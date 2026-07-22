@@ -3112,15 +3112,14 @@ public final class RuntimeViewModel {
         guard normalizedModelID.isEmpty == false else {
             return true
         }
+        // An interactive Provider is direct runtime evidence that this model
+        // is executable. Prefer that evidence over a stale catalog/cache row
+        // while the registry snapshot catches up with the resident runtime.
+        if hasInteractiveServerSession(for: normalizedModelID) {
+            return false
+        }
         guard let model = catalogModelsIncludingRegistry.first(where: { $0.modelID == normalizedModelID }) else {
-            // Registry-backed models are hydrated asynchronously. A running
-            // provider is already executable evidence for its configured
-            // model, so do not replace the composer with a false "missing
-            // model" repair state while that registry snapshot catches up.
-            return serverSessions.contains { session in
-                session.isInteractiveReady
-                    && session.modelID.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedModelID
-            } == false
+            return true
         }
         return model.runtimeCacheMissing
     }
@@ -8012,6 +8011,21 @@ public final class RuntimeViewModel {
         return nil
     }
 
+    private func hasInteractiveServerSession(for modelID: String) -> Bool {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedModelID.isEmpty == false else {
+            return false
+        }
+        return serverSessions.contains { session in
+            guard session.isInteractiveReady else {
+                return false
+            }
+            return session.servedModelIDs.contains { servedModelID in
+                servedModelID.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedModelID
+            }
+        }
+    }
+
     public func submitChatPrompt() async {
         let prompt = chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
@@ -8070,7 +8084,9 @@ public final class RuntimeViewModel {
         else {
             return
         }
-        if let missingModel = runtimeCacheMissingModel(for: modelID) {
+        if hasInteractiveServerSession(for: modelID) == false,
+           let missingModel = runtimeCacheMissingModel(for: modelID)
+        {
             chatStatusText = "Failed • \(ModelRuntimeAvailability.missingRuntimeCacheCode)"
             setLastError(missingModel.runtimeCacheDetailText)
             notifyStateChanged()
@@ -8112,7 +8128,9 @@ public final class RuntimeViewModel {
             enableThinking: chatThinkingEnabled
         )
 
-        if shouldPreloadChatModel(modelID: modelID) {
+        if hasInteractiveServerSession(for: modelID) == false,
+           shouldPreloadChatModel(modelID: modelID)
+        {
             await loadModel(modelID: modelID)
             guard isActiveChatRequest(requestOwnership) else {
                 return

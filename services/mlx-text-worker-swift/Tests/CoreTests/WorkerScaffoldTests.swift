@@ -6078,6 +6078,73 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorded.last?.completed.assistantText, "")
     }
 
+    func testGenerateUsesLoadedGemmaParserModeForImplicitThinkingBody() async throws {
+        let services = makeServices(
+            backend: FakeRuntimeBackend(generatedChunks: [
+                "reason ",
+                "first\n<channel|>",
+                "answer\n",
+            ])
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            request.model.modelPath = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            request.model.parserMode = "gemma"
+            request.model.ext["melix.tool_parser.mode"] = "gemma"
+            request.model.ext["parser.fixture"] = "loaded-model-fallback"
+            request.model.requestRoutes = [makeTextRequestRoute()]
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_GenerateRequest()
+        request.execution.id.requestID = "req-stored-gemma-parser-generate"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.execution.reasoning.enabled = true
+        request.messages = [makeUserMessage("Think and answer.")]
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.generate(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        let payloadText = recorded.compactMap { event -> String? in
+            switch event.payload {
+            case .reasoningDelta(let reasoning):
+                return "reasoning:\(reasoning.text)"
+            case .tokenDelta(let token):
+                return "token:\(token.text)"
+            default:
+                return nil
+            }
+        }
+
+        XCTAssertEqual(
+            payloadText,
+            ["reasoning:reason ", "reasoning:first\n", "token:answer\n"]
+        )
+        XCTAssertEqual(recorded.last?.completed.reasoningText, "reason first\n")
+        XCTAssertEqual(recorded.last?.completed.assistantText, "answer\n")
+    }
+
     func testGenerateSuppressesHarmonyThoughtChannelForLoadedModel() async throws {
         let services = makeServices(
             environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],

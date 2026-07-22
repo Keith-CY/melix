@@ -349,7 +349,7 @@ public actor GatewayConfigStore {
 
     func apply(
         command: Melix_Controlplane_V1_ApplyGatewayConfig
-    ) throws {
+    ) async throws {
         // Validates then persists a listener record for the given server session.
         let serverSessionID = Self.trimmed(command.serverSessionID)
         guard !serverSessionID.isEmpty else {
@@ -381,44 +381,46 @@ public actor GatewayConfigStore {
         let allowedHosts = LocalServerSecurityPolicy.normalizedAllowedHosts(command.allowedHosts)
         let allowedOrigins = LocalServerSecurityPolicy.normalizedAllowedOrigins(command.allowedOrigins)
 
-        try SiblingFileAdvisoryLock.withExclusiveLock(
+        let lockURL = try SiblingFileAdvisoryLock.prepareLockURL(
             storeURL: storeURL,
             fileManager: fileManager
-        ) {
-            let loadedConfig: LoadedGatewayConfig
-            switch Self.loadConfig(from: storeURL, fileManager: fileManager) {
-            case .missing:
-                loadedConfig = .empty
-            case let .loaded(config):
-                loadedConfig = config
-            case let .failed(failure):
-                recordRefreshFailure(failure)
-                throw failure
-            }
-            var nextRecordsByServerSessionID = loadedConfig.recordsByServerSessionID
-            nextRecordsByServerSessionID[serverSessionID] = PersistedGatewayListenerRecord(
-                serverSessionID: serverSessionID,
-                host: host,
-                port: command.port,
-                defaultModelID: defaultModelID,
-                servedModelIDs: servedModelIDs,
-                rateLimitPerMinute: command.rateLimitPerMinute,
-                timeoutSeconds: command.timeoutSeconds,
-                modelIdleTimeoutSeconds: command.modelIdleTimeoutSeconds,
-                allowedHosts: allowedHosts,
-                allowedOrigins: allowedOrigins,
-                sourceRawValue: Melix_Controlplane_V1_GatewayConfigSource.operatorOverride.rawValue,
-                updatedAtUnixMS: nowUnixMS()
-            )
-            try writeRecords(
-                activeServerSessionID: serverSessionID,
-                recordsByServerSessionID: nextRecordsByServerSessionID
-            )
-            activeServerSessionID = serverSessionID
-            recordsByServerSessionID = nextRecordsByServerSessionID
-            hasLastKnownGoodPersistedConfig = true
-            recordRefreshSuccess()
+        )
+        let advisoryLock = try await SiblingFileAdvisoryLock.acquire(lockURL: lockURL)
+        defer { advisoryLock.release() }
+
+        let loadedConfig: LoadedGatewayConfig
+        switch Self.loadConfig(from: storeURL, fileManager: fileManager) {
+        case .missing:
+            loadedConfig = .empty
+        case let .loaded(config):
+            loadedConfig = config
+        case let .failed(failure):
+            recordRefreshFailure(failure)
+            throw failure
         }
+        var nextRecordsByServerSessionID = loadedConfig.recordsByServerSessionID
+        nextRecordsByServerSessionID[serverSessionID] = PersistedGatewayListenerRecord(
+            serverSessionID: serverSessionID,
+            host: host,
+            port: command.port,
+            defaultModelID: defaultModelID,
+            servedModelIDs: servedModelIDs,
+            rateLimitPerMinute: command.rateLimitPerMinute,
+            timeoutSeconds: command.timeoutSeconds,
+            modelIdleTimeoutSeconds: command.modelIdleTimeoutSeconds,
+            allowedHosts: allowedHosts,
+            allowedOrigins: allowedOrigins,
+            sourceRawValue: Melix_Controlplane_V1_GatewayConfigSource.operatorOverride.rawValue,
+            updatedAtUnixMS: nowUnixMS()
+        )
+        try writeRecords(
+            activeServerSessionID: serverSessionID,
+            recordsByServerSessionID: nextRecordsByServerSessionID
+        )
+        activeServerSessionID = serverSessionID
+        recordsByServerSessionID = nextRecordsByServerSessionID
+        hasLastKnownGoodPersistedConfig = true
+        recordRefreshSuccess()
     }
 
     public func summary(

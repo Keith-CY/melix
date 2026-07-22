@@ -195,10 +195,11 @@ updates are visible to Desktop execution.
   URL, and an update timestamp.
 - Keep a launcher watchdog alive across the final `exec` so crash and force-quit
   exits also remove the descriptor and stop the bundled sidecars.
-- Let external CLI processes discover that descriptor only when neither socket
-  environment override is present. Accept it only while the app PID is live
-  and both absolute socket paths exist; otherwise retain the historical socket
-  defaults.
+- Let external CLI processes resolve each worker socket independently. A fully
+  explicit environment pair remains an atomic debug override; with only one
+  explicit socket, use the live active-runtime descriptor for the companion
+  socket. Accept each descriptor-sourced socket only while the App PID is live
+  and that companion path exists; otherwise retain its historical default.
 - Package a Swift-core-compatible `mlx.metallib` as a single versioned asset,
   expose it through MLX's colocated relative path, and fail packaging when its
   version cannot be proven compatible. Do not reuse a newer Python MLX
@@ -208,7 +209,9 @@ updates are visible to Desktop execution.
   registry-backed model is sendable without first appearing in a live snapshot.
 - While that catalog is hydrating, treat an interactive running provider as
   executable evidence for its configured model. Runtime load failures remain
-  authoritative and are surfaced by the normal Chat request path.
+  authoritative and are surfaced by the normal Chat request path. The same
+  live Provider evidence overrides a stale catalog `model_path_missing` flag
+  both at composer attachment gating and immediately before submission.
 - Make packaged provider creation an ordered `create -> restore -> start`
   workflow. Decode the exact session ID from the create receipt, preserve the
   created draft if start fails, and surface the typed CLI failure instead of
@@ -230,7 +233,11 @@ updates are visible to Desktop execution.
   replacement for the JSON document, and fail a write rather than replace an
   unreadable existing document from an empty fallback. Apply the same
   sibling-lock transaction to the shared serving-defaults document so
-  independent session updates cannot overwrite one another.
+  independent session updates cannot overwrite one another. Lock contention
+  must use `O_NONBLOCK` acquisition plus cancellable async backoff so a competing
+  process cannot park Swift's cooperative executor; any acquired descriptor is
+  released exactly once on success, error, explicit release, or deinitialization,
+  while an unsuccessful or cancelled acquisition owns none.
 - Make the long-lived Swift worker the process-residency authority for text
   models. Identical load identities must share one handle through a single-flight
   load, failed loads must remain retryable, automatic unload must protect shared
@@ -263,9 +270,21 @@ updates are visible to Desktop execution.
   emits the following body until `<channel|>`; marker fragments may span token
   chunks and must never leak. Other parsers retain the historical Harmony
   marker-terminated-header behavior.
+- Resolve Swift single-shot Generate framing from request metadata first and
+  the loaded model specification second, including its parser field and parser
+  extensions. This matches Decode, whose stored Prefill execution and loaded
+  model specification already provide the same fallback authority.
 - Stream active reasoning bodies incrementally in the Python fallback assembler
-  while retaining only a possible closing-marker suffix. Suppressed reasoning
-  must remain private when Thinking is disabled.
+  while retaining only a possible closing-marker suffix. When an unclosed
+  reasoning body reaches a separator that can begin terminal assistant recovery,
+  hold that ambiguous tail outside the public reasoning stream. A later close
+  marker confirms and immediately flushes it as reasoning; EOS recovers it as
+  assistant content, and a 4,096-character bound commits an oversized candidate
+  to assistant content rather than risking a final-answer leak into Thinking.
+  Generate must publish any EOS reasoning-recovery deltas before its usage and
+  Completed events so streaming clients receive the recovered answer exactly
+  once; unrelated aggregate-only partial-marker tails remain unstreamed.
+  Suppressed reasoning must remain private when Thinking is disabled.
 - Decode and validate Responses `max_output_tokens` at the HTTP boundary, map it
   to the worker sampling cap, reject conflicting compatibility aliases, and
   preserve the legacy fields for existing clients.
@@ -440,12 +459,24 @@ updates are visible to Desktop execution.
 - A malformed unclosed reasoning channel may remain reasoning-only, but no text
   previously emitted on the reasoning stream may be duplicated or reclassified
   into assistant content during final recovery.
+- A malformed unclosed reasoning channel must not emit a possible final-answer
+  tail as a live reasoning delta. Confirmed reasoning before the candidate tail
+  still streams incrementally, a normal close marker flushes the held tail with
+  no semantic change, and the bounded overflow path prefers assistant content.
+  At EOS, a recovered assistant tail must appear as one or more token deltas
+  before usage and Completed, matching the Completed aggregate without
+  duplication.
 - Concurrent gateway-config and serving-defaults writers targeting different
   server sessions must preserve every listener and defaults record. The final
   gateway active owner may follow lock acquisition order, but it must identify
   exactly one of the committed records. Readers must continue to observe either
   the complete previous document or the complete replacement document without
   taking the writer lock.
+- A contended sibling-lock waiter must observe task cancellation during the
+  async backoff, release no descriptor it does not own, and leave the lock
+  immediately reusable. The focused latency probe starts cancellation after
+  25 milliseconds and must complete the waiter/reacquire sequence without
+  blocking unrelated cooperative work.
 - Repeated and concurrent identical loads across control-plane clients must
   produce one worker handle and one backend load. Failed first loads must be
   retryable; shared automatic unload must be rejected while explicit forced
@@ -466,6 +497,9 @@ updates are visible to Desktop execution.
 - A Gemma reasoning body must produce its first worker reasoning delta before
   `<channel|>` arrives. Split open and close markers must not leak or duplicate
   text, and an output-limit finish must preserve already-emitted reasoning.
+- A Swift Generate request that omits parser metadata must still use the loaded
+  Gemma model specification, route implicit pre-close text to reasoning, consume
+  `<channel|>`, and route the following text to the assistant answer.
 - A Responses request with `max_output_tokens` must apply that exact worker cap
   and record it as the output-cap source; non-positive, malformed, or conflicting
   values must fail before worker dispatch.
@@ -555,26 +589,34 @@ updates are visible to Desktop execution.
   provider creation, trusted identity context, reasoning-before-answer ordering,
   independent streaming state, 128-point overflow behavior, grapheme cadence,
   manual-scroll suspension, Reduce Motion fallback, provider-switch request
-  invalidation, and the streaming-time provider-picker gate.
+  invalidation, the streaming-time provider-picker gate, and stale
+  `model_path_missing` suppression only when a matching Provider is genuinely
+  interactive.
 - Focused stream-assembler and receipt tests for truncated reasoning, partial
   close markers, and EOS recovery without reasoning-to-content duplication.
 - Focused gateway tests for packaged listener authority, legacy owner fallback,
   bound-session roster refresh without live owner rebinding, last-known-good
   behavior and diagnostics after read/decode failures, sibling-lock failures,
   and concurrent gateway-config and serving-defaults read-modify-write
-  preservation.
+  preservation, plus cancellation and reuse of a contended nonblocking lease.
 - Focused Swift-worker tests for repeated/concurrent load deduplication, failed
   load recovery, shared unload protection, active-request protection, and forced
   unload, plus tokenizer-declared end-of-turn token loading and Gemma channel
-  framing across split markers in both generate and decode.
+  framing across split markers in both generate and decode, including a Generate
+  request whose parser authority exists only on the loaded model specification.
 - Focused control-plane tests for cached-handle validation and lazy stale-handle
   recovery across independently constructed clients.
 - Focused Responses tests for standard `max_output_tokens` mapping, validation,
   alias conflicts, and request receipts.
 - Focused Python assembler tests for incremental `<think>` and Gemma thought
-  channels, split close markers, disabled-reasoning suppression, and malformed
-  terminal recovery.
+  channels, split close markers, disabled-reasoning suppression, malformed
+  terminal recovery, split visible-tail candidates, bounded candidate overflow,
+  close-confirmed low-latency flushing, and the Generate event sequence for an
+  EOS-recovered answer before usage and completion.
 - Focused development launcher tests for explicit environment listener authority.
+- Focused CLI socket-discovery tests for one-sided descriptor fallback,
+  per-socket usability validation, fully explicit atomic override, and invalid
+  descriptor fallback.
 - Focused prompt-token normalization and top-k propagation/sampling tests.
 - Focused K=V projection-source coverage plus a real deterministic 31B
   multi-turn packaged-runtime comparison against the official Python output.
@@ -710,6 +752,46 @@ updates are visible to Desktop execution.
   hits, and the token-byte probe assembled all 80,000 events per sample with no
   decode errors. The pull-request performance workflow remains authoritative
   for the paired base-versus-head regression decision.
+
+## Second Pull Request Review Follow-up Evidence (2026-07-22)
+
+- Swift single-shot Generate now resolves Gemma framing from the loaded model
+  specification when request metadata is absent. The complete Swift text-worker
+  suite passed 289 tests; the changed `TextGenerationEngine.swift` slice reports
+  100-percent changed-line coverage (41/41).
+- Python EOS recovery now emits a recovered visible answer before usage and
+  completion without changing the historical partial-marker stream contract.
+  The focused stream and Generate selection passed 151 tests, and the complete
+  Python suite passed 5,128 tests with 14 skips. The changed assembler and engine
+  slice reports 97.35-percent changed-line coverage (110/113).
+- The final paired Python probes reported no gated regression: parser-mode
+  paired median was approximately +2.28 percent, structural-prefix was -7.11
+  percent, and token-byte elapsed median was -2.74 percent. Every correctness
+  checksum, structural hit count, tool call, channel transition, and decode
+  error invariant passed.
+- Gateway and serving-default writes now use cancellable nonblocking sibling
+  leases, including a post-open cancellation guard that closes the acquired
+  descriptor before propagating cancellation. The complete control-plane suite
+  passed 1,191 tests across 43 suites. The changed lock and store slice reports
+  97.37-percent changed-line coverage (111/114).
+- CLI one-sided socket overrides now retain the live active-runtime companion
+  socket while a fully explicit pair remains atomic. The complete CLI suite
+  passed 432 tests across 10 suites with one skip; the changed factory slice
+  reports 100-percent changed-line coverage (22/22).
+- Desktop Chat trusts a matching interactive Provider over stale catalog cache
+  state only during attachment, submission, and preload decisions; explicit
+  load and Restore Download continue to observe the real cache state. Three
+  focused regressions, 281 Desktop Foundation tests, and the complete macOS
+  suite of 878 tests across 25 suites all passed. The changed
+  `RuntimeViewModel.swift` slice reports 96.30-percent changed-line coverage
+  (26/27).
+- The transient reasoning, tool, and assistant presentation test records the
+  synchronous state-notification history instead of polling the current state.
+  It verifies exclusive visibility and the exact reasoning-to-tool-to-assistant
+  sequence without depending on scheduler timing; the final test passed five
+  consecutive runs, and the adjacent zero-delay/out-of-order regression passed.
+- The final integration gate passed 123 tests with one skip. The packaging smoke
+  gate passed 145 tests and all eight packaging-target metrics.
 
 ## Known Boundaries
 

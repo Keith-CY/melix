@@ -2591,7 +2591,7 @@ def test_empty_pipe_reasoning_channel_is_suppressed_as_thinking_off_sentinel() -
     assert completed.metrics["reasoning_leak_count"] == 0
 
 
-def test_unclosed_reasoning_channel_never_reclassifies_already_streamed_text_at_eos() -> None:
+def test_unclosed_reasoning_channel_holds_possible_visible_tail_until_eos() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-unclosed-reasoning-visible-tail",
         reasoning_enabled=True,
@@ -2601,17 +2601,83 @@ def test_unclosed_reasoning_channel_never_reclassifies_already_streamed_text_at_
 
     first = assembler.accept(StreamFragment(raw_text="<think>plan step"))
     second = assembler.accept(StreamFragment(raw_text="<think>plan step\n\nFinal answer"))
+    terminal, completed = assembler.finalize()
+
+    assert [delta.reasoning_text for delta in first + second if delta.reasoning_text] == [
+        "plan step",
+    ]
+    assert [delta.content_text for delta in first + second if delta.content_text] == []
+    assert [delta.content_text for delta in terminal if delta.content_text] == ["Final answer"]
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == "Final answer"
+    assert completed.metrics["malformed_reasoning_count"] == 1
+    assert completed.metrics["reasoning_channel_recovery_count"] == 1
+    repeated_terminal, repeated_completed = assembler.finalize()
+    assert repeated_terminal == []
+    assert repeated_completed == completed
+
+
+def test_unclosed_reasoning_candidate_split_across_fragments_is_not_streamed_as_reasoning() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-unclosed-reasoning-split-visible-tail",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    first = assembler.accept(StreamFragment(raw_text="<think>plan step\n"))
+    second = assembler.accept(StreamFragment(raw_text="<think>plan step\n\nFinal answer"))
     completed = assembler.completed()
 
     assert [delta.reasoning_text for delta in first + second if delta.reasoning_text] == [
         "plan step",
-        "\n\nFinal answer",
     ]
     assert [delta.content_text for delta in first + second if delta.content_text] == []
-    assert completed.reasoning_text == "plan step\n\nFinal answer"
-    assert completed.assistant_text == ""
-    assert completed.metrics["malformed_reasoning_count"] == 1
-    assert completed.metrics["reasoning_channel_recovery_count"] == 1
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == "Final answer"
+
+
+def test_well_formed_reasoning_flushes_ambiguous_paragraph_when_close_arrives() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-well-formed-reasoning-ambiguous-paragraph",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    first = assembler.accept(StreamFragment(raw_text="<think>plan step\n\nsecond thought"))
+    second = assembler.accept(
+        StreamFragment(raw_text="<think>plan step\n\nsecond thought</think>Final answer")
+    )
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in first if delta.reasoning_text] == ["plan step"]
+    assert [delta.reasoning_text for delta in second if delta.reasoning_text] == [
+        "\n\nsecond thought",
+    ]
+    assert [delta.content_text for delta in second if delta.content_text] == ["Final answer"]
+    assert completed.reasoning_text == "plan step\n\nsecond thought"
+    assert completed.assistant_text == "Final answer"
+
+
+def test_unclosed_reasoning_visible_tail_buffer_has_bounded_safe_commit() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-unclosed-reasoning-bounded-visible-tail",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    visible = "A" * (RequestStreamAssembler._MAX_AMBIGUOUS_REASONING_TAIL_CHARS + 1)
+
+    deltas = assembler.accept(StreamFragment(raw_text=f"<think>plan step\n\n{visible}"))
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["plan step"]
+    assert [delta.content_text for delta in deltas if delta.content_text] == [visible]
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == visible
+    assert completed.metrics["reasoning_ambiguous_tail_max_chars"] == len(visible) + 2
+    assert completed.metrics["reasoning_visible_tail_safe_commit_count"] == 1
 
 
 def test_unclosed_pipe_reasoning_channel_recovers_visible_answer_tail_at_eos() -> None:
@@ -2771,8 +2837,8 @@ def test_unclosed_reasoning_recovery_handles_disabled_and_marker_paths() -> None
     )
     marker.accept(StreamFragment(raw_text="<think>hidden\nAnswer: 42"))
     marker_completed = marker.completed()
-    assert marker_completed.reasoning_text == "hidden\nAnswer: 42"
-    assert marker_completed.assistant_text == ""
+    assert marker_completed.reasoning_text == "hidden"
+    assert marker_completed.assistant_text == "Answer: 42"
 
     blank = RequestStreamAssembler(
         request_id="req-blank-unclosed-reasoning",

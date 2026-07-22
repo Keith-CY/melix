@@ -322,6 +322,16 @@ class RequestStreamAssembler:
     _PIPE_TOOL_PREFIXES_REVERSED = tuple(reversed(_PIPE_TOOL_PREFIXES))
     _PIPE_CHANNEL_PREFIXES_REVERSED = tuple(reversed(_PIPE_CHANNEL_PREFIXES))
     _VISIBLE_TAIL_MARKERS = ("\nFinal answer", "\nFinal:", "\nAnswer:", "\nAssistant:", "\nResult:")
+    _UNCLOSED_REASONING_RECOVERY_MARKERS = (
+        "\r\n\r\n",
+        "\n\n",
+        *_VISIBLE_TAIL_MARKERS,
+    )
+    # A malformed reasoning block has no authoritative boundary until EOS. Keep
+    # a bounded candidate tail off the public reasoning stream; if it outgrows
+    # the bound, commit it to assistant content rather than risk exposing a
+    # potentially final answer as Thinking.
+    _MAX_AMBIGUOUS_REASONING_TAIL_CHARS = 4_096
     _HIDDEN_PIPE_CHANNELS = frozenset({"analysis", "thought", "reasoning"})
     _VISIBLE_PIPE_CHANNELS = frozenset({"commentary", "final"})
     _PIPE_CALL_RE = re.compile(
@@ -404,10 +414,11 @@ class RequestStreamAssembler:
         self._assistant_parts: list[str] = []
         self._reasoning_parts: list[str] = []
         self._active_reasoning_close_tag = ""
-        self._active_reasoning_body_parts: list[str] = []
-        self._active_reasoning_parts_start = 0
         self._active_reasoning_pending_whitespace = ""
         self._active_reasoning_has_content = False
+        self._active_reasoning_probe_tail = ""
+        self._active_reasoning_ambiguous_tail = ""
+        self._active_reasoning_visible_tail_committed = False
         self._tool_fragment_index = 0
         self._emitted_tool_keys: set[tuple[str, str]] = set()
         self._metrics: dict[str, int | str] = {
@@ -423,6 +434,8 @@ class RequestStreamAssembler:
             "stream_parser_request_context_mode": self._request_context_mode,
             "tool_call_markup_leak_count": 0,
             "reasoning_channel_recovery_count": 0,
+            "reasoning_ambiguous_tail_max_chars": 0,
+            "reasoning_visible_tail_safe_commit_count": 0,
             "generated_token_count": 0,
             "logprob_entry_count": 0,
             "token_logprob_mismatch_count": 0,
@@ -647,7 +660,9 @@ class RequestStreamAssembler:
             )
         ]
 
-    def completed(self) -> AssemblyCompletion:
+    def finalize(self) -> tuple[list[AssemblyDelta], AssemblyCompletion]:
+        terminal_deltas: list[AssemblyDelta] = []
+        reasoning_recovery_count = self._metrics["reasoning_channel_recovery_count"]
         if self._pending_token_bytes:
             self._metrics["byte_fallback_decode_error_count"] += 1
             self._buffer += self._pending_token_bytes.decode("utf-8", errors="replace")
@@ -659,17 +674,26 @@ class RequestStreamAssembler:
                 )
                 self._buffer = ""
         else:
-            self._drain_buffer(final=True)
+            drained_deltas = self._drain_buffer(final=True)
+            if self._metrics["reasoning_channel_recovery_count"] != reasoning_recovery_count:
+                terminal_deltas = drained_deltas
         self._sync_channel_state_metrics()
         metrics = dict(self._metrics)
         metrics["effective_parser_config_json"] = self._effective_parser_config_json()
-        return AssemblyCompletion(
-            assistant_text="".join(self._assistant_parts),
-            reasoning_text="".join(self._reasoning_parts),
-            raw_text=self._materialized_raw_seen(),
-            tool_call_count=self._tool_fragment_index,
-            metrics=metrics,
+        return (
+            terminal_deltas,
+            AssemblyCompletion(
+                assistant_text="".join(self._assistant_parts),
+                reasoning_text="".join(self._reasoning_parts),
+                raw_text=self._materialized_raw_seen(),
+                tool_call_count=self._tool_fragment_index,
+                metrics=metrics,
+            ),
         )
+
+    def completed(self) -> AssemblyCompletion:
+        _, completion = self.finalize()
+        return completion
 
     @property
     def _is_json_structured_output(self) -> bool:
@@ -1027,10 +1051,11 @@ class RequestStreamAssembler:
         self._buffer = self._buffer[len(open_tag) :]
         self.channel_state.record_reasoning_source()
         self._active_reasoning_close_tag = close_tag
-        self._active_reasoning_body_parts = []
-        self._active_reasoning_parts_start = len(self._reasoning_parts)
         self._active_reasoning_pending_whitespace = ""
         self._active_reasoning_has_content = False
+        self._active_reasoning_probe_tail = ""
+        self._active_reasoning_ambiguous_tail = ""
+        self._active_reasoning_visible_tail_committed = False
 
     def _drain_active_reasoning(self, *, final: bool) -> tuple[list[AssemblyDelta], bool]:
         close_tag = self._active_reasoning_close_tag
@@ -1040,7 +1065,9 @@ class RequestStreamAssembler:
             self._buffer = self._buffer[close_index + len(close_tag) :]
             if self.channel_state.pending_marker_tail:
                 self.channel_state.clear_marker_tail()
-            deltas = self._stream_active_reasoning_body(body)
+            # The close marker makes every still-held byte grammar-confirmed
+            # reasoning, so flush the bounded probe/candidate tail immediately.
+            deltas = self._stream_active_reasoning_body(body, confirmed=True)
             if not self._active_reasoning_has_content:
                 self._metrics["empty_thinking_sentinel_count"] += 1
             elif not self._reasoning_enabled:
@@ -1058,35 +1085,32 @@ class RequestStreamAssembler:
             self._buffer = ""
 
         if final:
-            if body:
-                self._active_reasoning_body_parts.append(body)
-            full_body = "".join(self._active_reasoning_body_parts)
-            streamed_reasoning = "".join(
-                self._reasoning_parts[self._active_reasoning_parts_start :]
-            )
-            if streamed_reasoning:
-                recovery_body = (
-                    full_body[len(streamed_reasoning) :]
-                    if full_body.startswith(streamed_reasoning)
-                    else ""
-                )
-            else:
-                del self._reasoning_parts[self._active_reasoning_parts_start :]
-                recovery_body = full_body
+            deltas = self._stream_active_reasoning_body(body)
             self._metrics["malformed_reasoning_count"] += 1
             self._metrics["reasoning_channel_recovery_count"] += 1
-            hidden, visible = self._recover_unclosed_reasoning_body(recovery_body)
-            if hidden:
-                if self._reasoning_enabled:
-                    self._reasoning_parts.append(hidden)
+            ambiguous_tail = self._active_reasoning_ambiguous_tail
+            self._active_reasoning_ambiguous_tail = ""
+            if ambiguous_tail:
+                hidden, visible = self._recover_unclosed_reasoning_body(ambiguous_tail)
+                if visible:
+                    if hidden:
+                        deltas.extend(self._reasoning_delta(hidden))
+                    deltas.append(self._content_delta(visible))
                 else:
-                    self._metrics["suppressed_reasoning_count"] += 1
-                    self._metrics["reasoning_parser_bypassed_count"] += 1
+                    # A boundary without a visible body (for example a trailing
+                    # blank line) remains part of the malformed reasoning text.
+                    deltas.extend(self._reasoning_delta(ambiguous_tail))
+            else:
+                deltas.extend(self._reasoning_delta(self._active_reasoning_probe_tail))
+            self._active_reasoning_probe_tail = ""
+            if self._active_reasoning_has_content and not self._reasoning_enabled:
+                self._metrics["suppressed_reasoning_count"] += 1
+                self._metrics["reasoning_parser_bypassed_count"] += 1
             if self.channel_state.pending_marker_tail:
                 self.channel_state.flush_terminal_marker_tail()
             self._buffer = ""
             self._clear_active_reasoning()
-            return ([self._content_delta(visible)] if visible else []), True
+            return deltas, True
 
         deltas = self._stream_active_reasoning_body(body)
         if held_suffix:
@@ -1095,10 +1119,14 @@ class RequestStreamAssembler:
             self.channel_state.clear_marker_tail()
         return deltas, False
 
-    def _stream_active_reasoning_body(self, body: str) -> list[AssemblyDelta]:
-        if not body:
+    def _stream_active_reasoning_body(
+        self,
+        body: str,
+        *,
+        confirmed: bool = False,
+    ) -> list[AssemblyDelta]:
+        if not body and not confirmed:
             return []
-        self._active_reasoning_body_parts.append(body)
         if not self._active_reasoning_has_content:
             self._active_reasoning_pending_whitespace += body
             if not self._active_reasoning_pending_whitespace.strip():
@@ -1106,17 +1134,73 @@ class RequestStreamAssembler:
             body = self._active_reasoning_pending_whitespace
             self._active_reasoning_pending_whitespace = ""
             self._active_reasoning_has_content = True
-        if not self._reasoning_enabled:
+
+        if self._active_reasoning_visible_tail_committed:
+            return [self._content_delta(body)] if body else []
+
+        combined = (
+            self._active_reasoning_probe_tail
+            + self._active_reasoning_ambiguous_tail
+            + body
+        )
+        self._active_reasoning_probe_tail = ""
+        self._active_reasoning_ambiguous_tail = ""
+
+        if confirmed:
+            return self._reasoning_delta(combined)
+
+        candidate_index = self._unclosed_reasoning_candidate_index(combined)
+        if candidate_index >= 0:
+            safe_prefix = combined[:candidate_index]
+            self._active_reasoning_ambiguous_tail = combined[candidate_index:]
+            self._record_ambiguous_reasoning_tail_size()
+            deltas = self._reasoning_delta(safe_prefix)
+            if (
+                len(self._active_reasoning_ambiguous_tail)
+                > self._MAX_AMBIGUOUS_REASONING_TAIL_CHARS
+            ):
+                deltas.extend(self._commit_ambiguous_reasoning_tail_as_visible())
+            return deltas
+
+        held_suffix = self._longest_unclosed_reasoning_marker_prefix_suffix(combined)
+        if held_suffix:
+            safe_body = combined[: -len(held_suffix)]
+            self._active_reasoning_probe_tail = held_suffix
+        else:
+            safe_body = combined
+        return self._reasoning_delta(safe_body)
+
+    def _reasoning_delta(self, body: str) -> list[AssemblyDelta]:
+        if not body or not self._reasoning_enabled:
             return []
         self._reasoning_parts.append(body)
         return [AssemblyDelta(reasoning_text=body, raw_text=body)]
 
+    def _commit_ambiguous_reasoning_tail_as_visible(self) -> list[AssemblyDelta]:
+        tail = self._active_reasoning_ambiguous_tail
+        self._active_reasoning_ambiguous_tail = ""
+        hidden, visible = self._recover_unclosed_reasoning_body(tail)
+        if not visible:
+            return self._reasoning_delta(tail)
+        deltas = self._reasoning_delta(hidden)
+        self._active_reasoning_visible_tail_committed = True
+        self._metrics["reasoning_visible_tail_safe_commit_count"] += 1
+        deltas.append(self._content_delta(visible))
+        return deltas
+
+    def _record_ambiguous_reasoning_tail_size(self) -> None:
+        self._metrics["reasoning_ambiguous_tail_max_chars"] = max(
+            self._metrics["reasoning_ambiguous_tail_max_chars"],
+            len(self._active_reasoning_ambiguous_tail),
+        )
+
     def _clear_active_reasoning(self) -> None:
         self._active_reasoning_close_tag = ""
-        self._active_reasoning_body_parts = []
-        self._active_reasoning_parts_start = 0
         self._active_reasoning_pending_whitespace = ""
         self._active_reasoning_has_content = False
+        self._active_reasoning_probe_tail = ""
+        self._active_reasoning_ambiguous_tail = ""
+        self._active_reasoning_visible_tail_committed = False
 
     @staticmethod
     def _longest_marker_prefix_suffix(text: str, marker: str) -> str:
@@ -1331,6 +1415,23 @@ class RequestStreamAssembler:
             if index >= 0:
                 return body[:index].strip(), body[index + 1 :].strip()
         return "", ""
+
+    @classmethod
+    def _unclosed_reasoning_candidate_index(cls, body: str) -> int:
+        indexes = (
+            body.find(marker)
+            for marker in cls._UNCLOSED_REASONING_RECOVERY_MARKERS
+        )
+        return min((index for index in indexes if index >= 0), default=-1)
+
+    @classmethod
+    def _longest_unclosed_reasoning_marker_prefix_suffix(cls, body: str) -> str:
+        held_suffix = ""
+        for marker in cls._UNCLOSED_REASONING_RECOVERY_MARKERS:
+            candidate = cls._longest_marker_prefix_suffix(body, marker)
+            if len(candidate) > len(held_suffix):
+                held_suffix = candidate
+        return held_suffix
 
     def _next_structural_tag(self) -> tuple[str, int] | None:
         buffer = self._buffer

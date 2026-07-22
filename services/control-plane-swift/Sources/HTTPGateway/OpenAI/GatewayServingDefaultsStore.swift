@@ -624,7 +624,7 @@ public actor GatewayServingDefaultsStore {
 
     func apply(
         command: Melix_Controlplane_V1_ApplyServingDefaults
-    ) throws {
+    ) async throws {
         let serverSessionID = Self.trimmed(command.serverSessionID)
         guard !serverSessionID.isEmpty else {
             throw ServingDefaultsValidationError.missingServerSessionID
@@ -661,36 +661,38 @@ public actor GatewayServingDefaultsStore {
             throw ServingDefaultsValidationError.invalidRoutePolicy
         }
 
-        try SiblingFileAdvisoryLock.withExclusiveLock(
+        let lockURL = try SiblingFileAdvisoryLock.prepareLockURL(
             storeURL: storeURL,
             fileManager: fileManager
-        ) {
-            var nextRecordsByServerSessionID = Self.loadRecords(
-                from: storeURL,
-                fileManager: fileManager
-            )
-            nextRecordsByServerSessionID[serverSessionID] = PersistedServingDefaultsRecord(
-                serverSessionID: serverSessionID,
-                temperature: command.temperature,
-                topP: command.topP,
-                maxTokens: command.maxTokens,
-                streamIntervalTokens: command.streamIntervalTokens,
-                maxConcurrentRequests: command.maxConcurrentRequests,
-                concurrentProcessingEnabled: command.concurrentProcessingEnabled,
-                prefillBatchSize: command.prefillBatchSize,
-                completionBatchSize: command.completionBatchSize,
-                accelerationModeRawValue: command.accelerationMode.rawValue,
-                draftModelID: Self.trimmed(command.draftModelID),
-                numDraftTokens: command.numDraftTokens,
-                accelerationProfile: Self.normalizedProfileID(command.accelerationProfile),
-                multimodalRoutePolicy: multimodalRoutePolicy,
-                speculativeRoutePolicy: speculativeRoutePolicy,
-                sourceRawValue: Melix_Controlplane_V1_ServingDefaultsSource.operatorOverride.rawValue,
-                updatedAtUnixMS: nowUnixMS()
-            )
-            try writeRecords(recordsByServerSessionID: nextRecordsByServerSessionID)
-            recordsByServerSessionID = nextRecordsByServerSessionID
-        }
+        )
+        let advisoryLock = try await SiblingFileAdvisoryLock.acquire(lockURL: lockURL)
+        defer { advisoryLock.release() }
+
+        var nextRecordsByServerSessionID = Self.loadRecords(
+            from: storeURL,
+            fileManager: fileManager
+        )
+        nextRecordsByServerSessionID[serverSessionID] = PersistedServingDefaultsRecord(
+            serverSessionID: serverSessionID,
+            temperature: command.temperature,
+            topP: command.topP,
+            maxTokens: command.maxTokens,
+            streamIntervalTokens: command.streamIntervalTokens,
+            maxConcurrentRequests: command.maxConcurrentRequests,
+            concurrentProcessingEnabled: command.concurrentProcessingEnabled,
+            prefillBatchSize: command.prefillBatchSize,
+            completionBatchSize: command.completionBatchSize,
+            accelerationModeRawValue: command.accelerationMode.rawValue,
+            draftModelID: Self.trimmed(command.draftModelID),
+            numDraftTokens: command.numDraftTokens,
+            accelerationProfile: Self.normalizedProfileID(command.accelerationProfile),
+            multimodalRoutePolicy: multimodalRoutePolicy,
+            speculativeRoutePolicy: speculativeRoutePolicy,
+            sourceRawValue: Melix_Controlplane_V1_ServingDefaultsSource.operatorOverride.rawValue,
+            updatedAtUnixMS: nowUnixMS()
+        )
+        try writeRecords(recordsByServerSessionID: nextRecordsByServerSessionID)
+        recordsByServerSessionID = nextRecordsByServerSessionID
     }
 
     public func summary(

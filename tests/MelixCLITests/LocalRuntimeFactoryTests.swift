@@ -67,30 +67,67 @@ struct LocalRuntimeFactoryTests {
         #expect(paths.swiftTextWorkerSocketPath == fixture.swiftTextSocketPath)
     }
 
-    @Test("explicit socket environment wins without mixing in descriptor values")
-    func explicitSocketEnvironmentWinsAtomically() throws {
+    @Test("one explicit socket keeps the live descriptor companion")
+    func oneExplicitSocketKeepsLiveDescriptorCompanion() throws {
         let fixture = try ActiveRuntimeDescriptorFixture()
         defer { fixture.remove() }
-        try fixture.descriptorJSON().write(to: fixture.descriptorURL, atomically: true, encoding: .utf8)
+        try fixture.write(fixture.descriptorJSON(swiftTextSocketPath: "relative-stale-swift.sock"))
 
         let paths = MelixLocalRuntimeFactory.resolvedWorkerSocketPaths(
             environment: [
                 "MELIX_ACTIVE_RUNTIME_PATH": fixture.descriptorURL.path,
                 "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/explicit-swift.sock",
-            ]
+            ],
+            processIsAlive: { fixture.runtimeProcessIDs.contains($0) },
+            socketPathIsUsable: { $0 == fixture.pythonSocketPath }
         )
 
-        #expect(paths.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
+        #expect(paths.pythonWorkerSocketPath == fixture.pythonSocketPath)
         #expect(paths.swiftTextWorkerSocketPath == "/tmp/explicit-swift.sock")
+
+        try fixture.write(fixture.descriptorJSON(pythonSocketPath: "relative-stale-python.sock"))
+
+        let explicitPythonPaths = MelixLocalRuntimeFactory.resolvedWorkerSocketPaths(
+            environment: [
+                "MELIX_ACTIVE_RUNTIME_PATH": fixture.descriptorURL.path,
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/explicit-python.sock",
+            ],
+            processIsAlive: { fixture.runtimeProcessIDs.contains($0) },
+            socketPathIsUsable: { $0 == fixture.swiftTextSocketPath }
+        )
+        #expect(explicitPythonPaths.pythonWorkerSocketPath == "/tmp/explicit-python.sock")
+        #expect(explicitPythonPaths.swiftTextWorkerSocketPath == fixture.swiftTextSocketPath)
 
         let blankExplicitPath = MelixLocalRuntimeFactory.resolvedWorkerSocketPaths(
             environment: [
                 "MELIX_ACTIVE_RUNTIME_PATH": fixture.descriptorURL.path,
                 "MELIX_WORKER_SOCKET_PATH": "",
-            ]
+            ],
+            processIsAlive: { fixture.runtimeProcessIDs.contains($0) },
+            socketPathIsUsable: { $0 == fixture.swiftTextSocketPath }
         )
         #expect(blankExplicitPath.pythonWorkerSocketPath.isEmpty)
-        #expect(blankExplicitPath.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
+        #expect(blankExplicitPath.swiftTextWorkerSocketPath == fixture.swiftTextSocketPath)
+    }
+
+    @Test("two explicit sockets atomically override the active runtime descriptor")
+    func twoExplicitSocketsAtomicallyOverrideDescriptor() throws {
+        let fixture = try ActiveRuntimeDescriptorFixture()
+        defer { fixture.remove() }
+        try fixture.write(fixture.descriptorJSON())
+
+        let paths = MelixLocalRuntimeFactory.resolvedWorkerSocketPaths(
+            environment: [
+                "MELIX_ACTIVE_RUNTIME_PATH": fixture.descriptorURL.path,
+                "MELIX_WORKER_SOCKET_PATH": "/tmp/explicit-python.sock",
+                "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/explicit-swift.sock",
+            ],
+            processIsAlive: { _ in false },
+            socketPathIsUsable: { _ in false }
+        )
+
+        #expect(paths.pythonWorkerSocketPath == "/tmp/explicit-python.sock")
+        #expect(paths.swiftTextWorkerSocketPath == "/tmp/explicit-swift.sock")
     }
 
     @Test(
@@ -204,8 +241,14 @@ private struct ActiveRuntimeDescriptorFixture {
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
     }
 
-    func descriptorJSON(appProcessID overriddenAppProcessID: Int32? = nil) -> String {
+    func descriptorJSON(
+        appProcessID overriddenAppProcessID: Int32? = nil,
+        pythonSocketPath overriddenPythonSocketPath: String? = nil,
+        swiftTextSocketPath overriddenSwiftTextSocketPath: String? = nil
+    ) -> String {
         let descriptorAppProcessID = overriddenAppProcessID ?? appProcessID
+        let descriptorPythonSocketPath = overriddenPythonSocketPath ?? pythonSocketPath
+        let descriptorSwiftTextSocketPath = overriddenSwiftTextSocketPath ?? swiftTextSocketPath
         return """
         {
           "schema_version": "melix.active_runtime.v1",
@@ -213,8 +256,8 @@ private struct ActiveRuntimeDescriptorFixture {
           "control_plane_process_id": \(controlPlaneProcessID),
           "python_worker_process_id": \(pythonWorkerProcessID),
           "swift_text_worker_process_id": \(swiftTextWorkerProcessID),
-          "python_worker_socket_path": "\(pythonSocketPath)",
-          "swift_text_worker_socket_path": "\(swiftTextSocketPath)",
+          "python_worker_socket_path": "\(descriptorPythonSocketPath)",
+          "swift_text_worker_socket_path": "\(descriptorSwiftTextSocketPath)",
           "service_base_url": "http://127.0.0.1:12436",
           "updated_at_unix_ms": 1784304000000
         }

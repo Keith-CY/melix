@@ -2825,9 +2825,42 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedActions.contains("chat:melix-dev-text"))
     }
 
-    @Test("chat submit preflight preserves the draft when managed Hugging Face cache is missing")
+    @Test("chat submit preserves the draft when managed Hugging Face cache is missing without an interactive Provider")
     @MainActor
-    func chatSubmitPreflightPreservesDraftWhenManagedHuggingFaceCacheIsMissing() async throws {
+    func chatSubmitPreservesDraftWhenManagedHuggingFaceCacheIsMissing() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var missingModel = makeModelSummary(state: .modelDiscovered)
+        missingModel.settings.ext["melix.model_path_missing"] = "true"
+        missingModel.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        await client.configureSnapshot(makeSnapshot(
+            serverState: .serverReady,
+            models: [missingModel],
+            runtimeSessions: [makeRuntimeSession(lifecycleState: .stopped)]
+        ))
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let modelID = try #require(viewModel.selectedChatServerSession?.modelID)
+        #expect(viewModel.selectedChatServerSession?.isInteractiveReady == false)
+        #expect(viewModel.chatModelNeedsAttachment(modelID: modelID))
+
+        viewModel.chatComposerText = "hello"
+        let transcriptBeforePreflight = viewModel.chatTranscript
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }) == false)
+        #expect(viewModel.chatComposerText == "hello")
+        #expect(viewModel.chatTranscript == transcriptBeforePreflight)
+        #expect(viewModel.chatTranscript.contains { $0.kind == .user } == false)
+        #expect(viewModel.chatTranscript.contains { $0.kind == .error } == false)
+        #expect(viewModel.chatStatusText == "Stopped")
+        #expect(viewModel.lastError == "Start the bound Provider before sending chat prompts.")
+    }
+
+    @Test("chat trusts an interactive Provider when the catalog reports a stale missing runtime cache")
+    @MainActor
+    func chatTrustsInteractiveProviderWhenCatalogReportsStaleMissingRuntimeCache() async throws {
         let client = FakeControlPlaneXPCClient()
         var missingModel = makeModelSummary(state: .modelDiscovered)
         missingModel.settings.ext["melix.model_path_missing"] = "true"
@@ -2841,17 +2874,19 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let modelID = try #require(viewModel.selectedChatServerSession?.modelID)
+        #expect(viewModel.selectedChatServerSession?.isInteractiveReady == true)
+        #expect(viewModel.chatModelNeedsAttachment(modelID: modelID) == false)
+
         viewModel.chatComposerText = "hello"
-        let transcriptBeforePreflight = viewModel.chatTranscript
         await viewModel.submitChatPrompt()
 
-        #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }) == false)
-        #expect(viewModel.chatComposerText == "hello")
-        #expect(viewModel.chatTranscript == transcriptBeforePreflight)
-        #expect(viewModel.chatTranscript.contains { $0.kind == .user } == false)
+        #expect(await client.recordedActions.contains("chat:\(modelID)"))
+        #expect(viewModel.chatComposerText.isEmpty)
+        #expect(viewModel.chatTranscript.contains { $0.kind == .user && $0.body == "hello" })
         #expect(viewModel.chatTranscript.contains { $0.kind == .error } == false)
-        #expect(viewModel.chatStatusText == "Failed • model_runtime_missing")
-        #expect(viewModel.lastError == "Hugging Face cache files are missing. Re-download this model to restore it.")
+        #expect(viewModel.chatStatusText != "Failed • model_runtime_missing")
+        #expect(viewModel.lastError != "Hugging Face cache files are missing. Re-download this model to restore it.")
     }
 
     @Test("surface selection command center and server session controls update shell state")
@@ -13527,49 +13562,83 @@ struct RuntimeViewModelTests {
             )),
         ])
         let viewModel = RuntimeViewModel(client: client)
+        var observedReasoningPhase = false
+        var observedToolPhase = false
+        var observedAssistantPhase = false
+        var reasoningPhaseWasAlwaysValid = true
+        var toolPhaseWasAlwaysValid = true
+        var assistantPhaseWasAlwaysValid = true
+        var maximumSimultaneousStreamingEntries = 0
+        var observedStreamingPhaseOrder: [String] = []
+
+        viewModel.onStateChanged = { [weak viewModel] in
+            guard let viewModel else {
+                return
+            }
+            let streamingEntries = viewModel.chatTranscript.filter {
+                viewModel.isStreamingChatTranscriptEntry($0)
+            }
+            maximumSimultaneousStreamingEntries = max(
+                maximumSimultaneousStreamingEntries,
+                streamingEntries.count
+            )
+            if let phase = streamingEntries.first?.kind.rawValue,
+               observedStreamingPhaseOrder.last != phase {
+                observedStreamingPhaseOrder.append(phase)
+            }
+
+            guard
+                streamingEntries.isEmpty == false,
+                let assistantEntry = viewModel.chatTranscript.first(where: { $0.kind == .assistant })
+            else {
+                return
+            }
+
+            if streamingEntries.contains(where: { $0.kind == .reasoning }) {
+                observedReasoningPhase = true
+                reasoningPhaseWasAlwaysValid = reasoningPhaseWasAlwaysValid
+                    && streamingEntries.count == 1
+                    && viewModel.isStreamingChatTranscriptEntry(assistantEntry) == false
+                    && viewModel.isStreamingAssistantTranscriptEntry(assistantEntry) == false
+                    && viewModel.shouldDisplayChatTranscriptEntry(assistantEntry) == false
+            }
+
+            if streamingEntries.contains(where: { $0.kind == .tool }) {
+                observedToolPhase = true
+                toolPhaseWasAlwaysValid = toolPhaseWasAlwaysValid
+                    && streamingEntries.count == 1
+                    && viewModel.isStreamingChatTranscriptEntry(assistantEntry) == false
+                    && viewModel.isStreamingAssistantTranscriptEntry(assistantEntry) == false
+                    && viewModel.shouldDisplayChatTranscriptEntry(assistantEntry) == false
+            }
+
+            if streamingEntries.contains(where: { $0.kind == .assistant }) {
+                observedAssistantPhase = true
+                assistantPhaseWasAlwaysValid = assistantPhaseWasAlwaysValid
+                    && streamingEntries.count == 1
+                    && viewModel.isStreamingChatTranscriptEntry(assistantEntry)
+                    && viewModel.isStreamingAssistantTranscriptEntry(assistantEntry)
+                    && viewModel.shouldDisplayChatTranscriptEntry(assistantEntry)
+            }
+        }
 
         await viewModel.start()
         try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Show activity"
-        let submitTask = Task { @MainActor in await viewModel.submitChatPrompt() }
+        await viewModel.submitChatPrompt()
 
-        try await waitForRuntimeViewModelCondition("reasoning entry should become active") {
-            viewModel.chatTranscript.contains { entry in
-                entry.kind == .reasoning && viewModel.isStreamingChatTranscriptEntry(entry)
-            }
-        }
-        let reasoningEntry = try #require(viewModel.chatTranscript.first { $0.kind == .reasoning })
-        let pendingAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
-        #expect(viewModel.isStreamingChatTranscriptEntry(reasoningEntry))
-        #expect(viewModel.isStreamingChatTranscriptEntry(pendingAssistantEntry) == false)
-        #expect(viewModel.isStreamingAssistantTranscriptEntry(pendingAssistantEntry) == false)
-        #expect(viewModel.shouldDisplayChatTranscriptEntry(pendingAssistantEntry) == false)
-
-        try await waitForRuntimeViewModelCondition("tool entry should become active") {
-            viewModel.chatTranscript.contains { entry in
-                entry.kind == .tool && viewModel.isStreamingChatTranscriptEntry(entry)
-            }
-        }
-        let toolEntry = try #require(viewModel.chatTranscript.first { $0.kind == .tool })
-        #expect(viewModel.isStreamingChatTranscriptEntry(reasoningEntry) == false)
-        #expect(viewModel.isStreamingChatTranscriptEntry(toolEntry))
-        #expect(viewModel.isStreamingChatTranscriptEntry(pendingAssistantEntry) == false)
-        #expect(viewModel.shouldDisplayChatTranscriptEntry(pendingAssistantEntry) == false)
-
-        try await waitForRuntimeViewModelCondition("assistant entry should become active") {
-            viewModel.chatTranscript.contains { entry in
-                entry.kind == .assistant && viewModel.isStreamingChatTranscriptEntry(entry)
-            }
-        }
-        #expect(viewModel.isStreamingChatTranscriptEntry(reasoningEntry) == false)
-        #expect(viewModel.isStreamingChatTranscriptEntry(toolEntry) == false)
-        #expect(viewModel.isStreamingChatTranscriptEntry(pendingAssistantEntry))
-        #expect(viewModel.isStreamingAssistantTranscriptEntry(pendingAssistantEntry))
-        #expect(viewModel.shouldDisplayChatTranscriptEntry(pendingAssistantEntry))
-
-        await submitTask.value
+        let assistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        #expect(observedReasoningPhase)
+        #expect(observedToolPhase)
+        #expect(observedAssistantPhase)
+        #expect(reasoningPhaseWasAlwaysValid)
+        #expect(toolPhaseWasAlwaysValid)
+        #expect(assistantPhaseWasAlwaysValid)
+        #expect(maximumSimultaneousStreamingEntries == 1)
+        #expect(observedStreamingPhaseOrder == ["reasoning", "tool", "assistant"])
         #expect(viewModel.chatTranscript.allSatisfy { viewModel.isStreamingChatTranscriptEntry($0) == false })
-        #expect(viewModel.isStreamingAssistantTranscriptEntry(pendingAssistantEntry) == false)
+        #expect(viewModel.isStreamingAssistantTranscriptEntry(assistantEntry) == false)
+        viewModel.onStateChanged = nil
     }
 
     @Test("out-of-order chat deltas keep presentation phases mutually exclusive")

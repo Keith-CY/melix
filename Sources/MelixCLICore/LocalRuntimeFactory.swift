@@ -103,12 +103,12 @@ public enum MelixLocalRuntimeFactory {
         let explicitPythonSocketPath = environment["MELIX_WORKER_SOCKET_PATH"]
         let explicitSwiftTextSocketPath = environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"]
 
-        if explicitPythonSocketPath != nil || explicitSwiftTextSocketPath != nil {
+        // A fully explicit pair is an atomic override and must not be mixed
+        // with a descriptor from another runtime instance.
+        if let explicitPythonSocketPath, let explicitSwiftTextSocketPath {
             return MelixLocalRuntimeSocketPaths(
-                pythonWorkerSocketPath: explicitPythonSocketPath
-                    ?? MelixLocalRuntimeSocketPaths.defaults.pythonWorkerSocketPath,
+                pythonWorkerSocketPath: explicitPythonSocketPath,
                 swiftTextWorkerSocketPath: explicitSwiftTextSocketPath
-                    ?? MelixLocalRuntimeSocketPaths.defaults.swiftTextWorkerSocketPath
             )
         }
 
@@ -120,17 +120,29 @@ public enum MelixLocalRuntimeFactory {
               descriptor.swiftTextWorkerProcessId > 1,
               descriptor.updatedAtUnixMs > 0,
               !descriptor.serviceBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let pythonSocketPath = normalizedAbsolutePath(descriptor.pythonWorkerSocketPath),
-              let swiftTextSocketPath = normalizedAbsolutePath(descriptor.swiftTextWorkerSocketPath)
+              let pythonSocketPath = explicitPythonSocketPath
+                ?? normalizedAbsolutePath(descriptor.pythonWorkerSocketPath),
+              let swiftTextSocketPath = explicitSwiftTextSocketPath
+                ?? normalizedAbsolutePath(descriptor.swiftTextWorkerSocketPath)
         else {
-            return .defaults
+            return MelixLocalRuntimeSocketPaths(
+                pythonWorkerSocketPath: explicitPythonSocketPath
+                    ?? MelixLocalRuntimeSocketPaths.defaults.pythonWorkerSocketPath,
+                swiftTextWorkerSocketPath: explicitSwiftTextSocketPath
+                    ?? MelixLocalRuntimeSocketPaths.defaults.swiftTextWorkerSocketPath
+            )
         }
 
         guard processIsAlive(descriptor.appProcessId),
-              socketPathIsUsable(pythonSocketPath),
-              socketPathIsUsable(swiftTextSocketPath)
+              explicitPythonSocketPath != nil || socketPathIsUsable(pythonSocketPath),
+              explicitSwiftTextSocketPath != nil || socketPathIsUsable(swiftTextSocketPath)
         else {
-            return .defaults
+            return MelixLocalRuntimeSocketPaths(
+                pythonWorkerSocketPath: explicitPythonSocketPath
+                    ?? MelixLocalRuntimeSocketPaths.defaults.pythonWorkerSocketPath,
+                swiftTextWorkerSocketPath: explicitSwiftTextSocketPath
+                    ?? MelixLocalRuntimeSocketPaths.defaults.swiftTextWorkerSocketPath
+            )
         }
 
         return MelixLocalRuntimeSocketPaths(
