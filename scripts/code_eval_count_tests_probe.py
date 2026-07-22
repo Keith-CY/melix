@@ -60,6 +60,16 @@ def _run_assert_node_sample(assert_module: ast.AST, iterations: int) -> tuple[fl
     return elapsed_ms, assert_count
 
 
+def _run_plain_assert_sample(assert_tests: str, iterations: int) -> tuple[float, int]:
+    code_eval_runner._count_tests.cache_clear()
+    started = time.perf_counter()
+    assert_count = 0
+    for _ in range(iterations):
+        assert_count = code_eval_runner._count_tests(assert_tests)
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    return elapsed_ms, assert_count
+
+
 def main() -> int:
     line_count = 8000
     iterations = 25
@@ -76,7 +86,9 @@ def main() -> int:
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     assert_elapsed_samples: list[float] = []
+    plain_assert_elapsed_samples: list[float] = []
     assert_count = 0
+    plain_assert_count = 0
     syntax_count = 0
     no_assert_count = 0
     for _ in range(sample_count):
@@ -86,6 +98,9 @@ def main() -> int:
         )
         assert_elapsed_ms, assert_count = _run_assert_node_sample(
             assert_module, assert_node_iterations
+        )
+        plain_assert_elapsed_ms, plain_assert_count = _run_plain_assert_sample(
+            assert_tests, iterations
         )
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
@@ -101,9 +116,14 @@ def main() -> int:
             raise SystemExit(
                 f"unexpected valid assert count: {assert_count} != {assert_line_count}"
             )
+        if plain_assert_count != assert_line_count:
+            raise SystemExit(
+                f"unexpected plain assert count: {plain_assert_count} != {assert_line_count}"
+            )
         elapsed_samples.append(elapsed_ms)
         peak_samples.append(float(peak))
         assert_elapsed_samples.append(assert_elapsed_ms)
+        plain_assert_elapsed_samples.append(plain_assert_elapsed_ms)
 
     print(
         json.dumps(
@@ -111,6 +131,9 @@ def main() -> int:
                 "elapsed_ms_mean": statistics.fmean(elapsed_samples),
                 "peak_bytes_mean": statistics.fmean(peak_samples),
                 "assert_elapsed_ms_mean": statistics.fmean(assert_elapsed_samples),
+                "plain_assert_elapsed_ms_mean": statistics.fmean(
+                    plain_assert_elapsed_samples
+                ),
                 "assert_line_count": float(assert_line_count),
                 "assert_node_iterations": float(assert_node_iterations),
                 "line_count": float(line_count),
@@ -119,6 +142,7 @@ def main() -> int:
                 "syntax_count": float(syntax_count),
                 "no_assert_count": float(no_assert_count),
                 "assert_count": float(assert_count),
+                "plain_assert_count": float(plain_assert_count),
             },
             sort_keys=True,
         )

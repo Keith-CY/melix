@@ -5918,9 +5918,11 @@ def test_code_eval_count_tests_probe_script_emits_metrics(
     assert metrics["syntax_count"] == 5334.0
     assert metrics["no_assert_count"] == 6002.0
     assert metrics["assert_elapsed_ms_mean"] > 0
+    assert metrics["plain_assert_elapsed_ms_mean"] > 0
     assert metrics["assert_line_count"] == 8000.0
     assert metrics["assert_node_iterations"] == 20.0
     assert metrics["assert_count"] == 8000.0
+    assert metrics["plain_assert_count"] == 8000.0
 
 
 def test_code_eval_assert_prescan_probe_script_emits_metrics(
