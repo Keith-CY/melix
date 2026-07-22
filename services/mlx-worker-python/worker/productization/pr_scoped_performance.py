@@ -84,7 +84,7 @@ def _log_progress(message: str) -> None:
 
 
 def _summarize_command(command: str, *, max_length: int = 180) -> str:
-    summary = command.lstrip().rstrip()
+    summary = command.strip()
     if not summary:
         return "<empty command>"
 
