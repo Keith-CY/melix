@@ -1141,7 +1141,7 @@ class WorkerRegistry:
             self._active_prefill_count += 1
         elif state.phase == "decode":
             self._active_decode_count += 1
-        if self._is_multimodal_request_kind(state.runtime_kind):
+        if state.runtime_kind in _MULTIMODAL_REQUEST_KINDS:
             self._active_multimodal_request_count += 1
         if state.runtime_kind == "vlm":
             self._active_vlm_request_count += 1
@@ -1155,7 +1155,7 @@ class WorkerRegistry:
         elif state.phase == "decode":
             if self._active_decode_count > 0:
                 self._active_decode_count -= 1
-        if self._is_multimodal_request_kind(state.runtime_kind):
+        if state.runtime_kind in _MULTIMODAL_REQUEST_KINDS:
             if self._active_multimodal_request_count > 0:
                 self._active_multimodal_request_count -= 1
         if state.runtime_kind == "vlm" and self._active_vlm_request_count > 0:
