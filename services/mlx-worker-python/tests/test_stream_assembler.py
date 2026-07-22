@@ -1115,7 +1115,28 @@ def test_token_byte_delta_preserves_split_multibyte_sequence(monkeypatch) -> Non
     assert completed.raw_text == "€"
     assert completed.metrics["generated_token_count"] == 2
     assert completed.metrics["byte_fallback_merge_count"] == 1
-    assert decoder_calls == 2
+    assert decoder_calls == 0
+
+
+def test_token_byte_delta_preserves_decoded_prefix_with_new_split_multibyte_sequence() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-token-byte-prefix-with-new-split-multibyte",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    euro_bytes = "€".encode("utf-8")
+
+    assert assembler.accept(StreamFragment(token_bytes=euro_bytes[:1])) == []
+    deltas = assembler.accept(StreamFragment(token_bytes=euro_bytes[1:] + euro_bytes[:1]))
+    assert [delta.content_text for delta in deltas] == ["€"]
+    completed = assembler.completed()
+
+    assert completed.assistant_text == "€�"
+    assert completed.raw_text.endswith("�")
+    assert completed.metrics["generated_token_count"] == 2
+    assert completed.metrics["byte_fallback_merge_count"] == 1
+    assert completed.metrics["byte_fallback_decode_error_count"] == 1
 
 
 def test_token_byte_raw_parts_materialize_before_raw_text_delta() -> None:

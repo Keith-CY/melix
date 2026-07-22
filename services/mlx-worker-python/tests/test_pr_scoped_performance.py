@@ -227,6 +227,10 @@ def test_stream_assembler_token_byte_probe_only_gates_current_path_metrics() -> 
     assert warn_abs["delta_token_count_new_ms_mean"] == 0.5
     assert directions["delta_token_count_delta_ms"] == "informational"
     assert directions["delta_token_count_speedup"] == "informational"
+    assert directions["split_token_byte_decode_ms_mean"] == "lower_is_better"
+    assert directions["split_token_byte_decoder_calls_mean"] == "lower_is_better"
+    assert warn_abs["split_token_byte_decode_ms_mean"] == 0.5
+    assert warn_abs["split_token_byte_decoder_calls_mean"] == 0.0
 
     scope = {
         "changed_files": ["services/mlx-worker-python/worker/runtime/stream_assembler.py"],
@@ -4041,6 +4045,7 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_SAMPLES", "1")
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_ANNOTATION_ITERATIONS", "2")
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_COMPRESSION_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_SPLIT_TOKEN_BYTES_EVENTS", "3")
 
     runpy.run_path(
         str(REPO_ROOT / "scripts/stream_assembler_token_bytes_probe.py"),
@@ -4067,6 +4072,10 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
     assert metrics["token_count_compression_iterations"] == 2.0
     assert metrics["token_count_compression_delta_count"] == 192.0
     assert metrics["token_count_compression_checksum"] > 0
+    assert metrics["split_token_byte_decode_ms_mean"] >= 0
+    assert metrics["split_token_byte_decoder_calls_mean"] >= 0
+    assert metrics["split_token_byte_iterations"] == 3.0
+    assert metrics["split_token_byte_checksum"] == 3.0
 
 
 def test_stream_assembler_token_compression_probe_rejects_bad_totals(

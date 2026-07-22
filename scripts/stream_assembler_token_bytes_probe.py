@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
+from worker.runtime import stream_assembler as stream_assembler_module
 from worker.runtime.stream_assembler import (
     AssembledToolCall,
     AssemblyDelta,
@@ -122,6 +123,47 @@ def _measure_token_count_compression(sample_count: int) -> dict[str, float]:
     }
 
 
+def _measure_split_token_byte_decode(sample_count: int) -> dict[str, float]:
+    iterations = int(os.environ.get("MELIX_STREAM_ASSEMBLER_SPLIT_TOKEN_BYTES_EVENTS", "50000"))
+    euro_bytes = "€".encode("utf-8")
+    elapsed: list[float] = []
+    decoder_calls: list[float] = []
+    checksum = 0
+    original_decoder_factory = stream_assembler_module._UTF8_INCREMENTAL_DECODER
+
+    for _ in range(sample_count):
+        calls = 0
+
+        def tracked_decoder_factory():  # pragma: no cover - optimized path keeps this cold
+            nonlocal calls
+            calls += 1
+            return original_decoder_factory()
+
+        stream_assembler_module._UTF8_INCREMENTAL_DECODER = tracked_decoder_factory
+        assembler = RequestStreamAssembler("split-token-bytes-probe", False, "", "")
+        started = time.perf_counter()
+        try:
+            for _index in range(iterations):
+                if assembler.accept(StreamFragment(token_bytes=euro_bytes[:1])):
+                    raise SystemExit("split token-byte prefix emitted text too early")  # pragma: no cover
+                for delta in assembler.accept(StreamFragment(token_bytes=euro_bytes[1:])):
+                    checksum += len(delta.content_text)
+        finally:
+            stream_assembler_module._UTF8_INCREMENTAL_DECODER = original_decoder_factory
+        completed = assembler.completed()
+        if completed.assistant_text != "€" * iterations:
+            raise SystemExit("split token-byte assembly diverged")  # pragma: no cover
+        elapsed.append((time.perf_counter() - started) * 1000.0)
+        decoder_calls.append(float(calls))
+
+    return {
+        "split_token_byte_decode_ms_mean": statistics.fmean(elapsed),
+        "split_token_byte_decoder_calls_mean": statistics.fmean(decoder_calls),
+        "split_token_byte_iterations": float(iterations),
+        "split_token_byte_checksum": float(checksum),
+    }
+
+
 def _measure(sample_count: int | None = None, token_event_count: int | None = None) -> dict[str, float]:
     if sample_count is None:
         sample_count = int(os.environ.get("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_SAMPLES", "5"))
@@ -172,6 +214,7 @@ def _measure(sample_count: int | None = None, token_event_count: int | None = No
     metrics.update(_measure_delta_token_count(sample_count))
     metrics.update(_measure_token_count_annotation(sample_count))
     metrics.update(_measure_token_count_compression(sample_count))
+    metrics.update(_measure_split_token_byte_decode(sample_count))
     return metrics
 
 

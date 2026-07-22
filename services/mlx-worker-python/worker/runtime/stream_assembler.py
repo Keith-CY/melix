@@ -746,32 +746,34 @@ class RequestStreamAssembler:
     def _token_byte_delta(self, token_bytes: bytes | None) -> str | None:
         if token_bytes is None:
             return None
-        if not self._pending_token_bytes:
-            try:
-                return token_bytes.decode()
-            except UnicodeDecodeError:
-                had_pending = False
-        else:
-            had_pending = True
-        self._pending_token_bytes += token_bytes
-        decoder = _UTF8_INCREMENTAL_DECODER()
+        had_pending = bool(self._pending_token_bytes)
+        pending_bytes = self._pending_token_bytes + token_bytes if had_pending else token_bytes
         try:
-            decoded = decoder.decode(self._pending_token_bytes, final=False)
-        except UnicodeDecodeError:
-            self._metrics["byte_fallback_decode_error_count"] += 1
-            decoded = self._pending_token_bytes.decode("utf-8", errors="replace")
+            decoded = pending_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            if exc.reason == "unexpected end of data":
+                if exc.start:
+                    decoded = pending_bytes[: exc.start].decode("utf-8")
+                    self._pending_token_bytes = pending_bytes[exc.start :]
+                    if had_pending:
+                        self._metrics["byte_fallback_merge_count"] = (
+                            int(self._metrics["byte_fallback_merge_count"]) + 1
+                        )
+                    return decoded
+                self._pending_token_bytes = pending_bytes
+                return ""
+            self._metrics["byte_fallback_decode_error_count"] = (
+                int(self._metrics["byte_fallback_decode_error_count"]) + 1
+            )
+            decoded = pending_bytes.decode("utf-8", errors="replace")
             self._pending_token_bytes = b""
             return decoded
 
-        buffered, _ = decoder.getstate()
-        if buffered:
-            self._pending_token_bytes = bytes(buffered)
-            if not decoded:
-                return ""
-        else:
-            self._pending_token_bytes = b""
+        self._pending_token_bytes = b""
         if had_pending:
-            self._metrics["byte_fallback_merge_count"] += 1
+            self._metrics["byte_fallback_merge_count"] = (
+                int(self._metrics["byte_fallback_merge_count"]) + 1
+            )
         return decoded
 
     def _effective_parser_config_json(self) -> str:
