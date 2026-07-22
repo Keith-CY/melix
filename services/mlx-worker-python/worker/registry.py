@@ -1147,15 +1147,19 @@ class WorkerRegistry:
             self._active_vlm_request_count += 1
 
     def _remove_request_from_counters(self, state: RequestState) -> None:
-        self._active_request_count = max(0, self._active_request_count - 1)
+        if self._active_request_count > 0:
+            self._active_request_count -= 1
         if state.phase == "prefill":
-            self._active_prefill_count = max(0, self._active_prefill_count - 1)
+            if self._active_prefill_count > 0:
+                self._active_prefill_count -= 1
         elif state.phase == "decode":
-            self._active_decode_count = max(0, self._active_decode_count - 1)
+            if self._active_decode_count > 0:
+                self._active_decode_count -= 1
         if self._is_multimodal_request_kind(state.runtime_kind):
-            self._active_multimodal_request_count = max(0, self._active_multimodal_request_count - 1)
-        if state.runtime_kind == "vlm":
-            self._active_vlm_request_count = max(0, self._active_vlm_request_count - 1)
+            if self._active_multimodal_request_count > 0:
+                self._active_multimodal_request_count -= 1
+        if state.runtime_kind == "vlm" and self._active_vlm_request_count > 0:
+            self._active_vlm_request_count -= 1
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
         response = cache_pb2.GetCacheStatsResponse()
