@@ -107,11 +107,16 @@ def test_estimate_cache_snapshot_bytes_sums_pair_tuple_state() -> None:
         def __init__(self, nbytes: int) -> None:
             self.nbytes = nbytes
 
+    class TensorWithSize:
+        size = 3
+        itemsize = 5
+
     cache_snapshot = [
         SimpleNamespace(state=(TensorWithNbytes(11), TensorWithNbytes(13))),
+        SimpleNamespace(state=(TensorWithSize(), TensorWithNbytes(17))),
     ]
 
-    assert estimate_cache_snapshot_bytes(cache_snapshot) == 24
+    assert estimate_cache_snapshot_bytes(cache_snapshot) == 24 + 15 + 17
 
 
 def _put(store: PrefixBlockStore, session_id: str, tokens: list[int], **kwargs: Any) -> None:

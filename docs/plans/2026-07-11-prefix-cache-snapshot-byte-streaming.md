@@ -144,3 +144,16 @@ scalar `.state`, and `.keys` / `.values` behavior.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Direct Exact Sequence Type Branch
+
+The 2026-07-22 follow-up keeps the same registered probe and narrows to exact
+list/tuple state detection in `estimate_cache_snapshot_bytes()`. The prior
+exact-type slice used tuple membership against a bound sequence-type tuple; this
+slice branches directly on `type(state) is list or type(state) is tuple`, avoiding
+the membership lookup while preserving the same exact list/tuple, scalar
+`.state`, and `.keys` / `.values` behavior.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
