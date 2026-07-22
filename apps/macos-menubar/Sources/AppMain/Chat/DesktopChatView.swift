@@ -10,8 +10,114 @@ enum DesktopChatLayoutMetrics {
     static let inspectorIdealWidth: CGFloat = 232
     static let inspectorMaxWidth: CGFloat = 280
     static let collapsedRailWidth: CGFloat = 0
-    static let composerMinHeight: CGFloat = 76
+    static let composerMinHeight: CGFloat = 40
     static let readableWorkspaceMaxWidth: CGFloat = 980
+    static let transcriptTurnMaxWidth: CGFloat = 780
+    static let assistantAvatarSize: CGFloat = 27
+}
+
+enum DesktopChatCapabilityGlyphMetrics {
+    static let controlSize: CGFloat = 28
+    static let statusMarkSize: CGFloat = 6
+    static let maximumClusterHeight: CGFloat = 30
+}
+
+struct DesktopChatModelIdentityPresentation: Equatable {
+    let canonicalID: String
+    let displayName: String
+    let quantizationLabel: String?
+
+    init(modelID: String) {
+        let canonicalID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.canonicalID = canonicalID
+
+        let leaf = canonicalID.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? canonicalID
+        var components = leaf
+            .split(separator: "-", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        if components.count >= 2,
+           components.last?.lowercased() == "bit",
+           components[components.count - 2].allSatisfy(\.isNumber) {
+            quantizationLabel = "\(components[components.count - 2])-bit"
+            components.removeLast(2)
+        } else if let quantizationIndex = components.indices.reversed().first(where: {
+            Self.quantizationLabel(for: components[$0]) != nil
+        }) {
+            quantizationLabel = Self.quantizationLabel(for: components[quantizationIndex])
+            if components[quantizationIndex].lowercased().hasPrefix("q") {
+                components.removeSubrange(quantizationIndex..<components.endIndex)
+            } else {
+                components.remove(at: quantizationIndex)
+            }
+        } else {
+            quantizationLabel = nil
+        }
+
+        if components.last?.lowercased() == "mlx" {
+            components.removeLast()
+        }
+        if let trailingQuantizationIndex = components.indices.reversed().first(where: {
+            components[$0].lowercased().first == "q"
+                && components[$0].lowercased().dropFirst().first?.isNumber == true
+        }) {
+            components.removeSubrange(trailingQuantizationIndex..<components.endIndex)
+        }
+
+        let humanReadableName = components
+            .map(Self.humanizedComponent)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        displayName = humanReadableName.isEmpty ? (canonicalID.isEmpty ? "Unknown Model" : canonicalID) : humanReadableName
+    }
+
+    private static func quantizationLabel(for component: String) -> String? {
+        let lowercased = component.lowercased()
+        if lowercased.hasSuffix("bit") {
+            let bits = lowercased.dropLast(3)
+            if bits.isEmpty == false, bits.allSatisfy(\.isNumber) {
+                return "\(bits)-bit"
+            }
+        }
+        if lowercased.hasPrefix("int") || lowercased.hasPrefix("fp") || lowercased.hasPrefix("bf") {
+            let suffix = lowercased.drop { $0.isLetter }
+            if suffix.isEmpty == false, suffix.allSatisfy(\.isNumber) {
+                return lowercased.uppercased()
+            }
+        }
+        if lowercased.first == "q",
+           lowercased.dropFirst().first?.isNumber == true {
+            return component.uppercased()
+        }
+        return nil
+    }
+
+    private static func humanizedComponent(_ component: String) -> String {
+        let lowercased = component.lowercased()
+        let fixedNames = [
+            "gemma": "Gemma",
+            "llama": "Llama",
+            "qwen": "Qwen",
+            "it": "IT",
+            "mlx": "MLX",
+            "vlm": "VLM",
+            "llm": "LLM",
+            "ocr": "OCR",
+            "optiq": "OptiQ",
+        ]
+        if let fixedName = fixedNames[lowercased] {
+            return fixedName
+        }
+        if let suffix = lowercased.last,
+           ["b", "m", "k"].contains(String(suffix)),
+           lowercased.dropLast().allSatisfy({ $0.isNumber || $0 == "." }) {
+            return "\(lowercased.dropLast())\(String(suffix).uppercased())"
+        }
+        if component.contains(where: \.isUppercase) {
+            return component
+        }
+        return lowercased.prefix(1).uppercased() + String(lowercased.dropFirst())
+    }
 }
 
 private enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
@@ -80,6 +186,79 @@ enum DesktopChatTranscriptAutoScroll {
     }
 }
 
+enum DesktopChatReasoningPresentationPolicy {
+    static let maximumStreamingHeight: CGFloat = 128
+    static let streamingBodyOpacity = 0.72
+    static let bottomTolerance: CGFloat = 8
+
+    static func initiallyExpanded(isStreaming: Bool) -> Bool {
+        isStreaming
+    }
+
+    static func summaryText(isStreaming: Bool, elapsedSeconds: Int?) -> String {
+        if isStreaming {
+            return "Thinking..."
+        }
+        if let elapsedSeconds {
+            return "Thought for \(elapsedSeconds) seconds"
+        }
+        return "Thought recorded"
+    }
+
+    static func accessibilityAnnouncement(isStreaming: Bool) -> String {
+        isStreaming
+            ? "Public reasoning is streaming."
+            : "Public reasoning completed."
+    }
+
+    static func compactStreamingAttributedText(
+        from rawText: String,
+        includesCaret: Bool,
+        caretVisible: Bool
+    ) -> AttributedString {
+        var result = AttributedString()
+        let lines = rawText.split(separator: "\n", omittingEmptySubsequences: false)
+
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                result.append(AttributedString("\n"))
+            }
+
+            let sourceLine = String(line)
+            let formattedLine = DesktopChatMarkdownInlineFormatter.attributedString(from: sourceLine)
+            if formattedLine.characters.isEmpty && sourceLine.isEmpty == false {
+                result.append(AttributedString(sourceLine))
+            } else {
+                result.append(formattedLine)
+            }
+        }
+
+        if includesCaret {
+            var caret = AttributedString("▏")
+            caret.foregroundColor = caretVisible ? MelixDesignTokens.accent : .clear
+            result.append(caret)
+        }
+
+        return result
+    }
+
+    static func isAtBottom(
+        contentOffsetY: CGFloat,
+        contentHeight: CGFloat,
+        viewportHeight: CGFloat
+    ) -> Bool {
+        let maximumOffset = max(0, contentHeight - viewportHeight)
+        return contentOffsetY >= maximumOffset - bottomTolerance
+    }
+}
+
+struct DesktopChatTranscriptPresentationRow: Identifiable {
+    let index: Int
+    let entry: DesktopChatTranscriptEntry
+
+    var id: String { entry.id }
+}
+
 enum DesktopChatComposerKeyPolicy {
     enum Action: Equatable {
         case submit
@@ -89,18 +268,17 @@ enum DesktopChatComposerKeyPolicy {
 
     static let returnKeyCode: UInt16 = 36
     static let keypadEnterKeyCode: UInt16 = 76
+    static let postCompositionGuardInterval: TimeInterval = 0.05
 
     static func action(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Action {
         guard keyCode == returnKeyCode || keyCode == keypadEnterKeyCode else {
             return .passThrough
         }
-        if modifiers.contains(.command) {
-            return .submit
-        }
-        if modifiers.contains(.control) {
+        let semanticModifiers = modifiers.intersection([.command, .shift, .option, .control])
+        if semanticModifiers == [.command] {
             return .insertNewline
         }
-        return .passThrough
+        return semanticModifiers.isEmpty ? .submit : .passThrough
     }
 }
 
@@ -109,16 +287,14 @@ enum DesktopChatComposerReturnCommandPolicy {
         guard isReturnCommandSelector(selector) else {
             return .passThrough
         }
-        if modifiers.contains(.command) {
-            return .submit
-        }
-        if modifiers.contains(.control) {
+        let semanticModifiers = modifiers.intersection([.command, .shift, .option, .control])
+        if semanticModifiers == [.command] {
             return .insertNewline
         }
-        return .passThrough
+        return semanticModifiers.isEmpty ? .submit : .passThrough
     }
 
-    private static func isReturnCommandSelector(_ selector: Selector) -> Bool {
+    static func isReturnCommandSelector(_ selector: Selector) -> Bool {
         selector == #selector(NSTextView.insertNewline(_:))
         || selector == #selector(NSTextView.insertLineBreak(_:))
         || selector == #selector(NSTextView.insertNewlineIgnoringFieldEditor(_:))
@@ -328,6 +504,10 @@ struct DesktopChatSessionSidebar: View {
                                     viewModel.selectChatSession(id: session.id)
                                     _ = viewModel.exportSelectedChatSession()
                                 },
+                                onClear: {
+                                    viewModel.selectChatSession(id: session.id)
+                                    viewModel.clearChatTranscript()
+                                },
                                 onDelete: {
                                     viewModel.deleteChatSession(id: session.id)
                                 }
@@ -348,6 +528,7 @@ struct DesktopChatSessionWorkspace: View {
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
     var onPreviewArtifact: (DesktopChatArtifactPreviewState) -> Void = { _ in }
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     private var isSendDisabled: Bool {
         viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -363,10 +544,7 @@ struct DesktopChatSessionWorkspace: View {
         guard modelID.isEmpty == false else {
             return true
         }
-        guard let model = viewModel.models.first(where: { $0.modelID == modelID }) else {
-            return true
-        }
-        return model.runtimeCacheMissing
+        return viewModel.chatModelNeedsAttachment(modelID: modelID)
     }
 
     private func submitChatPrompt() {
@@ -423,6 +601,16 @@ struct DesktopChatSessionWorkspace: View {
         )
     }
 
+    private var chatTranscriptPresentationRows: [DesktopChatTranscriptPresentationRow] {
+        viewModel.chatTranscript.indices.compactMap { index in
+            let entry = viewModel.chatTranscript[index]
+            guard viewModel.shouldDisplayChatTranscriptEntry(entry) else {
+                return nil
+            }
+            return DesktopChatTranscriptPresentationRow(index: index, entry: entry)
+        }
+    }
+
     private func scrollChatTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
         DispatchQueue.main.async {
             if animated {
@@ -435,37 +623,53 @@ struct DesktopChatSessionWorkspace: View {
         }
     }
 
+    private func showsAssistantRole(at index: Int) -> Bool {
+        guard viewModel.chatTranscript.indices.contains(index),
+              viewModel.chatTranscript[index].kind != .user
+        else {
+            return false
+        }
+        guard index > viewModel.chatTranscript.startIndex else {
+            return true
+        }
+        return viewModel.chatTranscript[index - 1].kind == .user
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(viewModel.selectedChatSession?.title ?? "Chat")
-                        .font(.title2.weight(.semibold))
+                        .font(.headline.weight(.semibold))
                     if let branch = viewModel.selectedChatSession?.displayBranchTitle {
                         DesktopChatSessionBranchBadgeView(branch: branch)
                     }
                 }
                 Spacer(minLength: 12)
-                DesktopChatServerPicker(viewModel: viewModel)
-                    .alignmentGuide(.firstTextBaseline) { dimensions in
-                        dimensions[VerticalAlignment.center]
+                HStack(spacing: 8) {
+                    DesktopChatServerPicker(viewModel: viewModel)
+                    if let serverSession = viewModel.selectedChatServerSession {
+                        DesktopChatModelIdentityButton(serverSession: serverSession)
                     }
+                }
+                .alignmentGuide(.firstTextBaseline) { dimensions in
+                    dimensions[VerticalAlignment.center]
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let notice = viewModel.selectedChatServerSession?.chatWorkspaceNoticeState {
-                DesktopInlineNoticeCardView(notice: notice)
-            }
 
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         if viewModel.chatTranscript.isEmpty == false {
-                            ForEach(viewModel.chatTranscript) { entry in
+                            ForEach(chatTranscriptPresentationRows) { presentationRow in
+                                let index = presentationRow.index
+                                let entry = presentationRow.entry
                                 DesktopChatTranscriptRowView(
                                     entry: entry,
                                     isPending: viewModel.isPendingAssistantTranscriptEntry(entry),
-                                    isStreaming: viewModel.isStreamingAssistantTranscriptEntry(entry),
+                                    isStreaming: viewModel.isStreamingChatTranscriptEntry(entry),
+                                    showsAssistantRole: showsAssistantRole(at: index),
                                     pendingStatusText: viewModel.chatStatusText,
                                     onPreviewArtifact: onPreviewArtifact
                                 )
@@ -478,12 +682,17 @@ struct DesktopChatSessionWorkspace: View {
                             .frame(height: 1)
                             .id(DesktopChatTranscriptAutoScroll.Anchor.bottom)
                     }
+                    .frame(maxWidth: DesktopChatLayoutMetrics.transcriptTurnMaxWidth)
+                    .frame(maxWidth: .infinity)
                 }
                 .onAppear {
                     scrollChatTranscriptToBottom(proxy, animated: false)
                 }
                 .onChange(of: chatTranscriptScrollSnapshot) { _, _ in
-                    scrollChatTranscriptToBottom(proxy, animated: true)
+                    scrollChatTranscriptToBottom(
+                        proxy,
+                        animated: accessibilityReduceMotion == false
+                    )
                 }
             }
 
@@ -492,12 +701,14 @@ struct DesktopChatSessionWorkspace: View {
                     get: { viewModel.chatComposerText },
                     set: { viewModel.chatComposerText = $0 }
                 ),
+                isThinkingEnabled: Binding(
+                    get: { viewModel.chatThinkingEnabled },
+                    set: { viewModel.chatThinkingEnabled = $0 }
+                ),
                 isSubmitAvailable: viewModel.isChatStreaming == false
                 && viewModel.selectedChatServerSession?.isInteractiveReady == true,
                 isSendDisabled: isSendDisabled,
                 isStreaming: viewModel.isChatStreaming,
-                statusText: viewModel.chatStatusText,
-                usageText: viewModel.lastChatUsageText,
                 serverSession: viewModel.selectedChatServerSession,
                 capabilities: viewModel.chatCapabilities,
                 isModelMissing: selectedChatModelNeedsAttachment,
@@ -506,7 +717,6 @@ struct DesktopChatSessionWorkspace: View {
                     submitChatPrompt()
                 },
                 onSubmit: submitChatPrompt,
-                onClear: viewModel.clearChatTranscript,
                 onOpenServer: openServerSurface,
                 onOpenModels: openModelsSurface,
                 onRunCapabilitiesTest: openDiagnosticsSurface,
@@ -516,6 +726,12 @@ struct DesktopChatSessionWorkspace: View {
             )
         }
         .padding(16)
+        .onAppear {
+            viewModel.setChatPresentationReduceMotion(accessibilityReduceMotion)
+        }
+        .onChange(of: accessibilityReduceMotion) { _, reduceMotion in
+            viewModel.setChatPresentationReduceMotion(reduceMotion)
+        }
     }
 }
 
@@ -523,38 +739,15 @@ struct DesktopChatSessionInspector: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
-        DesktopInspectorContractView(
-            title: "Chat Inspector",
-            context: runtimeContextText,
-            health: runtimeHealthText,
-            metrics: runtimeMetricsText,
+        DesktopChatPrecisionInspector(
+            serverSession: viewModel.selectedChatServerSession,
+            capabilities: viewModel.chatCapabilities,
+            isStreaming: viewModel.isChatStreaming,
+            usageText: viewModel.lastChatUsageText,
             actions: inspectorActions,
-            evidence: inspectorEvidence
-        ) {
-            GroupBox("Model Capabilities") {
-                DesktopChatCapabilityIconGrid(capabilities: viewModel.chatCapabilities)
-            }
-        }
-    }
-
-    private var runtimeContextText: String {
-        if let server = viewModel.selectedChatServerSession {
-            return "\(server.title) • \(server.modelID)"
-        }
-        return "No provider selected"
-    }
-
-    private var runtimeHealthText: String {
-        viewModel.selectedChatServerSession?.lifecycleSummaryText
-            ?? viewModel.selectedChatSession?.statusText
-            ?? "Choose a provider to start chatting"
-    }
-
-    private var runtimeMetricsText: String {
-        if let server = viewModel.selectedChatServerSession {
-            return "\(server.effectiveBaseURL) • \(server.runtimeDetailText)"
-        }
-        return viewModel.lastChatUsageText.isEmpty ? "No usage recorded" : viewModel.lastChatUsageText
+            onStartProvider: startSelectedProvider,
+            onResumeProvider: resumeSelectedProvider
+        )
     }
 
     private var inspectorActions: [DesktopInspectorActionRow] {
@@ -571,14 +764,296 @@ struct DesktopChatSessionInspector: View {
         ]
     }
 
-    private var inspectorEvidence: [String] {
-        [
-            viewModel.selectedChatSession?.exportPath,
-            viewModel.selectedChatServerSession?.sharedAccessSummaryText,
-            viewModel.lastChatUsageText,
-        ]
-        .compactMap { $0 }
-        .filter { $0.isEmpty == false }
+    func startSelectedProvider() {
+        guard let serverSessionID = viewModel.selectedChatServerSession?.id else {
+            viewModel.selectSurface(.server)
+            return
+        }
+        Task { await viewModel.startServerSession(id: serverSessionID) }
+    }
+
+    func resumeSelectedProvider() {
+        guard let serverSessionID = viewModel.selectedChatServerSession?.id else {
+            viewModel.selectSurface(.server)
+            return
+        }
+        Task { await viewModel.resumeServerSession(id: serverSessionID) }
+    }
+}
+
+private struct DesktopChatPrecisionInspector: View {
+    let serverSession: DesktopServerSessionState?
+    let capabilities: [DesktopChatCapabilityRow]
+    let isStreaming: Bool
+    let usageText: String
+    let actions: [DesktopInspectorActionRow]
+    let onStartProvider: () -> Void
+    let onResumeProvider: () -> Void
+
+    private var modelIdentity: DesktopChatModelIdentityPresentation {
+        DesktopChatModelIdentityPresentation(modelID: serverSession?.modelID ?? "")
+    }
+
+    private var primaryCapabilities: [DesktopChatCapabilityRow] {
+        let chatCapabilities = capabilities.filter { ["text", "vlm"].contains($0.id) }
+        return Array((chatCapabilities.isEmpty ? capabilities : chatCapabilities).prefix(2))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            identityRow
+                .padding(.bottom, 12)
+
+            Divider()
+                .opacity(0.55)
+                .padding(.bottom, 7)
+
+            if isStreaming {
+                DesktopChatInspectorTransientRow(
+                    systemImage: "waveform",
+                    title: "Generating response",
+                    tint: MelixDesignTokens.accent
+                )
+            } else if let serverSession {
+                providerTransientRow(serverSession)
+            }
+
+            if let serverSession {
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "waveform.path.ecg",
+                    value: serverSession.lifecycle.rawValue,
+                    tail: serverSession.powerState.rawValue,
+                    helpText: serverSession.lifecycleSummaryText
+                )
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "network",
+                    value: serverSession.effectiveListenerLabel,
+                    tail: "/v1",
+                    helpText: serverSession.effectiveBaseURL
+                )
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "number",
+                    value: usageText.isEmpty ? "No usage" : usageText,
+                    tail: "tokens",
+                    helpText: usageText.isEmpty ? "No token usage recorded" : usageText
+                )
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "checkmark.shield",
+                    value: trustLabel(serverSession),
+                    tail: "trust",
+                    helpText: serverSession.sharedAccessSummaryText
+                )
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "clock",
+                    value: serverSession.idleTimerSeconds > 0 ? "\(serverSession.idleTimerSeconds)s" : "Idle",
+                    tail: "timer",
+                    helpText: serverSession.idlePolicySummaryText
+                )
+            } else {
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "server.rack",
+                    value: "Choose a Provider",
+                    tail: "route",
+                    helpText: "Choose a local or remote Provider for this Chat."
+                )
+            }
+
+            HStack(spacing: 5) {
+                ForEach(actions.prefix(3)) { action in
+                    Button(action: action.action) {
+                        Image(systemName: action.systemImage)
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(width: 30, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(MelixDesignTokens.accent)
+                    .background(Color.secondary.opacity(0.045), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+                    )
+                    .help(action.title)
+                    .accessibilityLabel(action.title)
+                }
+            }
+            .padding(.top, 9)
+            .overlay(alignment: .top) {
+                Divider().opacity(0.55)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Chat Inspector")
+    }
+
+    private var identityRow: some View {
+        HStack(alignment: .top, spacing: 7) {
+            Circle()
+                .fill(providerStatusColor)
+                .frame(width: 7, height: 7)
+                .padding(.top, 5)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(serverSession?.title ?? "No Provider")
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(serverSession == nil ? "Choose a provider" : modelIdentity.displayName)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let quantizationLabel = modelIdentity.quantizationLabel {
+                        Text(quantizationLabel)
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundStyle(MelixDesignTokens.accent)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.weak), in: RoundedRectangle(cornerRadius: 4))
+                            .fixedSize()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(modelIdentity.canonicalID)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(identityAccessibilityLabel)
+
+            DesktopChatCapabilityGlyphCluster(capabilities: primaryCapabilities)
+        }
+    }
+
+    @ViewBuilder
+    private func providerTransientRow(_ serverSession: DesktopServerSessionState) -> some View {
+        switch serverSession.lifecycle {
+        case .draft, .stopped, .error, .unavailable:
+            DesktopChatInspectorTransientRow(
+                systemImage: "power",
+                title: serverSession.lifecycle == .error ? "Provider needs recovery" : "Provider stopped",
+                tint: serverSession.lifecycle == .error
+                    ? MelixDesignTokens.StatusColor.error
+                    : MelixDesignTokens.StatusColor.warning,
+                actionTitle: "Start",
+                action: onStartProvider
+            )
+        case .paused:
+            DesktopChatInspectorTransientRow(
+                systemImage: "pause.circle",
+                title: "Provider paused",
+                tint: MelixDesignTokens.StatusColor.warning,
+                actionTitle: "Resume",
+                action: onResumeProvider
+            )
+        case .starting, .stopping:
+            DesktopChatInspectorTransientRow(
+                systemImage: "arrow.triangle.2.circlepath",
+                title: "Provider \(serverSession.lifecycle.rawValue.lowercased())",
+                tint: MelixDesignTokens.accent
+            )
+        case .running, .sleeping:
+            EmptyView()
+        }
+    }
+
+    private var providerStatusColor: Color {
+        switch serverSession?.lifecycle {
+        case .running, .sleeping:
+            return MelixDesignTokens.StatusColor.success
+        case .starting, .stopping:
+            return MelixDesignTokens.StatusColor.info
+        case .error:
+            return MelixDesignTokens.StatusColor.error
+        case .draft, .paused, .stopped, .unavailable:
+            return MelixDesignTokens.StatusColor.warning
+        case nil:
+            return Color.secondary.opacity(0.45)
+        }
+    }
+
+    private var identityAccessibilityLabel: String {
+        guard let serverSession else {
+            return "No Provider selected"
+        }
+        let quantization = modelIdentity.quantizationLabel.map { ", quantization \($0)" } ?? ""
+        return "\(serverSession.title), model \(modelIdentity.displayName)\(quantization), canonical ID \(modelIdentity.canonicalID)"
+    }
+
+    private func trustLabel(_ serverSession: DesktopServerSessionState) -> String {
+        switch serverSession.sharedAccessState {
+        case .localOnly:
+            return "Local only"
+        case .configuredDisabled:
+            return "Configured"
+        case .enabled:
+            return serverSession.accessKeyCount == 1 ? "1 shared key" : "\(serverSession.accessKeyCount) shared keys"
+        }
+    }
+}
+
+private struct DesktopChatInspectorLedgerRow: View {
+    let systemImage: String
+    let value: String
+    let tail: String
+    let helpText: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MelixDesignTokens.accent)
+                .frame(width: 25)
+                .accessibilityHidden(true)
+            Text(value)
+                .font(.caption2.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(tail)
+                .font(.system(size: 8))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .frame(minHeight: 31)
+        .padding(.horizontal, 5)
+        .help(helpText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(tail), \(value). \(helpText)")
+    }
+}
+
+private struct DesktopChatInspectorTransientRow: View {
+    let systemImage: String
+    let title: String
+    let tint: Color
+    var actionTitle: String? = nil
+    var action: () -> Void = {}
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 25)
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let actionTitle {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 9, weight: .semibold))
+                    .accessibilityLabel("\(actionTitle) Provider")
+            }
+        }
+        .foregroundStyle(tint)
+        .frame(minHeight: 31)
+        .padding(.horizontal, 5)
+        .background(tint.opacity(MelixDesignTokens.StateOpacity.background), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -702,9 +1177,6 @@ private struct DesktopChatEmptyStateView: View {
                 }
             }
 
-            if let notice = viewModel.selectedChatServerSession?.chatWorkspaceNoticeState {
-                DesktopInlineNoticeCardView(notice: notice)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 12)
@@ -756,67 +1228,220 @@ private struct DesktopChatServerPicker: View {
             .labelsHidden()
             .pickerStyle(.menu)
             .controlSize(.small)
-            .frame(maxWidth: 180)
+            .frame(maxWidth: 132)
             .help("Choose the provider for this chat session")
             .accessibilityLabel("Chat Provider")
         }
     }
 }
 
-private struct DesktopChatCapabilityIconGrid: View {
-    let capabilities: [DesktopChatCapabilityRow]
+struct DesktopChatModelIdentityButton: View {
+    let serverSession: DesktopServerSessionState
+    @State private var showsModelDetails = false
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 74), spacing: 8, alignment: .top),
-    ]
+    init(serverSession: DesktopServerSessionState) {
+        self.serverSession = serverSession
+    }
+
+    private var identity: DesktopChatModelIdentityPresentation {
+        DesktopChatModelIdentityPresentation(modelID: serverSession.modelID)
+    }
 
     var body: some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+        Button {
+            showsModelDetails.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "cube")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(MelixDesignTokens.accent)
+                    .accessibilityHidden(true)
+                Text(identity.displayName)
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let quantizationLabel = identity.quantizationLabel {
+                    Text(quantizationLabel)
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundStyle(MelixDesignTokens.accent)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.weak), in: RoundedRectangle(cornerRadius: 4))
+                        .fixedSize()
+                        .layoutPriority(1)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: 190)
+        .background(Color.secondary.opacity(0.045), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+        )
+        .help(identity.canonicalID)
+        .accessibilityLabel(modelAccessibilityLabel)
+        .accessibilityHint("Shows the canonical model ID and copy action")
+        .popover(isPresented: $showsModelDetails, arrowEdge: .top) {
+            modelDetails
+        }
+    }
+
+    var modelDetails: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(identity.displayName)
+                    .font(.headline)
+                Text("\(serverSession.title) · \(serverSession.lifecycle.rawValue)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(alignment: .top, spacing: 7) {
+                Text(identity.canonicalID)
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    copyCanonicalID()
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(MelixDesignTokens.accent)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 5))
+                .help("Copy Model ID")
+                .accessibilityLabel("Copy Model ID")
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
+
+            HStack(spacing: 10) {
+                Text("Canonical ID")
+                Text(serverSession.sharedAccessState == .localOnly ? "Local trust" : "Shared access")
+                if let quantizationLabel = identity.quantizationLabel {
+                    Text("Quantization \(quantizationLabel)")
+                }
+            }
+            .font(.system(size: 9))
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(width: 308)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Model identity details")
+    }
+
+    private var modelAccessibilityLabel: String {
+        let quantization = identity.quantizationLabel.map { ", quantization \($0)" } ?? ""
+        return "Model \(identity.displayName)\(quantization), canonical ID \(identity.canonicalID)"
+    }
+
+    func copyCanonicalID(
+        to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general
+    ) {
+        pasteboard.clearContents()
+        _ = pasteboard.setString(identity.canonicalID, forType: .string)
+    }
+}
+
+private struct DesktopChatCapabilityGlyphCluster: View {
+    let capabilities: [DesktopChatCapabilityRow]
+
+    var body: some View {
+        HStack(spacing: 4) {
             ForEach(capabilities) { capability in
-                DesktopChatCapabilityIconTile(capability: capability)
+                DesktopChatCapabilityGlyphButton(capability: capability)
             }
         }
+        .frame(maxHeight: DesktopChatCapabilityGlyphMetrics.maximumClusterHeight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Model Capabilities")
     }
 }
 
-private struct DesktopChatCapabilityIconTile: View {
+struct DesktopChatCapabilityGlyphButton: View {
     let capability: DesktopChatCapabilityRow
+    @State private var showsDetail = false
+
+    init(capability: DesktopChatCapabilityRow) {
+        self.capability = capability
+    }
 
     var body: some View {
-        VStack(spacing: 6) {
-            ZStack(alignment: .topTrailing) {
+        Button {
+            showsDetail.toggle()
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(
+                        capability.isReady
+                            ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.weak)
+                            : Color.secondary.opacity(0.045)
+                    )
                 Image(systemName: capability.systemImageName)
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(width: 34, height: 28)
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(capability.isReady ? MelixDesignTokens.accent : Color.secondary)
-
+                if capability.isReady == false {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.7))
+                        .frame(width: 16, height: 1)
+                        .rotationEffect(.degrees(-42))
+                        .accessibilityHidden(true)
+                }
                 Circle()
                     .fill(capability.isReady ? MelixDesignTokens.StatusColor.success : Color.secondary.opacity(0.45))
-                    .frame(width: 7, height: 7)
-                    .offset(x: 2, y: -1)
+                    .frame(
+                        width: DesktopChatCapabilityGlyphMetrics.statusMarkSize,
+                        height: DesktopChatCapabilityGlyphMetrics.statusMarkSize
+                    )
+                    .offset(x: 9, y: -9)
+                    .accessibilityHidden(true)
             }
-
-            Text(capability.shortTitle)
-                .font(.caption2.weight(.medium))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            .frame(
+                width: DesktopChatCapabilityGlyphMetrics.controlSize,
+                height: DesktopChatCapabilityGlyphMetrics.controlSize
+            )
+            .contentShape(Rectangle())
         }
-        .frame(minWidth: 64, minHeight: 58)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
-                .fill(Color.primary.opacity(0.035))
-        )
+        .buttonStyle(.plain)
         .overlay(
-            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
+            RoundedRectangle(cornerRadius: 7)
                 .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
         )
-        .help("\(capability.title): \(capability.detail)")
+        .help("\(capability.title) · \(capability.isReady ? "Ready" : "Unavailable") · \(capability.detail)")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(capability.title), \(capability.isReady ? "ready" : "unavailable")")
+        .accessibilityLabel(capability.title)
+        .accessibilityValue(capability.isReady ? "Ready" : "Unavailable")
+        .accessibilityHint("Shows capability detail")
+        .popover(isPresented: $showsDetail, arrowEdge: .top) {
+            detailView
+        }
+    }
+
+    var detailView: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(capability.title)
+                .font(.headline)
+            Label(
+                capability.isReady ? "Ready" : "Unavailable",
+                systemImage: capability.isReady ? "checkmark.circle.fill" : "circle.slash"
+            )
+            .font(.caption.weight(.medium))
+            .foregroundStyle(capability.isReady ? MelixDesignTokens.StatusColor.success : Color.secondary)
+            Text(capability.detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+        .padding(10)
+        .frame(width: 220, alignment: .leading)
     }
 }
 
@@ -826,6 +1451,7 @@ private struct DesktopChatSessionRow: View {
     let onSelect: () -> Void
     let onFork: () -> Void
     let onExport: () -> Void
+    let onClear: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -854,7 +1480,12 @@ private struct DesktopChatSessionRow: View {
             }
             .buttonStyle(.plain)
 
-            DesktopChatSessionRowActions(onFork: onFork, onExport: onExport, onDelete: onDelete)
+            DesktopChatSessionRowActions(
+                onFork: onFork,
+                onExport: onExport,
+                onClear: onClear,
+                onDelete: onDelete
+            )
         }
         .padding(10)
         .melixSelection(isSelected)
@@ -864,6 +1495,7 @@ private struct DesktopChatSessionRow: View {
 private struct DesktopChatSessionRowActions: View {
     let onFork: () -> Void
     let onExport: () -> Void
+    let onClear: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -871,6 +1503,7 @@ private struct DesktopChatSessionRowActions: View {
             Button("Fork", action: onFork)
             Button("Export", action: onExport)
             Divider()
+            Button("Clear Conversation", role: .destructive, action: onClear)
             Button("Delete", role: .destructive, action: onDelete)
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -886,19 +1519,39 @@ private struct DesktopChatSessionRowActions: View {
     }
 }
 
+enum DesktopChatComposerSubmissionPolicy {
+    static func canSubmit(
+        text: String,
+        isSubmitAvailable: Bool,
+        isSendDisabled: Bool,
+        isStreaming: Bool,
+        hasRepairState: Bool
+    ) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        && isSubmitAvailable
+        && isSendDisabled == false
+        && isStreaming == false
+        && hasRepairState == false
+    }
+}
+
 struct DesktopChatComposerSurface: View {
     @Binding var text: String
+    @Binding var isThinkingEnabled: Bool
+    @State private var editorHeight = DesktopChatComposerHeightPolicy.minimumHeight
+    @State private var editorContentHeight = DesktopChatComposerHeightPolicy.minimumHeight
+    @State private var isEditorExpanded = false
+    @State private var isEditorFocused = false
+    @State private var editorFocusRequestID: UUID?
+    @State private var restoresFocusAfterRepair = false
     let isSubmitAvailable: Bool
     let isSendDisabled: Bool
     let isStreaming: Bool
-    let statusText: String
-    let usageText: String
     let serverSession: DesktopServerSessionState?
     let capabilities: [DesktopChatCapabilityRow]
     let isModelMissing: Bool
     let onCommandSubmit: (String) -> Void
     let onSubmit: () -> Void
-    let onClear: () -> Void
     let onOpenServer: () -> Void
     let onOpenModels: () -> Void
     let onRunCapabilitiesTest: () -> Void
@@ -914,90 +1567,229 @@ struct DesktopChatComposerSurface: View {
         )
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            DesktopChatProviderControlStrip(
-                serverSession: serverSession,
-                capabilities: capabilities,
-                onOpenServer: onOpenServer,
-                onStartServer: onStartServer,
-                onResumeServer: onResumeServer,
-                onWakeServer: onWakeServer
-            )
+    var canSubmit: Bool {
+        DesktopChatComposerSubmissionPolicy.canSubmit(
+            text: text,
+            isSubmitAvailable: isSubmitAvailable,
+            isSendDisabled: isSendDisabled,
+            isStreaming: isStreaming,
+            hasRepairState: composerGate.repairState != nil
+        )
+    }
 
+    var shouldShowExpandControl: Bool {
+        DesktopChatComposerHeightPolicy.isAtCollapsedCap(contentHeight: editorContentHeight)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
             if let repairState = composerGate.repairState {
-                DesktopChatComposerRepairPanel(
+                DesktopChatComposerRepairStrip(
                     state: repairState,
                     onPrimaryAction: { performRepairAction(repairState.primaryActionKind) },
                     onOpenServer: onOpenServer,
                     onOpenModels: onOpenModels,
                     onRunCapabilitiesTest: onRunCapabilitiesTest
                 )
-            } else {
-                HStack(alignment: .bottom, spacing: 10) {
-                    DesktopChatComposerTextView(
-                        text: $text,
-                        isSubmitAvailable: isSubmitAvailable,
-                        onCommandSubmit: onCommandSubmit
-                    )
-                    .frame(height: DesktopChatLayoutMetrics.composerMinHeight)
-
-                    VStack(spacing: 6) {
-                        primaryActionButton
-
-                        if composerGate.isDegraded, isStreaming == false {
-                            Button(action: onOpenServer) {
-                                Image(systemName: "wrench.and.screwdriver")
-                            }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help("Open Providers")
-                            .accessibilityLabel("Open Providers")
-                        }
-
-                        Button(action: onClear) {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help("Clear Chat")
-                        .accessibilityLabel("Clear Chat")
-                    }
-                    .fixedSize(horizontal: true, vertical: false)
-                }
             }
 
-            HStack(spacing: 10) {
-                Text(statusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                if usageText.isEmpty == false {
-                    Text(usageText)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            editorPlane
+            actionPlane
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
+            RoundedRectangle(
+                cornerRadius: MelixDesignTokens.Radius.composer,
+                style: .continuous
+            )
                 .fill(Color(nsColor: .textBackgroundColor).opacity(0.82))
         )
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: MelixDesignTokens.Radius.composer,
+                style: .continuous
+            )
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
-                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.interactive), lineWidth: 1)
+            RoundedRectangle(
+                cornerRadius: MelixDesignTokens.Radius.composer,
+                style: .continuous
+            )
+            .stroke(
+                isEditorFocused
+                    ? MelixDesignTokens.accent.opacity(MelixDesignTokens.StrokeOpacity.focusedInput)
+                    : Color.primary.opacity(MelixDesignTokens.StrokeOpacity.interactive),
+                lineWidth: isEditorFocused ? 1.5 : 1
+            )
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Chat Composer")
+        .onChange(of: composerGate.repairState == nil) { _, isReady in
+            guard isReady, restoresFocusAfterRepair else {
+                return
+            }
+            restoresFocusAfterRepair = false
+            requestEditorFocus()
+        }
+        .onChange(of: shouldShowExpandControl) { _, isAtCap in
+            if isAtCap == false {
+                isEditorExpanded = false
+            }
+        }
+        .onChange(of: text.isEmpty) { _, isEmpty in
+            if isEmpty {
+                isEditorExpanded = false
+            }
+        }
+        .onChange(of: isStreaming) { wasStreaming, isStreaming in
+            guard wasStreaming == false, isStreaming else {
+                return
+            }
+            DesktopChatAccessibilityAnnouncer.post(
+                "Response is generating. The next draft remains editable and is saved."
+            )
+        }
+    }
+
+    var editorPlane: some View {
+        ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .topLeading) {
+                DesktopChatComposerTextView(
+                    text: $text,
+                    height: $editorHeight,
+                    contentHeight: $editorContentHeight,
+                    isFocused: $isEditorFocused,
+                    isExpanded: isEditorExpanded,
+                    focusRequestID: editorFocusRequestID,
+                    isSubmitAvailable: canSubmit,
+                    onCommandSubmit: onCommandSubmit
+                )
+                .frame(height: editorHeight)
+                .padding(.trailing, shouldShowExpandControl ? 28 : 0)
+
+                if text.isEmpty {
+                    Text("Message Melix…")
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 1)
+                        .padding(.leading, 1)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+
+            if shouldShowExpandControl {
+                expandEditorButton
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 11)
+        .padding(.bottom, 3)
+    }
+
+    var actionPlane: some View {
+        HStack(spacing: 8) {
+            thinkingToggleButton
+
+            Spacer(minLength: 8)
+
+            contextualStatus
+
+            primaryActionButton
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+    }
+
+    var thinkingToggleButton: some View {
+        Button {
+            toggleThinking()
+        } label: {
+            Label {
+                Text("Thinking")
+                    .font(.caption.weight(.medium))
+            } icon: {
+                Image(systemName: isThinkingEnabled ? "lightbulb.fill" : "lightbulb")
+            }
+                .foregroundStyle(isThinkingEnabled ? MelixDesignTokens.accent : Color.secondary)
+                .padding(.horizontal, 6)
+                .frame(minHeight: 28)
+                .contentShape(RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md))
+        }
+        .buttonStyle(.plain)
+        .disabled(isStreaming)
+        .help(isThinkingEnabled ? "Thinking enabled" : "Thinking disabled")
+        .accessibilityLabel("Thinking")
+        .accessibilityValue(isThinkingEnabled ? "On" : "Off")
+        .accessibilityHint(isStreaming ? "Unavailable while a response is generating." : "Toggles public reasoning display.")
+    }
+
+    @ViewBuilder
+    var contextualStatus: some View {
+        if isStreaming {
+            HStack(spacing: 5) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Generating · draft saved")
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(.secondary)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Generating. Draft saved.")
+        } else if composerGate.isDegraded {
+            Button(action: onOpenServer) {
+                Label("Provider limited", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+            }
+            .buttonStyle(.plain)
+            .help("Open Providers to inspect unavailable capabilities")
+            .accessibilityLabel("Provider limited. Open Providers")
+        } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  isEditorFocused,
+                  composerGate.repairState == nil {
+            Text("↵ Send · ⌘↵ New line")
+                .font(.caption2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
+    }
+
+    var expandEditorButton: some View {
+        Button {
+            isEditorExpanded.toggle()
+            requestEditorFocus()
+        } label: {
+            Image(
+                systemName: isEditorExpanded
+                    ? "arrow.down.right.and.arrow.up.left"
+                    : "arrow.up.left.and.arrow.down.right"
+            )
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.92), in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .help(isEditorExpanded ? "Collapse editor" : "Expand editor")
+        .accessibilityLabel(isEditorExpanded ? "Collapse message editor" : "Expand message editor")
+        .accessibilityValue(isEditorExpanded ? "Expanded" : "Collapsed")
+    }
+
+    func toggleThinking() {
+        guard isStreaming == false else {
+            return
+        }
+        isThinkingEnabled.toggle()
     }
 
     func primaryAction() {
-        guard isStreaming == false else {
+        guard canSubmit else {
             return
         }
         onSubmit()
@@ -1010,10 +1802,13 @@ struct DesktopChatComposerSurface: View {
         case .attachModel:
             onOpenModels()
         case .startProvider:
+            restoresFocusAfterRepair = true
             onStartServer()
         case .resumeProvider:
+            restoresFocusAfterRepair = true
             onResumeServer()
         case .wakeProvider:
+            restoresFocusAfterRepair = true
             onWakeServer()
         case .openProviders:
             onOpenServer()
@@ -1022,51 +1817,43 @@ struct DesktopChatComposerSurface: View {
         }
     }
 
+    func requestEditorFocus() {
+        editorFocusRequestID = UUID()
+    }
+
     var primaryActionHelpText: String {
         if isStreaming {
-            return "Streaming cancellation is not available yet"
+            return "Send unavailable while generating; draft saved"
+        }
+        if let repairState = composerGate.repairState {
+            return "Send unavailable. \(repairState.title)"
+        }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Send unavailable for an empty message"
         }
         return composerGate.isDegraded ? "Send Anyway" : "Send"
     }
 
     var primaryActionAccessibilityLabel: String {
-        if isStreaming {
-            return "Stop"
-        }
-        return composerGate.isDegraded ? "Send Anyway" : "Send"
+        composerGate.isDegraded ? "Send Anyway" : "Send"
     }
 
-    @ViewBuilder
     var primaryActionButton: some View {
-        if composerGate.isDegraded, isStreaming == false {
-            Button("Send Anyway", action: primaryAction)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-                .disabled(isSendDisabled)
-                .help(primaryActionHelpText)
-                .accessibilityLabel(primaryActionAccessibilityLabel)
-        } else {
-            Button(action: primaryAction) {
-                primaryActionLabel
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .disabled(isStreaming || isSendDisabled)
-            .help(primaryActionHelpText)
-            .accessibilityLabel(primaryActionAccessibilityLabel)
+        Button(action: primaryAction) {
+            primaryActionLabel
         }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.roundedRectangle(radius: 10))
+        .controlSize(.regular)
+        .disabled(canSubmit == false)
+        .help(primaryActionHelpText)
+        .accessibilityLabel(primaryActionAccessibilityLabel)
+        .accessibilityHint(primaryActionHelpText)
     }
 
-    @ViewBuilder
     var primaryActionLabel: some View {
-        if isStreaming {
-            Label("Stop", systemImage: "stop.fill")
-        } else if composerGate.isDegraded {
-            Label("Send Anyway", systemImage: "paperplane.fill")
-        } else {
-            Label("Send", systemImage: "paperplane.fill")
-        }
+        Label("Send", systemImage: "paperplane.fill")
     }
 }
 
@@ -1205,7 +1992,7 @@ struct DesktopChatComposerGate: Equatable {
     }
 }
 
-struct DesktopChatComposerRepairPanel: View {
+struct DesktopChatComposerRepairStrip: View {
     let state: DesktopChatComposerRepairState
     let onPrimaryAction: () -> Void
     let onOpenServer: () -> Void
@@ -1213,43 +2000,46 @@ struct DesktopChatComposerRepairPanel: View {
     let onRunCapabilitiesTest: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 8) {
             Image(systemName: state.systemImageName)
-                .font(.body.weight(.semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(MelixDesignTokens.StatusColor.warning)
-                .frame(width: 22, height: 22)
+                .frame(width: 18, height: 18)
+                .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(state.title)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(state.detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
+            Text(state.title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityLabel("\(state.title) \(state.detail)")
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 6) {
-                ForEach(state.secondaryActions) { action in
-                    Button(action.title) {
-                        performSecondaryAction(action.kind)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+            ForEach(state.secondaryActions) { action in
+                Button(action.title) {
+                    performSecondaryAction(action.kind)
                 }
-                Button(state.primaryActionTitle, action: onPrimaryAction)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .fixedSize(horizontal: true, vertical: false)
+                .help(action.title)
+                .accessibilityLabel(action.title)
             }
-            .fixedSize(horizontal: true, vertical: false)
+
+            Button(state.primaryActionTitle, action: onPrimaryAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .frame(minHeight: DesktopChatLayoutMetrics.composerMinHeight, alignment: .center)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(state.title) \(state.primaryActionTitle)")
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .frame(minHeight: 34)
+        .background(
+            MelixDesignTokens.StatusColor.warning.opacity(MelixDesignTokens.StateOpacity.background)
+        )
+        .help(state.detail)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Provider repair")
     }
 
     func performSecondaryAction(_ kind: DesktopChatComposerRepairActionKind) {
@@ -1317,8 +2107,6 @@ struct DesktopChatProviderControlStrip: View {
             if capabilities.isEmpty == false {
                 DesktopChatCapabilityStatusSignal(capabilities: Array(capabilities.prefix(5)))
             }
-
-            Spacer(minLength: 8)
 
             recoveryActionButton
 
@@ -1542,19 +2330,46 @@ enum DesktopChatProviderSignalMetrics {
     static let capabilitySignalWidth: CGFloat = 66
 }
 
-private struct DesktopChatComposerTextView: NSViewRepresentable {
+enum DesktopChatComposerHeightPolicy {
+    static let minimumHeight: CGFloat = 40
+    static let collapsedMaximumHeight: CGFloat = 99
+    static let expandedMaximumHeight: CGFloat = 220
+
+    static func resolvedHeight(contentHeight: CGFloat, isExpanded: Bool = false) -> CGFloat {
+        let maximumHeight = isExpanded ? expandedMaximumHeight : collapsedMaximumHeight
+        return min(maximumHeight, max(minimumHeight, ceil(contentHeight)))
+    }
+
+    static func isAtCollapsedCap(contentHeight: CGFloat) -> Bool {
+        ceil(contentHeight) >= collapsedMaximumHeight
+    }
+}
+
+struct DesktopChatComposerTextView: NSViewRepresentable {
     @Binding var text: String
+    @Binding var height: CGFloat
+    @Binding var contentHeight: CGFloat
+    @Binding var isFocused: Bool
+    let isExpanded: Bool
+    let focusRequestID: UUID?
     let isSubmitAvailable: Bool
     let onCommandSubmit: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(
+            text: $text,
+            height: $height,
+            contentHeight: $contentHeight,
+            isFocused: $isFocused,
+            isExpanded: isExpanded
+        )
     }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = DesktopChatComposerCommandSubmitScrollView()
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
 
         let textView = DesktopChatComposerCommandSubmitTextView()
@@ -1562,17 +2377,26 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
-        textView.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         textView.drawsBackground = false
         textView.textContainerInset = NSSize(width: 0, height: 0)
-        textView.minSize = NSSize(width: 0, height: DesktopChatLayoutMetrics.composerMinHeight)
+        textView.minSize = NSSize(width: 0, height: DesktopChatComposerHeightPolicy.minimumHeight)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
+        textView.setAccessibilityLabel("Message")
+        textView.setAccessibilityHelp("Return to send. Command Return for a new line.")
         scrollView.commandSubmitTextView = textView
         scrollView.documentView = textView
+        scrollView.onLayout = { [weak textView, weak coordinator = context.coordinator] in
+            guard let textView else {
+                return
+            }
+            coordinator?.updateHeight(for: textView)
+        }
+        context.coordinator.updateHeight(for: textView)
         return scrollView
     }
 
@@ -1583,6 +2407,11 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
         }
+        context.coordinator.text = $text
+        context.coordinator.height = $height
+        context.coordinator.contentHeight = $contentHeight
+        context.coordinator.isFocused = $isFocused
+        context.coordinator.isExpanded = isExpanded
         textView.onCommandSubmit = { currentText in
             context.coordinator.text.wrappedValue = currentText
             guard isSubmitAvailable,
@@ -1593,13 +2422,41 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
             onCommandSubmit(currentText)
             return true
         }
+        context.coordinator.updateHeight(for: textView)
+
+        if let focusRequestID,
+           context.coordinator.lastHandledFocusRequestID != focusRequestID {
+            context.coordinator.lastHandledFocusRequestID = focusRequestID
+            DispatchQueue.main.async { [weak scrollView, weak textView] in
+                guard let scrollView, let textView else {
+                    return
+                }
+                scrollView.window?.makeFirstResponder(textView)
+            }
+        }
     }
 
+    @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
+        var height: Binding<CGFloat>
+        var contentHeight: Binding<CGFloat>
+        var isFocused: Binding<Bool>
+        var isExpanded: Bool
+        var lastHandledFocusRequestID: UUID?
 
-        init(text: Binding<String>) {
+        init(
+            text: Binding<String>,
+            height: Binding<CGFloat>,
+            contentHeight: Binding<CGFloat>,
+            isFocused: Binding<Bool>,
+            isExpanded: Bool
+        ) {
             self.text = text
+            self.height = height
+            self.contentHeight = contentHeight
+            self.isFocused = isFocused
+            self.isExpanded = isExpanded
         }
 
         func textDidChange(_ notification: Notification) {
@@ -1607,6 +2464,55 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
                 return
             }
             text.wrappedValue = textView.string
+            updateHeight(for: textView)
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            guard isFocused.wrappedValue == false else {
+                return
+            }
+            isFocused.wrappedValue = true
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            guard isFocused.wrappedValue else {
+                return
+            }
+            isFocused.wrappedValue = false
+        }
+
+        func updateHeight(for textView: NSTextView) {
+            guard let textContainer = textView.textContainer,
+                  let layoutManager = textView.layoutManager
+            else {
+                return
+            }
+            layoutManager.ensureLayout(for: textContainer)
+            let contentHeight = layoutManager.usedRect(for: textContainer).height
+                + (textView.textContainerInset.height * 2)
+            let measuredContentHeight = ceil(contentHeight)
+            let documentHeight = max(DesktopChatComposerHeightPolicy.minimumHeight, measuredContentHeight)
+            if abs(textView.frame.height - documentHeight) > 0.5 {
+                var frame = textView.frame
+                frame.size.height = documentHeight
+                textView.frame = frame
+            }
+            let resolvedHeight = DesktopChatComposerHeightPolicy.resolvedHeight(
+                contentHeight: measuredContentHeight,
+                isExpanded: isExpanded
+            )
+            if abs(self.contentHeight.wrappedValue - measuredContentHeight) > 0.5 {
+                let contentHeightBinding = self.contentHeight
+                DispatchQueue.main.async {
+                    contentHeightBinding.wrappedValue = measuredContentHeight
+                }
+            }
+            if abs(height.wrappedValue - resolvedHeight) > 0.5 {
+                let heightBinding = height
+                DispatchQueue.main.async {
+                    heightBinding.wrappedValue = resolvedHeight
+                }
+            }
         }
     }
 
@@ -1615,33 +2521,11 @@ private struct DesktopChatComposerTextView: NSViewRepresentable {
 @MainActor
 final class DesktopChatComposerCommandSubmitScrollView: NSScrollView {
     weak var commandSubmitTextView: DesktopChatComposerCommandSubmitTextView?
-    private var localKeyDownMonitor: Any?
+    var onLayout: (() -> Void)?
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-
-        if window == nil {
-            if let localKeyDownMonitor {
-                NSEvent.removeMonitor(localKeyDownMonitor)
-                self.localKeyDownMonitor = nil
-            }
-            return
-        }
-
-        guard localKeyDownMonitor == nil else {
-            return
-        }
-        localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self,
-                  let window = self.window,
-                  window.isKeyWindow,
-                  event.window == nil || event.window === window,
-                  self.isComposerInteractionActive
-            else {
-                return event
-            }
-            return self.handleComposerKeyEvent(event) ? nil : event
-        }
+    override func layout() {
+        super.layout()
+        onLayout?()
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -1687,46 +2571,52 @@ final class DesktopChatComposerCommandSubmitScrollView: NSScrollView {
 @MainActor
 final class DesktopChatComposerCommandSubmitTextView: NSTextView {
     var onCommandSubmit: ((String) -> Bool)?
-    private var localKeyDownMonitor: Any?
+    var monotonicNow: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    private var compositionGuardUntil: TimeInterval = -.infinity
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-
-        if window == nil {
-            if let localKeyDownMonitor {
-                NSEvent.removeMonitor(localKeyDownMonitor)
-                self.localKeyDownMonitor = nil
-            }
-            return
+    override func unmarkText() {
+        let wasComposing = hasMarkedText()
+        super.unmarkText()
+        if wasComposing {
+            armPostCompositionGuard()
         }
+    }
 
-        guard localKeyDownMonitor == nil else {
-            return
-        }
-        localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self,
-                  let window = self.window,
-                  window.isKeyWindow,
-                  event.window == nil || event.window === window,
-                  window.firstResponder === self || window.firstResponder is NSTextView
-            else {
-                return event
-            }
-            return self.handleLocalKeyDown(event) ? nil : event
+    override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        let wasComposing = hasMarkedText()
+        super.insertText(insertString, replacementRange: replacementRange)
+        if wasComposing {
+            armPostCompositionGuard()
         }
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard DesktopChatComposerKeyPolicy.action(
-            keyCode: event.keyCode,
-            modifiers: event.modifierFlags
-        ) == .submit else {
+        guard hasMarkedText() == false else {
             return super.performKeyEquivalent(with: event)
         }
-        return submitCurrentText()
+        if shouldConsumePostCompositionReturn(event) {
+            return true
+        }
+        switch DesktopChatComposerKeyPolicy.action(keyCode: event.keyCode, modifiers: event.modifierFlags) {
+        case .submit:
+            guard event.isARepeat == false else { return true }
+            return submitCurrentText()
+        case .insertNewline:
+            super.insertNewlineIgnoringFieldEditor(nil)
+            return true
+        case .passThrough:
+            return super.performKeyEquivalent(with: event)
+        }
     }
 
     override func doCommand(by selector: Selector) {
+        guard hasMarkedText() == false else {
+            super.doCommand(by: selector)
+            return
+        }
+        if shouldConsumePostCompositionReturn(selector) {
+            return
+        }
         switch currentReturnCommandAction(for: selector) {
         case .submit:
             _ = submitCurrentText()
@@ -1738,38 +2628,73 @@ final class DesktopChatComposerCommandSubmitTextView: NSTextView {
     }
 
     override func insertNewline(_ sender: Any?) {
-        guard currentReturnCommandAction(for: #selector(NSTextView.insertNewline(_:))) == .submit else {
+        guard hasMarkedText() == false else {
             super.insertNewline(sender)
             return
         }
-        _ = submitCurrentText()
+        if shouldConsumePostCompositionReturn(#selector(NSTextView.insertNewline(_:))) {
+            return
+        }
+        switch currentReturnCommandAction(for: #selector(NSTextView.insertNewline(_:))) {
+        case .submit:
+            _ = submitCurrentText()
+        case .insertNewline:
+            super.insertNewlineIgnoringFieldEditor(sender)
+        case .passThrough:
+            super.insertNewline(sender)
+        }
     }
 
     override func insertLineBreak(_ sender: Any?) {
-        guard currentReturnCommandAction(for: #selector(NSTextView.insertLineBreak(_:))) == .submit else {
+        guard hasMarkedText() == false else {
             super.insertLineBreak(sender)
             return
         }
-        _ = submitCurrentText()
+        if shouldConsumePostCompositionReturn(#selector(NSTextView.insertLineBreak(_:))) {
+            return
+        }
+        switch currentReturnCommandAction(for: #selector(NSTextView.insertLineBreak(_:))) {
+        case .submit:
+            _ = submitCurrentText()
+        case .insertNewline:
+            super.insertNewlineIgnoringFieldEditor(sender)
+        case .passThrough:
+            super.insertLineBreak(sender)
+        }
     }
 
     override func insertNewlineIgnoringFieldEditor(_ sender: Any?) {
-        guard currentReturnCommandAction(
-            for: #selector(NSTextView.insertNewlineIgnoringFieldEditor(_:))
-        ) == .submit else {
+        guard hasMarkedText() == false else {
             super.insertNewlineIgnoringFieldEditor(sender)
             return
         }
-        _ = submitCurrentText()
+        if shouldConsumePostCompositionReturn(#selector(NSTextView.insertNewlineIgnoringFieldEditor(_:))) {
+            return
+        }
+        switch currentReturnCommandAction(for: #selector(NSTextView.insertNewlineIgnoringFieldEditor(_:))) {
+        case .submit:
+            _ = submitCurrentText()
+        case .insertNewline:
+            super.insertNewlineIgnoringFieldEditor(sender)
+        case .passThrough:
+            super.insertNewlineIgnoringFieldEditor(sender)
+        }
     }
 
     @discardableResult
     func handleLocalKeyDown(_ event: NSEvent) -> Bool {
+        guard hasMarkedText() == false else {
+            return false
+        }
+        if shouldConsumePostCompositionReturn(event) {
+            return true
+        }
         switch DesktopChatComposerKeyPolicy.action(keyCode: event.keyCode, modifiers: event.modifierFlags) {
         case .submit:
+            guard event.isARepeat == false else { return true }
             return submitCurrentText()
         case .insertNewline:
-            insertNewlineIgnoringFieldEditor(nil)
+            super.insertNewlineIgnoringFieldEditor(nil)
             return true
         case .passThrough:
             return false
@@ -1789,11 +2714,27 @@ final class DesktopChatComposerCommandSubmitTextView: NSTextView {
         return DesktopChatComposerReturnCommandPolicy.action(selector: selector, modifiers: event.modifierFlags)
     }
 
-    private func submitCurrentText() -> Bool {
-        if onCommandSubmit?(string) == true {
-            return true
+    private func shouldConsumePostCompositionReturn(_ event: NSEvent) -> Bool {
+        guard event.keyCode == DesktopChatComposerKeyPolicy.returnKeyCode
+                || event.keyCode == DesktopChatComposerKeyPolicy.keypadEnterKeyCode
+        else {
+            return false
         }
-        NSSound.beep()
+        return monotonicNow() < compositionGuardUntil
+    }
+
+    private func shouldConsumePostCompositionReturn(_ selector: Selector) -> Bool {
+        DesktopChatComposerReturnCommandPolicy.isReturnCommandSelector(selector)
+        && monotonicNow() < compositionGuardUntil
+    }
+
+    private func armPostCompositionGuard() {
+        compositionGuardUntil = monotonicNow()
+            + DesktopChatComposerKeyPolicy.postCompositionGuardInterval
+    }
+
+    private func submitCurrentText() -> Bool {
+        _ = onCommandSubmit?(string)
         return true
     }
 }
@@ -1802,6 +2743,7 @@ struct DesktopChatTranscriptRowView: View {
     let entry: DesktopChatTranscriptEntry
     let isPending: Bool
     let isStreaming: Bool
+    let showsAssistantRole: Bool
     let pendingStatusText: String
     let onPreviewArtifact: (DesktopChatArtifactPreviewState) -> Void
 
@@ -1809,12 +2751,14 @@ struct DesktopChatTranscriptRowView: View {
         entry: DesktopChatTranscriptEntry,
         isPending: Bool = false,
         isStreaming: Bool = false,
+        showsAssistantRole: Bool = true,
         pendingStatusText: String = "",
         onPreviewArtifact: @escaping (DesktopChatArtifactPreviewState) -> Void = { _ in }
     ) {
         self.entry = entry
         self.isPending = isPending
         self.isStreaming = isStreaming
+        self.showsAssistantRole = showsAssistantRole
         self.pendingStatusText = pendingStatusText
         self.onPreviewArtifact = onPreviewArtifact
     }
@@ -1837,34 +2781,41 @@ struct DesktopChatTranscriptRowView: View {
         case .user:
             DesktopChatUserBubbleView(messageBody: sanitizedBody)
         case .assistant:
-            DesktopChatAssistantDocumentView(
-                messageBody: sanitizedBody,
-                isPending: isPending,
-                isStreaming: isStreaming,
-                pendingStatusText: sanitizedPendingStatusText
-            )
+            DesktopChatAssistantTurnEnvelope(showsRole: showsAssistantRole) {
+                DesktopChatAssistantDocumentView(
+                    messageBody: sanitizedBody,
+                    isPending: isPending,
+                    isStreaming: isStreaming,
+                    pendingStatusText: sanitizedPendingStatusText,
+                    metadataText: sanitizedDetail
+                )
+            }
         case .reasoning:
-            DesktopChatActivityBlockView(
-                kind: .reasoning,
-                title: sanitizedTitle,
-                messageBody: sanitizedBody,
-                detail: sanitizedDetail,
-                isStreaming: isStreaming
-            )
+            DesktopChatAssistantTurnEnvelope(showsRole: showsAssistantRole) {
+                DesktopChatReasoningBlockView(
+                    publicMessageBody: sanitizedBody,
+                    isStreaming: isStreaming,
+                    reasoningElapsedSeconds: entry.reasoningElapsedSeconds
+                )
+            }
         case .tool:
-            DesktopChatActivityBlockView(
-                kind: .tool,
-                title: sanitizedTitle,
-                messageBody: sanitizedBody,
-                detail: sanitizedDetail,
-                isStreaming: isStreaming
-            )
+            DesktopChatAssistantTurnEnvelope(showsRole: showsAssistantRole) {
+                DesktopChatActivityBlockView(
+                    kind: .tool,
+                    title: sanitizedTitle,
+                    messageBody: sanitizedBody,
+                    detail: sanitizedDetail,
+                    isStreaming: isStreaming
+                )
+            }
         case .error:
-            DesktopChatErrorBlockView(
-                title: sanitizedTitle,
-                messageBody: sanitizedBody,
-                detail: sanitizedDetail
-            )
+            DesktopChatAssistantTurnEnvelope(showsRole: showsAssistantRole) {
+                DesktopChatErrorBlockView(
+                    title: sanitizedTitle,
+                    messageBody: sanitizedBody,
+                    detail: sanitizedDetail
+                )
+            }
         }
     }
 
@@ -1892,6 +2843,57 @@ struct DesktopChatTranscriptRowView: View {
 
     private var sanitizedPendingStatusText: String {
         RichOutputSanitizer.sanitized(pendingStatusText)
+    }
+}
+
+struct DesktopChatAssistantTurnEnvelope<Content: View>: View {
+    let showsRole: Bool
+    @ViewBuilder let content: Content
+
+    init(showsRole: Bool, @ViewBuilder content: () -> Content) {
+        self.showsRole = showsRole
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Group {
+                if showsRole {
+                    Text("M")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(MelixDesignTokens.accent)
+                        .frame(
+                            width: DesktopChatLayoutMetrics.assistantAvatarSize,
+                            height: DesktopChatLayoutMetrics.assistantAvatarSize
+                        )
+                        .background(
+                            MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.weak),
+                            in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.sm)
+                        )
+                        .accessibilityHidden(true)
+                } else {
+                    Color.clear
+                        .frame(
+                            width: DesktopChatLayoutMetrics.assistantAvatarSize,
+                            height: 1
+                        )
+                        .accessibilityHidden(true)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: showsRole ? 10 : 0) {
+                if showsRole {
+                    Text("MELIX ASSISTANT")
+                        .font(.caption2.weight(.semibold))
+                        .tracking(0.35)
+                        .foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1968,6 +2970,7 @@ struct DesktopChatUserBubbleView: View {
             Text(messageBody.isEmpty ? "…" : messageBody)
                 .font(.body)
                 .textSelection(.enabled)
+                .frame(minWidth: 64, alignment: .leading)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
                 .background(
@@ -1995,6 +2998,7 @@ struct DesktopChatAssistantDocumentView: View {
     let isPending: Bool
     let isStreaming: Bool
     let pendingStatusText: String
+    let metadataText: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2005,6 +3009,12 @@ struct DesktopChatAssistantDocumentView: View {
                     rawText: messageBody.isEmpty ? "…" : messageBody,
                     isStreaming: isStreaming
                 )
+                if isStreaming == false, metadataText.isEmpty == false {
+                    Text(metadataText)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Usage \(metadataText)")
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2014,22 +3024,321 @@ struct DesktopChatAssistantDocumentView: View {
     }
 
     private var pendingAssistantView: some View {
-        HStack(alignment: .center, spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Thinking...")
-                    .font(.body)
-                if pendingStatusText.isEmpty == false {
-                    Text(pendingStatusText)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
+        DesktopChatReasoningBlockView(
+            publicMessageBody: "",
+            isStreaming: true,
+            reasoningElapsedSeconds: nil,
+            announcesStreamingStart: true
+        )
+    }
+}
+
+struct DesktopChatReasoningBlockView: View {
+    private enum ScrollAnchor: Hashable {
+        case latest
+    }
+
+    let publicMessageBody: String
+    let isStreaming: Bool
+    let reasoningElapsedSeconds: Int?
+    let announcesStreamingStart: Bool
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @State private var isExpanded: Bool
+    @State private var isFollowingLatest = true
+    @State private var isUserScrolling = false
+
+    init(
+        publicMessageBody: String,
+        isStreaming: Bool,
+        reasoningElapsedSeconds: Int? = nil,
+        announcesStreamingStart: Bool = false
+    ) {
+        self.publicMessageBody = publicMessageBody
+        self.isStreaming = isStreaming
+        self.reasoningElapsedSeconds = reasoningElapsedSeconds
+        self.announcesStreamingStart = announcesStreamingStart
+        _isExpanded = State(
+            initialValue: DesktopChatReasoningPresentationPolicy.initiallyExpanded(
+                isStreaming: isStreaming
+            )
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                isExpanded.toggle()
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "brain.head.profile")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(MelixDesignTokens.accent)
+                        .frame(width: 16, height: 16)
+                    DesktopChatThinkingLabel(
+                        text: summaryText,
+                        isStreaming: isStreaming
+                    )
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Hide public reasoning" : "Show public reasoning")
+            .accessibilityLabel(summaryText)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+            if isExpanded {
+                HStack(alignment: .top, spacing: 14) {
+                    DesktopChatReasoningDottedRule()
+
+                    if isStreaming {
+                        streamingReasoningBody
+                    } else {
+                        completedReasoningBody
+                    }
+                }
+                .padding(.top, 11)
+                .padding(.leading, 8)
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(
+            accessibilityReduceMotion ? nil : .easeOut(duration: 0.16),
+            value: isExpanded
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Public reasoning")
+        .accessibilityValue(isStreaming ? "Busy" : "Completed")
+        .onAppear {
+            guard announcesStreamingStart, isStreaming else {
+                return
+            }
+            DesktopChatAccessibilityAnnouncer.post(
+                DesktopChatReasoningPresentationPolicy.accessibilityAnnouncement(isStreaming: true)
+            )
+        }
+        .onChange(of: isStreaming) { _, newValue in
+            isExpanded = newValue
+            if newValue {
+                isFollowingLatest = true
+            }
+            DesktopChatAccessibilityAnnouncer.post(
+                DesktopChatReasoningPresentationPolicy.accessibilityAnnouncement(isStreaming: newValue)
+            )
+        }
+    }
+
+    private var summaryText: String {
+        DesktopChatReasoningPresentationPolicy.summaryText(
+            isStreaming: isStreaming,
+            elapsedSeconds: reasoningElapsedSeconds
+        )
+    }
+
+    private var streamingReasoningBody: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    publicReasoningText(showsCaret: accessibilityReduceMotion == false)
+                    Color.clear
+                        .frame(height: 1)
+                        .id(ScrollAnchor.latest)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: DesktopChatReasoningPresentationPolicy.maximumStreamingHeight, alignment: .top)
+            .scrollIndicators(.hidden)
+            .opacity(DesktopChatReasoningPresentationPolicy.streamingBodyOpacity)
+            .overlay(alignment: .top) {
+                DesktopChatReasoningTopFade()
+            }
+            .onAppear {
+                scrollToLatest(proxy)
+            }
+            .onChange(of: publicMessageBody) { _, _ in
+                scrollToLatest(proxy)
+            }
+            .onScrollPhaseChange { _, newPhase, context in
+                switch newPhase {
+                case .tracking, .interacting:
+                    isUserScrolling = true
+                    isFollowingLatest = false
+                case .idle:
+                    guard isUserScrolling else {
+                        return
+                    }
+                    isFollowingLatest = DesktopChatReasoningPresentationPolicy.isAtBottom(
+                        contentOffsetY: context.geometry.contentOffset.y,
+                        contentHeight: context.geometry.contentSize.height,
+                        viewportHeight: context.geometry.containerSize.height
+                    )
+                    isUserScrolling = false
+                case .decelerating, .animating:
+                    break
                 }
             }
         }
+    }
+
+    private var completedReasoningBody: some View {
+        publicReasoningText(showsCaret: false)
+    }
+
+    @ViewBuilder
+    private func publicReasoningText(showsCaret: Bool) -> some View {
+        if publicMessageBody.isEmpty {
+            Text(isStreaming ? "Waiting for reasoning..." : "No public reasoning recorded.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if isStreaming {
+            DesktopChatCompactStreamingReasoningText(
+                rawText: publicMessageBody,
+                showsCaret: showsCaret
+            )
+        } else {
+            DesktopChatMarkdownBodyView(
+                rawText: publicMessageBody,
+                isStreaming: false
+            )
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
+    }
+
+    private func scrollToLatest(_ proxy: ScrollViewProxy) {
+        guard isFollowingLatest else {
+            return
+        }
+        DispatchQueue.main.async {
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                proxy.scrollTo(ScrollAnchor.latest, anchor: .bottom)
+            }
+        }
+    }
+}
+
+struct DesktopChatCompactStreamingReasoningText: View {
+    let rawText: String
+    let showsCaret: Bool
+
+    var body: some View {
+        Group {
+            if showsCaret {
+                TimelineView(.animation(minimumInterval: 0.36, paused: false)) { context in
+                    compactText(caretVisible: isCaretVisible(at: context.date))
+                }
+            } else {
+                compactText(caretVisible: false)
+            }
+        }
+        .font(.caption)
+        .lineSpacing(3)
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Assistant is thinking")
+        .accessibilityLabel(rawText)
+    }
+
+    private func compactText(caretVisible: Bool) -> some View {
+        Text(
+            DesktopChatReasoningPresentationPolicy.compactStreamingAttributedText(
+                from: rawText,
+                includesCaret: showsCaret,
+                caretVisible: caretVisible
+            )
+        )
+    }
+
+    private func isCaretVisible(at date: Date) -> Bool {
+        let phase = Int(date.timeIntervalSinceReferenceDate / 0.36)
+        return phase.isMultiple(of: 2)
+    }
+}
+
+private struct DesktopChatReasoningTopFade: View {
+    var body: some View {
+        LinearGradient(
+            colors: [
+                Color(nsColor: .windowBackgroundColor),
+                Color(nsColor: .windowBackgroundColor).opacity(0),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: 28)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private enum DesktopChatAccessibilityAnnouncer {
+    @MainActor
+    static func post(_ announcement: String) {
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: announcement,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
+    }
+}
+
+private struct DesktopChatThinkingLabel: View {
+    let text: String
+    let isStreaming: Bool
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+    var body: some View {
+        Group {
+            if isStreaming && accessibilityReduceMotion == false {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                    let progress = context.date.timeIntervalSinceReferenceDate
+                        .truncatingRemainder(dividingBy: 1.35) / 1.35
+                    Text(text)
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [
+                                    Color.secondary,
+                                    MelixDesignTokens.accent,
+                                    Color.secondary,
+                                ],
+                                startPoint: UnitPoint(x: progress * 2.0 - 1.0, y: 0.5),
+                                endPoint: UnitPoint(x: progress * 2.0, y: 0.5)
+                            )
+                        )
+                }
+            } else {
+                Text(text)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption.weight(.medium))
+    }
+}
+
+private struct DesktopChatReasoningDottedRule: View {
+    var body: some View {
+        GeometryReader { geometry in
+            Path { path in
+                path.move(to: CGPoint(x: 1, y: 0))
+                path.addLine(to: CGPoint(x: 1, y: geometry.size.height))
+            }
+            .stroke(
+                MelixDesignTokens.accent.opacity(0.5),
+                style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [1, 4])
+            )
+        }
+        .frame(width: 2)
+        .accessibilityHidden(true)
     }
 }
 

@@ -21,6 +21,10 @@ window.MelixTokens = {
   neutral200: '#E8E8E8',
   neutral300: '#D4D4D4',
 
+  warning: '#D97706',
+  warningText: '#75420E',
+  warningWeak: '#FFF3DF',
+
   fontSans: 'system-ui, "SF Pro Display", "Inter", -apple-system, sans-serif',
   fontMono: 'ui-monospace, "SF Mono", "JetBrains Mono", monospace',
 
@@ -28,6 +32,8 @@ window.MelixTokens = {
   radiusMd: '8px',
   radiusLg: '10px',
   radiusXl: '12px',
+  // Component-scoped exception: the Chat Composer is a stable two-plane shell.
+  radiusComposer: '16px',
   radiusFull: '9999px',
 
   // Chat bubble tints

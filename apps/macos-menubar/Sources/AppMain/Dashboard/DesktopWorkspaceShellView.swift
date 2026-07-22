@@ -14,7 +14,7 @@ struct DesktopWorkspaceShellView: View {
         let foundation = viewModel.desktopFoundationState
 
         VStack(spacing: 0) {
-            if let banner = viewModel.desktopBannerState {
+            if let banner = presentedDesktopBanner {
                 DesktopShellBannerView(banner: banner) {
                     viewModel.dismissDesktopBanner(id: banner.id)
                 }
@@ -125,6 +125,25 @@ struct DesktopWorkspaceShellView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    private var presentedDesktopBanner: DesktopBannerState? {
+        guard let banner = viewModel.desktopBannerState else {
+            return nil
+        }
+        let chatServerSession = viewModel.selectedChatServerSession
+        let chatModelNeedsAttachment = chatServerSession.map { session in
+            viewModel.chatModelNeedsAttachment(modelID: session.modelID)
+        } ?? false
+        guard DesktopWorkspaceBannerPresentationPolicy.shouldPresent(
+            banner: banner,
+            selectedSurface: viewModel.selectedSurface,
+            selectedChatServerSession: chatServerSession,
+            selectedChatModelNeedsAttachment: chatModelNeedsAttachment
+        ) else {
+            return nil
+        }
+        return banner
+    }
+
     private func paneVisibilityBinding(
         _ role: DesktopPaneRole,
         for surface: DesktopSurface
@@ -133,6 +152,37 @@ struct DesktopWorkspaceShellView: View {
             get: { viewModel.isDesktopPaneVisible(role, for: surface) },
             set: { viewModel.setDesktopPaneVisible(role, visible: $0, for: surface) }
         )
+    }
+}
+
+enum DesktopWorkspaceBannerPresentationPolicy {
+    static func shouldPresent(
+        banner: DesktopBannerState,
+        selectedSurface: DesktopSurface,
+        selectedChatServerSession: DesktopServerSessionState?,
+        selectedChatModelNeedsAttachment: Bool
+    ) -> Bool {
+        guard selectedSurface == .chat else {
+            return true
+        }
+
+        if let lifecycleBanner = selectedChatServerSession?.lifecycleBannerState,
+           lifecycleBanner == banner
+        {
+            return false
+        }
+
+        if selectedChatModelNeedsAttachment,
+           let modelID = selectedChatServerSession?.modelID.trimmingCharacters(
+               in: .whitespacesAndNewlines
+           ),
+           modelID.isEmpty == false,
+           banner.id == "model-runtime-cache-missing-\(modelID)"
+        {
+            return false
+        }
+
+        return true
     }
 }
 
@@ -2387,7 +2437,10 @@ private struct DesktopProviderWorkspaceEditor: View {
                                     TextField(
                                         "Max tokens",
                                         value: Binding(
-                                            get: { viewModel.selectedServerSession?.servingDefaults.maxTokens ?? 256 },
+                                            get: {
+                                                viewModel.selectedServerSession?.servingDefaults.maxTokens
+                                                    ?? DesktopServerServingDefaultsState.builtInMaxTokens
+                                            },
                                             set: { viewModel.updateSelectedServerSessionMaxTokens($0) }
                                         ),
                                         format: .number

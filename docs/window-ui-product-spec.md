@@ -663,18 +663,51 @@ selected. Required composer states:
 Production composer state is driven by runtime state, not by a user-facing
 manual segmented control.
 
+A local Chat session's explicit Provider binding is execution-authoritative,
+not presentation-only metadata. Every direct Desktop or CLI chat request must
+carry that Provider's Server Session ID through the control-plane boundary.
+Lifecycle admission, request-activity wakeup, and serving-default resolution
+must all use that same ID; a non-default selection must never inherit the
+default Server Session's lifecycle or generation policy. An omitted or blank
+ID retains the legacy default Server Session behavior.
+
 User-facing Chat binding language must use Provider terms. Starter prompts,
 empty states, composer repair actions, diagnostics pickers, and selected-object
 labels should say provider, provider profile, or provider target. Use `runtime`
 only for execution-layer evidence such as runtime directories, runtime packs,
 runtime jobs, protocol sessions, and detailed diagnostics artifacts.
 
-The composer provider strip should remain compact and glanceable. Its status
-lamps or colored icon plus short-code signals exist to reduce occupied space and
-make state recognizable at a glance. They must not become a dense metric strip.
+The resting Composer must not repeat Provider identity, model identity,
+capabilities, usage, normal health, or clear-session controls. A compact
+Provider repair strip appears only when routing blocks or degrades sending.
 Full provider names, model IDs, numeric queue/cache details, and runtime details
-belong in help text, accessibility labels, selected-object Inspector context, or
-provider detail views, not in the visible strip.
+belong in the Chat header, help text, accessibility labels, selected-object
+Inspector context, or provider detail views.
+
+The Chat header uses the accepted Human-readable Identity route treatment.
+Provider selection and model identity remain separate controls. The persistent
+model control hides the repository namespace, shows a readable model name, and
+keeps the quantization suffix in a compact non-shrinking badge. The canonical
+model ID remains available through the control tooltip and accessibility label;
+one activation opens a selectable detail popover with an explicit copy action.
+An 80-plus-character canonical ID must ellipsize only the readable name, never
+the quantization badge or the Chat title.
+
+Model capabilities use the accepted Inline Glyph Cluster. Each capability is a
+28-point icon control with a status mark and a non-color unavailable treatment;
+the entire cluster remains at or below 30 points high. Capability names, status,
+and evidence stay available through help, accessibility values, and one-step
+detail disclosure. Chat must not restore large capability tiles or permanent
+capability labels inside the Inspector.
+
+The Chat Inspector uses the accepted Precision Ledger at its 232-point ideal
+width. It starts with Provider and readable model identity plus the capability
+glyph cluster, then presents dynamic health, endpoint, usage, trust, and idle
+values as icon-first rows. Stable category headings and repeated page copy are
+omitted. Command Center, Providers, and Diagnostics remain separately focusable
+icon actions with complete help and accessibility labels; repair actions retain
+short text because their consequence must remain explicit. At 760 points high,
+the identity, ledger values, repair state, and actions must fit without scrolling.
 
 Chat should expose runtime failure locally before forcing the operator into
 Command Center:
@@ -696,11 +729,34 @@ Provider is degraded, but text generation is available.
 [Send Anyway] [Open Providers]
 ```
 
-Blocking states replace the text input with a compact repair panel so Command
-Return, prompt suggestions, and the primary send action are unavailable until
-the blocking repair has been taken. Degraded states keep the text input mounted,
-rename the primary send action to `Send Anyway`, and provide a repair/evidence
-entry into Providers.
+The Chat Composer uses a stable two-plane hierarchy: the editable message plane
+is above a compact action plane. The resting shell uses a 16-point continuous
+corner, a low-contrast border, and no persistent drop shadow or internal
+divider. Thinking remains a persistent icon-first Melix capability, but its On
+state is expressed through accent icon and text color rather than a status dot
+or filled background. The Composer must not duplicate Provider/model identity,
+capabilities, token usage, or clear-conversation actions that already have an
+authoritative home elsewhere in Chat.
+
+The editor remains mounted and editable while a response is generating or a
+Provider route is blocked, so the operator can prepare or preserve the next
+draft. It grows from one through five visible lines, scrolls at the five-line
+cap, and exposes an Expand/Collapse action only while capped. During generation,
+Thinking and Send are unavailable and an independent `Generating · draft saved`
+status explains the state; the Send control must not turn into an ambiguous
+progress indicator or expose a Stop action until runtime cancellation exists.
+The keyboard hint is contextual: show it only for an empty, focused editor, and
+hide it once a draft exists.
+
+Blocking states add a compact warning-tinted repair strip above the still-
+editable message plane. Send remains unavailable until repair, each repair
+action remains independently focusable, and focus returns to the editor once
+the blocking state clears. Degraded states keep the editor mounted, rename the
+primary send action to `Send Anyway`, and provide a repair/evidence entry into
+Providers. While Chat presents a Provider-lifecycle or missing-model repair in
+the Composer, the shell must suppress an equivalent global banner so the same
+condition is not announced twice or allowed to push the Composer below the
+minimum-height viewport. Unrelated critical global banners remain visible.
 
 ### Command Center
 
