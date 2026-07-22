@@ -319,18 +319,46 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     mapping_type = Mapping
     for record in records:
         record_is_dict = type_of(record) is dict_type
-        if not record_is_dict and not isinstance(record, mapping_type):
-            store_refusal_receipts_append(
-                store_record_refusal(
-                    source_field="record",
-                    source_id="unknown-retrieved-document",
-                    context_kind="retrieved_document",
+        if record_is_dict:
+            try:
+                context_kind = record["context_kind"]
+                source_id = record["source_id"]
+                payload = record["payload"]
+                owner_scope_checked = record["owner_scope_checked"]
+                segment_id = record["segment_id"]
+                source_field = record["source_field"]
+                reason = record["reason"]
+                corrective_action = record["corrective_action"]
+            except KeyError:
+                record_get: Any = record.get
+                context_kind = record_get("context_kind")
+                source_id = record_get("source_id")
+                payload = record_get("payload")
+                owner_scope_checked = record_get("owner_scope_checked")
+                segment_id = record_get("segment_id", "")
+                source_field = record_get("source_field", "")
+                reason = record_get("reason", "")
+                corrective_action = record_get("corrective_action", "")
+        else:
+            if not isinstance(record, mapping_type):
+                store_refusal_receipts_append(
+                    store_record_refusal(
+                        source_field="record",
+                        source_id="unknown-retrieved-document",
+                        context_kind="retrieved_document",
+                    )
                 )
-            )
-            continue
+                continue
+            record_get = record.get
+            context_kind = record_get("context_kind")
+            source_id = record_get("source_id")
+            payload = record_get("payload")
+            owner_scope_checked = record_get("owner_scope_checked")
+            segment_id = record_get("segment_id", "")
+            source_field = record_get("source_field", "")
+            reason = record_get("reason", "")
+            corrective_action = record_get("corrective_action", "")
 
-        record_get: Any = record.get
-        context_kind = record_get("context_kind")
         if context_kind != "retrieved_document" and context_kind != "retrieved_image":
             source_id = store_record_source_id(record)
             refusal_context_kind = store_record_refusal_context_kind(source_id)
@@ -344,22 +372,6 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             continue
 
         if record_is_dict:
-            try:
-                source_id = record["source_id"]
-                payload = record["payload"]
-                owner_scope_checked = record["owner_scope_checked"]
-                segment_id = record["segment_id"]
-                source_field = record["source_field"]
-                reason = record["reason"]
-                corrective_action = record["corrective_action"]
-            except KeyError:
-                source_id = record_get("source_id")
-                payload = record_get("payload")
-                owner_scope_checked = record_get("owner_scope_checked")
-                segment_id = record_get("segment_id", "")
-                source_field = record_get("source_field", "")
-                reason = record_get("reason", "")
-                corrective_action = record_get("corrective_action", "")
             if (
                 type_of(source_id) is str_type
                 and type_of(payload) is dict_type
@@ -424,6 +436,8 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     receipts_append(receipt)
                     continue
 
+        if record_is_dict:
+            record_get = record.get
         try:
             admission = admit_entry(
                 entry_type(

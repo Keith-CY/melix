@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import UserDict
 
 import pytest
 
@@ -1066,6 +1067,29 @@ def test_project_retrieval_store_records_complete_dict_fast_path_avoids_isinstan
     }
     assert projection.refusal_receipts == []
     assert projection.untrusted_context_receipts[0]["source_id"] == "doc:exact-type"
+
+
+def test_project_retrieval_store_records_preserves_mapping_subclass_fallback() -> None:
+    record = UserDict(
+        {
+            "context_kind": "retrieved_document",
+            "source_id": "doc:mapping-subclass",
+            "payload": {"title": "Mapping fallback"},
+            "owner_scope_checked": True,
+            "segment_id": "doc:mapping-subclass:retrieved-document-context",
+            "source_field": "retrieved_document_mapping_subclass",
+            "reason": "retrieved document evidence is prompt data",
+            "corrective_action": "keep retrieved document evidence in user data",
+        }
+    )
+
+    projection = project_retrieval_store_records([record])
+
+    assert projection.user_payload == {
+        "retrieved_document_mapping_subclass": {"title": "Mapping fallback"}
+    }
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts[0]["source_id"] == "doc:mapping-subclass"
 
 
 def test_project_retrieval_store_records_falls_back_for_source_prefixed_public_text_ids() -> None:
