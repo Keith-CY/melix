@@ -252,6 +252,24 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, and protobuf config
   materialization unchanged.
 
+## Follow-up Slice: Preflight Name Set Cache
+
+The 2026-07-22 preflight-name-set follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts and referenced-tool
+ordering unchanged, but stores each `ToolRegistry` name snapshot as a cached
+`frozenset` during registry initialization. Consistency preflight can then reuse
+those cached membership sets instead of rebuilding `set(registry.names())` and
+`set(catalog.names())` on every call. The ordered tuple snapshots remain the
+source for receipt ordering.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload;
+- preserve callable/missing/referenced tool receipts and deterministic ordering;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
@@ -261,7 +279,8 @@ Expected effect:
    compare the relevant registered metric (`schema_payload_elapsed_ms_mean` for
    schema-payload slices, `elapsed_ms_mean` for the OpenAI tool payload slice,
    `no_keyword_fallback_planning_elapsed_ms_mean` for the no-keyword fallback
-   slice, or `selector_planning_elapsed_ms_mean` and
+   slice, `preflight_consistency_elapsed_ms_mean` for preflight slices, or
+   `selector_planning_elapsed_ms_mean` and
    `current_capacity_planning_elapsed_ms_mean` for the local-compute seed slice)
    over repeated samples.
 4. Push only if local evidence is neutral-to-improved and rely on the GitHub

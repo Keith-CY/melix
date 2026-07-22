@@ -173,6 +173,35 @@ def test_tool_schema_consistency_preflight_accepts_viewed_procedure_tool() -> No
     assert decision.receipt["corrective_action"] == ""
 
 
+def test_tool_schema_consistency_preflight_reuses_cached_name_sets() -> None:
+    class CountingNames(tuple[str, ...]):
+        iter_calls = 0
+
+        def __iter__(self):
+            type(self).iter_calls += 1
+            return super().__iter__()
+
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(
+        ("local_compute",)
+    )
+    catalog = tool_registry_module.agentic_tool_catalog_registry()
+    object.__setattr__(catalog, "_tool_names", CountingNames(catalog.names()))
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            {"tool_id": "visit", "source": "viewed_procedure"},
+            {"tool_id": "local_compute", "source": "viewed_procedure"},
+        ),
+        registry=registry,
+        catalog=catalog,
+        source="viewed_procedure",
+    )
+
+    assert decision.referenced_tools == ("visit", "local_compute")
+    assert decision.missing_tools == ("visit",)
+    assert CountingNames.iter_calls == 1
+
+
 def test_tool_schema_consistency_preflight_reports_missing_catalog_custom_tool() -> None:
     custom_tool = ToolDescriptor(
         name="procedure_lookup",
