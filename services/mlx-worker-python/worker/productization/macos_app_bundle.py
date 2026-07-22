@@ -963,22 +963,22 @@ def _copy_swiftpm_resource_bundles(source_root: Path, target_roots: list[Path]) 
     copied_paths: list[Path] = []
     try:
         with os.scandir(source_root) as entries:
-            bundle_names = []
+            bundles: list[tuple[str, str]] = []
             for entry in entries:
-                if not entry.name.endswith(".bundle"):
+                bundle_name = entry.name
+                if not bundle_name.endswith(".bundle"):
                     continue
                 try:
                     if not entry.is_dir(follow_symlinks=False):
                         continue
                 except OSError:
                     continue
-                bundle_names.append(entry.name)
-            bundle_names.sort()
+                bundles.append((bundle_name, entry.path))
+            bundles.sort(key=lambda bundle: bundle[0])
     except OSError:
         return copied_paths
 
-    for bundle_name in bundle_names:
-        source = source_root / bundle_name
+    for bundle_name, source in bundles:
         for target_root in target_roots:
             target = target_root / bundle_name
             backup = target.with_name(f"{target.name}.melix-backup")
