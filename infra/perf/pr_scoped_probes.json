@@ -2444,6 +2444,12 @@
         "unit": "bool",
         "direction": "lower_is_better",
         "warn_pct": 0.0
+      },
+      {
+        "key": "command_summary_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
       }
     ]
   },
