@@ -461,6 +461,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
     tensor_nbytes = _tensor_nbytes
     sequence_types = _CACHE_STATE_SEQUENCE_TYPES
     get_attr = getattr
+    type_of = type
     for layer_cache in cache_snapshot:
         state = get_attr(layer_cache, "state", None)
         if state is None:
@@ -470,7 +471,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
             values = get_attr(layer_cache, "values", None)
             if values is not None:
                 total += tensor_nbytes(values)
-        elif isinstance(state, sequence_types):
+        elif type_of(state) in sequence_types:
             try:
                 first_state, second_state = state
             except ValueError:

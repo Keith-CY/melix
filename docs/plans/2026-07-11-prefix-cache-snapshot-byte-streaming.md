@@ -130,3 +130,17 @@ the pair-state hot path.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Exact Sequence Type Check
+
+The 2026-07-22 follow-up keeps the same registered probe and narrows to the
+common exact `list` / `tuple` `.state` cache sequence shapes produced by prompt
+cache layers. `estimate_cache_snapshot_bytes()` now binds `type` once and uses
+an exact-type membership check before the existing pair-unpack path, avoiding
+the more general `isinstance(..., (list, tuple))` dispatch in the repeated
+snapshot byte-estimation loop while preserving supported exact list/tuple,
+scalar `.state`, and `.keys` / `.values` behavior.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
