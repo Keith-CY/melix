@@ -2068,6 +2068,13 @@
         "direction": "lower_is_better",
         "warn_pct": 5.0,
         "warn_abs": 0.001
+      },
+      {
+        "key": "request_lifecycle_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0,
+        "warn_abs": 0.001
       }
     ]
   },
