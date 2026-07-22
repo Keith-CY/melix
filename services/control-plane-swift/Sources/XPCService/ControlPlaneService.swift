@@ -1704,6 +1704,7 @@ public actor ControlPlaneService {
             runtimeBinding: gatewayRuntimeBinding,
             fallbackDefaultModelID: fallbackDefaultModelID
         )
+        await gatewayConfigStore.publishRefreshDiagnostics(to: metricsStore)
         let servingDefaultsSummary = await gatewayServingDefaultsStore.summary(
             serverSessionIDs: runtimeSessions.map(\.serverSessionID),
             defaultModelIDs: Dictionary(
@@ -1856,6 +1857,7 @@ public actor ControlPlaneService {
         } catch let error as GatewayConfigValidationError {
             return errorResponse(for: request, code: error.code, message: error.message)
         } catch {
+            await gatewayConfigStore.publishRefreshDiagnostics(to: metricsStore)
             await metricsStore.increment("gateway.config_persist_failures")
             return errorResponse(
                 for: request,
@@ -1980,6 +1982,7 @@ public actor ControlPlaneService {
             runtimeBinding: gatewayRuntimeBinding,
             fallbackDefaultModelID: ModelCatalog.devTextModel().modelID
         )
+        await gatewayConfigStore.publishRefreshDiagnostics(to: metricsStore)
         let listener = gatewayConfigSummary.listeners.first { $0.serverSessionID == command.serverSessionID }
         let servedDefaultModelID = (listener?.defaultModelID ?? ModelCatalog.devTextModel().modelID)
             .trimmingCharacters(in: .whitespacesAndNewlines)

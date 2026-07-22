@@ -3048,8 +3048,100 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
-    @Test("POST /v1/chat/completions switches owner, roster, and serving defaults after an external session update")
-    func postChatCompletionsSwitchesOwnerRosterAndServingDefaultsAfterExternalSessionUpdate() async throws {
+    @Test("POST /v1/chat/completions exports gateway config refresh failures while serving last-known-good state")
+    func postChatCompletionsExportsGatewayConfigRefreshFailureMetrics() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-test-gateway-config-metrics-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        var model = ModelCatalog.devTextModel()
+        model.modelID = "melix-primary"
+        model.state = .modelWarm
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.recordLoadSucceeded(id: "melix-primary", dispatchHandle: "melix-primary::swift")
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-config-refresh-metrics",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "last known good"
+            ),
+        ])
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: storeURL,
+            defaults: [:],
+            nowUnixMS: { 123_456 }
+        )
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "127.0.0.1"
+        command.port = 11_434
+        command.defaultModelID = "melix-primary"
+        command.servedModelIds = ["melix-primary"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+        try await gatewayConfigStore.apply(command: command)
+        try Data("{".utf8).write(to: storeURL, options: [.atomic])
+
+        let metricsStore = MetricsStore()
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-config-refresh-metrics" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) }),
+            gatewayConfigStore: gatewayConfigStore
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    """
+                    {
+                      "model": "melix-primary",
+                      "stream": true,
+                      "messages": [
+                        { "role": "user", "content": "route with damaged config" }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let metrics = await metricsStore.snapshot()
+        let refreshDiagnostics = await gatewayConfigStore.refreshDiagnostics()
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("data: [DONE]"))
+        #expect(request.execution.modelHandle == "melix-primary::swift")
+        #expect(
+            metrics.values["gateway.config_refresh_failure_count"]
+                == Double(refreshDiagnostics.totalFailureCount)
+        )
+        #expect(
+            metrics.values["gateway.config_refresh_consecutive_failure_count"]
+                == Double(refreshDiagnostics.consecutiveFailureCount)
+        )
+        #expect(metrics.values["gateway.config_refresh_serving_last_known_good"] == 1)
+        #expect(metrics.values["gateway.config_refresh_last_failure_at_unix_ms"] == 123_456)
+        #expect(metrics.values["gateway.config_refresh_last_failure_kind_code"] == 3)
+    }
+
+    @Test("POST /v1/chat/completions retains its bootstrap owner after an external session update")
+    func postChatCompletionsRetainsItsBootstrapOwnerAfterExternalSessionUpdate() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-test-live-gateway-roster-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -3062,14 +3154,14 @@ struct OpenAIHandlerTests {
         secondary.modelID = "melix-secondary"
         secondary.state = .modelWarm
         let catalog = ModelCatalog(seedModels: [primary, secondary])
-        _ = await catalog.recordLoadSucceeded(id: "melix-secondary", dispatchHandle: "melix-secondary::swift")
+        _ = await catalog.recordLoadSucceeded(id: "melix-primary", dispatchHandle: "melix-primary::swift")
         let workerClient = ScriptedWorkerClient(events: [
-            makeTokenEvent(requestID: "req-live-roster-secondary", seq: 1, text: "live secondary"),
+            makeTokenEvent(requestID: "req-live-roster-primary", seq: 1, text: "live primary"),
             makeCompletedEvent(
-                requestID: "req-live-roster-secondary",
+                requestID: "req-live-roster-primary",
                 seq: 2,
                 finishReason: "stop",
-                assistantText: "live secondary"
+                assistantText: "live primary"
             ),
         ])
         let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
@@ -3115,7 +3207,7 @@ struct OpenAIHandlerTests {
                 modelCatalog: catalog
             ),
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-live-roster-secondary" }),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-live-roster-primary" }),
             sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) }),
             gatewayConfigStore: residentGatewayStore,
             gatewayServingDefaultsStore: servingDefaultsStore,
@@ -3130,7 +3222,7 @@ struct OpenAIHandlerTests {
         secondaryCommand.rateLimitPerMinute = 1
         try await externalCLIStore.apply(command: secondaryCommand)
 
-        let response = try await handler.handle(
+        let rejectedSecondaryResponse = try await handler.handle(
             HTTPRequest(
                 method: .post,
                 path: "/v1/chat/completions",
@@ -3148,9 +3240,8 @@ struct OpenAIHandlerTests {
                 )
             )
         )
-        let request = try #require(await workerClient.lastGenerateRequest)
-        let payload = try await collectBody(response.body)
-        let rateLimitedResponse = try await handler.handle(
+        let rejectedSecondaryPayload = try await collectBody(rejectedSecondaryResponse.body)
+        let response = try await handler.handle(
             HTTPRequest(
                 method: .post,
                 path: "/v1/chat/completions",
@@ -3158,16 +3249,18 @@ struct OpenAIHandlerTests {
                 body: Data(
                     """
                     {
-                      "model": "melix-secondary",
+                      "model": "melix-primary",
                       "stream": true,
                       "messages": [
-                        { "role": "user", "content": "respect secondary rate limit" }
+                        { "role": "user", "content": "retain the bound session" }
                       ]
                     }
                     """.utf8
                 )
             )
         )
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let payload = try await collectBody(response.body)
         let summary = await residentGatewayStore.summary(
             serverSessionIDs: [
                 ServerSessionRuntimeStore.defaultServerSessionID,
@@ -3177,20 +3270,21 @@ struct OpenAIHandlerTests {
             fallbackDefaultModelID: "melix-primary"
         )
 
+        #expect(rejectedSecondaryResponse.statusCode == 404)
+        #expect(rejectedSecondaryPayload.contains("\"code\":\"model_not_served_by_server\""))
         #expect(response.statusCode == 200)
-        #expect(request.execution.modelHandle == "melix-secondary::swift")
-        #expect(request.sampling.temperature == 0.73)
-        #expect(request.sampling.maxOutputTokens == 222)
-        #expect(payload.contains("live secondary"))
+        #expect(request.execution.modelHandle == "melix-primary::swift")
+        #expect(request.sampling.temperature == 0.11)
+        #expect(request.sampling.maxOutputTokens == 111)
+        #expect(payload.contains("live primary"))
         #expect(payload.contains("data: [DONE]"))
-        #expect(rateLimitedResponse.statusCode == 429)
         #expect(
             summary.listeners.first(where: { $0.serverSessionID == "server-session-secondary" })?.activeBinding
-                == true
+                == false
         )
         #expect(
             summary.listeners.first(where: { $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID })?
-                .activeBinding == false
+                .activeBinding == true
         )
     }
 

@@ -561,8 +561,8 @@ struct ControlPlaneServiceTests {
         #expect(listener.requestedPort == UInt32(MelixGatewayDefaults.port))
     }
 
-    @Test("applying a secondary gateway owner reports listener restart drift against the shared runtime")
-    func applyingSecondaryGatewayOwnerReportsListenerRestartDriftAgainstSharedRuntime() async throws {
+    @Test("applying a secondary gateway owner keeps the running listener pinned to its bootstrap session")
+    func applyingSecondaryGatewayOwnerKeepsRunningListenerPinnedToBootstrapSession() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-control-plane-gateway-secondary-owner-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -594,12 +594,20 @@ struct ControlPlaneServiceTests {
                 $0.serverSessionID == "server-session-secondary"
             }
         )
+        let running = try #require(
+            response.server.snapshot.gatewayConfig.listeners.first {
+                $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
+            }
+        )
 
         #expect(response.ok)
-        #expect(secondary.activeBinding)
-        #expect(secondary.effectiveHost == "127.0.0.1")
-        #expect(secondary.effectivePort == 11_434)
-        #expect(secondary.requiresRestart)
+        #expect(!secondary.activeBinding)
+        #expect(secondary.effectiveHost == "0.0.0.0")
+        #expect(secondary.effectivePort == 18_080)
+        #expect(!secondary.requiresRestart)
+        #expect(running.activeBinding)
+        #expect(running.effectiveHost == "127.0.0.1")
+        #expect(running.effectivePort == 11_434)
         #expect(await metricsStore.value(forKey: "gateway.config_requires_restart_count") == 1)
     }
 
@@ -681,10 +689,11 @@ struct ControlPlaneServiceTests {
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
 
         let metricsStore = MetricsStore()
+        let gatewayConfigStore = GatewayConfigStore(storeURL: storeURL, defaults: [:])
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
             metricsStore: metricsStore,
-            gatewayConfigStore: GatewayConfigStore(storeURL: storeURL, defaults: [:]),
+            gatewayConfigStore: gatewayConfigStore,
             gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
         )
 
@@ -701,6 +710,17 @@ struct ControlPlaneServiceTests {
         #expect(!response.ok)
         #expect(response.error.code == "gateway_config_persist_failed")
         #expect(await metricsStore.value(forKey: "gateway.config_persist_failures") == 1)
+        let refreshDiagnostics = await gatewayConfigStore.refreshDiagnostics()
+        #expect(
+            await metricsStore.value(forKey: "gateway.config_refresh_failure_count")
+                == Double(refreshDiagnostics.totalFailureCount)
+        )
+        #expect(
+            await metricsStore.value(forKey: "gateway.config_refresh_consecutive_failure_count")
+                == Double(refreshDiagnostics.consecutiveFailureCount)
+        )
+        #expect(await metricsStore.value(forKey: "gateway.config_refresh_serving_last_known_good") == 0)
+        #expect(await metricsStore.value(forKey: "gateway.config_refresh_last_failure_kind_code") == 2)
     }
 
     @Test("execute projects typed serving defaults state through server snapshots")

@@ -6846,6 +6846,9 @@ public final class RuntimeViewModel {
         else {
             return
         }
+        if selectedChatSession.serverSessionID != serverSession.id {
+            invalidateActiveChatRequest(markCurrentSessionInterrupted: true)
+        }
 
         replaceChatSession(id: selectedChatSession.id) { session in
             session.serverSessionID = serverSession.id

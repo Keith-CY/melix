@@ -1557,6 +1557,7 @@ button.primary:active {
             runtimeBinding: gatewayRuntimeBinding,
             fallbackDefaultModelID: fallbackModelID
         )
+        await gatewayConfigStore.publishRefreshDiagnostics(to: metricsStore)
         return summary.listeners.first(where: { $0.activeBinding })?.rateLimitPerMinute
             ?? summary.listeners.first?.rateLimitPerMinute
             ?? 120
@@ -3771,6 +3772,7 @@ button.primary:active {
                 fallbackServedModelIDs: defaultServedModelIDs(from: catalogModels, endpoint: endpoint)
             )
         }
+        await gatewayConfigStore.publishRefreshDiagnostics(to: metricsStore)
         let trimmedRequested = requestedModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedModelID = trimmedRequested.isEmpty ? roster.defaultModelID : trimmedRequested
         let servedModelIDs = Set(roster.servedModelIDs)

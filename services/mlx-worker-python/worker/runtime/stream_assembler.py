@@ -1061,10 +1061,21 @@ class RequestStreamAssembler:
             if body:
                 self._active_reasoning_body_parts.append(body)
             full_body = "".join(self._active_reasoning_body_parts)
-            del self._reasoning_parts[self._active_reasoning_parts_start :]
+            streamed_reasoning = "".join(
+                self._reasoning_parts[self._active_reasoning_parts_start :]
+            )
+            if streamed_reasoning:
+                recovery_body = (
+                    full_body[len(streamed_reasoning) :]
+                    if full_body.startswith(streamed_reasoning)
+                    else ""
+                )
+            else:
+                del self._reasoning_parts[self._active_reasoning_parts_start :]
+                recovery_body = full_body
             self._metrics["malformed_reasoning_count"] += 1
             self._metrics["reasoning_channel_recovery_count"] += 1
-            hidden, visible = self._recover_unclosed_reasoning_body(full_body)
+            hidden, visible = self._recover_unclosed_reasoning_body(recovery_body)
             if hidden:
                 if self._reasoning_enabled:
                     self._reasoning_parts.append(hidden)

@@ -60,6 +60,11 @@ read-modify-write transaction also needs cross-process serialization.
 The final coherence pass also showed that a forced unload in one control plane
 can leave stale handles cached by the others, and that named development
 instances need the same explicit listener authority as the packaged runtime.
+Cached-handle validation must fail closed when worker inventory introspection
+cannot prove residency. Both Swift and Python worker routes expose the existing
+`ListLoadedModels` runtime RPC through their control-plane clients so a missing
+handle or an unreachable inventory call invalidates the cached handle before a
+safe load attempt.
 
 Real Gemma 4 generation exposed one final model-compatibility gap. Its
 tokenizer declares `<turn|>` as `eot_token`, but the generic Swift MLX model
@@ -169,6 +174,9 @@ updates are visible to Desktop execution.
 - Keep route declarations authoritative: a text-only request may select the
   explicit text companion route, while media-bearing VLM requests continue to
   use the multimodal route.
+- Validate cached dispatch handles against the selected worker's loaded-model
+  inventory on both Swift and Python routes. A failed inventory RPC is not proof
+  of residency: invalidate the cached handle and take the normal load path.
 - Preserve the source model ID as the user-visible model identity even when a
   companion model performs execution.
 - Carry the selected Server Session ID on direct Desktop and CLI chat requests,
@@ -208,16 +216,21 @@ updates are visible to Desktop execution.
 - Make the package's explicit HTTP host and port authoritative for the effective
   listener so the bound port, health probe, and runtime descriptor cannot drift.
   Keep the atomic gateway JSON as the canonical requested-listener, model
-  roster, and active server-session owner store. The last successfully applied
-  gateway config becomes the routing owner, while legacy documents without an
-  owner retain the runtime binding fallback. Reload the document before reads
-  and writes so the resident sidecar observes CLI subprocess updates without a
-  restart. Serialize each write transaction with an exclusive advisory lock on
-  a stable sibling lock file, retain atomic replacement for the JSON document,
-  and carry the resolved owner through roster selection into serving defaults
-  for the same request. Apply the same sibling-lock transaction to the shared
-  serving-defaults document so independent session updates cannot overwrite one
-  another.
+  roster, and next-bootstrap server-session owner store. Once a gateway has
+  bootstrapped, its immutable runtime binding remains the routing owner until
+  that listener restarts; a later config apply may update that bound session's
+  roster but cannot silently move the running listener to another session.
+  Legacy documents without an owner retain the default bootstrap fallback.
+  Reload the document before reads and writes so the resident sidecar observes
+  CLI subprocess updates for its bound session without a restart. A failed
+  request-path read or decode preserves the last known good document and
+  increments inspectable refresh diagnostics; a normally absent initial file
+  remains a valid empty starting state. Serialize each write transaction with
+  an exclusive advisory lock on a stable sibling lock file, retain atomic
+  replacement for the JSON document, and fail a write rather than replace an
+  unreadable existing document from an empty fallback. Apply the same
+  sibling-lock transaction to the shared serving-defaults document so
+  independent session updates cannot overwrite one another.
 - Make the long-lived Swift worker the process-residency authority for text
   models. Identical load identities must share one handle through a single-flight
   load, failed loads must remain retryable, automatic unload must protect shared
@@ -375,6 +388,17 @@ updates are visible to Desktop execution.
 30. Adopt the accepted Human-readable Identity, Inline Glyph Cluster, and
     Precision Ledger in production SwiftUI without changing Hybrid A Composer
     hierarchy or interaction semantics.
+31. Pin every running gateway request to the session identity captured in its
+    bootstrap runtime binding, and make request-path config refreshes preserve
+    last-known-good state with typed failure diagnostics instead of silently
+    routing through empty defaults.
+32. Disable the Desktop provider picker while a response is streaming and
+    invalidate the active request identity before any programmatic provider
+    rebinding, so late events from the old provider cannot enter the selected
+    conversation.
+33. On an unclosed public-reasoning channel, retain text that was already
+    emitted as reasoning and recover only the unstreamed remainder. Never
+    reclassify already-visible reasoning as final assistant content at EOS.
 
 ## Performance Probes and Success Metrics
 
@@ -398,12 +422,24 @@ updates are visible to Desktop execution.
 - The effective HTTP listener, `/health` probe, and active-runtime descriptor
   must all use the packaged host and port even when persisted requested binding
   values differ.
-- A roster update written by the CLI must affect the next HTTP request without
-  restarting the App. Switching from `server-session-1` to a later session must
-  move the active roster, rate limit, serving-default selection, and summary
-  ownership together without starting a second listener.
-  `gateway.model_route_resolution_ms` remains the probe for the small
-  atomic-config reload on that path.
+- A roster update written by the CLI for the session already captured in the
+  runtime binding must affect the next HTTP request without restarting the App.
+  Configuring a different session updates the next-bootstrap owner only; the
+  running listener's roster, serving-default selection, and summary ownership
+  stay pinned to its bound session. `gateway.model_route_resolution_ms` remains
+  the probe for the small atomic-config reload on that path.
+- A request-path gateway-config read or decode failure must keep serving the
+  last known good roster. Refresh diagnostics record total and consecutive
+  failures, a typed failure kind and timestamp, and whether last-known-good
+  state is active; a missing file before the first successful persisted load is
+  healthy and does not increment failure counts.
+- Switching a Desktop chat to another provider must cancel the active request
+  identity before changing its binding. Delayed reasoning, answer, and terminal
+  events from the previous provider must be ignored, and the visible picker is
+  disabled for the duration of a stream.
+- A malformed unclosed reasoning channel may remain reasoning-only, but no text
+  previously emitted on the reasoning stream may be duplicated or reclassified
+  into assistant content during final recovery.
 - Concurrent gateway-config and serving-defaults writers targeting different
   server sessions must preserve every listener and defaults record. The final
   gateway active owner may follow lock acquisition order, but it must identify
@@ -513,13 +549,19 @@ updates are visible to Desktop execution.
 
 - Focused Swift regression tests for the shared resolver, direct control-plane
   chat, OpenAI chat completions, and Responses API.
+- Focused worker-client tests for Swift/Python loaded-model inventory transport,
+  missing-handle recovery, and fail-closed recovery after introspection errors.
 - Focused desktop tests for registry-hydration Chat gating and ordered packaged
   provider creation, trusted identity context, reasoning-before-answer ordering,
   independent streaming state, 128-point overflow behavior, grapheme cadence,
-  manual-scroll suspension, and Reduce Motion fallback.
+  manual-scroll suspension, Reduce Motion fallback, provider-switch request
+  invalidation, and the streaming-time provider-picker gate.
+- Focused stream-assembler and receipt tests for truncated reasoning, partial
+  close markers, and EOS recovery without reasoning-to-content duplication.
 - Focused gateway tests for packaged listener authority, legacy owner fallback,
-  live roster and active-owner reload across server sessions, sibling-lock
-  failures, and concurrent gateway-config and serving-defaults read-modify-write
+  bound-session roster refresh without live owner rebinding, last-known-good
+  behavior and diagnostics after read/decode failures, sibling-lock failures,
+  and concurrent gateway-config and serving-defaults read-modify-write
   preservation.
 - Focused Swift-worker tests for repeated/concurrent load deduplication, failed
   load recovery, shared unload protection, active-request protection, and forced
@@ -591,9 +633,9 @@ updates are visible to Desktop execution.
   (657/671), Swift text worker and vendored execution path 96.25 percent
   (873/907), CLI 100 percent (109/109), and Python runtime and packaging 98.58
   percent (277/281).
-- The coverage runs also completed the corresponding full suites: 875 macOS
-  tests across 25 suites, 1,182 control-plane tests across 42 suites, 288 Swift
-  text-worker tests, 431 CLI tests with one skip, and 5,121 Python tests with 14
+- The coverage runs also completed the corresponding full suites: 877 macOS
+  tests across 25 suites, 1,189 control-plane tests across 42 suites, 288 Swift
+  text-worker tests, 431 CLI tests with one skip, and 5,124 Python tests with 14
   skips. Structured Gemma 4 text companion routing, Swift Vision media routing,
   and speech-only Chat Completion rejection are covered explicitly so legacy
   route metadata cannot override the structured request-route contract.
@@ -634,6 +676,40 @@ updates are visible to Desktop execution.
   internal test seams, Composer focus uses a mounted AppKit bridge, and copy
   verification uses an in-memory pasteboard so tests do not mutate the
   operator's clipboard.
+
+## Pull Request Review Follow-up Evidence (2026-07-22)
+
+- The gateway binding and last-known-good refresh selection passed 17 focused
+  store and OpenAI integration tests. `GatewayConfigStore.swift` changed-line
+  coverage is 97.13 percent (237/244). Refresh diagnostics are exported
+  atomically into `MetricsStore` at bootstrap, on the HTTP rate-limit and model
+  routing paths, through control-plane snapshots, and after failed config
+  persistence. The metrics expose total and consecutive failures, last-known-good
+  service state, failure timestamp, and a typed failure-kind code.
+- Fail-closed cached-handle validation and Python loaded-model inventory passed
+  88 focused Swift tests and five focused Python bridge tests. Swift changed-line
+  coverage is 95.97 percent (119/124), with both changed production files at
+  100 percent; Python changed-line coverage is 100 percent (12/12).
+- Desktop provider rebinding and the streaming picker gate passed both focused
+  tests. The four-file macOS review slice reports 98.25 percent changed-line
+  coverage (56/57); the request-invalidation implementation and its behavioral
+  test are fully covered, while the single SwiftUI `.disabled` modifier line is
+  held by the adjacent source contract.
+- Reasoning finalization and Python bridge coverage passed 181 focused stream,
+  receipt, generation, and bridge tests. The stream recovery slice reports
+  100-percent changed-line coverage (27/27).
+- The final serial control-plane coverage run passed all 1,189 tests in 42
+  suites. Aggregate changed-line coverage for the complete touched control-plane
+  scope is 97.89 percent (1,905/1,946); the new MetricsStore batch write,
+  OnDemand loader, Python bridge, and ControlPlaneService production lines are
+  each at 100 percent. The coverage-only long-prefill polling window was widened
+  after instrumentation exposed its previous 500-millisecond timing assumption.
+- All three registered stream-assembler probes completed without correctness
+  failures. The parser-mode probe ran 512 samples at a 5.891 ms mean, the
+  structural-prefix probe retained all 1,750,000 expected identity and suffix
+  hits, and the token-byte probe assembled all 80,000 events per sample with no
+  decode errors. The pull-request performance workflow remains authoritative
+  for the paired base-versus-head regression decision.
 
 ## Known Boundaries
 

@@ -7762,6 +7762,21 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("chat provider picker is disabled while a response is streaming")
+    func chatProviderPickerIsDisabledWhileResponseIsStreaming() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+        let pickerStart = try #require(source.range(of: #"Picker("Provider", selection: selectedServerBinding)"#))
+        let pickerTail = source[pickerStart.lowerBound...]
+        let pickerEnd = try #require(pickerTail.range(of: #".accessibilityLabel("Chat Provider")"#))
+        let pickerImplementation = pickerTail[..<pickerEnd.upperBound]
+
+        #expect(pickerImplementation.contains(".disabled(viewModel.isChatStreaming)"))
+    }
+
     @Test("chat tab renders populated transcript rows and runtime metadata")
     @MainActor
     func chatTabRendersPopulatedTranscriptRowsAndRuntimeMetadata() async throws {

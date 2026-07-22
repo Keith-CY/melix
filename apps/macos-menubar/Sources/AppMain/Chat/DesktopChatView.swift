@@ -1229,6 +1229,7 @@ private struct DesktopChatServerPicker: View {
             .pickerStyle(.menu)
             .controlSize(.small)
             .frame(maxWidth: 132)
+            .disabled(viewModel.isChatStreaming)
             .help("Choose the provider for this chat session")
             .accessibilityLabel("Chat Provider")
         }

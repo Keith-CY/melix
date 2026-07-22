@@ -877,7 +877,7 @@ def test_allowed_tools_receipt_reuses_static_omitted_receipt() -> None:
             "<think>unfinished hidden reasoning",
             {
                 "assistant_text": "",
-                "reasoning_text": "",
+                "reasoning_text": "unfinished hidden reasoning",
                 "reasoning_finalized": "true",
                 "tool_calls_finalized": "false",
                 "malformed_channel_recovered": "true",
@@ -889,8 +889,8 @@ def test_allowed_tools_receipt_reuses_static_omitted_receipt() -> None:
             "alternate-final-terminator",
             "<think>hidden trace\nAnswer: 42",
             {
-                "assistant_text": "Answer: 42",
-                "reasoning_text": "hidden trace",
+                "assistant_text": "",
+                "reasoning_text": "hidden trace\nAnswer: 42",
                 "reasoning_finalized": "true",
                 "tool_calls_finalized": "false",
                 "malformed_channel_recovered": "true",

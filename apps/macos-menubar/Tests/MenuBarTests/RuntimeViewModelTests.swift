@@ -13757,6 +13757,49 @@ struct RuntimeViewModelTests {
         #expect(originalSession.isStreaming == false)
     }
 
+    @Test("switching chat providers invalidates stale in-flight stream events")
+    @MainActor
+    func switchingChatProvidersInvalidatesStaleInFlightStreamEvents() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(150), event: .reasoningDelta("old-provider reasoning")),
+            .init(delay: .milliseconds(80), event: .tokenDelta("old-provider answer")),
+            .init(delay: .zero, event: .completed(
+                finishReason: "stop",
+                assistantText: "old-provider answer",
+                reasoningText: "old-provider reasoning"
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let originalServer = try #require(viewModel.selectedServerSession)
+        viewModel.createServerSession(
+            title: "Replacement Provider",
+            modelID: originalServer.modelID
+        )
+        let replacementServer = try #require(viewModel.selectedServerSession)
+        #expect(replacementServer.id != originalServer.id)
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: originalServer.id)
+        viewModel.chatComposerText = "Keep the old provider out of this transcript"
+        let submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        try await waitForRuntimeViewModelCondition("chat should enter its in-flight state before provider switch") {
+            viewModel.isChatStreaming
+        }
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: replacementServer.id)
+        await submitTask.value
+
+        #expect(viewModel.selectedChatSession?.serverSessionID == replacementServer.id)
+        #expect(viewModel.chatStatusText == "Interrupted")
+        #expect(viewModel.chatTranscript.contains { $0.kind == .user })
+        #expect(viewModel.chatTranscript.contains { $0.body.contains("old-provider") } == false)
+        #expect(viewModel.isChatStreaming == false)
+        #expect(viewModel.selectedChatSession?.isStreaming == false)
+    }
+
     @Test("chat prompt merges repeated deltas into shared transcript entries")
     @MainActor
     func chatPromptMergesRepeatedDeltasIntoSharedEntries() async throws {

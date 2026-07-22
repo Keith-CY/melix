@@ -1,4 +1,5 @@
 import Foundation
+import SwiftProtobuf
 import Testing
 
 @testable import MelixControlPlaneCore
@@ -134,8 +135,8 @@ struct OnDemandModelLoaderTests {
         #expect(metrics.values["control_plane.model_stale_handle_recovery_count"] == 1)
     }
 
-    @Test("loaded model introspection failures preserve the cached handle")
-    func loadedModelIntrospectionFailuresPreserveCachedHandle() async throws {
+    @Test("loaded model introspection failures invalidate and reload the cached handle")
+    func loadedModelIntrospectionFailuresInvalidateAndReloadCachedHandle() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
         _ = await catalog.recordLoadSucceeded(
             id: "melix-dev-text",
@@ -155,11 +156,11 @@ struct OnDemandModelLoaderTests {
         )
         let metrics = await metricsStore.snapshot()
 
-        #expect(handle == "melix-dev-text::cached")
-        #expect(await worker.loadRequestCount == 0)
+        #expect(handle == "melix-dev-text::shared-1")
+        #expect(await worker.loadRequestCount == 1)
         #expect(metrics.values.keys.contains("control_plane.model_handle_validation_ms"))
         #expect(metrics.values["control_plane.model_handle_validation_failure_count"] == 1)
-        #expect(metrics.values["control_plane.model_stale_handle_recovery_count", default: 0] == 0)
+        #expect(metrics.values["control_plane.model_stale_handle_recovery_count"] == 1)
     }
 
     @Test("catalog invalidation clears only the expected stale handle and records the transition")
@@ -557,6 +558,44 @@ struct OnDemandModelLoaderTests {
         #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
         #expect(await pythonClient.loadRequestCount == 1)
         #expect(await swiftClient.loadRequestCount == 0)
+    }
+
+    @Test("Python VLM cached handles are validated against worker residency before reuse")
+    func pythonVLMCachedHandlesAreValidatedAgainstWorkerResidencyBeforeReuse() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        _ = await catalog.recordLoadSucceeded(
+            id: "melix-dev-vlm",
+            dispatchHandle: "melix-dev-vlm::stale",
+            reason: "seed_load",
+            routeKind: .pythonVLM
+        )
+        let runner = PythonInventoryBridgeRunner(
+            loadedHandles: [],
+            loadHandle: "melix-dev-vlm::reloaded"
+        )
+        let pythonClient = PythonBridgeWorkerClient(
+            socketPath: "/tmp/melix-python-inventory-test.sock",
+            runner: runner
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: NullWorkerClient(),
+            pythonCompatibilityClient: pythonClient,
+            modelCatalog: catalog
+        )
+        let metricsStore = MetricsStore()
+
+        let handle = try await OnDemandModelLoader.ensureTextModelReady(
+            modelID: "melix-dev-vlm",
+            modelCatalog: catalog,
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let metrics = await metricsStore.snapshot()
+
+        #expect(handle == "melix-dev-vlm::reloaded")
+        #expect(await runner.listRequestCount == 1)
+        #expect(await runner.loadRequestCount == 1)
+        #expect(metrics.values["control_plane.model_stale_handle_recovery_count"] == 1)
     }
 
     @Test("VLM text loading falls back to ext when structured capability fields are empty")
@@ -1284,5 +1323,51 @@ private actor SharedResidencyTestingWorkerClient:
         var response = Melix_Worker_V1_ListLoadedModelsResponse()
         response.modelHandles = loadedHandles
         return response
+    }
+}
+
+private actor PythonInventoryBridgeRunner: WorkerBridgeRunning {
+    private let loadedHandles: [String]
+    private let loadHandle: String
+
+    private(set) var listRequestCount = 0
+    private(set) var loadRequestCount = 0
+
+    init(loadedHandles: [String], loadHandle: String) {
+        self.loadedHandles = loadedHandles
+        self.loadHandle = loadHandle
+    }
+
+    func runUnary(command: BridgeCommand) async throws -> String {
+        switch command.kind {
+        case .listLoadedModels:
+            listRequestCount += 1
+            var response = Melix_Worker_V1_ListLoadedModelsResponse()
+            response.modelHandles = loadedHandles
+            return try messageLine(response)
+        case .loadModel:
+            loadRequestCount += 1
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = true
+            response.modelHandle = loadHandle
+            response.residency.state = .warm
+            return try messageLine(response)
+        case .getRuntimeStats:
+            return try messageLine(Melix_Worker_V1_GetRuntimeStatsResponse())
+        default:
+            throw WorkerClientError.unavailable
+        }
+    }
+
+    func runStream(command: BridgeCommand) async throws -> AsyncThrowingStream<String, Error> {
+        _ = command
+        throw WorkerClientError.unavailable
+    }
+
+    private func messageLine<MessageType: SwiftProtobuf.Message>(
+        _ message: MessageType
+    ) throws -> String {
+        let encoded = try message.serializedData().base64EncodedString()
+        return #"{"kind":"message","message_b64":"\#(encoded)"}"#
     }
 }

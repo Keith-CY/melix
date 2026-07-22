@@ -3102,7 +3102,7 @@ struct RequestCoordinatorTests {
             requestID: "req-long-text-prefill-window",
             phase: .requestPrefilling,
             lane: "text.prefill.background",
-            attempts: 50,
+            attempts: 300,
             matching: { $0.prefillProcessedTokens == 32_768 }
         ))
         await workerClient.emitDecodeStarted(

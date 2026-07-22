@@ -345,8 +345,13 @@ enum OnDemandModelLoader {
                 forKey: "control_plane.model_handle_validation_ms"
             )
             await metricsStore.increment("control_plane.model_handle_validation_failure_count")
-            _ = await modelCatalog.markModelUsed(id: modelID)
-            return handle
+            if await modelCatalog.invalidateDispatchHandle(
+                for: modelID,
+                expectedDispatchHandle: handle
+            ) {
+                await metricsStore.increment("control_plane.model_stale_handle_recovery_count")
+            }
+            return nil
         }
         await metricsStore.set(
             Date().timeIntervalSince(validationStartedAt) * 1000,

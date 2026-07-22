@@ -51,6 +51,7 @@ struct GatewayConfigStoreTests {
             fallbackDefaultModelID: "melix-dev-text"
         )
         let listener = try #require(summary.listeners.first)
+        let refreshDiagnostics = await store.refreshDiagnostics()
 
         #expect(binding.host == "0.0.0.0")
         #expect(binding.port == 14_567)
@@ -71,6 +72,10 @@ struct GatewayConfigStoreTests {
         #expect(listener.source == .environmentDefaults)
         #expect(listener.activeBinding)
         #expect(listener.requiresRestart == false)
+        #expect(refreshDiagnostics.totalFailureCount == 0)
+        #expect(refreshDiagnostics.consecutiveFailureCount == 0)
+        #expect(refreshDiagnostics.lastFailureKind == nil)
+        #expect(refreshDiagnostics.servingLastKnownGoodConfig == false)
     }
 
     @Test("apply persists operator overrides and bootstrap binding reloads them")
@@ -299,8 +304,8 @@ struct GatewayConfigStoreTests {
         #expect(listener.requiresRestart)
     }
 
-    @Test("resident stores observe and preserve sequential updates written through another store")
-    func residentStoresObserveAndPreserveSequentialUpdatesWrittenThroughAnotherStore() async throws {
+    @Test("resident stores refresh session records without rebinding a running listener")
+    func residentStoresRefreshSessionRecordsWithoutRebindingARunningListener() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-gateway-config-cross-process-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -339,12 +344,12 @@ struct GatewayConfigStoreTests {
         secondaryCommand.servedModelIds = ["mlx-community/secondary-model"]
         try await residentWriter.apply(command: secondaryCommand)
 
-        let switchedRoster = try #require(
+        let boundRoster = try #require(
             await residentReader.activeModelRosterIfConfigured(runtimeBinding: binding)
         )
-        #expect(switchedRoster.serverSessionID == "server-session-secondary")
-        #expect(switchedRoster.defaultModelID == "mlx-community/secondary-model")
-        #expect(switchedRoster.servedModelIDs == ["mlx-community/secondary-model"])
+        #expect(boundRoster.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(boundRoster.defaultModelID == "mlx-community/new-model")
+        #expect(boundRoster.servedModelIDs == ["mlx-community/new-model"])
 
         let summary = await residentReader.summary(
             serverSessionIDs: [],
@@ -357,15 +362,148 @@ struct GatewayConfigStoreTests {
         ])
         #expect(
             summary.listeners.first(where: { $0.serverSessionID == "server-session-secondary" })?.activeBinding
-                == true
+                == false
         )
         #expect(
             summary.listeners.first(where: { $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID })?
-                .activeBinding == false
+                .activeBinding == true
         )
 
         let reloadedBinding = await GatewayConfigStore(storeURL: storeURL, defaults: [:]).bootstrapBinding()
         #expect(reloadedBinding.activeServerSessionID == "server-session-secondary")
+    }
+
+    @Test("decode failures preserve the last known good config and remain observable until recovery")
+    func decodeFailuresPreserveTheLastKnownGoodConfigAndRemainObservableUntilRecovery() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-refresh-decode-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let store = GatewayConfigStore(
+            storeURL: storeURL,
+            defaults: [:],
+            nowUnixMS: { 1_717_171_717_000 }
+        )
+        let command = makeConcurrentGatewayConfigCommand(index: 7)
+        try await store.apply(command: command)
+        let binding = await store.bootstrapBinding()
+        let validDocument = try Data(contentsOf: storeURL)
+
+        try Data("{ malformed".utf8).write(to: storeURL, options: .atomic)
+
+        let preservedRoster = try #require(
+            await store.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        let failedDiagnostics = await store.refreshDiagnostics()
+
+        #expect(preservedRoster.serverSessionID == command.serverSessionID)
+        #expect(preservedRoster.defaultModelID == command.defaultModelID)
+        #expect(preservedRoster.servedModelIDs == command.servedModelIds)
+        #expect(failedDiagnostics.totalFailureCount == 1)
+        #expect(failedDiagnostics.consecutiveFailureCount == 1)
+        #expect(failedDiagnostics.lastFailureKind == .decodeFailed)
+        #expect(failedDiagnostics.lastFailureAtUnixMS == 1_717_171_717_000)
+        #expect(failedDiagnostics.lastFailureMessage.isEmpty == false)
+        #expect(failedDiagnostics.servingLastKnownGoodConfig)
+
+        try validDocument.write(to: storeURL, options: .atomic)
+        let recoveredRoster = try #require(
+            await store.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        let recoveredDiagnostics = await store.refreshDiagnostics()
+
+        #expect(recoveredRoster.defaultModelID == command.defaultModelID)
+        #expect(recoveredDiagnostics.totalFailureCount == 1)
+        #expect(recoveredDiagnostics.consecutiveFailureCount == 0)
+        #expect(recoveredDiagnostics.lastFailureKind == .decodeFailed)
+        #expect(recoveredDiagnostics.servingLastKnownGoodConfig == false)
+    }
+
+    @Test("read failures preserve the last known good config and report their failure kind")
+    func readFailuresPreserveTheLastKnownGoodConfigAndReportTheirFailureKind() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-refresh-read-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let store = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let command = makeConcurrentGatewayConfigCommand(index: 8)
+        try await store.apply(command: command)
+        let binding = await store.bootstrapBinding()
+
+        try FileManager.default.removeItem(at: storeURL)
+        try FileManager.default.createDirectory(at: storeURL, withIntermediateDirectories: false)
+
+        let preservedRoster = try #require(
+            await store.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        let diagnostics = await store.refreshDiagnostics()
+
+        #expect(preservedRoster.serverSessionID == command.serverSessionID)
+        #expect(preservedRoster.defaultModelID == command.defaultModelID)
+        #expect(diagnostics.totalFailureCount == 1)
+        #expect(diagnostics.consecutiveFailureCount == 1)
+        #expect(diagnostics.lastFailureKind == .readFailed)
+        #expect(diagnostics.lastFailureMessage.isEmpty == false)
+        #expect(diagnostics.servingLastKnownGoodConfig)
+    }
+
+    @Test("a removed store after a valid load preserves the last known good config")
+    func removedStoreAfterAValidLoadPreservesTheLastKnownGoodConfig() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-refresh-removed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let store = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let command = makeConcurrentGatewayConfigCommand(index: 9)
+        try await store.apply(command: command)
+        let binding = await store.bootstrapBinding()
+
+        try FileManager.default.removeItem(at: storeURL)
+
+        let preservedRoster = try #require(
+            await store.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        let diagnostics = await store.refreshDiagnostics()
+
+        #expect(preservedRoster.defaultModelID == command.defaultModelID)
+        #expect(diagnostics.totalFailureCount == 1)
+        #expect(diagnostics.consecutiveFailureCount == 1)
+        #expect(diagnostics.lastFailureKind == .storeRemovedAfterLoad)
+        #expect(diagnostics.servingLastKnownGoodConfig)
+    }
+
+    @Test("apply refuses to replace an unreadable document from an empty fallback")
+    func applyRefusesToReplaceAnUnreadableDocumentFromAnEmptyFallback() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-apply-decode-failure-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let store = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        try await store.apply(command: makeConcurrentGatewayConfigCommand(index: 10))
+        let malformedDocument = Data("{ malformed".utf8)
+        try malformedDocument.write(to: storeURL, options: .atomic)
+
+        do {
+            try await store.apply(command: makeConcurrentGatewayConfigCommand(index: 11))
+            Issue.record("Expected apply to reject an unreadable existing gateway config.")
+        } catch {
+            #expect(error.localizedDescription.isEmpty == false)
+        }
+        let diagnostics = await store.refreshDiagnostics()
+
+        #expect(try Data(contentsOf: storeURL) == malformedDocument)
+        #expect(diagnostics.totalFailureCount == 1)
+        #expect(diagnostics.consecutiveFailureCount == 1)
+        #expect(diagnostics.lastFailureKind == .decodeFailed)
+        #expect(diagnostics.servingLastKnownGoodConfig)
     }
 
     @Test("concurrent store applies preserve every listener through the sibling file lock")
@@ -481,8 +619,8 @@ struct GatewayConfigStoreTests {
         #expect(roster.defaultModelID == "legacy-model")
     }
 
-    @Test("malformed gateway documents fall back without retaining a stale active owner")
-    func malformedGatewayDocumentsFallBackWithoutRetainingStaleActiveOwner() async throws {
+    @Test("malformed initial documents fall back while reporting that no last known good config exists")
+    func malformedInitialDocumentsFallBackWhileReportingThatNoLastKnownGoodConfigExists() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-gateway-config-malformed-owner-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
@@ -498,11 +636,17 @@ struct GatewayConfigStoreTests {
             fallbackDefaultModelID: "fallback-model",
             fallbackServedModelIDs: ["fallback-model"]
         )
+        let diagnostics = await store.refreshDiagnostics()
 
         #expect(binding.activeServerSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
         #expect(roster.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
         #expect(roster.defaultModelID == "fallback-model")
         #expect(roster.explicit == false)
+        #expect(diagnostics.totalFailureCount == 3)
+        #expect(diagnostics.consecutiveFailureCount == 3)
+        #expect(diagnostics.lastFailureKind == .decodeFailed)
+        #expect(diagnostics.lastFailureMessage.isEmpty == false)
+        #expect(diagnostics.servingLastKnownGoodConfig == false)
     }
 }
 
