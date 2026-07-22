@@ -250,6 +250,32 @@ def test_worker_registry_multimodal_request_kind_uses_expected_membership() -> N
         assert WorkerRegistry._is_multimodal_request_kind(runtime_kind) is False
 
 
+def test_worker_registry_request_counter_updates_use_direct_multimodal_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = build_registry()
+
+    def fail_helper(runtime_kind: str) -> bool:  # pragma: no cover - regression guard
+        _ = runtime_kind
+        raise AssertionError("request counter updates should use direct multimodal membership")
+
+    monkeypatch.setattr(WorkerRegistry, "_is_multimodal_request_kind", staticmethod(fail_helper))
+
+    registry.start_request("ocr-request", runtime_kind="ocr")
+    registry.start_request("text-request", runtime_kind="text")
+    stats = registry.runtime_stats()
+
+    assert stats.active_requests == 2
+    assert stats.active_multimodal_requests == 1
+
+    registry.finish_request("ocr-request")
+    registry.finish_request("text-request")
+    stats = registry.runtime_stats()
+
+    assert stats.active_requests == 0
+    assert stats.active_multimodal_requests == 0
+
+
 def test_worker_registry_capabilities_advertise_vlm_cooperative_text_step() -> None:
     registry = build_registry()
 
