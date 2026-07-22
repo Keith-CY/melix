@@ -1111,6 +1111,8 @@ def test_tool_registry_select_probe_script_emits_metrics(
     assert metrics["always_only_selected_schema_bytes_mean"] > 0.0
     assert metrics["policy_planning_elapsed_ms_mean"] >= 0.0
     assert metrics["policy_selected_schema_bytes_mean"] > 0.0
+    assert metrics["preflight_consistency_elapsed_ms_mean"] >= 0.0
+    assert metrics["preflight_referenced_tools_mean"] == 3.0
 
 
 def test_tool_registry_names_probe_script_emits_metrics(
