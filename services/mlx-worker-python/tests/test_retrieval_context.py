@@ -659,6 +659,11 @@ def test_project_retrieval_contexts_inlines_public_receipts(
         "untrusted_context_receipt",
         fail_receipt_builder,
     )
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "_public_untrusted_context_receipt",
+        fail_receipt_builder,
+    )
 
     projection = project_retrieval_contexts(
         [
@@ -959,6 +964,11 @@ def test_project_retrieval_store_records_fast_paths_complete_dict_records(
     monkeypatch.setattr(
         retrieval_context_module,
         "untrusted_context_receipt",
+        fail_receipt_builder,
+    )
+    monkeypatch.setattr(
+        retrieval_context_module,
+        "_public_untrusted_context_receipt",
         fail_receipt_builder,
     )
     monkeypatch.setattr(untrusted_context_module, "_PUBLIC_SOURCE_ID_RE", RegexGuard())

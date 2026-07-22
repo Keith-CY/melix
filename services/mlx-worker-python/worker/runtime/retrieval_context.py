@@ -131,7 +131,6 @@ def project_retrieval_contexts(
     admit_entry = _admit_entry
     duplicate_projection_receipt = _duplicate_projection_receipt
     build_untrusted_context_receipt = untrusted_context_receipt
-    build_public_context_receipt = _public_untrusted_context_receipt
     is_public_source_id = _is_public_source_id
     refusal_receipts_extend = refusal_receipts.extend
     refusal_receipts_append = refusal_receipts.append
@@ -190,15 +189,21 @@ def project_retrieval_contexts(
                     else:
                         source_is_public = is_public_source_id(normalized_source_id)
                     if source_is_public:
-                        receipt = build_public_context_receipt(
-                            segment_id=normalized_segment_id,
-                            source_type=context_kind,
-                            source_field=normalized_source_field,
-                            source_id=normalized_source_id,
-                            owner_scope_checked=owner_scope_checked,
-                            reason=normalized_reason,
-                            corrective_action=normalized_corrective_action,
-                        )
+                        receipt = {
+                            "schema_version": UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+                            "segment_id": normalized_segment_id,
+                            "source_type": context_kind,
+                            "source_field": normalized_source_field,
+                            "message_role": "user",
+                            "trust_level": "untrusted",
+                            "policy": "data_only",
+                            "boundary_checked": True,
+                            "included": True,
+                            "owner_scope_checked": owner_scope_checked,
+                            "reason": normalized_reason,
+                            "corrective_action": normalized_corrective_action,
+                            "source_id": normalized_source_id,
+                        }
                     else:
                         receipt = build_untrusted_context_receipt(
                             segment_id=normalized_segment_id,
@@ -302,7 +307,6 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     entry_type = RetrievalContextEntry
     duplicate_projection_receipt = _duplicate_projection_receipt
     build_untrusted_context_receipt = untrusted_context_receipt
-    build_public_context_receipt = _public_untrusted_context_receipt
     is_public_source_id = _is_public_source_id
     projection_refusal_receipts_extend = projection_refusal_receipts.extend
     receipts_append = receipts.append
@@ -403,15 +407,21 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     else:
                         source_is_public = is_public_source_id(normalized_source_id)
                     if source_is_public:
-                        receipt = build_public_context_receipt(
-                            segment_id=normalized_segment_id,
-                            source_type=context_kind,
-                            source_field=normalized_source_field,
-                            source_id=normalized_source_id,
-                            owner_scope_checked=owner_scope_checked,
-                            reason=normalized_reason,
-                            corrective_action=normalized_corrective_action,
-                        )
+                        receipt = {
+                            "schema_version": UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+                            "segment_id": normalized_segment_id,
+                            "source_type": context_kind,
+                            "source_field": normalized_source_field,
+                            "message_role": "user",
+                            "trust_level": "untrusted",
+                            "policy": "data_only",
+                            "boundary_checked": True,
+                            "included": True,
+                            "owner_scope_checked": owner_scope_checked,
+                            "reason": normalized_reason,
+                            "corrective_action": normalized_corrective_action,
+                            "source_id": normalized_source_id,
+                        }
                     else:
                         receipt = build_untrusted_context_receipt(
                             segment_id=normalized_segment_id,
