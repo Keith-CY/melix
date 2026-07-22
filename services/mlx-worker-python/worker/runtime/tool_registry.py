@@ -279,6 +279,7 @@ class ToolRegistry:
         "_schema_version",
         "_selection_cache",
         "_tool_by_name",
+        "_tool_name_set",
         "_tool_names",
         "_tool_names_list",
         "_tools",
@@ -304,6 +305,7 @@ class ToolRegistry:
         self._validate()
         self._tool_names = tuple(tool.name for tool in self._tools)
         self._tool_names_list = list(self._tool_names)
+        self._tool_name_set = frozenset(self._tool_names)
         self._tool_by_name = {tool.name: tool for tool in self._tools}
         self._openai_tool_templates: tuple[_OpenAIToolTemplate, ...] = tuple(
             (
@@ -553,9 +555,11 @@ def preflight_agentic_tool_schema_consistency(
     if catalog is None:
         catalog = agentic_tool_catalog_registry()
     callable_tools = registry.names()
-    callable_tool_set = set(callable_tools)
+    callable_tool_set = registry._tool_name_set
     catalog_tools = catalog.names()
-    known_tool_names = callable_tool_set | set(catalog_tools) | _BUILTIN_AGENTIC_TOOL_NAME_SET
+    known_tool_names = (
+        callable_tool_set | catalog._tool_name_set | _BUILTIN_AGENTIC_TOOL_NAME_SET
+    )
     referenced_tools, invalid_affordance_count = _referenced_tool_affordance_names(
         affordances,
         known_tool_names,
