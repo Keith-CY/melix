@@ -606,12 +606,7 @@ def _referenced_tool_affordance_names(
         return (), invalid_affordance_count
     ordered_names: list[str] = []
     ordered_name_set: set[str] = set()
-    for ordered_source_names in (
-        catalog_names,
-        SELECTABLE_AGENTIC_TOOL_NAMES,
-        registry_names,
-        tuple(sorted(seen_tool_names)),
-    ):
+    for ordered_source_names in (catalog_names, SELECTABLE_AGENTIC_TOOL_NAMES, registry_names):
         for tool_name in ordered_source_names:
             if tool_name in seen_tool_names and tool_name not in ordered_name_set:
                 ordered_names.append(tool_name)

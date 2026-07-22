@@ -232,6 +232,26 @@ Expected effect:
 - leave policy-aware selection, registry selection, OpenAI schema generation,
   and protobuf config materialization unchanged.
 
+## Follow-up Slice: Schema Consistency Ordered Fallback Elision
+
+The 2026-07-22 follow-up keeps `preflight_agentic_tool_schema_consistency(...)`
+receipt ordering unchanged, but removes the final sorted seen-affordance fallback.
+`known_tool_names` is constructed only from the catalog snapshot, selectable
+built-in names, and the callable registry snapshot, and the ordering pass already
+covers those same sources. The preflight can therefore avoid an unreachable sorted
+tuple allocation while preserving deterministic ordering for built-in, catalog,
+and registry-local tool names.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for consistency preflight paths
+  that only reference built-in agentic tools;
+- preserve referenced-tool ordering, invalid-affordance counting, missing-tool
+  receipts, and sanitization behavior;
+- leave registry selection, OpenAI schema generation, and protobuf config
+  materialization unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
