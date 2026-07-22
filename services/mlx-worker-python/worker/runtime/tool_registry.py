@@ -557,14 +557,20 @@ def preflight_agentic_tool_schema_consistency(
     callable_tools = registry.names()
     callable_tool_set = registry._tool_name_set
     catalog_tools = catalog.names()
-    known_tool_names = (
-        callable_tool_set | catalog._tool_name_set | _BUILTIN_AGENTIC_TOOL_NAME_SET
-    )
+    catalog_tool_set = catalog._tool_name_set
+    if _BUILTIN_AGENTIC_TOOL_NAME_SET.issubset(
+        catalog_tool_set
+    ) and callable_tool_set.issubset(catalog_tool_set):
+        known_tool_names = catalog_tool_set
+    else:
+        known_tool_names = callable_tool_set | catalog_tool_set | _BUILTIN_AGENTIC_TOOL_NAME_SET
     referenced_tools, invalid_affordance_count = _referenced_tool_affordance_names(
         affordances,
         known_tool_names,
         catalog_tools,
         callable_tools,
+        include_builtin_order_source=catalog_tools != SELECTABLE_AGENTIC_TOOL_NAMES,
+        include_registry_order_source=not callable_tool_set.issubset(catalog_tool_set),
     )
     missing_tools = tuple(
         tool_name for tool_name in referenced_tools if tool_name not in callable_tool_set
@@ -597,6 +603,9 @@ def _referenced_tool_affordance_names(
     known_tool_names: set[str] | frozenset[str],
     catalog_names: tuple[str, ...],
     registry_names: tuple[str, ...],
+    *,
+    include_builtin_order_source: bool = True,
+    include_registry_order_source: bool = True,
 ) -> tuple[tuple[str, ...], int]:
     seen_tool_names: set[str] = set()
     invalid_affordance_count = 0
@@ -610,8 +619,19 @@ def _referenced_tool_affordance_names(
         return (), invalid_affordance_count
     ordered_names: list[str] = []
     ordered_name_set: set[str] = set()
-    for ordered_source_names in (catalog_names, SELECTABLE_AGENTIC_TOOL_NAMES, registry_names):
-        for tool_name in ordered_source_names:
+    if include_builtin_order_source:
+        for ordered_source_names in (catalog_names, SELECTABLE_AGENTIC_TOOL_NAMES):
+            for tool_name in ordered_source_names:
+                if tool_name in seen_tool_names and tool_name not in ordered_name_set:
+                    ordered_names.append(tool_name)
+                    ordered_name_set.add(tool_name)
+    else:
+        for tool_name in catalog_names:
+            if tool_name in seen_tool_names:
+                ordered_names.append(tool_name)
+                ordered_name_set.add(tool_name)
+    if include_registry_order_source:
+        for tool_name in registry_names:
             if tool_name in seen_tool_names and tool_name not in ordered_name_set:
                 ordered_names.append(tool_name)
                 ordered_name_set.add(tool_name)

@@ -270,6 +270,27 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, protobuf config handling,
   and tool definitions unchanged.
 
+## Follow-up Slice: Default Catalog Preflight Set Reuse
+
+The 2026-07-22 preflight follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts and referenced-tool
+ordering unchanged, but reuses the catalog's cached name set as the known-tool
+membership set when the catalog already contains the selectable built-in names and
+the callable registry is a subset of that catalog. The same slice skips the
+separate selectable built-in and registry-local ordering sources when the active
+catalog already provides the canonical selectable built-in names and covers the
+callable registry. Custom registries or catalogs that need extra membership still
+fall back to the explicit union and additional ordering sources.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for the default catalog;
+- preserve callable/missing/referenced tool receipts, invalid-affordance counts,
+  and deterministic ordering;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.

@@ -238,6 +238,39 @@ def test_tool_schema_consistency_preflight_reports_missing_catalog_custom_tool()
     assert decision.receipt["missing_tools"] == ["visit", "procedure_lookup"]
 
 
+def test_tool_schema_consistency_preflight_unions_registry_only_custom_tool() -> None:
+    custom_tool = ToolDescriptor(
+        name="procedure_lookup",
+        description="Look up an operator approved procedure by id.",
+        tool_kind="procedure.lookup",
+        observation_kind="procedure",
+        arguments=(
+            ToolArgumentDescriptor(
+                name="procedure_id",
+                json_type="string",
+                description="Procedure identifier.",
+            ),
+        ),
+    )
+    registry = ToolRegistry((custom_tool,))
+    catalog = tool_registry_module.agentic_tool_catalog_registry()
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            {"tool_name": "procedure_lookup", "source": "workflow_selected"},
+            {"tool_name": "visit", "source": "workflow_selected"},
+        ),
+        registry=registry,
+        catalog=catalog,
+        source="workflow_selected",
+    )
+
+    assert decision.consistent is False
+    assert decision.referenced_tools == ("visit", "procedure_lookup")
+    assert decision.missing_tools == ("visit",)
+    assert decision.receipt["invalid_affordance_count"] == 0
+
+
 def test_tool_schema_consistency_preflight_reports_policy_disabled_context_tool() -> None:
     selection = select_agentic_tools_for_turn(
         ToolSelectionInput(
