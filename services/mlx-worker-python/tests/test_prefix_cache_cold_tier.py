@@ -102,6 +102,18 @@ def test_estimate_cache_snapshot_bytes_sums_non_pair_state_sequences() -> None:
     assert estimate_cache_snapshot_bytes(cache_snapshot) == 60
 
 
+def test_estimate_cache_snapshot_bytes_sums_pair_tuple_state() -> None:
+    class TensorWithNbytes:
+        def __init__(self, nbytes: int) -> None:
+            self.nbytes = nbytes
+
+    cache_snapshot = [
+        SimpleNamespace(state=(TensorWithNbytes(11), TensorWithNbytes(13))),
+    ]
+
+    assert estimate_cache_snapshot_bytes(cache_snapshot) == 24
+
+
 def _put(store: PrefixBlockStore, session_id: str, tokens: list[int], **kwargs: Any) -> None:
     store.put(
         session_id=session_id,
