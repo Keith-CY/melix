@@ -1136,29 +1136,33 @@ class WorkerRegistry:
         return runtime_kind in _MULTIMODAL_REQUEST_KINDS
 
     def _add_request_to_counters(self, state: RequestState) -> None:
+        phase = state.phase
+        runtime_kind = state.runtime_kind
         self._active_request_count += 1
-        if state.phase == "prefill":
+        if phase == "prefill":
             self._active_prefill_count += 1
-        elif state.phase == "decode":
+        elif phase == "decode":
             self._active_decode_count += 1
-        if state.runtime_kind in _MULTIMODAL_REQUEST_KINDS:
+        if runtime_kind in _MULTIMODAL_REQUEST_KINDS:
             self._active_multimodal_request_count += 1
-        if state.runtime_kind == "vlm":
+        if runtime_kind == "vlm":
             self._active_vlm_request_count += 1
 
     def _remove_request_from_counters(self, state: RequestState) -> None:
+        phase = state.phase
+        runtime_kind = state.runtime_kind
         if self._active_request_count > 0:
             self._active_request_count -= 1
-        if state.phase == "prefill":
-            if self._active_prefill_count > 0:
-                self._active_prefill_count -= 1
-        elif state.phase == "decode":
-            if self._active_decode_count > 0:
-                self._active_decode_count -= 1
-        if state.runtime_kind in _MULTIMODAL_REQUEST_KINDS:
-            if self._active_multimodal_request_count > 0:
-                self._active_multimodal_request_count -= 1
-        if state.runtime_kind == "vlm" and self._active_vlm_request_count > 0:
+        if phase == "prefill" and self._active_prefill_count > 0:
+            self._active_prefill_count -= 1
+        elif phase == "decode" and self._active_decode_count > 0:
+            self._active_decode_count -= 1
+        if (
+            runtime_kind in _MULTIMODAL_REQUEST_KINDS
+            and self._active_multimodal_request_count > 0
+        ):
+            self._active_multimodal_request_count -= 1
+        if runtime_kind == "vlm" and self._active_vlm_request_count > 0:
             self._active_vlm_request_count -= 1
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
