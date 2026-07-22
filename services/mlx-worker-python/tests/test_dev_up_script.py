@@ -56,6 +56,15 @@ def write_swift_mlx_package_resolved(repo_root: Path, version: str) -> None:
     )
 
 
+def write_swift_mlx_core_package(repo_root: Path, version: str) -> None:
+    package_swift_path = repo_root / "services/mlx-text-worker-swift/.build/checkouts/mlx-swift/Package.swift"
+    package_swift_path.parent.mkdir(parents=True, exist_ok=True)
+    package_swift_path.write_text(
+        f'cxxSettings: [.define("MLX_VERSION", to: "\\"{version}\\"")]\n',
+        encoding="utf-8",
+    )
+
+
 def write_mlx_metal_fixture(root: Path, version: str) -> Path:
     metallib_path = root / "mlx/lib/mlx.metallib"
     metallib_path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,6 +73,35 @@ def write_mlx_metal_fixture(root: Path, version: str) -> Path:
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text(f"Name: mlx-metal\nVersion: {version}\n", encoding="utf-8")
     return metallib_path
+
+
+def test_compatible_mlx_metal_versions_use_only_the_vendored_core_version(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+    repo_root = tmp_path / "repo"
+    write_swift_mlx_package_resolved(repo_root, "0.31.4")
+    write_swift_mlx_core_package(repo_root, "0.31.1")
+
+    assert dev_up.compatible_mlx_metal_versions_for_swift_mlx(repo_root) == ("0.31.1",)
+
+
+def test_compatible_mlx_metal_versions_use_an_explicit_mapping_without_a_checkout(
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    repo_root = tmp_path / "repo"
+    write_swift_mlx_package_resolved(repo_root, "0.31.4")
+
+    assert dev_up.compatible_mlx_metal_versions_for_swift_mlx(repo_root) == ("0.31.1",)
+
+
+def test_compatible_mlx_metal_versions_do_not_assume_the_package_tag_matches_core(
+    tmp_path: Path,
+) -> None:
+    dev_up = load_dev_up_module()
+    repo_root = tmp_path / "repo"
+    write_swift_mlx_package_resolved(repo_root, "9.8.7")
+
+    assert dev_up.compatible_mlx_metal_versions_for_swift_mlx(repo_root) == ()
 
 
 def make_layout(dev_up, tmp_path: Path):
@@ -622,6 +660,7 @@ def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path, monkeyp
     assert f'export MELIX_AUDIO_RUNTIME_PACK_ROOT="{layout.audio_runtime_packs_dir}"' in payload
     assert f'export MELIX_MODEL_OPS_JOBS_ROOT="{layout.model_ops_jobs_root}"' in payload
     assert f'export MELIX_EVALUATION_JOBS_ROOT="{layout.evaluation_jobs_root}"' in payload
+    assert 'export MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY="environment"' in payload
     assert 'export MELIX_SERVICE_INSTANCE_NAME="team-a"' in payload
     assert f'export MELIX_PYTHON_BRIDGE_EXECUTABLE="{bridge_python}"' in payload
     assert f'export MELIX_SWIFT_MLX_METALLIB_PATH="{metallib_path}"' in payload
@@ -631,11 +670,14 @@ def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path, monkeyp
 
 def test_prepare_swift_worker_launch_cwd_symlinks_runtime_local_default_metallib(tmp_path: Path) -> None:
     dev_up = load_dev_up_module()
+    write_swift_mlx_package_resolved(tmp_path, "0.29.1")
+    write_swift_mlx_core_package(tmp_path, "0.29.1")
     layout = make_layout(dev_up, tmp_path)
     layout.runtime_dir.mkdir(parents=True, exist_ok=True)
-    metallib_path = tmp_path / ".venv/lib/python3.13/site-packages/mlx/lib/mlx.metallib"
-    metallib_path.parent.mkdir(parents=True, exist_ok=True)
-    metallib_path.write_text("mlx", encoding="utf-8")
+    metallib_path = write_mlx_metal_fixture(
+        tmp_path / ".venv/lib/python3.13/site-packages",
+        "0.29.1",
+    )
 
     launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, tmp_path)
 
@@ -650,10 +692,13 @@ def test_resolve_local_mlx_metallib_uses_scandir_stack_without_path_rglob(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dev_up = load_dev_up_module()
+    write_swift_mlx_package_resolved(tmp_path, "0.29.1")
+    write_swift_mlx_core_package(tmp_path, "0.29.1")
     layout = make_layout(dev_up, tmp_path)
-    metallib_path = tmp_path / ".venv/lib/python3.13/site-packages/mlx/lib/mlx.metallib"
-    metallib_path.parent.mkdir(parents=True, exist_ok=True)
-    metallib_path.write_text("mlx", encoding="utf-8")
+    metallib_path = write_mlx_metal_fixture(
+        tmp_path / ".venv/lib/python3.13/site-packages",
+        "0.29.1",
+    )
 
     def fail_rglob(self: Path, pattern: str):
         raise AssertionError("resolve_local_mlx_metallib() should not allocate a Path.rglob() tree")
@@ -863,11 +908,11 @@ def test_iter_mlx_metallib_candidates_skips_entry_errors(
 
 def test_prepare_swift_worker_launch_cwd_uses_configured_uv_cache_dir_for_metallib(tmp_path: Path) -> None:
     dev_up = load_dev_up_module()
+    write_swift_mlx_package_resolved(tmp_path, "0.29.1")
+    write_swift_mlx_core_package(tmp_path, "0.29.1")
     layout = replace(make_layout(dev_up, tmp_path), uv_cache_dir=tmp_path / "custom-uv-cache")
     layout.runtime_dir.mkdir(parents=True, exist_ok=True)
-    metallib_path = layout.uv_cache_dir / "mlx/runtime/mlx.metallib"
-    metallib_path.parent.mkdir(parents=True, exist_ok=True)
-    metallib_path.write_text("mlx", encoding="utf-8")
+    metallib_path = write_mlx_metal_fixture(layout.uv_cache_dir / "archive-v0/good", "0.29.1")
 
     launch_cwd = dev_up.prepare_swift_worker_launch_cwd(layout, tmp_path)
 
@@ -884,6 +929,7 @@ def test_prepare_swift_worker_launch_cwd_prefers_matching_swift_mlx_metallib_fro
     dev_up = load_dev_up_module()
     repo_root = tmp_path / "repo"
     write_swift_mlx_package_resolved(repo_root, "0.29.1")
+    write_swift_mlx_core_package(repo_root, "0.29.1")
     layout = replace(make_layout(dev_up, repo_root), uv_cache_dir=repo_root / ".uv-cache")
     layout.runtime_dir.mkdir(parents=True, exist_ok=True)
     write_mlx_metal_fixture(layout.uv_cache_dir / "archive-v0/bad", "0.31.1")
@@ -926,6 +972,7 @@ def test_prepare_swift_worker_launch_cwd_rejects_incompatible_auto_discovered_me
     dev_up = load_dev_up_module()
     repo_root = tmp_path / "repo"
     write_swift_mlx_package_resolved(repo_root, "0.29.1")
+    write_swift_mlx_core_package(repo_root, "0.29.1")
     layout = replace(make_layout(dev_up, repo_root), uv_cache_dir=repo_root / ".uv-cache")
     layout.runtime_dir.mkdir(parents=True, exist_ok=True)
     incompatible_metallib_path = write_mlx_metal_fixture(layout.uv_cache_dir / "archive-v0/bad", "0.31.1")
@@ -1416,6 +1463,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
         payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-control-plane"]
     )
     assert control_plane_spawn["env_overrides"]["MELIX_HOME"] == str(layout.melix_home_dir)
+    assert control_plane_spawn["env_overrides"]["MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY"] == "environment"
     assert control_plane_spawn["env_overrides"]["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] == str(
         layout.swift_vision_worker_socket_path
     )
@@ -1574,6 +1622,7 @@ def test_start_stack_control_plane_gateway_config_store_overrides_parent_environ
 
     control_plane_env = captured_env[("melix-control-plane",)]
     assert control_plane_env["MELIX_HOME"] == str(layout.melix_home_dir)
+    assert control_plane_env["MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY"] == "environment"
     assert control_plane_env["MELIX_GATEWAY_CONFIG_STORE_PATH"] == str(layout.gateway_config_store_path)
     assert control_plane_env["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] == str(
         layout.swift_vision_worker_socket_path

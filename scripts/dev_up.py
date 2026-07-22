@@ -29,9 +29,10 @@ SWIFT_OPTIONAL_PARENT_ENV = (
     SWIFT_DFLASH_PROBE_PATH_ENV,
 )
 KNOWN_SWIFT_MLX_CORE_VERSION_BY_PACKAGE_VERSION = {
-    # mlx-swift 0.31.3 vendors MLX core 0.31.1, so its Metal library ABI
-    # matches the mlx_metal 0.31.1 wheel rather than the Swift package tag.
+    # These mlx-swift releases vendor MLX core 0.31.1, so their Metal library
+    # ABI matches the mlx_metal 0.31.1 wheel rather than the Swift package tag.
     "0.31.3": "0.31.1",
+    "0.31.4": "0.31.1",
 }
 DEFAULT_SOCKET_DIR = Path("/tmp")
 USAGE_TEXT = """Usage: bash scripts/dev_up.sh [--prefer-built] [--build-configuration debug|release]
@@ -463,21 +464,18 @@ def resolve_swift_mlx_core_version(repo_root: Path) -> str | None:
 
 
 def compatible_mlx_metal_versions_for_swift_mlx(repo_root: Path) -> tuple[str, ...]:
+    vendored_core_version = resolve_swift_mlx_core_version(repo_root)
+    if vendored_core_version is not None:
+        return (vendored_core_version,)
+
     package_version = resolve_swift_mlx_package_version(repo_root)
     if package_version is None:
         return ()
 
-    candidates = (
-        resolve_swift_mlx_core_version(repo_root),
-        KNOWN_SWIFT_MLX_CORE_VERSION_BY_PACKAGE_VERSION.get(package_version),
-        package_version,
-    )
-    compatible_versions: list[str] = []
-    for candidate in candidates:
-        if candidate is None or candidate in compatible_versions:
-            continue
-        compatible_versions.append(candidate)
-    return tuple(compatible_versions)
+    mapped_core_version = KNOWN_SWIFT_MLX_CORE_VERSION_BY_PACKAGE_VERSION.get(package_version)
+    if mapped_core_version is not None:
+        return (mapped_core_version,)
+    return ()
 
 
 def _read_dist_info_metadata_version(metadata_path: Path) -> str | None:
@@ -552,6 +550,9 @@ def iter_mlx_metallib_candidates(root: Path):
 def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = None) -> Path | None:
     swift_mlx_package_version = resolve_swift_mlx_package_version(repo_root)
     compatible_mlx_metal_versions = compatible_mlx_metal_versions_for_swift_mlx(repo_root)
+    if not compatible_mlx_metal_versions:
+        return None
+
     candidate_search_roots: list[Path] = []
     if uv_cache_dir is not None:
         candidate_search_roots.append(uv_cache_dir)
@@ -572,9 +573,6 @@ def resolve_local_mlx_metallib(repo_root: Path, *, uv_cache_dir: Path | None = N
         seen.add(resolved_root)
         for candidate in iter_mlx_metallib_candidates(resolved_root):
             resolved_candidate = candidate.resolve()
-            if not compatible_mlx_metal_versions:
-                return resolved_candidate
-
             candidate_version = read_mlx_metal_dist_info_version(resolved_candidate)
             if candidate_version in compatible_mlx_metal_versions:
                 return resolved_candidate
@@ -748,6 +746,7 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
         "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": os.fspath(layout.swift_text_worker_socket_path),
         "MELIX_SWIFT_VISION_WORKER_SOCKET_PATH": os.fspath(layout.swift_vision_worker_socket_path),
         "MELIX_HTTP_PORT": layout.http_port,
+        "MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY": "environment",
         "MELIX_BACKEND_MODE": layout.python_backend_mode,
         "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": layout.swift_text_worker_backend_mode,
         "MELIX_CONTROL_PLANE_METRICS_PATH": os.fspath(layout.control_plane_metrics_path),
@@ -885,6 +884,7 @@ def start_stack(options: DevUpOptions) -> None:
         log_path=layout.runtime_dir / "control-plane.log",
         env_overrides={
             "MELIX_HTTP_PORT": layout.http_port,
+            "MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY": "environment",
             "MELIX_HOME": os.fspath(layout.melix_home_dir),
             "MELIX_WORKER_SOCKET_PATH": os.fspath(layout.python_socket_path),
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": os.fspath(layout.swift_text_worker_socket_path),

@@ -299,6 +299,7 @@ public final class AppScreenshotCaptureRunner {
         case .missingModel:
             ensureSelectedChatSessionIsBoundToPrimaryProvider()
             viewModel.updateSelectedServerSessionModelID("melix-dev-missing")
+            await viewModel.stopSelectedServerSession()
         case .offlineProvider:
             ensureSelectedChatSessionIsBoundToPrimaryProvider()
             viewModel.updateSelectedServerSessionModelID(appScreenshotTextModelID)
