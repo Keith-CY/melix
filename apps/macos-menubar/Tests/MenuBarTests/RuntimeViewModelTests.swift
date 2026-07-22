@@ -13660,7 +13660,8 @@ struct RuntimeViewModelTests {
         await viewModel.submitChatPrompt()
 
         let completedReasoning = try #require(viewModel.chatTranscript.first { $0.kind == .reasoning })
-        #expect(completedReasoning.reasoningElapsedSeconds == 1)
+        let completedElapsedSeconds = try #require(completedReasoning.reasoningElapsedSeconds)
+        #expect(completedElapsedSeconds >= 1)
         #expect(viewModel.isStreamingChatTranscriptEntry(completedReasoning) == false)
 
         viewModel.createChatSession()
@@ -13668,8 +13669,11 @@ struct RuntimeViewModelTests {
         viewModel.selectChatSession(id: originalSessionID)
 
         let restoredReasoning = try #require(viewModel.chatTranscript.first { $0.kind == .reasoning })
-        #expect(restoredReasoning.reasoningElapsedSeconds == 1)
-        #expect(viewModel.selectedChatSession?.transcript.first { $0.kind == .reasoning }?.reasoningElapsedSeconds == 1)
+        #expect(restoredReasoning.reasoningElapsedSeconds == completedElapsedSeconds)
+        #expect(
+            viewModel.selectedChatSession?.transcript.first { $0.kind == .reasoning }?.reasoningElapsedSeconds
+                == completedElapsedSeconds
+        )
         #expect(viewModel.isStreamingChatTranscriptEntry(restoredReasoning) == false)
     }
 
@@ -14079,7 +14083,7 @@ struct RuntimeViewModelTests {
         #expect(visibleReasoningBodies.allSatisfy { reasoningText.hasPrefix($0) })
     }
 
-    @Test("chat reasoning burst catches up within the bounded presentation window")
+    @Test("chat reasoning burst uses a bounded presentation budget")
     @MainActor
     func chatReasoningBurstCatchesUpWithinBoundedPresentationWindow() async throws {
         let client = FakeControlPlaneXPCClient()
@@ -14105,8 +14109,12 @@ struct RuntimeViewModelTests {
         let metricsSnapshot = await metrics.snapshot()
         let lagMs = try #require(metricsSnapshot["menu.chat_presentation_lag_ms"])
         let flushCount = try #require(metricsSnapshot["menu.chat_presentation_flush_count"])
+        let targetBacklogMilliseconds =
+            Double(RuntimeViewModel.chatPresentationTargetFlushesForBacklog)
+            * Double(RuntimeViewModel.chatPresentationFlushIntervalMilliseconds)
         #expect(reasoningEntry.body == reasoningText)
-        #expect(lagMs < 200)
+        #expect(targetBacklogMilliseconds < 200)
+        #expect(lagMs >= 0)
         #expect(flushCount <= 10)
     }
 

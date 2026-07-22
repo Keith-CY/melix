@@ -3677,7 +3677,7 @@ public final class RuntimeViewModel {
     private static let chatPresentationFlushInterval: Duration = .milliseconds(
         chatPresentationFlushIntervalMilliseconds
     )
-    private static let chatPresentationTargetFlushesForBacklog = 7
+    static let chatPresentationTargetFlushesForBacklog = 7
     private static let chatPresentationBaselineChunkSize = 8
 
     public init(
