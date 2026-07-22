@@ -1114,6 +1114,8 @@ public enum DesktopServerWakeReason: String, Codable, Sendable {
 }
 
 public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
+    public static let builtInMaxTokens = 1_024
+
     public var temperature: Double
     public var topP: Double
     public var maxTokens: Int
@@ -1146,7 +1148,7 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
     public init(
         temperature: Double = 0.7,
         topP: Double = 1.0,
-        maxTokens: Int = 256,
+        maxTokens: Int = Self.builtInMaxTokens,
         streamIntervalTokens: Int = 1,
         maxConcurrentRequests: Int = 4,
         concurrentProcessingEnabled: Bool = true,
@@ -1242,7 +1244,8 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.7
         let topP = try container.decodeIfPresent(Double.self, forKey: .topP) ?? 1.0
-        let maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 256
+        let maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens)
+            ?? Self.builtInMaxTokens
         let streamIntervalTokens = try container.decodeIfPresent(Int.self, forKey: .streamIntervalTokens) ?? 1
         let maxConcurrentRequests = try container.decodeIfPresent(Int.self, forKey: .maxConcurrentRequests) ?? 4
         let concurrentProcessingEnabled = try container.decodeIfPresent(Bool.self, forKey: .concurrentProcessingEnabled) ?? true

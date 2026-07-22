@@ -22,8 +22,15 @@ struct TextGenerationEngine: Sendable {
         }
 
         do {
+            let loadedModel = await registry.getLoadedModel(request.execution.modelHandle)
+            let filterFallbackExecution = loadedModel.map {
+                harmonyFilterFallbackExecution(
+                    requested: request.execution,
+                    model: $0.spec
+                )
+            }
             let runtimeStream = try await registry.generateEvents(
-                modelHandle: request.execution.modelHandle,
+                execution: request.execution,
                 messages: request.messages,
                 sampling: request.sampling,
                 shouldAbort: { abortHandle.isAborted }
@@ -34,7 +41,12 @@ struct TextGenerationEngine: Sendable {
             var completionTokens = 0
             var outputState = FilteredTextOutputState()
             var tokensPerSecond: Double?
-            var outputFilter = HarmonyChannelOutputFilter()
+            var finishReason = "stop"
+            var outputFilter = HarmonyChannelOutputFilter(
+                execution: request.execution,
+                fallbackExecution: filterFallbackExecution,
+                fallbackParserMode: loadedModel?.spec.parserMode
+            )
             var harmonyFilterTotalMicros = 0
             var harmonyFilterCallCount = 0
             var grpcWriteTotalMicros = 0
@@ -102,6 +114,7 @@ struct TextGenerationEngine: Sendable {
                     promptTokens = max(promptTokens, summary.promptTokens)
                     completionTokens = max(completionTokens, summary.completionTokens)
                     tokensPerSecond = summary.tokensPerSecond
+                    finishReason = summary.finishReason
                 }
             }
 
@@ -124,7 +137,7 @@ struct TextGenerationEngine: Sendable {
             }
 
             var completed = Melix_Worker_V1_Completed()
-            completed.finishReason = abortHandle.isAborted ? "cancelled" : "stop"
+            completed.finishReason = abortHandle.isAborted ? "cancelled" : finishReason
             completed.assistantText = outputState.assistantText
             completed.reasoningText = outputState.reasoningText
 
@@ -183,6 +196,39 @@ struct TextGenerationEngine: Sendable {
             ))
         }
     }
+}
+
+private func harmonyFilterFallbackExecution(
+    requested: Melix_Worker_V1_ExecutionMetadata,
+    model: Melix_Worker_V1_ModelSpec
+) -> Melix_Worker_V1_ExecutionMetadata {
+    var fallback = requested
+    if fallback.scope.modelID.isEmpty {
+        fallback.scope.modelID = model.modelID
+    }
+    if fallback.scope.revision.isEmpty {
+        fallback.scope.revision = model.revision
+    }
+    if fallback.scope.tokenizerHash.isEmpty {
+        fallback.scope.tokenizerHash = model.tokenizerHash
+    }
+    if fallback.scope.quantProfileID.isEmpty {
+        fallback.scope.quantProfileID = model.quantProfileID
+    }
+    if fallback.scope.parserMode.isEmpty {
+        fallback.scope.parserMode = model.parserMode
+    }
+    if fallback.scope.reasoningMode.isEmpty {
+        fallback.scope.reasoningMode = model.reasoningMode
+    }
+    if fallback.scope.toolParserMode.isEmpty,
+       let toolParserMode = model.ext["melix.tool_parser.mode"] {
+        fallback.scope.toolParserMode = toolParserMode
+    }
+    for (key, value) in model.ext where fallback.ext[key] == nil {
+        fallback.ext[key] = value
+    }
+    return fallback
 }
 
 private func makeGenerateErrorExecuteEvent(

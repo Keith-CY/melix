@@ -240,6 +240,16 @@ private func gemma4ApplyRotaryPosition<R: RoPELayer>(
     }
 }
 
+/// Gemma 4's K-equals-V full-attention layers share the projection output,
+/// not the normalized and rotary-encoded key state. Values must therefore be
+/// normalized from the raw K projection before key normalization and RoPE.
+func gemma4ValueProjectionInput(
+    projectedKeys: MLXArray,
+    projectedValues: MLXArray?
+) -> MLXArray {
+    projectedValues ?? projectedKeys
+}
+
 // MARK: - Attention
 
 private class Gemma4Attention: Module {
@@ -358,19 +368,19 @@ private class Gemma4Attention: Module {
             guard let kProj = kProj, let kNorm = kNorm, let vNorm = vNorm else {
                 fatalError("Layer \(layerIdx) is a KV-shared layer but received no sharedKV")
             }
-            var k = kProj(x).reshaped(B, L, nKvHeads, effectiveHeadDim)
-            k = kNorm(k)
+            let projectedKeys = kProj(x).reshaped(B, L, nKvHeads, effectiveHeadDim)
+            let projectedValues = vProj?(x).reshaped(B, L, nKvHeads, effectiveHeadDim)
+
+            var v = gemma4ValueProjectionInput(
+                projectedKeys: projectedKeys,
+                projectedValues: projectedValues
+            )
+            v = vNorm(v)
+            v = v.transposed(0, 2, 1, 3)
+
+            var k = kNorm(projectedKeys)
             k = k.transposed(0, 2, 1, 3)
             k = gemma4ApplyRotaryPosition(rope, to: k, offset: activePositionOffset)
-
-            var v: MLXArray
-            if let vProj {
-                v = vProj(x).reshaped(B, L, nKvHeads, effectiveHeadDim)
-                v = vNorm(v)
-                v = v.transposed(0, 2, 1, 3)
-            } else {
-                v = vNorm(k)
-            }
 
             if let quantizedCache = cache as? QuantizedKVCacheProtocol {
                 if config.numKvSharedLayers == 0 {

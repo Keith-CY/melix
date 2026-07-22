@@ -21,7 +21,7 @@ from worker.runtime.mlx_text_runtime import (
 from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
 from worker.runtime.multimodal_attention_policy import MultimodalPrefillAttentionBudgetExceeded
 from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_accepts_kwarg
-from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
+from worker.runtime.stream_assembler import AssemblyDelta, RequestStreamAssembler, StreamFragment
 from worker.runtime.structured_output_constraints import (
     StructuredOutputConstraintError,
     json_schema_constraint_error,
@@ -437,6 +437,77 @@ class EngineCore:
                     tool_choice_policy=tool_choice_policy,
                 )
 
+        def assembly_events(
+            deltas: list[AssemblyDelta],
+        ) -> Iterator[inference_pb2.ExecuteEvent]:
+            nonlocal completion_token_count
+            nonlocal generated_reasoning_delta_count
+            nonlocal generated_tool_call_delta_count
+            for delta in deltas:
+                if delta.reasoning_text:
+                    generated_reasoning_delta_count += 1
+                    if token_route_receipt is not None:
+                        token_route_receipt.activate()
+                        token_route_receipt.record_span(
+                            channel="hidden_reasoning",
+                            channel_source="reasoning_tag",
+                            token_count=delta.token_count,
+                        )
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=allocate_seq(),
+                        reasoning_delta=inference_pb2.ReasoningDelta(
+                            text=delta.reasoning_text,
+                            raw_text=delta.raw_text,
+                            mode_source=reasoning.mode_source,
+                        ),
+                    )
+                if delta.tool_call is not None:
+                    generated_tool_call_delta_count += 1
+                    if token_route_receipt is not None:
+                        token_route_receipt.activate()
+                        token_route_receipt.record_span(
+                            channel="tool_call",
+                            channel_source="tool_call_tag",
+                            token_count=delta.token_count,
+                        )
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=allocate_seq(),
+                        tool_call_delta=inference_pb2.ToolCallDelta(
+                            call_id=delta.tool_call.call_id,
+                            tool_name=delta.tool_call.tool_name,
+                            arguments_json_fragment=delta.tool_call.arguments_json_fragment,
+                            fragment_index=delta.tool_call.fragment_index,
+                            parser_mode=delta.tool_call.parser_mode,
+                            complete=delta.tool_call.complete,
+                        ),
+                    )
+                if delta.content_text:
+                    if token_route_receipt is not None:
+                        token_route_receipt.record_span(
+                            channel="visible_text",
+                            channel_source="raw_text",
+                            token_count=delta.token_count,
+                            consume_all_available=True,
+                        )
+                    if track_usage:
+                        completion_token_count += 1
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=allocate_seq(),
+                        token_delta=inference_pb2.TokenDelta(
+                            text=delta.content_text,
+                            raw_text=delta.raw_text,
+                            parser_observation=delta.parser_observation,
+                            token_ids=delta.token_ids,
+                            token_logprobs=delta.token_logprobs,
+                        ),
+                    )
+
         try:
             template_kwargs = self._chat_template_kwargs(request) if execution_ext else None
             if execution.tool_config.tools:
@@ -558,70 +629,10 @@ class EngineCore:
                     stream_fragment = StreamFragment(runtime_event.text, runtime_event.raw_text)
                 if token_route_receipt is not None and runtime_event.token_ids:
                     token_route_receipt.append_token_ids(runtime_event.token_ids)
-                for delta in accept_stream_fragment(stream_fragment):
-                    if delta.reasoning_text:
-                        generated_reasoning_delta_count += 1
-                        if token_route_receipt is not None:
-                            token_route_receipt.activate()
-                            token_route_receipt.record_span(
-                                channel="hidden_reasoning",
-                                channel_source="reasoning_tag",
-                                token_count=delta.token_count,
-                            )
-                        yield inference_pb2.ExecuteEvent(
-                            request_id=request_id,
-                            execution_kind="generate",
-                            seq=allocate_seq(),
-                            reasoning_delta=inference_pb2.ReasoningDelta(
-                                text=delta.reasoning_text,
-                                raw_text=delta.raw_text,
-                                mode_source=reasoning.mode_source,
-                            ),
-                        )
-                    if delta.tool_call is not None:
-                        generated_tool_call_delta_count += 1
-                        if token_route_receipt is not None:
-                            token_route_receipt.activate()
-                            token_route_receipt.record_span(
-                                channel="tool_call",
-                                channel_source="tool_call_tag",
-                                token_count=delta.token_count,
-                            )
-                        yield inference_pb2.ExecuteEvent(
-                            request_id=request_id,
-                            execution_kind="generate",
-                            seq=allocate_seq(),
-                            tool_call_delta=inference_pb2.ToolCallDelta(
-                                call_id=delta.tool_call.call_id,
-                                tool_name=delta.tool_call.tool_name,
-                                arguments_json_fragment=delta.tool_call.arguments_json_fragment,
-                                fragment_index=delta.tool_call.fragment_index,
-                                parser_mode=delta.tool_call.parser_mode,
-                                complete=delta.tool_call.complete,
-                            ),
-                        )
-                    if delta.content_text:
-                        if token_route_receipt is not None:
-                            token_route_receipt.record_span(
-                                channel="visible_text",
-                                channel_source="raw_text",
-                                token_count=delta.token_count,
-                                consume_all_available=True,
-                            )
-                        if track_usage:
-                            completion_token_count += 1
-                        yield inference_pb2.ExecuteEvent(
-                            request_id=request_id,
-                            execution_kind="generate",
-                            seq=allocate_seq(),
-                            token_delta=inference_pb2.TokenDelta(
-                                text=delta.content_text,
-                                raw_text=delta.raw_text,
-                                parser_observation=delta.parser_observation,
-                                token_ids=delta.token_ids,
-                                token_logprobs=delta.token_logprobs,
-                            ),
-                        )
+                yield from assembly_events(accept_stream_fragment(stream_fragment))
+
+            terminal_deltas, assembled = assembler.finalize()
+            yield from assembly_events(terminal_deltas)
 
             if track_usage and not cancel_event.is_set():
                 completion_tokens = completion_token_count
@@ -662,7 +673,6 @@ class EngineCore:
             elif last_finish_reason:
                 finish_reason = last_finish_reason
 
-            assembled = assembler.completed()
             if assembled.metrics:
                 parser_metrics = {key: _parser_metric_text(value) for key, value in assembled.metrics.items()}
             else:

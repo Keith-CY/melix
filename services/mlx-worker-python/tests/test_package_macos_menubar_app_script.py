@@ -102,11 +102,21 @@ def test_main_forwards_packaging_target_and_update_channel(
     monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
     monkeypatch.setattr(
         module,
+        "resolve_built_control_plane_binary",
+        lambda repo_root: tmp_path / "melix-control-plane",
+    )
+    monkeypatch.setattr(
+        module,
         "resolve_built_swift_text_worker_binary",
         lambda repo_root: tmp_path / "melix-text-worker-swift",
     )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
+    monkeypatch.setattr(
+        module,
+        "resolve_swift_mlx_metallib",
+        lambda repo_root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
+    )
 
     def fake_write_unsigned_macos_app_bundle(**kwargs):
         seen.update(kwargs)
@@ -137,6 +147,9 @@ def test_main_forwards_packaging_target_and_update_channel(
 
     assert module.main() == 0
     assert seen["cli_executable_path"] == tmp_path / "melix"
+    assert seen["control_plane_executable_path"] == tmp_path / "melix-control-plane"
+    assert seen["swift_mlx_metallib_path"] == tmp_path / "mlx.metallib"
+    assert seen["swift_mlx_metallib_version"] == "0.31.1"
     assert seen["packaging_target_id"] == "macos_app_bundle_preview"
     assert seen["update_channel_path"] == str(tmp_path / "stable.json")
     assert seen["icon_source_path"] == str(tmp_path / "MelixAppIcon.icns")
@@ -153,13 +166,15 @@ def test_resolve_built_products_use_direct_release_candidate_before_debug(
     repo_root = tmp_path / "repo"
     menubar_binary = repo_root / "apps/macos-menubar/.build/release/melix-menubar"
     cli_binary = repo_root / ".build/release/melix"
+    control_plane_binary = repo_root / "services/control-plane-swift/.build/release/melix-control-plane"
     swift_worker_binary = repo_root / "services/mlx-text-worker-swift/.build/release/melix-text-worker-swift"
     debug_binaries = (
         repo_root / "apps/macos-menubar/.build/debug/melix-menubar",
         repo_root / ".build/debug/melix",
+        repo_root / "services/control-plane-swift/.build/debug/melix-control-plane",
         repo_root / "services/mlx-text-worker-swift/.build/debug/melix-text-worker-swift",
     )
-    for binary in (menubar_binary, cli_binary, swift_worker_binary, *debug_binaries):
+    for binary in (menubar_binary, cli_binary, control_plane_binary, swift_worker_binary, *debug_binaries):
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
@@ -170,7 +185,103 @@ def test_resolve_built_products_use_direct_release_candidate_before_debug(
 
     assert module.resolve_built_binary(repo_root) == menubar_binary
     assert module.resolve_built_cli_binary(repo_root) == cli_binary
+    assert module.resolve_built_control_plane_binary(repo_root) == control_plane_binary
     assert module.resolve_built_swift_text_worker_binary(repo_root) == swift_worker_binary
+
+
+def test_resolve_built_control_plane_requires_built_product(tmp_path: Path) -> None:
+    module = load_package_macos_app_module()
+
+    with pytest.raises(FileNotFoundError, match="Unable to find built `melix-control-plane`"):
+        module.resolve_built_control_plane_binary(tmp_path / "repo")
+
+
+def test_resolve_swift_mlx_metallib_requires_a_compatible_version(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    metallib_path = tmp_path / "mlx_metal-0.31.2/mlx/lib/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True)
+    metallib_path.write_bytes(b"metal")
+    monkeypatch.setattr(module, "read_mlx_metal_dist_info_version", lambda path: "0.31.2")
+    monkeypatch.setattr(
+        module,
+        "compatible_mlx_metal_versions_for_swift_mlx",
+        lambda repo_root: ("0.31.1",),
+    )
+
+    with pytest.raises(RuntimeError, match="Incompatible Swift MLX metallib 0.31.2"):
+        module.resolve_swift_mlx_metallib(tmp_path / "repo", metallib_path)
+
+
+def test_resolve_swift_mlx_metallib_returns_discovered_matching_asset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    metallib_path = tmp_path / "mlx_metal-0.31.1/mlx/lib/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True)
+    metallib_path.write_bytes(b"metal")
+    monkeypatch.setattr(module, "resolve_local_mlx_metallib", lambda repo_root, uv_cache_dir: metallib_path)
+    monkeypatch.setattr(module, "read_mlx_metal_dist_info_version", lambda path: "0.31.1")
+    monkeypatch.setattr(
+        module,
+        "compatible_mlx_metal_versions_for_swift_mlx",
+        lambda repo_root: ("0.31.1",),
+    )
+
+    assert module.resolve_swift_mlx_metallib(tmp_path / "repo") == (metallib_path, "0.31.1")
+
+
+def test_resolve_swift_mlx_metallib_rejects_a_version_without_compatibility_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    metallib_path = tmp_path / "mlx_metal-0.31.1/mlx/lib/mlx.metallib"
+    metallib_path.parent.mkdir(parents=True)
+    metallib_path.write_bytes(b"metal")
+    monkeypatch.setattr(module, "read_mlx_metal_dist_info_version", lambda path: "0.31.1")
+    monkeypatch.setattr(
+        module,
+        "compatible_mlx_metal_versions_for_swift_mlx",
+        lambda repo_root: (),
+    )
+
+    with pytest.raises(RuntimeError, match="Unable to prove Swift MLX metallib compatibility"):
+        module.resolve_swift_mlx_metallib(tmp_path / "repo", metallib_path)
+
+
+def test_resolve_swift_mlx_metallib_rejects_missing_configured_path(tmp_path: Path) -> None:
+    module = load_package_macos_app_module()
+
+    with pytest.raises(FileNotFoundError, match="MELIX_SWIFT_MLX_METALLIB_PATH does not point to a file"):
+        module.resolve_swift_mlx_metallib(tmp_path / "repo", tmp_path / "missing.metallib")
+
+
+def test_resolve_swift_mlx_metallib_requires_discovered_asset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    monkeypatch.setattr(module, "resolve_local_mlx_metallib", lambda repo_root, uv_cache_dir: None)
+
+    with pytest.raises(FileNotFoundError, match="No compatible Swift MLX metallib was found"):
+        module.resolve_swift_mlx_metallib(tmp_path / "repo")
+
+
+def test_resolve_swift_mlx_metallib_requires_version_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    metallib_path = tmp_path / "mlx.metallib"
+    metallib_path.write_bytes(b"metal")
+    monkeypatch.setattr(module, "read_mlx_metal_dist_info_version", lambda path: None)
+
+    with pytest.raises(RuntimeError, match="Unable to determine the mlx_metal version"):
+        module.resolve_swift_mlx_metallib(tmp_path / "repo", metallib_path)
 
 
 def test_resolve_built_product_falls_back_to_sorted_triple_release_candidates(
@@ -484,6 +595,41 @@ def test_package_workflow_uses_uv_managed_python_for_packaged_runtime() -> None:
     assert "sys.base_prefix" in package_step
 
 
+def test_package_workflow_installs_matching_swift_mlx_metallib() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    runtime_step = find_workflow_step(workflow, "Prepare packaging Python runtime")
+    assert "compatible_mlx_metal_versions_for_swift_mlx" in runtime_step
+    assert 'uv pip install --target "$SWIFT_MLX_METAL_ROOT"' in runtime_step
+    assert '"mlx-metal==$SWIFT_MLX_METAL_VERSION"' in runtime_step
+    assert 'SWIFT_MLX_METALLIB_PATH="$SWIFT_MLX_METAL_ROOT/mlx/lib/mlx.metallib"' in runtime_step
+    assert "SWIFT_MLX_METALLIB_PATH=%s" in runtime_step
+
+    package_step = find_workflow_step(workflow, "Package self-contained Melix.app")
+    assert '--swift-mlx-metallib-path "$SWIFT_MLX_METALLIB_PATH"' in package_step
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "Makefile",
+        "Package.swift",
+        "Package.resolved",
+        "Sources/**",
+        "pyproject.toml",
+        "uv.lock",
+        "scripts/ci_progress.sh",
+        "scripts/compute_build_metadata.py",
+        "scripts/dev_up.py",
+        "scripts/m8_packaging_target_smoke.py",
+    ],
+)
+def test_package_workflow_triggers_for_direct_packaging_inputs(path: str) -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert workflow.count(f'- "{path}"') == 2
+
+
 def test_package_workflow_builds_required_swift_products_before_packaging_app() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
@@ -492,6 +638,11 @@ def test_package_workflow_builds_required_swift_products_before_packaging_app() 
             workflow,
             "Build CLI executable",
             "swift build -c release --product melix --disable-automatic-resolution",
+        ),
+        find_run_workflow_step(
+            workflow,
+            "Build control plane executable",
+            "swift build -c release --package-path services/control-plane-swift --product melix-control-plane --disable-automatic-resolution",
         ),
         find_run_workflow_step(
             workflow,
@@ -520,10 +671,12 @@ def test_package_workflow_wraps_long_packaging_steps_with_ci_progress() -> None:
     progress_labels = [
         "Package app bootstrap",
         "Package app CLI build",
+        "Package app control plane build",
         "Package app Swift text worker build",
         "Package app menubar build",
         "Package app smoke checks",
         "Package app Python runtime sync",
+        "Package app Swift MLX metallib",
         "Package app build metadata",
         "Package app bundle assembly",
     ]
@@ -715,12 +868,15 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
     repo_root = tmp_path / "repo"
     menubar_binary = repo_root / "apps/macos-menubar/.build/release/melix-menubar"
     cli_binary = repo_root / ".build/release/melix"
+    control_plane_binary = (
+        repo_root / "services/control-plane-swift/.build/release/melix-control-plane"
+    )
     swift_worker_binary = (
         repo_root / "services/mlx-text-worker-swift/.build/arm64-apple-macosx/release/melix-text-worker-swift"
     )
     python_executable = repo_root / ".venv/bin/python"
     site_packages = repo_root / ".venv/lib/python3.13/site-packages"
-    for path in (menubar_binary, cli_binary, swift_worker_binary, python_executable):
+    for path in (menubar_binary, cli_binary, control_plane_binary, swift_worker_binary, python_executable):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     site_packages.mkdir(parents=True)
@@ -738,6 +894,11 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
 
     monkeypatch.setattr(module, "write_unsigned_macos_app_bundle", fake_write_unsigned_macos_app_bundle)
     monkeypatch.setattr(
+        module,
+        "resolve_swift_mlx_metallib",
+        lambda root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
+    )
+    monkeypatch.setattr(
         module.sys,
         "argv",
         [
@@ -754,7 +915,10 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
     assert capsys.readouterr().out.strip() == str(tmp_path / "Melix.app")
     assert seen["executable_path"] == menubar_binary.resolve()
     assert seen["cli_executable_path"] == cli_binary.resolve()
+    assert seen["control_plane_executable_path"] == control_plane_binary.resolve()
     assert seen["swift_text_worker_executable_path"] == swift_worker_binary.resolve()
+    assert seen["swift_mlx_metallib_path"] == tmp_path / "mlx.metallib"
+    assert seen["swift_mlx_metallib_version"] == "0.31.1"
     assert seen["python_runtime_root"] == python_executable.resolve().parent.parent
     assert seen["python_site_packages_path"] == site_packages.resolve()
 
@@ -772,11 +936,21 @@ def test_main_records_archive_timing_in_json_manifest(
     monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
     monkeypatch.setattr(
         module,
+        "resolve_built_control_plane_binary",
+        lambda repo_root: tmp_path / "melix-control-plane",
+    )
+    monkeypatch.setattr(
+        module,
         "resolve_built_swift_text_worker_binary",
         lambda repo_root: tmp_path / "melix-text-worker-swift",
     )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
+    monkeypatch.setattr(
+        module,
+        "resolve_swift_mlx_metallib",
+        lambda repo_root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
+    )
     call_order: list[str] = []
 
     def fake_write_unsigned_macos_app_bundle(**kwargs):
@@ -799,9 +973,19 @@ def test_main_records_archive_timing_in_json_manifest(
         seen["archive_path"] = requested_archive_path
         return Path(requested_archive_path)
 
+    def fake_verify_archived_macos_app_bundle(requested_archive_path, expected_app_name):
+        call_order.append("verify")
+        seen["verified_archive_path"] = requested_archive_path
+        seen["expected_app_name"] = expected_app_name
+
     monkeypatch.setattr(module, "write_unsigned_macos_app_bundle", fake_write_unsigned_macos_app_bundle)
     monkeypatch.setattr(module, "adhoc_sign_macos_app_bundle", fake_adhoc_sign_macos_app_bundle)
     monkeypatch.setattr(module, "archive_macos_app_bundle", fake_archive_macos_app_bundle)
+    monkeypatch.setattr(
+        module,
+        "verify_archived_macos_app_bundle",
+        fake_verify_archived_macos_app_bundle,
+    )
     monkeypatch.setattr(
         module.sys,
         "argv",
@@ -824,13 +1008,373 @@ def test_main_records_archive_timing_in_json_manifest(
     assert payload["adhoc_signed"] is True
     assert seen["signed_app_path"] == str(tmp_path / "Melix.app")
     assert seen["archive_path"] == str(archive_path)
-    assert call_order == ["sign", "archive"]
+    assert seen["verified_archive_path"] == str(archive_path)
+    assert seen["expected_app_name"] == "Melix.app"
+    assert call_order == ["sign", "archive", "verify"]
+    assert payload["archive_verified"] is True
     assert payload["timings"]["write_total_seconds"] == 0.25
     assert isinstance(payload["timings"]["adhoc_sign_seconds"], float)
     assert payload["timings"]["adhoc_sign_seconds"] >= 0.0
     assert isinstance(payload["timings"]["archive_seconds"], float)
     assert payload["timings"]["archive_seconds"] >= 0.0
+    assert isinstance(payload["timings"]["archive_verify_seconds"], float)
+    assert payload["timings"]["archive_verify_seconds"] >= 0.0
     assert payload["timings"]["total_seconds"] >= payload["timings"]["write_total_seconds"]
+
+
+def test_main_stops_before_archive_when_adhoc_signing_or_deep_verification_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+
+    monkeypatch.setattr(module, "resolve_built_binary", lambda repo_root: tmp_path / "melix-menubar")
+    monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
+    monkeypatch.setattr(
+        module,
+        "resolve_built_control_plane_binary",
+        lambda repo_root: tmp_path / "melix-control-plane",
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_built_swift_text_worker_binary",
+        lambda repo_root: tmp_path / "melix-text-worker-swift",
+    )
+    monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
+    monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
+    monkeypatch.setattr(
+        module,
+        "resolve_swift_mlx_metallib",
+        lambda repo_root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
+    )
+    monkeypatch.setattr(
+        module,
+        "write_unsigned_macos_app_bundle",
+        lambda **kwargs: {
+            "app_path": str(tmp_path / "Melix.app"),
+            "timings": {"write_total_seconds": 0.1},
+        },
+    )
+    monkeypatch.setattr(module, "adhoc_sign_macos_app_bundle", lambda app_path: False)
+    monkeypatch.setattr(
+        module,
+        "archive_macos_app_bundle",
+        lambda app_path, requested_archive_path: pytest.fail(
+            "archive creation must not run after signing or deep verification fails"
+        ),
+    )
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "package_macos_menubar_app.py",
+            "--repo-root",
+            str(tmp_path / "repo"),
+            "--output-path",
+            str(tmp_path / "Melix.app"),
+            "--archive-path",
+            str(archive_path),
+            "--json",
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="Ad-hoc signing and deep verification failed"):
+        module.main()
+
+    assert archive_path.exists() is False
+
+
+def test_main_propagates_extracted_archive_verification_failure_before_success_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+
+    monkeypatch.setattr(module, "resolve_built_binary", lambda repo_root: tmp_path / "melix-menubar")
+    monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
+    monkeypatch.setattr(
+        module,
+        "resolve_built_control_plane_binary",
+        lambda repo_root: tmp_path / "melix-control-plane",
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_built_swift_text_worker_binary",
+        lambda repo_root: tmp_path / "melix-text-worker-swift",
+    )
+    monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
+    monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
+    monkeypatch.setattr(
+        module,
+        "resolve_swift_mlx_metallib",
+        lambda repo_root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
+    )
+    monkeypatch.setattr(
+        module,
+        "write_unsigned_macos_app_bundle",
+        lambda **kwargs: {
+            "app_path": str(tmp_path / "Melix.app"),
+            "timings": {"write_total_seconds": 0.1},
+        },
+    )
+    monkeypatch.setattr(module, "adhoc_sign_macos_app_bundle", lambda app_path: True)
+
+    def fake_archive_macos_app_bundle(app_path: str, requested_archive_path: str) -> Path:
+        archive_path.write_bytes(b"zip")
+        return archive_path
+
+    monkeypatch.setattr(module, "archive_macos_app_bundle", fake_archive_macos_app_bundle)
+    monkeypatch.setattr(
+        module,
+        "verify_archived_macos_app_bundle",
+        lambda requested_archive_path, expected_app_name: (_ for _ in ()).throw(
+            RuntimeError("Archived macOS app deep signature verification failed")
+        ),
+    )
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "package_macos_menubar_app.py",
+            "--repo-root",
+            str(tmp_path / "repo"),
+            "--output-path",
+            str(tmp_path / "Melix.app"),
+            "--archive-path",
+            str(archive_path),
+            "--json",
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="deep signature verification failed"):
+        module.main()
+
+    assert capsys.readouterr().out == ""
+
+
+def _write_extracted_archive_fixture(
+    extraction_root: Path,
+    *,
+    expected_app_name: str,
+    absolute_metallib_link: bool = False,
+) -> Path:
+    app_path = extraction_root / expected_app_name
+    resources_path = app_path / "Contents/Resources"
+    bundled_metallib = resources_path / "swift-mlx/mlx.metallib"
+    bundled_metallib.parent.mkdir(parents=True)
+    bundled_metallib.write_bytes(b"matching-swift-mlx-metallib")
+    metallib_link = resources_path / "mlx.metallib"
+    metallib_link.symlink_to(
+        bundled_metallib.resolve()
+        if absolute_metallib_link
+        else Path("swift-mlx/mlx.metallib")
+    )
+    return app_path
+
+
+def test_verify_archived_macos_app_bundle_requires_relative_metallib_link_and_deep_signature(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/codesign")
+
+    def fake_run(command: list[str], check: bool, **kwargs: object) -> None:
+        calls.append(command)
+        if command[0] == "/usr/bin/ditto":
+            _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+            )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module.verify_archived_macos_app_bundle(
+        archive_path,
+        expected_app_name="Melix.app",
+    )
+
+    assert calls[0][:4] == ["/usr/bin/ditto", "-x", "-k", str(archive_path.resolve())]
+    assert calls[-1] == [
+        "/usr/bin/codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "--verbose=4",
+        str((Path(calls[0][-1]) / "Melix.app").resolve()),
+    ]
+
+
+def test_verify_archived_macos_app_bundle_rejects_absolute_metallib_link(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/codesign")
+
+    def fake_run(command: list[str], check: bool, **kwargs: object) -> None:
+        if command[0] == "/usr/bin/ditto":
+            _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+                absolute_metallib_link=True,
+            )
+            return
+        pytest.fail("deep signature verification must not run for an invalid metallib link")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="must be relative"):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+        )
+
+
+def test_verify_archived_macos_app_bundle_propagates_deep_signature_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/codesign")
+
+    def fake_run(command: list[str], check: bool, **kwargs: object) -> None:
+        if command[0] == "/usr/bin/ditto":
+            _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+            )
+            return
+        raise module.subprocess.CalledProcessError(returncode=1, cmd=command)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="deep signature verification failed"):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+        )
+
+
+def test_verify_archived_macos_app_bundle_requires_archive_and_codesign(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    missing_archive = tmp_path / "missing.zip"
+
+    with pytest.raises(FileNotFoundError, match="archive is missing"):
+        module.verify_archived_macos_app_bundle(
+            missing_archive,
+            expected_app_name="Melix.app",
+        )
+
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    monkeypatch.setattr(module.shutil, "which", lambda name: None)
+
+    with pytest.raises(RuntimeError, match="codesign is required"):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+        )
+
+
+@pytest.mark.parametrize("expected_app_name", ("Melix", "../Melix.app"))
+def test_verify_archived_macos_app_bundle_rejects_invalid_expected_app_name(
+    tmp_path: Path,
+    expected_app_name: str,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+
+    with pytest.raises(ValueError, match="single .app name"):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name=expected_app_name,
+        )
+
+
+def test_verify_archived_macos_app_bundle_propagates_extraction_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/codesign")
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda command, check, **kwargs: (_ for _ in ()).throw(
+            module.subprocess.CalledProcessError(returncode=1, cmd=command)
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="archive extraction failed"):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+        )
+
+
+@pytest.mark.parametrize(
+    ("archive_fixture", "message"),
+    (
+        ("missing-app", "bundle is missing after extraction"),
+        ("plain-metallib", "must remain a symbolic link"),
+        ("unexpected-target", "link target is unexpected"),
+        ("missing-target", "link target is missing"),
+    ),
+)
+def test_verify_archived_macos_app_bundle_rejects_invalid_extracted_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    archive_fixture: str,
+    message: str,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/codesign")
+
+    def fake_run(command: list[str], check: bool, **kwargs: object) -> None:
+        if command[0] != "/usr/bin/ditto":
+            pytest.fail("deep signature verification must not run for an invalid archive layout")
+        if archive_fixture == "missing-app":
+            return
+
+        resources_path = Path(command[-1]) / "Melix.app/Contents/Resources"
+        resources_path.mkdir(parents=True)
+        metallib_link = resources_path / "mlx.metallib"
+        if archive_fixture == "plain-metallib":
+            metallib_link.write_bytes(b"not-a-link")
+        elif archive_fixture == "unexpected-target":
+            metallib_link.symlink_to(Path("other/mlx.metallib"))
+        else:
+            metallib_link.symlink_to(Path("swift-mlx/mlx.metallib"))
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match=message):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+        )
 
 
 def test_main_requires_write_timing_when_archive_is_requested(
@@ -844,11 +1388,21 @@ def test_main_requires_write_timing_when_archive_is_requested(
     monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
     monkeypatch.setattr(
         module,
+        "resolve_built_control_plane_binary",
+        lambda repo_root: tmp_path / "melix-control-plane",
+    )
+    monkeypatch.setattr(
+        module,
         "resolve_built_swift_text_worker_binary",
         lambda repo_root: tmp_path / "melix-text-worker-swift",
     )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
+    monkeypatch.setattr(
+        module,
+        "resolve_swift_mlx_metallib",
+        lambda repo_root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
+    )
     monkeypatch.setattr(
         module,
         "write_unsigned_macos_app_bundle",

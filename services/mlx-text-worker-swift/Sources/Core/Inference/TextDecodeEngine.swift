@@ -66,6 +66,7 @@ struct TextDecodeEngine: Sendable {
             var completionTokens = 0
             var outputState = FilteredTextOutputState()
             var tokensPerSecond: Double?
+            var finishReason = "stop"
             var decodeBatchSize = 1
             var modelEvalBatchSize = 1
             var decodeLoopIterations = 1
@@ -87,7 +88,11 @@ struct TextDecodeEngine: Sendable {
             var harmonyFilterCallCount = 0
             var grpcWriteTotalMicros = 0
             var grpcWriteCallCount = 0
-            var outputFilter = HarmonyChannelOutputFilter()
+            var outputFilter = HarmonyChannelOutputFilter(
+                execution: request.execution,
+                fallbackExecution: session.prefill.execution,
+                fallbackParserMode: session.loadedModel.spec.parserMode
+            )
             let outputCadencePolicy = decodeOutputCadencePolicy(
                 model: session.loadedModel.spec,
                 execution: request.execution
@@ -224,6 +229,7 @@ struct TextDecodeEngine: Sendable {
                 case .summary(let summary):
                     completionTokens = max(completionTokens, summary.completionTokens)
                     tokensPerSecond = summary.tokensPerSecond
+                    finishReason = summary.finishReason
                     decodeBatchSize = max(decodeBatchSize, summary.decodeBatchSize ?? 1)
                     modelEvalBatchSize = max(modelEvalBatchSize, summary.modelEvalBatchSize ?? 1)
                     decodeLoopIterations = max(decodeLoopIterations, summary.decodeLoopIterations ?? 1)
@@ -304,7 +310,7 @@ struct TextDecodeEngine: Sendable {
             }
 
             var completed = Melix_Worker_V1_Completed()
-            completed.finishReason = (abortHandle?.isAborted ?? false) ? "cancelled" : "stop"
+            completed.finishReason = (abortHandle?.isAborted ?? false) ? "cancelled" : finishReason
             completed.assistantText = outputState.assistantText
             completed.reasoningText = outputState.reasoningText
             if let decodeBatchFallbackReason, !decodeBatchFallbackReason.isEmpty {

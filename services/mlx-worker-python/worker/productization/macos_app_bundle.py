@@ -55,7 +55,10 @@ class MacOSAppBundleLayout:
     launcher_script_path: Path
     bundled_app_binary_path: Path
     bundled_cli_binary_path: Path
+    bundled_control_plane_binary_path: Path
     bundled_swift_worker_binary_path: Path
+    bundled_swift_mlx_metallib_path: Path
+    swift_mlx_metallib_link_path: Path
     bundled_python_runtime_path: Path
     bundled_python_executable_path: Path
     bundled_site_packages_path: Path
@@ -82,7 +85,10 @@ def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Meli
         launcher_script_path=resources_path / f"{app_name}.sh",
         bundled_app_binary_path=resources_path / "melix-menubar",
         bundled_cli_binary_path=resources_path / "melix",
+        bundled_control_plane_binary_path=resources_path / "melix-control-plane",
         bundled_swift_worker_binary_path=resources_path / "melix-text-worker-swift",
+        bundled_swift_mlx_metallib_path=resources_path / "swift-mlx/mlx.metallib",
+        swift_mlx_metallib_link_path=resources_path / "mlx.metallib",
         bundled_python_runtime_path=python_runtime_path,
         bundled_python_executable_path=python_runtime_path / "bin/python3",
         bundled_site_packages_path=resources_path / "python-site-packages",
@@ -198,6 +204,7 @@ def render_portable_environment_script(
             f'export MELIX_HTTP_HOST="${{MELIX_HTTP_HOST:-{http_bind_host}}}"',
             f'export MELIX_HTTP_CONNECT_HOST="${{MELIX_HTTP_CONNECT_HOST:-{http_connect_host}}}"',
             f'export MELIX_HTTP_PORT="${{MELIX_HTTP_PORT:-{http_port}}}"',
+            'export MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY="environment"',
             'export MELIX_BACKEND_MODE="auto"',
             'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"',
             'export MELIX_LOGS_DIR="${MELIX_LOGS_DIR:-$MELIX_HOME/logs}"',
@@ -213,6 +220,7 @@ def render_launcher_script(
     bundle_repo_root: str | Path,
     bundled_app_binary_name: str,
     bundled_cli_binary_name: str,
+    bundled_control_plane_binary_name: str,
     bundled_swift_worker_binary_name: str,
     bundled_python_executable_relative_path: str,
     bundled_site_packages_relative_path: str,
@@ -245,6 +253,8 @@ def render_launcher_script(
             f'export PYTHONPATH="$RESOURCES_DIR/{bundled_site_packages_relative_path}:$MELIX_REPO_ROOT:$MELIX_REPO_ROOT/services/mlx-worker-python"',
             'cleanup() {',
             '  status=$?',
+            '  [[ -n "${MELIX_ACTIVE_RUNTIME_PATH:-}" ]] && rm -f "$MELIX_ACTIVE_RUNTIME_PATH"',
+            '  [[ -n "${MELIX_CONTROL_PLANE_PID:-}" ]] && kill "$MELIX_CONTROL_PLANE_PID" >/dev/null 2>&1 || true',
             '  [[ -n "${MELIX_SWIFT_WORKER_PID:-}" ]] && kill "$MELIX_SWIFT_WORKER_PID" >/dev/null 2>&1 || true',
             '  [[ -n "${MELIX_PYTHON_WORKER_PID:-}" ]] && kill "$MELIX_PYTHON_WORKER_PID" >/dev/null 2>&1 || true',
             '  rm -f "$MELIX_WORKER_SOCKET_PATH" "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"',
@@ -259,6 +269,74 @@ def render_launcher_script(
             'export MELIX_PYTHON_WORKER_PID',
             f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" "$RESOURCES_DIR/{wait_script_relative_path}" --socket-path "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH" --timeout-seconds 30',
             f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" "$RESOURCES_DIR/{wait_script_relative_path}" --socket-path "$MELIX_WORKER_SOCKET_PATH" --timeout-seconds 30',
+            (
+                f'if "$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
+                '-c \'import socket, sys; connection = socket.create_connection((sys.argv[1], int(sys.argv[2])), 0.2); connection.close()\' '
+                '"$MELIX_HTTP_CONNECT_HOST" "$MELIX_HTTP_PORT" >/dev/null 2>&1; then'
+            ),
+            '  printf "Melix HTTP port %s is already in use on %s.\\n" "$MELIX_HTTP_PORT" "$MELIX_HTTP_CONNECT_HOST" >&2',
+            '  exit 1',
+            'fi',
+            f'"$RESOURCES_DIR/{bundled_control_plane_binary_name}" >"$MELIX_LOGS_DIR/control-plane.stdout.log" 2>"$MELIX_LOGS_DIR/control-plane.stderr.log" &',
+            'MELIX_CONTROL_PLANE_PID=$!',
+            'export MELIX_CONTROL_PLANE_PID',
+            'MELIX_HTTP_READY_URL="http://$MELIX_HTTP_CONNECT_HOST:$MELIX_HTTP_PORT/health"',
+            'MELIX_HTTP_READY=0',
+            'for _ in {1..60}; do',
+            '  if ! kill -0 "$MELIX_CONTROL_PLANE_PID" >/dev/null 2>&1; then',
+            '    wait "$MELIX_CONTROL_PLANE_PID" >/dev/null 2>&1 || true',
+            '    printf "Melix control plane exited before becoming ready. See %s/control-plane.stderr.log.\\n" "$MELIX_LOGS_DIR" >&2',
+            '    exit 1',
+            '  fi',
+            '  if /usr/bin/curl --fail --silent --show-error "$MELIX_HTTP_READY_URL" >/dev/null 2>&1; then',
+            '    sleep 0.1',
+            '    if kill -0 "$MELIX_CONTROL_PLANE_PID" >/dev/null 2>&1; then',
+            '      MELIX_HTTP_READY=1',
+            '      break',
+            '    fi',
+            '  fi',
+            '  sleep 0.5',
+            'done',
+            'if [[ "$MELIX_HTTP_READY" != "1" ]]; then',
+            '  printf "Melix control plane did not become ready at %s. See %s/control-plane.stderr.log.\\n" "$MELIX_HTTP_READY_URL" "$MELIX_LOGS_DIR" >&2',
+            '  exit 1',
+            'fi',
+            'export MELIX_ACTIVE_RUNTIME_PATH="${MELIX_ACTIVE_RUNTIME_PATH:-$MELIX_RUNTIME_DIR/active-runtime.json}"',
+            (
+                f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
+                '-m worker.productization.active_runtime '
+                '--output-path "$MELIX_ACTIVE_RUNTIME_PATH" '
+                '--app-process-id "$$" '
+                '--control-plane-process-id "$MELIX_CONTROL_PLANE_PID" '
+                '--python-worker-process-id "$MELIX_PYTHON_WORKER_PID" '
+                '--swift-text-worker-process-id "$MELIX_SWIFT_WORKER_PID" '
+                '--python-worker-socket-path "$MELIX_WORKER_SOCKET_PATH" '
+                '--swift-text-worker-socket-path "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH" '
+                '--service-base-url "http://$MELIX_HTTP_CONNECT_HOST:$MELIX_HTTP_PORT/v1"'
+            ),
+            'MELIX_APP_PROCESS_PID=$$',
+            'MELIX_WATCHDOG_CONTROL_PLANE_PID="$MELIX_CONTROL_PLANE_PID"',
+            'MELIX_WATCHDOG_SWIFT_WORKER_PID="$MELIX_SWIFT_WORKER_PID"',
+            'MELIX_WATCHDOG_PYTHON_WORKER_PID="$MELIX_PYTHON_WORKER_PID"',
+            '(',
+            '  while kill -0 "$MELIX_APP_PROCESS_PID" >/dev/null 2>&1; do',
+            '    if [[ -n "$MELIX_WATCHDOG_CONTROL_PLANE_PID" ]] && ! kill -0 "$MELIX_WATCHDOG_CONTROL_PLANE_PID" >/dev/null 2>&1; then',
+            '      MELIX_WATCHDOG_CONTROL_PLANE_PID=""',
+            '    fi',
+            '    if [[ -n "$MELIX_WATCHDOG_SWIFT_WORKER_PID" ]] && ! kill -0 "$MELIX_WATCHDOG_SWIFT_WORKER_PID" >/dev/null 2>&1; then',
+            '      MELIX_WATCHDOG_SWIFT_WORKER_PID=""',
+            '    fi',
+            '    if [[ -n "$MELIX_WATCHDOG_PYTHON_WORKER_PID" ]] && ! kill -0 "$MELIX_WATCHDOG_PYTHON_WORKER_PID" >/dev/null 2>&1; then',
+            '      MELIX_WATCHDOG_PYTHON_WORKER_PID=""',
+            '    fi',
+            '    /bin/sleep 0.25',
+            '  done',
+            '  rm -f "$MELIX_ACTIVE_RUNTIME_PATH"',
+            '  [[ -n "$MELIX_WATCHDOG_CONTROL_PLANE_PID" ]] && kill "$MELIX_WATCHDOG_CONTROL_PLANE_PID" >/dev/null 2>&1 || true',
+            '  [[ -n "$MELIX_WATCHDOG_SWIFT_WORKER_PID" ]] && kill "$MELIX_WATCHDOG_SWIFT_WORKER_PID" >/dev/null 2>&1 || true',
+            '  [[ -n "$MELIX_WATCHDOG_PYTHON_WORKER_PID" ]] && kill "$MELIX_WATCHDOG_PYTHON_WORKER_PID" >/dev/null 2>&1 || true',
+            '  rm -f "$MELIX_WORKER_SOCKET_PATH" "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"',
+            ') >/dev/null 2>&1 &',
             f'exec "$RESOURCES_DIR/{bundled_app_binary_name}" "$@"',
             "",
         ]
@@ -598,7 +676,10 @@ def write_unsigned_macos_app_bundle(
     repo_root: str | Path,
     executable_path: str | Path,
     cli_executable_path: str | Path,
+    control_plane_executable_path: str | Path,
     swift_text_worker_executable_path: str | Path,
+    swift_mlx_metallib_path: str | Path,
+    swift_mlx_metallib_version: str,
     python_runtime_root: str | Path,
     python_site_packages_path: str | Path,
     output_path: str | Path,
@@ -616,7 +697,10 @@ def write_unsigned_macos_app_bundle(
     repo_root_path = Path(repo_root).expanduser().resolve()
     executable = Path(executable_path).expanduser().resolve()
     cli_executable = Path(cli_executable_path).expanduser().resolve()
+    control_plane_executable = Path(control_plane_executable_path).expanduser().resolve()
     swift_worker_executable = Path(swift_text_worker_executable_path).expanduser().resolve()
+    swift_mlx_metallib = Path(swift_mlx_metallib_path).expanduser().resolve()
+    normalized_swift_mlx_metallib_version = swift_mlx_metallib_version.strip()
     python_runtime = Path(python_runtime_root).expanduser().resolve()
     python_site_packages = Path(python_site_packages_path).expanduser().resolve()
     resolved_update_channel_path = (
@@ -636,8 +720,14 @@ def write_unsigned_macos_app_bundle(
         raise FileNotFoundError(f"Missing menubar executable: {executable}")
     if not cli_executable.is_file():
         raise FileNotFoundError(f"Missing Melix CLI executable: {cli_executable}")
+    if not control_plane_executable.is_file():
+        raise FileNotFoundError(f"Missing Melix control-plane executable: {control_plane_executable}")
     if not swift_worker_executable.is_file():
         raise FileNotFoundError(f"Missing Swift text worker executable: {swift_worker_executable}")
+    if not swift_mlx_metallib.is_file():
+        raise FileNotFoundError(f"Missing Swift MLX metallib: {swift_mlx_metallib}")
+    if not normalized_swift_mlx_metallib_version:
+        raise ValueError("Swift MLX metallib version must not be empty")
     if not python_runtime.is_dir():
         raise FileNotFoundError(f"Missing bundled Python runtime root: {python_runtime}")
     if not python_site_packages.is_dir():
@@ -666,8 +756,21 @@ def write_unsigned_macos_app_bundle(
     shutil.copy2(cli_executable, layout.bundled_cli_binary_path)
     timings["copy_cli_binary_seconds"] = elapsed_seconds(started_at)
     started_at = time.perf_counter()
+    shutil.copy2(control_plane_executable, layout.bundled_control_plane_binary_path)
+    timings["copy_control_plane_binary_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
     shutil.copy2(swift_worker_executable, layout.bundled_swift_worker_binary_path)
     timings["copy_swift_worker_binary_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
+    layout.bundled_swift_mlx_metallib_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(swift_mlx_metallib, layout.bundled_swift_mlx_metallib_path)
+    layout.swift_mlx_metallib_link_path.symlink_to(Path("swift-mlx/mlx.metallib"))
+    if not layout.swift_mlx_metallib_link_path.is_file():  # pragma: no cover - filesystem race guard
+        raise RuntimeError(
+            "Bundled Swift MLX metallib link does not resolve inside the app: "
+            f"{layout.swift_mlx_metallib_link_path}"
+        )
+    timings["copy_swift_mlx_metallib_seconds"] = elapsed_seconds(started_at)
     started_at = time.perf_counter()
     shutil.copy2(resolved_icon_source_path, layout.bundled_icon_path)
     timings["copy_icon_seconds"] = elapsed_seconds(started_at)
@@ -683,6 +786,7 @@ def write_unsigned_macos_app_bundle(
         [
             layout.bundled_app_binary_path,
             layout.bundled_cli_binary_path,
+            layout.bundled_control_plane_binary_path,
             layout.bundled_swift_worker_binary_path,
         ]
     )
@@ -725,10 +829,14 @@ def write_unsigned_macos_app_bundle(
     }
 
     started_at = time.perf_counter()
-    bundled_resource_bundle_paths = _copy_swiftpm_resource_bundles(
-        executable.parent,
-        [layout.resources_path],
-    )
+    bundled_resource_bundle_paths: list[Path] = []
+    for resource_source_root in dict.fromkeys((executable.parent, swift_worker_executable.parent)):
+        for copied_path in _copy_swiftpm_resource_bundles(
+            resource_source_root,
+            [layout.resources_path],
+        ):
+            if copied_path not in bundled_resource_bundle_paths:
+                bundled_resource_bundle_paths.append(copied_path)
     timings["copy_swiftpm_resource_bundles_seconds"] = elapsed_seconds(started_at)
 
     started_at = time.perf_counter()
@@ -752,6 +860,8 @@ def write_unsigned_macos_app_bundle(
     target_metadata["http_bind_host"] = normalized_bind_host
     target_metadata["http_connect_host"] = resolved_connect_host
     target_metadata["http_port"] = http_port
+    target_metadata["swift_mlx_metallib_path"] = "mlx.metallib"
+    target_metadata["swift_mlx_metallib_version"] = normalized_swift_mlx_metallib_version
     target_metadata["health_probe_url"] = f"http://{format_http_url_host(resolved_connect_host)}:{http_port}/health"
     target_metadata["service_base_url"] = f"http://{format_http_url_host(resolved_connect_host)}:{http_port}/v1"
     layout.packaging_target_manifest_path.write_text(
@@ -773,6 +883,7 @@ def write_unsigned_macos_app_bundle(
             bundle_repo_root=Path("repo"),
             bundled_app_binary_name=layout.bundled_app_binary_path.name,
             bundled_cli_binary_name=layout.bundled_cli_binary_path.name,
+            bundled_control_plane_binary_name=layout.bundled_control_plane_binary_path.name,
             bundled_swift_worker_binary_name=layout.bundled_swift_worker_binary_path.name,
             bundled_python_executable_relative_path=layout.bundled_python_executable_path.relative_to(layout.resources_path).as_posix(),
             bundled_site_packages_relative_path=layout.bundled_site_packages_path.relative_to(layout.resources_path).as_posix(),
@@ -802,6 +913,7 @@ def write_unsigned_macos_app_bundle(
         layout.launcher_path,
         layout.bundled_app_binary_path,
         layout.bundled_cli_binary_path,
+        layout.bundled_control_plane_binary_path,
         layout.bundled_swift_worker_binary_path,
         layout.bundled_python_executable_path,
     ):
@@ -816,7 +928,11 @@ def write_unsigned_macos_app_bundle(
         "resources_path": str(layout.resources_path),
         "bundled_binary_path": str(layout.bundled_app_binary_path),
         "bundled_cli_binary_path": str(layout.bundled_cli_binary_path),
+        "bundled_control_plane_binary_path": str(layout.bundled_control_plane_binary_path),
         "bundled_swift_worker_binary_path": str(layout.bundled_swift_worker_binary_path),
+        "bundled_swift_mlx_metallib_path": str(layout.bundled_swift_mlx_metallib_path),
+        "swift_mlx_metallib_link_path": str(layout.swift_mlx_metallib_link_path),
+        "swift_mlx_metallib_version": normalized_swift_mlx_metallib_version,
         "bundled_python_runtime_path": str(layout.bundled_python_runtime_path),
         "bundled_site_packages_path": str(layout.bundled_site_packages_path),
         "bundled_repo_root_path": str(layout.bundled_repo_root_path),

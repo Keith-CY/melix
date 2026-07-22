@@ -14,6 +14,7 @@ public enum BridgeCommandKind: String, Sendable {
     case loadModel = "load-model"
     case unloadModel = "unload-model"
     case getRuntimeStats = "get-runtime-stats"
+    case listLoadedModels = "list-loaded-models"
     case getCacheStats = "get-cache-stats"
     case generate = "generate"
     case prefill = "prefill"
@@ -78,6 +79,11 @@ public protocol PythonWorkerRPCRunning: Sendable {
         socketPath: String,
         request: Melix_Worker_V1_GetRuntimeStatsRequest
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse
+
+    func listLoadedModels(
+        socketPath: String,
+        request: Melix_Worker_V1_ListLoadedModelsRequest
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse
 
     func cacheStats(
         socketPath: String,
@@ -210,6 +216,7 @@ public struct PythonBridgeWorkerClient:
     NonTextInferenceWorkerClientProtocol,
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol,
+    LoadedModelsIntrospectingWorkerClientProtocol,
     ModelOperationsWorkerClientProtocol,
     StreamingExportResultsWorkerClientProtocol,
     Sendable
@@ -357,6 +364,20 @@ public struct PythonBridgeWorkerClient:
             )
         case .rpc(let runner):
             return try await runner.runtimeStats(socketPath: socketPath, request: request)
+        }
+    }
+
+    public func listLoadedModels() async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        let request = Melix_Worker_V1_ListLoadedModelsRequest()
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .listLoadedModels,
+                request: request,
+                as: Melix_Worker_V1_ListLoadedModelsResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.listLoadedModels(socketPath: socketPath, request: request)
         }
     }
 
@@ -783,6 +804,7 @@ public enum BootstrapWorkerPreparation {
         "melix.generation_config.source",
         "melix.generation_config.temperature",
         "melix.generation_config.top_p",
+        "melix.generation_config.top_k",
         "melix.generation_config.max_tokens",
         "melix.generation_config.do_sample",
     ]
@@ -1853,6 +1875,15 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
         try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _, _ in
             try await runtimeClient.getRuntimeStats(request)
+        }
+    }
+
+    public func listLoadedModels(
+        socketPath: String,
+        request: Melix_Worker_V1_ListLoadedModelsRequest
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _, _ in
+            try await runtimeClient.listLoadedModels(request)
         }
     }
 

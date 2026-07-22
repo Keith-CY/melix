@@ -8572,6 +8572,7 @@ public actor MelixCLIRunner {
                 execution = try await client.startChat(
                     ControlPlaneChatRequest(
                         modelID: options.modelID,
+                        serverSessionID: options.serverSessionID,
                         messages: buildChatMessages(options: options),
                         remoteTarget: remoteTarget
                     )

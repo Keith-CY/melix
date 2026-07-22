@@ -877,8 +877,8 @@ def test_allowed_tools_receipt_reuses_static_omitted_receipt() -> None:
             "<think>unfinished hidden reasoning",
             {
                 "assistant_text": "",
-                "reasoning_text": "",
-                "reasoning_finalized": "false",
+                "reasoning_text": "unfinished hidden reasoning",
+                "reasoning_finalized": "true",
                 "tool_calls_finalized": "false",
                 "malformed_channel_recovered": "true",
                 "malformed_reasoning_count": "1",
@@ -991,6 +991,34 @@ def test_generate_finalizer_receipt_matches_for_stream_and_non_stream_modes(
         if key in {"assistant_text", "reasoning_text", "tool_choice_policy"}:
             continue
         assert stream_receipt[key] == value
+
+
+def test_generate_flushes_eos_recovered_answer_before_usage_and_completed() -> None:
+    events = _generate_finalizer_events(
+        raw_text="<think>hidden trace\nAnswer: 42",
+        stream=True,
+        request_id="req-finalizer-stream-eos-recovery-sequence",
+    )
+
+    payloads = [event.WhichOneof("payload") for event in events]
+    reasoning = [
+        event.reasoning_delta.text
+        for event in events
+        if event.HasField("reasoning_delta")
+    ]
+    content = [
+        event.token_delta.text
+        for event in events
+        if event.HasField("token_delta")
+    ]
+    completed = _finalizer_completed(events)
+
+    assert reasoning == ["hidden trace"]
+    assert content == ["Answer: 42"]
+    assert "".join(content) == completed.assistant_text
+    assert payloads.index("reasoning_delta") < payloads.index("token_delta")
+    assert payloads.index("token_delta") < payloads.index("usage_delta")
+    assert payloads.index("usage_delta") < payloads.index("completed")
 
 
 def _token_route_request(

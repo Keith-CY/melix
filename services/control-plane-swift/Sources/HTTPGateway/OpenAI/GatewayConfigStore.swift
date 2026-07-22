@@ -59,6 +59,32 @@ public enum GatewayConfigValidationError: Error, Equatable, Sendable {
     }
 }
 
+public enum GatewayConfigRefreshFailureKind: String, Equatable, Sendable {
+    case storeRemovedAfterLoad = "store_removed_after_load"
+    case readFailed = "read_failed"
+    case decodeFailed = "decode_failed"
+
+    var metricCode: Double {
+        switch self {
+        case .storeRemovedAfterLoad:
+            return 1
+        case .readFailed:
+            return 2
+        case .decodeFailed:
+            return 3
+        }
+    }
+}
+
+public struct GatewayConfigRefreshDiagnostics: Equatable, Sendable {
+    public let totalFailureCount: UInt64
+    public let consecutiveFailureCount: UInt64
+    public let lastFailureKind: GatewayConfigRefreshFailureKind?
+    public let lastFailureAtUnixMS: Int64?
+    public let lastFailureMessage: String
+    public let servingLastKnownGoodConfig: Bool
+}
+
 public struct GatewayRuntimeBinding: Equatable, Sendable {
     public let activeServerSessionID: String
     public let host: String
@@ -90,6 +116,7 @@ private struct GatewayConfigDefaults: Equatable, Sendable {
     let allowedHosts: [String]
     let allowedOrigins: [String]
     let source: Melix_Controlplane_V1_GatewayConfigSource
+    let environmentListenerIsAuthoritative: Bool
 }
 
 private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
@@ -196,12 +223,41 @@ private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
 
 private struct GatewayConfigDocument: Codable, Equatable, Sendable {
     let schemaVersion: Int
+    let activeServerSessionID: String?
     let listeners: [PersistedGatewayListenerRecord]
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
+        case activeServerSessionID = "active_server_session_id"
         case listeners
     }
+}
+
+private struct LoadedGatewayConfig: Sendable {
+    let activeServerSessionID: String?
+    let recordsByServerSessionID: [String: PersistedGatewayListenerRecord]
+
+    static let empty = LoadedGatewayConfig(
+        activeServerSessionID: nil,
+        recordsByServerSessionID: [:]
+    )
+}
+
+private struct GatewayConfigLoadFailure: Error, Sendable {
+    let kind: GatewayConfigRefreshFailureKind
+    let message: String
+}
+
+private enum GatewayConfigLoadResult: Sendable {
+    case missing
+    case loaded(LoadedGatewayConfig)
+    case failed(GatewayConfigLoadFailure)
+}
+
+private struct InitialGatewayConfigState: Sendable {
+    let loadedConfig: LoadedGatewayConfig
+    let hasLastKnownGoodPersistedConfig: Bool
+    let refreshDiagnostics: GatewayConfigRefreshDiagnostics
 }
 
 public actor GatewayConfigStore {
@@ -209,18 +265,29 @@ public actor GatewayConfigStore {
     private let fileManager: FileManager
     private let nowUnixMS: @Sendable () -> Int64
     private let defaults: GatewayConfigDefaults
+    private var activeServerSessionID: String?
     private var recordsByServerSessionID: [String: PersistedGatewayListenerRecord]
+    private var hasLastKnownGoodPersistedConfig: Bool
+    private var refreshDiagnosticsState: GatewayConfigRefreshDiagnostics
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default,
         nowUnixMS: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
     ) {
+        let resolvedStoreURL = Self.resolveStoreURL(environment: environment)
+        let initialState = Self.initialState(
+            from: Self.loadConfig(from: resolvedStoreURL, fileManager: fileManager),
+            nowUnixMS: nowUnixMS
+        )
         self.fileManager = fileManager
         self.nowUnixMS = nowUnixMS
-        self.storeURL = Self.resolveStoreURL(environment: environment)
+        self.storeURL = resolvedStoreURL
         self.defaults = Self.resolveDefaults(environment: environment)
-        self.recordsByServerSessionID = Self.loadRecords(from: storeURL, fileManager: fileManager)
+        self.activeServerSessionID = initialState.loadedConfig.activeServerSessionID
+        self.recordsByServerSessionID = initialState.loadedConfig.recordsByServerSessionID
+        self.hasLastKnownGoodPersistedConfig = initialState.hasLastKnownGoodPersistedConfig
+        self.refreshDiagnosticsState = initialState.refreshDiagnostics
     }
 
     public init(
@@ -229,24 +296,33 @@ public actor GatewayConfigStore {
         fileManager: FileManager = .default,
         nowUnixMS: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
     ) {
+        let initialState = Self.initialState(
+            from: Self.loadConfig(from: storeURL, fileManager: fileManager),
+            nowUnixMS: nowUnixMS
+        )
         self.fileManager = fileManager
         self.nowUnixMS = nowUnixMS
         self.storeURL = storeURL
         self.defaults = Self.resolveDefaults(environment: defaults)
-        self.recordsByServerSessionID = Self.loadRecords(from: storeURL, fileManager: fileManager)
+        self.activeServerSessionID = initialState.loadedConfig.activeServerSessionID
+        self.recordsByServerSessionID = initialState.loadedConfig.recordsByServerSessionID
+        self.hasLastKnownGoodPersistedConfig = initialState.hasLastKnownGoodPersistedConfig
+        self.refreshDiagnosticsState = initialState.refreshDiagnostics
     }
 
     public func bootstrapBinding(
-        serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
+        serverSessionID: String? = nil
     ) -> GatewayRuntimeBinding {
-        let resolvedServerSessionID = Self.trimmed(serverSessionID).isEmpty
-            ? ServerSessionRuntimeStore.defaultServerSessionID
-            : Self.trimmed(serverSessionID)
+        refreshConfigFromDisk()
+        let requestedServerSessionID = Self.trimmed(serverSessionID)
+        let resolvedServerSessionID = requestedServerSessionID.isEmpty
+            ? resolvedBootstrapServerSessionID(fallback: ServerSessionRuntimeStore.defaultServerSessionID)
+            : requestedServerSessionID
         let record = recordsByServerSessionID[resolvedServerSessionID]
         return GatewayRuntimeBinding(
             activeServerSessionID: resolvedServerSessionID,
-            host: record?.host ?? defaults.host,
-            port: record?.port ?? defaults.port,
+            host: defaults.environmentListenerIsAuthoritative ? defaults.host : record?.host ?? defaults.host,
+            port: defaults.environmentListenerIsAuthoritative ? defaults.port : record?.port ?? defaults.port,
             allowedHosts: record?.allowedHosts ?? defaults.allowedHosts,
             allowedOrigins: record?.allowedOrigins ?? defaults.allowedOrigins
         )
@@ -256,9 +332,24 @@ public actor GatewayConfigStore {
         storeURL.path
     }
 
+    public func refreshDiagnostics() -> GatewayConfigRefreshDiagnostics {
+        refreshDiagnosticsState
+    }
+
+    public func publishRefreshDiagnostics(to metricsStore: MetricsStore) async {
+        let diagnostics = refreshDiagnosticsState
+        await metricsStore.set([
+            "gateway.config_refresh_failure_count": Double(diagnostics.totalFailureCount),
+            "gateway.config_refresh_consecutive_failure_count": Double(diagnostics.consecutiveFailureCount),
+            "gateway.config_refresh_serving_last_known_good": diagnostics.servingLastKnownGoodConfig ? 1 : 0,
+            "gateway.config_refresh_last_failure_at_unix_ms": Double(diagnostics.lastFailureAtUnixMS ?? 0),
+            "gateway.config_refresh_last_failure_kind_code": diagnostics.lastFailureKind?.metricCode ?? 0,
+        ])
+    }
+
     func apply(
         command: Melix_Controlplane_V1_ApplyGatewayConfig
-    ) throws {
+    ) async throws {
         // Validates then persists a listener record for the given server session.
         let serverSessionID = Self.trimmed(command.serverSessionID)
         guard !serverSessionID.isEmpty else {
@@ -290,7 +381,25 @@ public actor GatewayConfigStore {
         let allowedHosts = LocalServerSecurityPolicy.normalizedAllowedHosts(command.allowedHosts)
         let allowedOrigins = LocalServerSecurityPolicy.normalizedAllowedOrigins(command.allowedOrigins)
 
-        let record = PersistedGatewayListenerRecord(
+        let lockURL = try SiblingFileAdvisoryLock.prepareLockURL(
+            storeURL: storeURL,
+            fileManager: fileManager
+        )
+        let advisoryLock = try await SiblingFileAdvisoryLock.acquire(lockURL: lockURL)
+        defer { advisoryLock.release() }
+
+        let loadedConfig: LoadedGatewayConfig
+        switch Self.loadConfig(from: storeURL, fileManager: fileManager) {
+        case .missing:
+            loadedConfig = .empty
+        case let .loaded(config):
+            loadedConfig = config
+        case let .failed(failure):
+            recordRefreshFailure(failure)
+            throw failure
+        }
+        var nextRecordsByServerSessionID = loadedConfig.recordsByServerSessionID
+        nextRecordsByServerSessionID[serverSessionID] = PersistedGatewayListenerRecord(
             serverSessionID: serverSessionID,
             host: host,
             port: command.port,
@@ -304,8 +413,14 @@ public actor GatewayConfigStore {
             sourceRawValue: Melix_Controlplane_V1_GatewayConfigSource.operatorOverride.rawValue,
             updatedAtUnixMS: nowUnixMS()
         )
-        recordsByServerSessionID[serverSessionID] = record
-        try writeRecords()
+        try writeRecords(
+            activeServerSessionID: serverSessionID,
+            recordsByServerSessionID: nextRecordsByServerSessionID
+        )
+        activeServerSessionID = serverSessionID
+        recordsByServerSessionID = nextRecordsByServerSessionID
+        hasLastKnownGoodPersistedConfig = true
+        recordRefreshSuccess()
     }
 
     public func summary(
@@ -313,13 +428,15 @@ public actor GatewayConfigStore {
         runtimeBinding: GatewayRuntimeBinding,
         fallbackDefaultModelID: String
     ) -> Melix_Controlplane_V1_GatewayConfigSummary {
+        refreshConfigFromDisk()
         var summary = Melix_Controlplane_V1_GatewayConfigSummary()
         let resolvedFallbackModelID = Self.trimmed(fallbackDefaultModelID)
+        let resolvedActiveServerSessionID = Self.resolvedRuntimeServerSessionID(runtimeBinding)
 
         let allServerSessionIDs = Set(
             serverSessionIDs.map(Self.trimmed).filter { !$0.isEmpty }
             + recordsByServerSessionID.keys
-            + [runtimeBinding.activeServerSessionID]
+            + [resolvedActiveServerSessionID]
         )
 
         summary.listeners = allServerSessionIDs.sorted().map { serverSessionID in
@@ -333,7 +450,7 @@ public actor GatewayConfigStore {
             let modelIdleTimeoutSeconds = record?.modelIdleTimeoutSeconds ?? defaults.modelIdleTimeoutSeconds
             let allowedHosts = record?.allowedHosts ?? defaults.allowedHosts
             let allowedOrigins = record?.allowedOrigins ?? defaults.allowedOrigins
-            let isActiveBinding = serverSessionID == runtimeBinding.activeServerSessionID
+            let isActiveBinding = serverSessionID == resolvedActiveServerSessionID
 
             var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
             listener.serverSessionID = serverSessionID
@@ -366,12 +483,21 @@ public actor GatewayConfigStore {
         runtimeBinding: GatewayRuntimeBinding,
         fallbackDefaultModelID: String,
         fallbackServedModelIDs: [String]
-    ) -> (defaultModelID: String, servedModelIDs: [String], modelIdleTimeoutSeconds: UInt32, explicit: Bool) {
-        let record = recordsByServerSessionID[runtimeBinding.activeServerSessionID]
+    ) -> (
+        serverSessionID: String,
+        defaultModelID: String,
+        servedModelIDs: [String],
+        modelIdleTimeoutSeconds: UInt32,
+        explicit: Bool
+    ) {
+        refreshConfigFromDisk()
+        let serverSessionID = Self.resolvedRuntimeServerSessionID(runtimeBinding)
+        let record = recordsByServerSessionID[serverSessionID]
         let defaultModelID = record?.defaultModelID ?? Self.trimmed(fallbackDefaultModelID)
         let servedModelIDs = record?.servedModelIDs
             ?? Self.normalizedFallbackServedModelIDs(fallbackServedModelIDs, defaultModelID: defaultModelID)
         return (
+            serverSessionID: serverSessionID,
             defaultModelID: defaultModelID,
             servedModelIDs: servedModelIDs,
             modelIdleTimeoutSeconds: record?.modelIdleTimeoutSeconds ?? defaults.modelIdleTimeoutSeconds,
@@ -381,20 +507,32 @@ public actor GatewayConfigStore {
 
     public func activeModelRosterIfConfigured(
         runtimeBinding: GatewayRuntimeBinding
-    ) -> (defaultModelID: String, servedModelIDs: [String], modelIdleTimeoutSeconds: UInt32)? {
-        guard let record = recordsByServerSessionID[runtimeBinding.activeServerSessionID] else {
+    ) -> (
+        serverSessionID: String,
+        defaultModelID: String,
+        servedModelIDs: [String],
+        modelIdleTimeoutSeconds: UInt32
+    )? {
+        refreshConfigFromDisk()
+        let serverSessionID = Self.resolvedRuntimeServerSessionID(runtimeBinding)
+        guard let record = recordsByServerSessionID[serverSessionID] else {
             return nil
         }
         return (
+            serverSessionID: serverSessionID,
             defaultModelID: record.defaultModelID,
             servedModelIDs: record.servedModelIDs,
             modelIdleTimeoutSeconds: record.modelIdleTimeoutSeconds
         )
     }
 
-    private func writeRecords() throws {
+    private func writeRecords(
+        activeServerSessionID: String?,
+        recordsByServerSessionID: [String: PersistedGatewayListenerRecord]
+    ) throws {
         let document = GatewayConfigDocument(
             schemaVersion: 1,
+            activeServerSessionID: activeServerSessionID,
             listeners: recordsByServerSessionID.values.sorted { lhs, rhs in
                 lhs.serverSessionID < rhs.serverSessionID
             }
@@ -402,27 +540,170 @@ public actor GatewayConfigStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(document)
-        try fileManager.createDirectory(
-            at: storeURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
         try data.write(to: storeURL, options: .atomic)
     }
 
-    private static func loadRecords(
+    private func refreshConfigFromDisk() {
+        switch Self.loadConfig(from: storeURL, fileManager: fileManager) {
+        case .missing:
+            if hasLastKnownGoodPersistedConfig {
+                recordRefreshFailure(
+                    GatewayConfigLoadFailure(
+                        kind: .storeRemovedAfterLoad,
+                        message: "Gateway config disappeared after a valid document was loaded: \(storeURL.path)"
+                    )
+                )
+            } else {
+                recordRefreshSuccess()
+            }
+        case let .loaded(loadedConfig):
+            activeServerSessionID = loadedConfig.activeServerSessionID
+            recordsByServerSessionID = loadedConfig.recordsByServerSessionID
+            hasLastKnownGoodPersistedConfig = true
+            recordRefreshSuccess()
+        case let .failed(failure):
+            recordRefreshFailure(failure)
+        }
+    }
+
+    private func resolvedBootstrapServerSessionID(fallback: String) -> String {
+        let persistedServerSessionID = Self.trimmed(activeServerSessionID)
+        if !persistedServerSessionID.isEmpty,
+           recordsByServerSessionID[persistedServerSessionID] != nil
+        {
+            return persistedServerSessionID
+        }
+        let resolvedFallback = Self.trimmed(fallback)
+        return resolvedFallback.isEmpty ? ServerSessionRuntimeStore.defaultServerSessionID : resolvedFallback
+    }
+
+    private static func resolvedRuntimeServerSessionID(
+        _ runtimeBinding: GatewayRuntimeBinding
+    ) -> String {
+        let boundServerSessionID = trimmed(runtimeBinding.activeServerSessionID)
+        return boundServerSessionID.isEmpty
+            ? ServerSessionRuntimeStore.defaultServerSessionID
+            : boundServerSessionID
+    }
+
+    private func recordRefreshFailure(_ failure: GatewayConfigLoadFailure) {
+        let totalFailureCount = incremented(refreshDiagnosticsState.totalFailureCount)
+        let consecutiveFailureCount = incremented(refreshDiagnosticsState.consecutiveFailureCount)
+        refreshDiagnosticsState = GatewayConfigRefreshDiagnostics(
+            totalFailureCount: totalFailureCount,
+            consecutiveFailureCount: consecutiveFailureCount,
+            lastFailureKind: failure.kind,
+            lastFailureAtUnixMS: nowUnixMS(),
+            lastFailureMessage: failure.message,
+            servingLastKnownGoodConfig: hasLastKnownGoodPersistedConfig
+        )
+    }
+
+    private func recordRefreshSuccess() {
+        refreshDiagnosticsState = GatewayConfigRefreshDiagnostics(
+            totalFailureCount: refreshDiagnosticsState.totalFailureCount,
+            consecutiveFailureCount: 0,
+            lastFailureKind: refreshDiagnosticsState.lastFailureKind,
+            lastFailureAtUnixMS: refreshDiagnosticsState.lastFailureAtUnixMS,
+            lastFailureMessage: refreshDiagnosticsState.lastFailureMessage,
+            servingLastKnownGoodConfig: false
+        )
+    }
+
+    private func incremented(_ value: UInt64) -> UInt64 {
+        value == UInt64.max ? value : value + 1
+    }
+
+    private static func loadConfig(
         from storeURL: URL,
         fileManager: FileManager
-    ) -> [String: PersistedGatewayListenerRecord] {
+    ) -> GatewayConfigLoadResult {
         guard fileManager.fileExists(atPath: storeURL.path) else {
-            return [:]
+            return .missing
         }
-        guard
-            let data = try? Data(contentsOf: storeURL),
-            let document = try? JSONDecoder().decode(GatewayConfigDocument.self, from: data)
-        else {
-            return [:]
+        let data: Data
+        do {
+            data = try Data(contentsOf: storeURL)
+        } catch {
+            return .failed(
+                GatewayConfigLoadFailure(
+                    kind: .readFailed,
+                    message: "Failed to read gateway config at \(storeURL.path): \(error.localizedDescription)"
+                )
+            )
         }
-        return Dictionary(uniqueKeysWithValues: document.listeners.map { ($0.serverSessionID, $0) })
+        let document: GatewayConfigDocument
+        do {
+            document = try JSONDecoder().decode(GatewayConfigDocument.self, from: data)
+        } catch {
+            return .failed(
+                GatewayConfigLoadFailure(
+                    kind: .decodeFailed,
+                    message: "Failed to decode gateway config at \(storeURL.path): \(error.localizedDescription)"
+                )
+            )
+        }
+        var recordsByServerSessionID: [String: PersistedGatewayListenerRecord] = [:]
+        for record in document.listeners {
+            guard recordsByServerSessionID.updateValue(record, forKey: record.serverSessionID) == nil else {
+                return .failed(
+                    GatewayConfigLoadFailure(
+                        kind: .decodeFailed,
+                        message: "Gateway config at \(storeURL.path) contains duplicate listener records for \(record.serverSessionID)."
+                    )
+                )
+            }
+        }
+        return .loaded(
+            LoadedGatewayConfig(
+                activeServerSessionID: Self.trimmed(document.activeServerSessionID),
+                recordsByServerSessionID: recordsByServerSessionID
+            )
+        )
+    }
+
+    private static func initialState(
+        from loadResult: GatewayConfigLoadResult,
+        nowUnixMS: @Sendable () -> Int64
+    ) -> InitialGatewayConfigState {
+        switch loadResult {
+        case .missing:
+            return InitialGatewayConfigState(
+                loadedConfig: .empty,
+                hasLastKnownGoodPersistedConfig: false,
+                refreshDiagnostics: emptyRefreshDiagnostics()
+            )
+        case let .loaded(loadedConfig):
+            return InitialGatewayConfigState(
+                loadedConfig: loadedConfig,
+                hasLastKnownGoodPersistedConfig: true,
+                refreshDiagnostics: emptyRefreshDiagnostics()
+            )
+        case let .failed(failure):
+            return InitialGatewayConfigState(
+                loadedConfig: .empty,
+                hasLastKnownGoodPersistedConfig: false,
+                refreshDiagnostics: GatewayConfigRefreshDiagnostics(
+                    totalFailureCount: 1,
+                    consecutiveFailureCount: 1,
+                    lastFailureKind: failure.kind,
+                    lastFailureAtUnixMS: nowUnixMS(),
+                    lastFailureMessage: failure.message,
+                    servingLastKnownGoodConfig: false
+                )
+            )
+        }
+    }
+
+    private static func emptyRefreshDiagnostics() -> GatewayConfigRefreshDiagnostics {
+        GatewayConfigRefreshDiagnostics(
+            totalFailureCount: 0,
+            consecutiveFailureCount: 0,
+            lastFailureKind: nil,
+            lastFailureAtUnixMS: nil,
+            lastFailureMessage: "",
+            servingLastKnownGoodConfig: false
+        )
     }
 
     private static func resolveDefaults(environment: [String: String]) -> GatewayConfigDefaults {
@@ -439,6 +720,8 @@ public actor GatewayConfigStore {
         let envModelIdleTimeout = UInt32(trimmed(environment["MELIX_MODEL_IDLE_TIMEOUT_SECONDS"])) ?? 0
         let envAllowedHosts = LocalServerSecurityPolicy.normalizedAllowedHosts(environment["MELIX_ALLOWED_HOSTS"])
         let envAllowedOrigins = LocalServerSecurityPolicy.normalizedAllowedOrigins(environment["MELIX_ALLOWED_ORIGINS"])
+        let environmentListenerIsAuthoritative =
+            trimmed(environment["MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY"]).lowercased() == "environment"
 
         let usesEnvironmentDefaults = !envHost.isEmpty
             || envPort > 0
@@ -456,7 +739,8 @@ public actor GatewayConfigStore {
             modelIdleTimeoutSeconds: envModelIdleTimeout > 0 ? envModelIdleTimeout : builtInModelIdleTimeout,
             allowedHosts: envAllowedHosts,
             allowedOrigins: envAllowedOrigins,
-            source: usesEnvironmentDefaults ? .environmentDefaults : .builtInDefaults
+            source: usesEnvironmentDefaults ? .environmentDefaults : .builtInDefaults,
+            environmentListenerIsAuthoritative: environmentListenerIsAuthoritative
         )
     }
 

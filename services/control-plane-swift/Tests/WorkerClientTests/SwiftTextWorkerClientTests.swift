@@ -77,6 +77,19 @@ struct SwiftTextWorkerClientTests {
         #expect(cacheStats.stats.l1HitRate == 0.5)
     }
 
+    @Test("loaded model introspection forwards worker handles from the runner")
+    func loadedModelIntrospectionForwardsWorkerHandlesFromTheRunner() async throws {
+        let runner = ScriptedSwiftTextWorkerRunner()
+        var response = Melix_Worker_V1_ListLoadedModelsResponse()
+        response.modelHandles = ["melix-dev-text::swift"]
+        await runner.setListLoadedModelsResponse(response)
+
+        let client = SwiftTextWorkerClient(socketPath: "/tmp/melix-swift-test.sock", runner: runner)
+        let loadedModels = try await client.listLoadedModels()
+
+        #expect(loadedModels.modelHandles == ["melix-dev-text::swift"])
+    }
+
     @Test("generate forwards streamed execute events from the runner")
     func generateForwardsStreamedExecuteEventsFromTheRunner() async throws {
         let runner = ScriptedSwiftTextWorkerRunner()
@@ -257,6 +270,9 @@ struct SwiftTextWorkerClientTests {
             let runtimeStats = try await client.runtimeStats()
             #expect(runtimeStats.stats.residentBytes == 8_192)
 
+            let loadedModels = try await client.listLoadedModels()
+            #expect(loadedModels.modelHandles.isEmpty)
+
             let cacheStats = try await client.cacheStats()
             #expect(cacheStats.stats.l1Bytes == 2_048)
             #expect(cacheStats.stats.l2Bytes == 4_096)
@@ -372,6 +388,7 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
     private var handshakeResponse: Melix_Worker_V1_HandshakeResponse?
     private var loadModelResponse: Melix_Worker_V1_LoadModelResponse?
     private var runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse?
+    private var listLoadedModelsResponse: Melix_Worker_V1_ListLoadedModelsResponse?
     private var cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse?
     private var generateEvents: [Melix_Worker_V1_ExecuteEvent] = []
     private var prefillResponse: Melix_Worker_V1_PrefillResponse?
@@ -390,6 +407,10 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
 
     func setRuntimeStatsResponse(_ response: Melix_Worker_V1_GetRuntimeStatsResponse) {
         runtimeStatsResponse = response
+    }
+
+    func setListLoadedModelsResponse(_ response: Melix_Worker_V1_ListLoadedModelsResponse) {
+        listLoadedModelsResponse = response
     }
 
     func setCacheStatsResponse(_ response: Melix_Worker_V1_GetCacheStatsResponse) {
@@ -458,6 +479,13 @@ private actor ScriptedSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning {
         request: Melix_Worker_V1_GetRuntimeStatsRequest
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
         runtimeStatsResponse ?? Melix_Worker_V1_GetRuntimeStatsResponse()
+    }
+
+    func listLoadedModels(
+        socketPath: String,
+        request: Melix_Worker_V1_ListLoadedModelsRequest
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        listLoadedModelsResponse ?? Melix_Worker_V1_ListLoadedModelsResponse()
     }
 
     func cacheStats(

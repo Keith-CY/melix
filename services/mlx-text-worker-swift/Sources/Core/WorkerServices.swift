@@ -185,14 +185,31 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_UnloadModelResponse {
         let startedAt = Date()
-        let found = await registry.unloadModel(request.modelHandle)
+        let result = await registry.unloadModel(request.modelHandle, force: request.force)
         metrics.recordMilliseconds("swift_text.unload_model_ms", value: elapsedMilliseconds(since: startedAt))
         metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
 
         var response = Melix_Worker_V1_UnloadModelResponse()
-        response.ok = found
-        if !found {
+        switch result {
+        case .unloaded:
+            response.ok = true
+        case .notFound:
             response.error = makeErrorStatus(code: "not_found", message: "Unknown model handle.")
+        case .activeRequests:
+            response.error = makeErrorStatus(
+                code: "model_in_use",
+                message: "The model has active inference requests and cannot be unloaded safely."
+            )
+            response.error.retriable = true
+        case .sharedResidency:
+            response.error = makeErrorStatus(
+                code: "shared_model_residency",
+                message: "The model handle is shared by multiple load callers; force is required to unload it.",
+                details: ["force_required": "true"]
+            )
+        }
+        if !response.ok {
+            metrics.increment("swift_text.rpc_error_count")
         }
         return response
     }

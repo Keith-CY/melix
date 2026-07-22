@@ -51,6 +51,7 @@ _AUDIO_LOCALE_POLICY_KEY = "melix.audio.locale_policy"
 _GENERATION_CONFIG_SOURCE_KEY = "melix.generation_config.source"
 _GENERATION_CONFIG_TEMPERATURE_KEY = "melix.generation_config.temperature"
 _GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
+_GENERATION_CONFIG_TOP_K_KEY = "melix.generation_config.top_k"
 _GENERATION_CONFIG_MAX_TOKENS_KEY = "melix.generation_config.max_tokens"
 _GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 _REGISTRY_SCAN_PRUNED_DIR_NAMES = frozenset({"blobs", ".git", "__pycache__"})
@@ -417,6 +418,7 @@ def _merge_generation_config_metadata(
     recognized_values = {
         _GENERATION_CONFIG_TEMPERATURE_KEY: payload.get("temperature"),
         _GENERATION_CONFIG_TOP_P_KEY: payload.get("top_p"),
+        _GENERATION_CONFIG_TOP_K_KEY: payload.get("top_k"),
         _GENERATION_CONFIG_MAX_TOKENS_KEY: payload.get("max_new_tokens"),
         _GENERATION_CONFIG_DO_SAMPLE_KEY: payload.get("do_sample"),
     }
@@ -1573,6 +1575,18 @@ def _vision_capability_metadata(family_id: str) -> dict[str, str]:
             supported_modalities=("text", "image"),
             supported_tasks=("vlm", "generate"),
             supported_parsers=("text",),
+        )
+    if family_id == "gemma4-v1":
+        return _capability_metadata(
+            adapter_set_hash="vision-family-gemma4-v1",
+            route_kind="python_vlm",
+            capability_class="vlm",
+            supported_modalities=("text", "image", "video"),
+            supported_tasks=("vlm", "generate"),
+            supported_parsers=("text", "gemma"),
+            tool_parser_mode="gemma",
+            tool_parser_namespaces=("tools.vision",),
+            tool_parser_xml_fallback=True,
         )
     return _capability_metadata(
         adapter_set_hash=f"vision-family-{family_id}",

@@ -27,6 +27,7 @@ def test_packaged_launcher_exports_import_isolation_before_pythonpath() -> None:
         bundle_repo_root=Path("repo"),
         bundled_app_binary_name="melix-menubar",
         bundled_cli_binary_name="melix",
+        bundled_control_plane_binary_name="melix-control-plane",
         bundled_swift_worker_binary_name="melix-text-worker-swift",
         bundled_python_executable_relative_path="python-runtime/bin/python3",
         bundled_site_packages_relative_path="python-site-packages",

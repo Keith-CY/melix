@@ -93,9 +93,14 @@ Typography is structure. Whitespace is hierarchy. Color is ink — reserved only
 |---|---|---|
 | `--radius-sm` | 6px | Tags, small badges |
 | `--radius-md` | 8px | Buttons, icon button hit areas |
-| `--radius-lg` | 10px | Composer, session rows, input fields |
+| `--radius-lg` | 10px | Session rows, input fields |
 | `--radius-xl` | 12px | Dashboard cards, chat bubbles |
+| `--radius-composer` | 16px | Chat Composer only; stable editor-and-actions shell |
 | `--radius-full` | 9999px | Tab strip capsule, status pills |
+
+`--radius-composer` is a component-scoped exception, not a new general-purpose
+radius step. It supports the Composer's continuous two-plane silhouette without
+changing card, input, or session-row geometry.
 
 ### Backgrounds
 - **No images**, no full-bleed photography, no gradients.
@@ -122,6 +127,21 @@ Typography is structure. Whitespace is hierarchy. Color is ink — reserved only
 - `RoundedRectangle(cornerRadius: 12)` with `.quaternary.opacity(0.6)` fill.
 - No box-shadow. No border.
 - Internal padding: 12–16px.
+
+### Chat Route Identity, Capabilities, and Inspector
+- Provider selection and model identity are separate 28px controls in the Chat header.
+- The persistent model identity uses the readable repository leaf without its namespace. Quantization is a compact, non-shrinking accent badge; the complete canonical ID is available through tooltip, accessibility, and a selectable/copyable popover.
+- Model capabilities use 28px glyph controls in a cluster no taller than 30px. Use a status mark plus a diagonal unavailable treatment so state never relies on color alone. Names and evidence belong in tooltip, accessibility value, and one-step detail disclosure rather than permanent tile labels.
+- The 232px Chat Inspector is a Precision Ledger: identity and capability glyphs first, then 31px icon/value/tail rows for health, endpoint, usage, trust, and idle state.
+- Omit repeated `Context`, `Health`, `Metrics`, `Actions`, and `Evidence` headings in Chat. Use separately focusable 30-by-28px destination icons with full tooltips and accessibility labels. Repair actions keep concise text.
+
+### Chat Composer
+- One stable 16px shell contains an editor plane above an action plane. There is no internal divider or persistent shadow.
+- `Thinking` is a transparent control. Its active state uses accent-colored icon and text only; never add a status dot or filled selected background.
+- Shortcut guidance appears only while the empty editor is focused. Draft and multiline states leave the center status lane empty.
+- Generation owns the independent center status lane (`Generating · draft saved`); the editor remains available while `Thinking` and Send are unavailable.
+- Provider failure adds a compact warning repair rail above the editor. The draft remains mounted and editable, Send is unavailable, and the rail exposes Start.
+- Do not add a Stop affordance until the runtime has real cancellation semantics.
 
 ### Elevation / Shadow
 - No decorative shadows on cards or panels.
