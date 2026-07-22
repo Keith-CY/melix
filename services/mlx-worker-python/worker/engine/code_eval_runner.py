@@ -285,7 +285,16 @@ def _count_tests(test_code: str) -> int:
     return assert_count or _count_nonblank_test_lines(test_code)
 
 
-def _count_plain_assert_statement_lines(test_code: str) -> int:
+def _count_plain_assert_statement_lines(
+    test_code: str,
+    *,
+    _assert_prefix="assert",
+    _assert_prefix_length=6,
+    _find=str.find,
+    _isalnum=str.isalnum,
+    _line_spacing=_ASSERT_LINE_SPACING,
+    _startswith=str.startswith,
+) -> int:
     """Count simple assert-only test payloads without building a Python AST.
 
     Code-eval fixtures often consist of thousands of one-line top-level assert
@@ -298,25 +307,19 @@ def _count_plain_assert_statement_lines(test_code: str) -> int:
     start = 0
     text_length = len(test_code)
     while start < text_length:
-        newline_index = test_code.find("\n", start)
+        newline_index = _find(test_code, "\n", start)
         end = text_length if newline_index < 0 else newline_index
         cursor = start
-        while cursor < end and test_code[cursor] in " \t":
+        while cursor < end and test_code[cursor] in _line_spacing:
             cursor += 1
         if cursor < end:
-            after_index = cursor + 6
-            if (
-                after_index > end
-                or test_code[cursor] != "a"
-                or test_code[cursor + 1] != "s"
-                or test_code[cursor + 2] != "s"
-                or test_code[cursor + 3] != "e"
-                or test_code[cursor + 4] != "r"
-                or test_code[cursor + 5] != "t"
+            after_index = cursor + _assert_prefix_length
+            if after_index > end or not _startswith(
+                test_code, _assert_prefix, cursor, end
             ):
                 return 0
             after = test_code[after_index] if after_index < end else "\n"
-            if after == "_" or (after != " " and after != "\t" and after.isalnum()):
+            if after == "_" or (after not in _line_spacing and _isalnum(after)):
                 return 0
             count += 1
         if newline_index < 0:
