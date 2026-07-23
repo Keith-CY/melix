@@ -24,6 +24,15 @@ The probe repeatedly resolves a Qwen3-MoE text family config using a large read-
 
 The 2026-05-09 follow-up slice keeps the same registered probe and narrows the new behavior change to `_split_csv()`: empty metadata strings return immediately without allocating split parts, and non-empty values strip each CSV item once.
 
+The 2026-07-23 follow-up keeps the same registered probe and narrows the new behavior change to `_bool_from_any()`: exact normalized string literals (`"true"`, `"false"`, `"on"`, etc.) return before the fallback `strip().lower()` normalization. Whitespace-padded and mixed-case strings still use the fallback path, preserving the existing bool parsing behavior while avoiding per-resolution string normalization for already-normalized metadata values.
+
+Local Linux registered probe samples for the 2026-07-23 follow-up on this host:
+
+- baseline `origin/main`: `156.5028017386794`, `164.59141615778208`, `158.0336649902165` ms; mean `159.709294295559` ms.
+- exact bool literal fast path: `152.33040382154286`, `152.0294691901654`, `150.74609643779695` ms; mean `151.701989816501` ms.
+- delta: `-8.007304479058` ms, `5.013674698300%` faster (`1.052783120964x`).
+- `config_copy_calls_mean`: unchanged at `0.0`; `config_key_accesses_mean`: unchanged at `20000.0`.
+
 Metrics:
 
 - `elapsed_ms_mean`
