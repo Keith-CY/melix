@@ -1168,6 +1168,40 @@ def test_registry_root_tree_defers_plain_child_path_construction_until_stack_pus
     assert plain_root_child_joins == 0
 
 
+def test_registry_root_tree_uses_root_identity_check_for_hf_cache_detection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    for index in range(3):
+        config_dir = root / f"plain-model-{index}"
+        _write_model_config(config_dir, {"model_type": "qwen3"})
+        _write_weights(config_dir)
+
+    resolved_root = root.resolve()
+    original_eq = Path.__eq__
+    root_value_comparisons = 0
+
+    def tracking_eq(self: Path, other: object) -> bool:  # pragma: no cover - must remain unused by the scanner
+        nonlocal root_value_comparisons
+        if self is resolved_root or other is resolved_root:
+            root_value_comparisons += 1
+        return original_eq(self, other)
+
+    monkeypatch.setattr(Path, "__eq__", tracking_eq)
+
+    manifest_paths, plain_scans, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
+
+    assert manifest_paths == ()
+    assert hf_cache_repo_dirs == ()
+    assert [scan.model_dir for scan in plain_scans] == [
+        (root / "plain-model-0").resolve(),
+        (root / "plain-model-1").resolve(),
+        (root / "plain-model-2").resolve(),
+    ]
+    assert root_value_comparisons == 0
+
+
 
 def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
     monkeypatch: pytest.MonkeyPatch,
