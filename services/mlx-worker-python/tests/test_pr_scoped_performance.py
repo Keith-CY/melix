@@ -8105,6 +8105,8 @@ def test_vision_family_prompt_token_count_probe_script_emits_metrics(
     assert metrics["split_calls_mean"] == 0.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["config_object_footprint_bytes"] > 0
+    assert metrics["config_resolve_elapsed_ms_mean"] > 0
+    assert metrics["metadata_iteration_calls_mean"] == 0.0
 
 
 def test_scope_report_selects_deterministic_ocr_probe() -> None:
