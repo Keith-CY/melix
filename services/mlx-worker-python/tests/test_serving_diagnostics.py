@@ -1066,6 +1066,7 @@ def test_serving_diagnostics_bounded_queue_drops_oldest_without_blocking(
     ) is False
     snapshot = queue.snapshot()
     assert snapshot.dropped_count == 1
+    assert queue._retained_count == 2
     assert [event.event_index for event in snapshot.events] == [1, 2]
 
     summary = ServingDiagnosticsRequestSummary(
