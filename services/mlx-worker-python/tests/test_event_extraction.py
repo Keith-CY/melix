@@ -174,6 +174,22 @@ def test_parse_response_json_accepts_generic_fence_after_fast_json_prefix() -> N
     }
 
 
+def test_parse_response_json_generic_fence_uses_direct_marker_check() -> None:
+    class StartswithCountingText(str):
+        calls = 0
+
+        def startswith(self, *args, **kwargs):
+            self.calls += 1
+            return super().startswith(*args, **kwargs)
+
+    response = StartswithCountingText('  ```javascript\n{"events": [{"event_type": "generic"}]}\n```')
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "generic"}]
+    }
+    assert response.calls == 1
+
+
 def test_parse_response_json_accepts_unfenced_json_without_pretrim_copy() -> None:
     response = '  {"events": [{"event_type": "pickup"}]}  '
 

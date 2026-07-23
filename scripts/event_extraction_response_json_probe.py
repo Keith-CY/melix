@@ -24,7 +24,13 @@ def _env_int(name: str, default: int) -> int:
     return max(1, int(value))
 
 
-def _response(event_count: int, *, leading_whitespace: bool = True, fenced: bool = False) -> str:
+def _response(
+    event_count: int,
+    *,
+    leading_whitespace: bool = True,
+    fenced: bool = False,
+    generic_fence: bool = False,
+) -> str:
     events = [
         {
             "event_type": "delivery",
@@ -38,7 +44,9 @@ def _response(event_count: int, *, leading_whitespace: bool = True, fenced: bool
         for index in range(event_count)
     ]
     response = json.dumps({"events": events}, ensure_ascii=False, separators=(",", ":"))
-    if fenced:
+    if generic_fence:
+        response = "```javascript\n" + response + "\n```   "
+    elif fenced:
         response = "```json\n" + response + "\n```   "
     else:
         response += "\n  "
@@ -89,6 +97,12 @@ def run_probe(*, event_count: int = 1600, iterations: int = 80, samples: int = 5
         iterations=iterations,
         samples=samples,
     )
+    generic_fence_metrics = _measure_response(
+        _response(event_count, leading_whitespace=False, generic_fence=True),
+        event_count=event_count,
+        iterations=iterations,
+        samples=samples,
+    )
     return {
         "elapsed_ms_mean": fenced_metrics["elapsed_ms_mean"],
         "peak_bytes_mean": fenced_metrics["peak_bytes_mean"],
@@ -97,6 +111,9 @@ def run_probe(*, event_count: int = 1600, iterations: int = 80, samples: int = 5
         "direct_elapsed_ms_mean": direct_metrics["elapsed_ms_mean"],
         "direct_peak_bytes_mean": direct_metrics["peak_bytes_mean"],
         "direct_checksum": direct_metrics["checksum"],
+        "generic_fence_elapsed_ms_mean": generic_fence_metrics["elapsed_ms_mean"],
+        "generic_fence_peak_bytes_mean": generic_fence_metrics["peak_bytes_mean"],
+        "generic_fence_checksum": generic_fence_metrics["checksum"],
         "event_count": float(event_count),
         "iterations_per_sample": float(iterations),
         "sample_count": float(samples),
