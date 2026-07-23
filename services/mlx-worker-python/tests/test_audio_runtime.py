@@ -15,7 +15,7 @@ from worker.engine.speech_core import SpeechCore
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.audio_preprocessing import AudioPreprocessError, prepare_audio_input
+from worker.runtime.audio_preprocessing import AudioPreprocessError, _basename_from_path, prepare_audio_input
 from worker.runtime.audio_runtime_protocols import SpeechResult, SpeechStreamFrame
 from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
 from worker.runtime.deterministic_transcription_runtime import DeterministicTranscriptionRuntime
@@ -334,6 +334,27 @@ def test_audio_preprocessing_derives_uri_suffix_without_splitext(
         read_uri_bytes=False,
     )
     assert trailing_dot_prepared.format == "wav"
+
+
+def test_audio_preprocessing_derives_filename_without_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "nested" / "sample.wav"
+    audio_path.parent.mkdir()
+    audio_path.write_bytes(b"filename fast path")
+
+    basename_spy = Mock(side_effect=AssertionError("filename should use rfind fast path"))
+    monkeypatch.setattr(os.path, "basename", basename_spy)
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), format="wav"),
+        read_uri_bytes=False,
+    )
+
+    assert prepared.filename == "sample.wav"
+    assert prepared.preprocess_input_bytes == len(b"filename fast path")
+    assert basename_spy.call_count == 0
+    assert _basename_from_path("sample.wav") == "sample.wav"
 
 
 def test_audio_preprocessing_rejects_missing_and_unsupported_inputs(tmp_path: Path) -> None:
