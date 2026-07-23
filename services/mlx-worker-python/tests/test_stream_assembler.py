@@ -25,11 +25,12 @@ def test_pipe_channel_name_caches_repeated_headers() -> None:
     assert RequestStreamAssembler._pipe_channel_name("commentary\tmetadata other") == "commentary"
     assert RequestStreamAssembler._pipe_channel_name("commentary\tmetadata") == "commentary"
     assert RequestStreamAssembler._pipe_channel_name("analysis") == "analysis"
+    assert RequestStreamAssembler._pipe_channel_name("FiNaL") == "final"
     assert RequestStreamAssembler._pipe_channel_name("   ") == ""
 
     cache_info = RequestStreamAssembler._pipe_channel_name.cache_info()
     assert cache_info.hits == 1
-    assert cache_info.misses == 7
+    assert cache_info.misses == 8
 
     RequestStreamAssembler._pipe_channel_name.cache_clear()
 

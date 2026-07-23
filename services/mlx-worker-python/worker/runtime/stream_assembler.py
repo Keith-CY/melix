@@ -1683,6 +1683,7 @@ class RequestStreamAssembler:
             tab_index = header.find("\t")
             if tab_index >= 0:
                 return header[:tab_index].lower()
+            return header.lower()
         start = 0
         header_len = len(header)
         while start < header_len and header[start].isspace():
