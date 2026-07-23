@@ -453,11 +453,35 @@ class LocalJobContinuationStore:
                 continue
             if reconciliation is None:
                 continue
+            record = reconciliation.record
             completion_evidence_available = reconciliation.receipt.get(
                 "completion_evidence_available"
             )
+            if (
+                record.status == "completed"
+                and completion_evidence_available is True
+                and record.followup_status not in {"pending", "in_progress", "completed"}
+            ):
+                receipt = {
+                    "schema_version": RECEIPT_SCHEMA_VERSION,
+                    "job_id": record.job_id,
+                    "status": record.status,
+                    "reason": "followup_candidate_ready",
+                    "session_id": record.session_id,
+                    "exit_status": record.exit_status,
+                    "followup_status": record.followup_status,
+                    "followup_session_id": "",
+                    "duplicate_launch_refused": False,
+                    "completion_evidence_available": True,
+                    "corrective_action": (
+                        "A monitor may claim this local job follow-up after prompt-context admission."
+                    ),
+                }
+                receipts_append(receipt)
+                candidates_append(candidate_type(record=record, receipt=receipt))
+                continue
             receipt = candidate_receipt(
-                reconciliation.record,
+                record,
                 evidence_available=(
                     completion_evidence_available
                     if type(completion_evidence_available) is bool
@@ -471,7 +495,7 @@ class LocalJobContinuationStore:
                 receipts_append(receipt)
                 candidates_append(
                     candidate_type(
-                        record=reconciliation.record,
+                        record=record,
                         receipt=receipt,
                     )
                 )
@@ -1270,19 +1294,21 @@ def _followup_candidate_scan_receipt(
             followup_session_id=record.followup_session_id,
         )
     if record.status == "completed" and evidence_available:
-        return _receipt(
-            job_id=record.job_id,
-            status=record.status,
-            reason="followup_candidate_ready",
-            session_id=record.session_id,
-            exit_status=record.exit_status,
-            followup_status=record.followup_status,
-            duplicate_launch_refused=False,
-            completion_evidence_available=True,
-            corrective_action=(
+        return {
+            "schema_version": RECEIPT_SCHEMA_VERSION,
+            "job_id": record.job_id,
+            "status": record.status,
+            "reason": "followup_candidate_ready",
+            "session_id": record.session_id,
+            "exit_status": record.exit_status,
+            "followup_status": record.followup_status,
+            "followup_session_id": "",
+            "duplicate_launch_refused": False,
+            "completion_evidence_available": True,
+            "corrective_action": (
                 "A monitor may claim this local job follow-up after prompt-context admission."
             ),
-        )
+        }
     # A non-ready record only means the monitor may not claim it yet; callers
     # that need running-vs-blocked detail should inspect the status field.
     return _receipt(

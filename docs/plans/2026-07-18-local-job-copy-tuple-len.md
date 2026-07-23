@@ -40,3 +40,18 @@ PR-scoped performance remains the merge gate after push.
 This is a Python worker path and can be validated locally on Linux. CI remains
 the source of truth for the registered PR-scoped performance report after the PR
 is opened.
+
+## Follow-up Slice: Ready Receipt Direct Construction
+
+The 2026-07-23 follow-up keeps the same registered probe and narrows to the
+ready completed local-job record path in both `scan_followup_candidates()` and
+`_followup_candidate_scan_receipt()`. The scan loop now constructs the common
+`followup_candidate_ready` receipt directly when reconciliation already proved
+completion evidence, and the standalone helper uses the same direct construction
+for explicit ready-receipt calls. This preserves the emitted schema and fields
+while avoiding one helper call, one reason lookup, and keyword argument binding in
+the scan hot path.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower ready-receipt and scan/projection timing,
+and if the PR-scoped CI probe completes successfully before merge.
