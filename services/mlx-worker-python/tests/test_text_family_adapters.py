@@ -337,6 +337,12 @@ def test_resolve_text_family_config_covers_fallback_parsing_and_bool_variants() 
 
 
 def test_bool_from_any_preserves_literal_string_variants() -> None:
+    class NoStripLiteral(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("normalized bool literals should not allocate stripped copies")
+
+    assert _bool_from_any(NoStripLiteral("true")) is True
+    assert _bool_from_any(NoStripLiteral("false")) is False
     assert _bool_from_any("on") is True
     assert _bool_from_any(" YES ") is True
     assert _bool_from_any("off") is False

@@ -503,6 +503,10 @@ def _bool_from_any(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     if isinstance(value, str):
+        if value in _TRUE_BOOL_LITERALS:
+            return True
+        if value in _FALSE_BOOL_LITERALS:
+            return False
         normalized = value.strip().lower()
         if normalized in _TRUE_BOOL_LITERALS:
             return True
