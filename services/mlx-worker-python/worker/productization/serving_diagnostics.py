@@ -190,12 +190,16 @@ class BoundedServingDiagnosticsEventQueue:
     def append(self, event: ServingDiagnosticsEvent) -> bool:
         lock = self._lock
         append_event = self._append_event
+        if self._is_saturated:
+            lock.acquire()
+            try:
+                append_event(event)
+                self._dropped_count = self._dropped_count + 1
+                return False
+            finally:
+                lock.release()
         lock.acquire()
         try:
-            if self._is_saturated:
-                append_event(event)
-                self._dropped_count += 1
-                return False
             append_event(event)
             retained_count = self._retained_count + 1
             self._retained_count = retained_count
