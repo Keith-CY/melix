@@ -354,6 +354,18 @@ def test_compare_versions_handles_suffixes_without_padding_lists() -> None:
     assert compare_versions("2.10", "2.10.0.0") == 0
 
 
+def test_normalized_version_parts_materializes_without_generator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_iter_parts(value: str):  # pragma: no cover - sentinel
+        raise AssertionError(f"normalized_version_parts allocated generator for {value}")
+
+    monkeypatch.setattr(startup_signals_module, "_iter_normalized_version_parts", fail_iter_parts)
+
+    assert normalized_version_parts(" v3.2rc1.0-beta+build ") == [3, 2, 0]
+    assert normalized_version_parts("release") == [0]
+
+
 def test_compare_versions_reuses_cached_result_for_repeated_pairs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
