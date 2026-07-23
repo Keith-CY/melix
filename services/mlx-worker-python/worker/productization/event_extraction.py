@@ -2950,16 +2950,28 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
 def _has_only_optional_closing_fence(response_text: str, start: int, response_length: int) -> bool:
     if start == response_length:
         return True
-    if response_text.startswith(_CLOSING_FENCE_WITH_LEADING_NEWLINE, start):
+    skip_json_whitespace = _skip_json_whitespace
+    if (
+        start + _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH <= response_length
+        and response_text[start] == "\n"
+        and response_text[start + 1] == "`"
+        and response_text[start + 2] == "`"
+        and response_text[start + 3] == "`"
+    ):
         start += _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH
-        return _skip_json_whitespace(response_text, start, response_length) == response_length
-    start = _skip_json_whitespace(response_text, start, response_length)
+        return skip_json_whitespace(response_text, start, response_length) == response_length
+    start = skip_json_whitespace(response_text, start, response_length)
     if start == response_length:
         return True
-    if not response_text.startswith("```", start):
+    if (
+        start + 3 > response_length
+        or response_text[start] != "`"
+        or response_text[start + 1] != "`"
+        or response_text[start + 2] != "`"
+    ):
         return False
     start += 3
-    return _skip_json_whitespace(response_text, start, response_length) == response_length
+    return skip_json_whitespace(response_text, start, response_length) == response_length
 
 
 def _has_only_trailing_whitespace(response_text: str, start: int, response_length: int) -> bool:
