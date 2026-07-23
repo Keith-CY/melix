@@ -19,15 +19,20 @@ contexts = (2048, 8192, 32768)
 sample_count = 5
 iteration_count = 120
 plain_iteration_count = 2_000
+single_context_iteration_count = 2_000
+single_context_prompt = " ".join(f"single{index % 64}" for index in range(8192))
 
 
 def main() -> int:
     elapsed_samples: list[float] = []
+    single_context_elapsed_samples: list[float] = []
     token_count_samples: list[float] = []
     plain_count_samples: list[float] = []
+    single_context_token_samples: list[float] = []
     for _ in range(sample_count):
         token_total = 0
         plain_total = 0
+        single_context_token_total = 0
         started = time.perf_counter()
         for _ in range(iteration_count):
             for context_length in contexts:
@@ -36,6 +41,16 @@ def main() -> int:
                 if token_count != context_length:
                     raise SystemExit(f"unexpected token count {token_count} for {context_length}")
                 token_total += token_count
+        single_started = time.perf_counter()
+        for index in range(single_context_iteration_count):
+            shaped = MaintenanceCore._shape_benchmark_prompt(
+                f"{single_context_prompt} {index}",
+                context_length=1,
+            )
+            if shaped != "single0" or getattr(shaped, "token_count", 0) != 1:
+                raise SystemExit(f"unexpected single-token shaped prompt {shaped!r}")
+            single_context_token_total += getattr(shaped, "token_count", 0)
+        single_context_elapsed_samples.append((time.perf_counter() - single_started) * 1000.0)
         for _ in range(plain_iteration_count):
             plain_count = MaintenanceCore._benchmark_prompt_token_count(plain_prompt)
             if plain_count != 4096:
@@ -47,16 +62,26 @@ def main() -> int:
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         token_count_samples.append(float(token_total))
         plain_count_samples.append(float(plain_total))
+        single_context_token_samples.append(float(single_context_token_total))
     print(
         json.dumps(
             {
                 "context_count": float(len(contexts)),
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
+                "single_context_elapsed_ms_mean": round(
+                    statistics.fmean(single_context_elapsed_samples),
+                    6,
+                ),
                 "iteration_count": float(iteration_count),
                 "plain_iteration_count": float(plain_iteration_count),
+                "single_context_iteration_count": float(single_context_iteration_count),
                 "sample_count": float(sample_count),
                 "token_count_mean": round(statistics.fmean(token_count_samples), 3),
                 "plain_token_count_mean": round(statistics.fmean(plain_count_samples), 3),
+                "single_context_token_count_mean": round(
+                    statistics.fmean(single_context_token_samples),
+                    3,
+                ),
             },
             sort_keys=True,
         )
