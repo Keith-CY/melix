@@ -31,6 +31,8 @@ _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _BARE_SIZE_HINT_SEARCH = _BARE_SIZE_HINT_RE.search
 _EXPLICIT_SIZE_HINT_SEARCH = _EXPLICIT_SIZE_HINT_RE.search
+_README_MODEL_SIZE_TABLE_PREFIX = "README\nMODEL SIZE | "
+_README_MODEL_SIZE_TABLE_PREFIX_LENGTH = len(_README_MODEL_SIZE_TABLE_PREFIX)
 _NEXT_LINK_REL_MARKER = 'rel="next"'
 _CURSOR_QUERY_KEY = "cursor="
 _CURSOR_QUERY_KEY_LEN = len(_CURSOR_QUERY_KEY)
@@ -1013,6 +1015,8 @@ def _direct_size_hint_from_line(text: str, value_start: int) -> int:
 
 @lru_cache(maxsize=4096)
 def _direct_explicit_size_hint_from_text(text: str) -> int:
+    if text.startswith(_README_MODEL_SIZE_TABLE_PREFIX):
+        return _direct_size_hint_from_line(text, _README_MODEL_SIZE_TABLE_PREFIX_LENGTH)
     marker_index = text.find("Model size: ", 0, 64)
     if marker_index >= 0:
         return _direct_size_hint_from_line(text, marker_index + 12)
