@@ -145,6 +145,19 @@ def test_parse_response_json_trims_inline_closing_fence_with_trailing_space() ->
     assert event_extraction_module._parse_response_json(response) == {"events": []}
 
 
+def test_parse_response_json_closing_fence_check_avoids_startswith() -> None:
+    class NoStartswithText(str):
+        def startswith(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("closing-fence hot path should use direct character checks")
+
+    assert event_extraction_module._has_only_optional_closing_fence(
+        NoStartswithText('\n```   '), 0, 7
+    )
+    assert event_extraction_module._has_only_optional_closing_fence(
+        NoStartswithText('```   '), 0, 6
+    )
+
+
 def test_parse_response_json_accepts_leading_whitespace_before_fence() -> None:
     response = '  \n```json\n{"events": [{"event_type": "handoff"}]}\n```'
 

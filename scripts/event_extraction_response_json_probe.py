@@ -24,7 +24,7 @@ def _env_int(name: str, default: int) -> int:
     return max(1, int(value))
 
 
-def _response(event_count: int, *, leading_whitespace: bool = True) -> str:
+def _response(event_count: int, *, leading_whitespace: bool = True, fenced: bool = False) -> str:
     events = [
         {
             "event_type": "delivery",
@@ -37,7 +37,11 @@ def _response(event_count: int, *, leading_whitespace: bool = True) -> str:
         }
         for index in range(event_count)
     ]
-    response = json.dumps({"events": events}, ensure_ascii=False, separators=(",", ":")) + "\n  "
+    response = json.dumps({"events": events}, ensure_ascii=False, separators=(",", ":"))
+    if fenced:
+        response = "```json\n" + response + "\n```   "
+    else:
+        response += "\n  "
     # Include leading and trailing whitespace to exercise the unfenced JSON
     # parser path without making json.loads perform its own leading scan.
     if leading_whitespace:
@@ -70,6 +74,12 @@ def _measure_response(response: str, *, event_count: int, iterations: int, sampl
 
 
 def run_probe(*, event_count: int = 1600, iterations: int = 80, samples: int = 5) -> dict[str, float]:
+    fenced_metrics = _measure_response(
+        _response(event_count, leading_whitespace=False, fenced=True),
+        event_count=event_count,
+        iterations=iterations,
+        samples=samples,
+    )
     leading_metrics = _measure_response(
         _response(event_count), event_count=event_count, iterations=iterations, samples=samples
     )
@@ -80,15 +90,17 @@ def run_probe(*, event_count: int = 1600, iterations: int = 80, samples: int = 5
         samples=samples,
     )
     return {
-        "elapsed_ms_mean": leading_metrics["elapsed_ms_mean"],
-        "peak_bytes_mean": leading_metrics["peak_bytes_mean"],
+        "elapsed_ms_mean": fenced_metrics["elapsed_ms_mean"],
+        "peak_bytes_mean": fenced_metrics["peak_bytes_mean"],
+        "leading_elapsed_ms_mean": leading_metrics["elapsed_ms_mean"],
+        "leading_peak_bytes_mean": leading_metrics["peak_bytes_mean"],
         "direct_elapsed_ms_mean": direct_metrics["elapsed_ms_mean"],
         "direct_peak_bytes_mean": direct_metrics["peak_bytes_mean"],
         "direct_checksum": direct_metrics["checksum"],
         "event_count": float(event_count),
         "iterations_per_sample": float(iterations),
         "sample_count": float(samples),
-        "checksum": leading_metrics["checksum"],
+        "checksum": fenced_metrics["checksum"],
     }
 
 
