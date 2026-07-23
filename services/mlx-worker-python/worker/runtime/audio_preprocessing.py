@@ -60,7 +60,7 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
         if not format_name:
             format_name = _suffix_format_from_path(local_path)
         if not filename:
-            filename = os.path.basename(local_path)
+            filename = _basename_from_path(local_path)
     else:
         raise AudioPreprocessError("No audio input provided.")
 
@@ -93,6 +93,13 @@ def _suffix_format_from_path(local_path: str) -> str:
     if dot_index <= slash_index + 1:
         return ""
     return local_path[dot_index + 1 :]
+
+
+def _basename_from_path(local_path: str) -> str:
+    slash_index = local_path.rfind(os.sep)
+    if slash_index < 0:
+        return local_path
+    return local_path[slash_index + 1 :]
 
 
 def _path_from_uri(uri: str) -> Path:
