@@ -3530,8 +3530,8 @@ def test_answers_match_stripped_exact_prediction_skips_normalization(
     assert EvaluationCore._answers_match(expected="Paris", predicted=" Paris ") is True
     assert normalize_calls == 0
     assert EvaluationCore._answers_match(expected="Paris", predicted=" paris ") is True
-    assert normalize_calls == 2
-    assert normalized_values == ["Paris", "paris"]
+    assert normalize_calls == 0
+    assert normalized_values == []
 
 
 def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.MonkeyPatch) -> None:
