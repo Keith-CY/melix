@@ -3516,11 +3516,13 @@ def test_answers_match_stripped_exact_prediction_skips_normalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     normalize_calls = 0
+    normalized_values: list[str] = []
     original_normalize = EvaluationCore._normalized_answer
 
     def counting_normalize(value: str) -> str:
         nonlocal normalize_calls
         normalize_calls += 1
+        normalized_values.append(value)
         return original_normalize(value)
 
     monkeypatch.setattr(EvaluationCore, "_normalized_answer", staticmethod(counting_normalize))
@@ -3529,6 +3531,7 @@ def test_answers_match_stripped_exact_prediction_skips_normalization(
     assert normalize_calls == 0
     assert EvaluationCore._answers_match(expected="Paris", predicted=" paris ") is True
     assert normalize_calls == 2
+    assert normalized_values == ["Paris", "paris"]
 
 
 def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.MonkeyPatch) -> None:
