@@ -27,6 +27,16 @@ entries for:
 This slice targets the `elapsed_ms_mean` size-hint parser metric while keeping
 `size_hint_calls_mean`, checksum, and match counts unchanged.
 
+## 2026-07 marker order follow-up
+
+This follow-up Python-only slice stays within
+`worker.model_ops.hub_catalog._may_contain_model_marker()` and the same
+registered `hub-catalog-size-hint-regex-precompile` probe. The marker guard now
+checks the common `Model size` and uppercase `MODEL SIZE` adjacent-prefix forms
+before the rarer lowercase/mixed-case alternatives. Behavior remains unchanged
+for all four case combinations; the slice only reduces average failed membership
+scans before the direct size-hint parser runs on common README metadata.
+
 ## Implementation plan
 
 1. Keep the regex fallback and the direct uppercase pipe marker path intact.
