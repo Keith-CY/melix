@@ -923,6 +923,11 @@ def test_read_last_nonempty_line_trims_byte_whitespace_without_python_byte_loop(
     assert _read_last_nonempty_line(log_path, chunk_size=4) == "last line"
 
 
+def test_right_stripped_chunk_length_short_circuits_all_whitespace_chunks() -> None:
+    assert startup_signals_module._right_stripped_chunk_length(b"\n\t  \r\n") == 0
+    assert startup_signals_module._right_stripped_chunk_length(b"ready\n\t") == len(b"ready")
+
+
 def test_log_excerpt_uses_read_fallback_without_exists_preflight(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
