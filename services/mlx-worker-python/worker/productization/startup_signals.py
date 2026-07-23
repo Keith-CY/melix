@@ -661,6 +661,10 @@ def _read_last_nonempty_line(path: Path, *, chunk_size: int = 8192) -> str:
     return payload.decode("utf-8", errors="replace")
 
 
+def _right_stripped_chunk_length(chunk: bytes) -> int:
+    return 0 if chunk.isspace() else len(chunk.rstrip(_BYTE_WHITESPACE))
+
+
 def _seek_last_nonempty_line_bounds(handle: Any, *, chunk_size: int) -> tuple[int, int]:
     position = handle.tell()
     payload_end = 0
@@ -670,7 +674,7 @@ def _seek_last_nonempty_line_bounds(handle: Any, *, chunk_size: int) -> tuple[in
         handle.seek(start)
         chunk = handle.read(read_size)
         if payload_end == 0:
-            search_end = len(chunk.rstrip(_BYTE_WHITESPACE))
+            search_end = _right_stripped_chunk_length(chunk)
             if search_end == 0:
                 position = start
                 continue
