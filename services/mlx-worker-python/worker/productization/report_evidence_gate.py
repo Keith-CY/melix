@@ -629,21 +629,35 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
         return phases
     phases_add = phases.add
     to_string = str
+    value_type = type
+    dict_type = dict
+    list_type = list
+    is_instance = isinstance
     for side in _PROBE_PHASE_SIDES:
         side_summary = probe_summary.get(side)
-        if not isinstance(side_summary, dict):
+        if value_type(side_summary) is not dict_type and not is_instance(
+            side_summary,
+            dict_type,
+        ):
             continue
         side_summary_get = side_summary.get
         for bucket in _PROBE_PHASE_BUCKETS:
             rows = side_summary_get(bucket)
-            if not isinstance(rows, list):
+            if value_type(rows) is not list_type and not is_instance(rows, list_type):
                 continue
             for row in rows:
-                if not isinstance(row, dict):
+                if value_type(row) is not dict_type and not is_instance(row, dict_type):
                     continue
                 phase_raw = row.get("phase", "")
-                if type(phase_raw) is str:
+                if value_type(phase_raw) is str:
                     if phase_raw in phases:
+                        continue
+                    if (
+                        phase_raw
+                        and not phase_raw[0].isspace()
+                        and not phase_raw[-1].isspace()
+                    ):
+                        phases_add(phase_raw)
                         continue
                     phase = phase_raw.strip()
                 else:
