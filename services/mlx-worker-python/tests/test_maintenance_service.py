@@ -6986,6 +6986,14 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     MaintenanceCore._benchmark_prompt_token_count.cache_clear()
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
     assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
+    shaped_single_token_prompt = core._shape_benchmark_prompt(
+        "one two three four",
+        context_length=1,
+    )
+    assert shaped_single_token_prompt == "one"
+    assert getattr(shaped_single_token_prompt, "tokens") == ("one",)
+    assert getattr(shaped_single_token_prompt, "token_count") == 1
+    assert core._shape_benchmark_prompt("   ", context_length=1) == "benchmark"
     assert core._shape_benchmark_prompt("one two three", context_length=8) == (
         "one two three one two three one two"
     )

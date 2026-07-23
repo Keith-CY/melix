@@ -2923,6 +2923,28 @@ def test_maintenance_prompt_shape_probe_is_importable_without_running() -> None:
     assert "elapsed_samples" not in probe_script
 
 
+def test_maintenance_prompt_shape_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/maintenance_prompt_shape_probe.py"))
+    main = probe_script["main"]
+    probe_globals = main.__globals__
+
+    monkeypatch.setitem(probe_globals, "contexts", (2,))
+    monkeypatch.setitem(probe_globals, "sample_count", 1)
+    monkeypatch.setitem(probe_globals, "iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "plain_iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "single_context_iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "single_context_prompt", "single0 single1")
+
+    assert main() == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["single_context_elapsed_ms_mean"] >= 0.0
+    assert metrics["single_context_iteration_count"] == 1.0
+    assert metrics["single_context_token_count_mean"] == 1.0
+
+
 def test_maintenance_prompt_shape_probe_validates_invariants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2935,6 +2957,7 @@ def test_maintenance_prompt_shape_probe_validates_invariants(
     monkeypatch.setitem(probe_globals, "sample_count", 1)
     monkeypatch.setitem(probe_globals, "iteration_count", 1)
     monkeypatch.setitem(probe_globals, "plain_iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "single_context_iteration_count", 1)
     monkeypatch.setitem(probe_globals, "plain_prompt", "one two")
 
     monkeypatch.setattr(
@@ -2945,10 +2968,18 @@ def test_maintenance_prompt_shape_probe_validates_invariants(
     with pytest.raises(SystemExit, match="unexpected token count"):
         main()
 
+    class SingleTokenPrompt(str):
+        token_count = 1
+
+    def shaped_probe_prompt(prompt: str, *, context_length: int) -> str:
+        if context_length == 1:
+            return SingleTokenPrompt("single0")
+        return "one two"
+
     monkeypatch.setattr(
         maintenance_core,
         "_shape_benchmark_prompt",
-        staticmethod(lambda prompt, *, context_length: "one two"),
+        staticmethod(shaped_probe_prompt),
     )
     monkeypatch.setattr(
         maintenance_core,

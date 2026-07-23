@@ -5450,6 +5450,10 @@ class MaintenanceCore:
     @staticmethod
     @lru_cache(maxsize=256)
     def _shape_benchmark_prompt(prompt: str, *, context_length: int) -> str:
+        if context_length == 1:
+            first_tokens = prompt.split(maxsplit=1)
+            first_token = first_tokens[0] if first_tokens else "benchmark"
+            return ShapedBenchmarkPrompt(first_token, (first_token,), 1)
         tokens = prompt.split()
         if not tokens:
             tokens = ["benchmark"]
