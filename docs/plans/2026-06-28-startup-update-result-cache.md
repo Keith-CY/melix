@@ -90,3 +90,18 @@ file mtime and size, channel JSON is still decoded after a cache miss, and
 result construction/version comparison semantics are untouched. Verification
 remains the registered focused tests, changed-scope coverage command, local
 Linux probe, and PR-scoped performance workflow as the merge gate.
+
+## 2026-07-23 follow-up: normalized parts direct materialization
+
+This Python-only follow-up keeps the same registered startup-signals probe and
+narrows to the public `normalized_version_parts(...)` helper. The helper still
+returns a materialized `list[int]` and preserves the same whitespace trimming,
+leading `v` elision, suffix cutoff, and non-numeric segment behavior, but it now
+builds that list directly instead of allocating the private generator and a
+slice of the cleaned version string.
+
+The registered probe is extended with `normalized_parts_*` metrics so the
+affected public helper is measured directly in both local Linux runs and the
+PR-scoped performance workflow. Verification remains the registered focused
+tests, changed-scope coverage command, local Linux probe, and PR-scoped
+performance workflow as the merge gate.
