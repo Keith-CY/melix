@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
-from typing import cast
+from typing import SupportsIndex, cast
 
 import pytest
 
@@ -80,6 +80,27 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
     assert code_eval_runner.extract_candidate_code(
         "```python\nprint('complete')\n```\n```"
     ) == ("print('complete')", "parsed_code_block")
+    count_calls: list[tuple[str, tuple[SupportsIndex, ...]]] = []
+
+    class CountingResponse(str):
+        def count(self, sub: str, *args: SupportsIndex) -> int:  # type: ignore[override]
+            count_calls.append((sub, args))
+            return super().count(sub, *args)
+
+    trailing_text = "\n" + ("post-answer whitespace scan guard " * 64)
+    empty_trailing_block = CountingResponse(
+        "```python\nprint('complete')\n```\n```python\n```" + trailing_text
+    )
+    assert code_eval_runner.extract_candidate_code(empty_trailing_block) == (
+        "",
+        "parsed_code_block",
+    )
+    assert count_calls == [
+        (
+            "```",
+            (0, empty_trailing_block.rfind("```", 0, empty_trailing_block.rfind("```"))),
+        )
+    ]
     assert code_eval_runner.extract_candidate_code(
         "```python\nprint('complete')\n```\nfinal commentary after the answer"
     ) == ("print('complete')", "parsed_code_block")
