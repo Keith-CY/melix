@@ -45,11 +45,13 @@ def _model_safetensor_files(model_path: Path) -> list[str]:
 
     weight_files: list[str] = []
     append_weight_file = weight_files.append
+    startswith = str.startswith
+    endswith = str.endswith
     try:
         with os.scandir(model_path) as entries:
             for entry in entries:
                 name = entry.name
-                if name.startswith("model") and name.endswith(".safetensors"):
+                if startswith(name, "model") and endswith(name, ".safetensors"):
                     append_weight_file(entry.path)
     except FileNotFoundError:
         return []

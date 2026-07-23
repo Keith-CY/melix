@@ -22,6 +22,8 @@ The probe is extended to measure the model safetensor listing path directly agai
 
 2026-07-18 follow-up slice: `_is_mtp_weight_key()` now keeps the exact `str` fast path on two direct prefix checks instead of the tuple-prefix form. The behavior for `str` subclasses and custom key objects remains unchanged through the existing compatibility branches, while direct callers scanning JSON-decoded string keys avoid the tuple dispatch overhead measured by the registered probe's `key_*` metrics.
 
+2026-07-23 follow-up slice: `_model_safetensor_files()` now binds `str.startswith` and `str.endswith` before the scandir loop. The helper still returns sorted string paths matching the historical `glob` baseline, while large top-level model directories avoid repeated bound-method lookup for every candidate filename.
+
 ## Verification plan
 
 ```bash
