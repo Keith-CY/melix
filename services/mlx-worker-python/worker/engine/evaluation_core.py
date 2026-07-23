@@ -4121,8 +4121,9 @@ class EvaluationCore:
             return False
         if expected == stripped_predicted:
             return True
-        normalized_expected = EvaluationCore._normalized_answer(expected)
-        normalized_predicted = EvaluationCore._normalized_answer(stripped_predicted)
+        normalize_answer = EvaluationCore._normalized_answer
+        normalized_expected = normalize_answer(expected)
+        normalized_predicted = normalize_answer(stripped_predicted)
         return normalized_expected == normalized_predicted
 
     @staticmethod

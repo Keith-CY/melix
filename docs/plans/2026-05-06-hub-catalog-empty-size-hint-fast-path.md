@@ -71,3 +71,13 @@ cursor is fully decoded. Lowercase escapes, Unicode percent escapes, malformed
 percent sequences, and plus-to-space decoding still fall through to the existing
 lowercase or general decoding paths, preserving cursor behavior while reducing
 string replacement work for the common uppercase cursor path.
+
+## 2026-07-23 README table model-size prefix slice
+
+This follow-up Python-only slice keeps the same registered
+`hub-catalog-size-hint-regex-precompile` probe and narrows to
+`_direct_explicit_size_hint_from_text(...)`. Hub README metadata commonly starts
+with a short heading followed immediately by a `MODEL SIZE | ...` table-style
+line. Checking the exact `README\nMODEL SIZE | ` prefix before the broader marker
+search preserves all fallback marker parsing while avoiding redundant substring
+searches for that common registered-probe shape.

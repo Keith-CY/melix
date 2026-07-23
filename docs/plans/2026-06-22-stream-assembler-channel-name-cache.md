@@ -24,3 +24,14 @@ The affected path is covered by the registered PR-scoped probe `stream-assembler
 3. Apply the bounded `lru_cache` to `_pipe_channel_name()`.
 4. Run the registered focused test command, changed-scope coverage command, and registered probe locally on Linux.
 5. Use GitHub Actions PR-scoped performance as the merge gate before merging.
+
+## 2026-07-23 compact header direct return slice
+
+This follow-up Python-only slice stays within `_pipe_channel_name()` and the
+same registered `stream-assembler-parser-mode-cache` probe. Compact Harmony
+headers that contain no leading whitespace and no separator characters now return
+`header.lower()` immediately after the existing delimiter scans, avoiding the
+generic character loop that is still required for leading-whitespace headers.
+Behavior remains unchanged for whitespace-prefixed headers, metadata-bearing
+headers, newline/tab-delimited headers, empty headers, visible channels, hidden
+channels, and unknown-channel accounting.

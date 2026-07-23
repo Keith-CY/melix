@@ -2165,8 +2165,26 @@ def test_scope_report_selects_lora_reward_summary_probe() -> None:
         ],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "lora-reward-summary-candidate-minmax"
+    assert scope["selected_count"] == 2
+    assert set(_selected_probe_ids(scope)) == {
+        "lora-normalized-manifest-io-count",
+        "lora-reward-summary-candidate-minmax",
+    }
+
+
+def test_lora_normalized_manifest_probe_script_smoke(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/lora_normalized_manifest_probe.py"))
+
+    probe_script["main"]()
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["manifest_write_text_calls_mean"] == 1.0
+    assert metrics["manifest_read_text_calls_mean"] == 0.0
+    assert metrics["iteration_count"] == 12.0
+    assert metrics["manifest_checksum"] == 24.0
 
 
 def test_scope_report_selects_statistical_evidence_probe() -> None:
@@ -4754,6 +4772,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "job-registry-restore-sort-elision",
         "lora-aux-modules-scandir",
         "lora-experiment-run-dir-name-scan",
+        "lora-normalized-manifest-io-count",
         "local-job-followup-scan-scandir",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
@@ -6952,6 +6971,7 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
 
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["root_plain_child_path_joins_mean"] == 0.0
+    assert metrics["root_identity_comparisons_mean"] == 0.0
     assert metrics["plain_scan_count_mean"] == metrics["model_count"] == 400.0
     assert metrics["manifest_count_mean"] == 400.0
     assert metrics["sample_count"] == 5.0
@@ -6962,6 +6982,7 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     assert script_globals["main"]() == 0
     direct_metrics = json.loads(capsys.readouterr().out)
     assert direct_metrics["root_plain_child_path_joins_mean"] == 0.0
+    assert direct_metrics["root_identity_comparisons_mean"] == 0.0
     assert direct_metrics["plain_scan_count_mean"] == direct_metrics["manifest_count_mean"] == 3.0
 
 
@@ -8086,6 +8107,8 @@ def test_vision_family_prompt_token_count_probe_script_emits_metrics(
     assert metrics["split_calls_mean"] == 0.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["config_object_footprint_bytes"] > 0
+    assert metrics["config_resolve_elapsed_ms_mean"] > 0
+    assert metrics["metadata_iteration_calls_mean"] == 0.0
 
 
 def test_scope_report_selects_deterministic_ocr_probe() -> None:

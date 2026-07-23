@@ -21,6 +21,7 @@ def main() -> int:
     sample_count = int(os.environ.get("MELIX_MODEL_REGISTRY_PLAIN_CHILD_PROBE_SAMPLES", "5"))
     elapsed_samples: list[float] = []
     root_plain_child_join_samples: list[float] = []
+    root_identity_comparison_samples: list[float] = []
     plain_scan_count_samples: list[float] = []
     manifest_count_samples: list[float] = []
 
@@ -62,14 +63,16 @@ def main() -> int:
 
         resolved_root = root.resolve()
         original_truediv = Path.__truediv__
+        original_eq = Path.__eq__
 
         for _ in range(sample_count):
             root_plain_child_joins = 0
+            root_identity_comparisons = 0
 
             def tracking_truediv(self: Path, key: object) -> Path:
                 nonlocal root_plain_child_joins
                 counts_root_plain_child = (
-                    self == resolved_root
+                    self is resolved_root
                     and isinstance(key, str)
                     and (key.startswith("model-") or key.startswith("ignored-"))
                 )
@@ -78,13 +81,21 @@ def main() -> int:
                     root_plain_child_joins += 1
                 return result
 
+            def tracking_eq(self: Path, other: object) -> bool:  # pragma: no cover - optimized path should not call this
+                nonlocal root_identity_comparisons
+                if self is resolved_root or other is resolved_root:
+                    root_identity_comparisons += 1
+                return original_eq(self, other)
+
             Path.__truediv__ = tracking_truediv  # type: ignore[method-assign]
+            Path.__eq__ = tracking_eq  # type: ignore[method-assign]
             try:
                 started = time.perf_counter()
                 manifests, plain_scans, hf_repos = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
             finally:
                 Path.__truediv__ = original_truediv
+                Path.__eq__ = original_eq
 
             if hf_repos:
                 raise SystemExit(f"unexpected hf repos: {hf_repos!r}")
@@ -94,6 +105,7 @@ def main() -> int:
                 raise SystemExit(f"unexpected manifest count: {len(manifests)} != {model_count}")
             elapsed_samples.append(elapsed_ms)
             root_plain_child_join_samples.append(float(root_plain_child_joins))
+            root_identity_comparison_samples.append(float(root_identity_comparisons))
             plain_scan_count_samples.append(float(len(plain_scans)))
             manifest_count_samples.append(float(len(manifests)))
 
@@ -102,6 +114,7 @@ def main() -> int:
             {
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
                 "root_plain_child_path_joins_mean": round(statistics.fmean(root_plain_child_join_samples), 6),
+                "root_identity_comparisons_mean": round(statistics.fmean(root_identity_comparison_samples), 6),
                 "plain_scan_count_mean": round(statistics.fmean(plain_scan_count_samples), 6),
                 "manifest_count_mean": round(statistics.fmean(manifest_count_samples), 6),
                 "model_count": float(model_count),

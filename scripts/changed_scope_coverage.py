@@ -323,22 +323,34 @@ def _measurable_changed_lines(
         measured_changed = None
         dense_sorted_measured = False
         if changed_count == 1:
-            changed_line = next(iter(changed))
+            changed_line = 0
+            for changed_line in changed:
+                break
             singleton_may_overlap = False
-            if executed_lines:
-                first_line = executed_lines[0]
-                last_line = executed_lines[-1]
-                if first_line > last_line:
-                    first_line = min(executed_lines)
-                    last_line = max(executed_lines)
+            if (
+                executed_lines
+                and missing_lines
+                and executed_lines[0] <= executed_lines[-1]
+                and missing_lines[0] <= missing_lines[-1]
+            ):
+                first_line = executed_lines[0] if executed_lines[0] < missing_lines[0] else missing_lines[0]
+                last_line = executed_lines[-1] if executed_lines[-1] > missing_lines[-1] else missing_lines[-1]
                 singleton_may_overlap = first_line <= changed_line <= last_line
-            if not singleton_may_overlap and missing_lines:
-                first_line = missing_lines[0]
-                last_line = missing_lines[-1]
-                if first_line > last_line:
-                    first_line = min(missing_lines)
-                    last_line = max(missing_lines)
-                singleton_may_overlap = first_line <= changed_line <= last_line
+            else:
+                if executed_lines:
+                    first_line = executed_lines[0]
+                    last_line = executed_lines[-1]
+                    if first_line > last_line:
+                        first_line = min(executed_lines)
+                        last_line = max(executed_lines)
+                    singleton_may_overlap = first_line <= changed_line <= last_line
+                if not singleton_may_overlap and missing_lines:
+                    first_line = missing_lines[0]
+                    last_line = missing_lines[-1]
+                    if first_line > last_line:
+                        first_line = min(missing_lines)
+                        last_line = max(missing_lines)
+                    singleton_may_overlap = first_line <= changed_line <= last_line
             if not singleton_may_overlap:
                 return [], [], []
         else:
