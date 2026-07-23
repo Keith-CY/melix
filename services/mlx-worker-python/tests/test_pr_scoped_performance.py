@@ -2165,8 +2165,26 @@ def test_scope_report_selects_lora_reward_summary_probe() -> None:
         ],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "lora-reward-summary-candidate-minmax"
+    assert scope["selected_count"] == 2
+    assert set(_selected_probe_ids(scope)) == {
+        "lora-normalized-manifest-io-count",
+        "lora-reward-summary-candidate-minmax",
+    }
+
+
+def test_lora_normalized_manifest_probe_script_smoke(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/lora_normalized_manifest_probe.py"))
+
+    probe_script["main"]()
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["manifest_write_text_calls_mean"] == 1.0
+    assert metrics["manifest_read_text_calls_mean"] == 0.0
+    assert metrics["iteration_count"] == 12.0
+    assert metrics["manifest_checksum"] == 24.0
 
 
 def test_scope_report_selects_statistical_evidence_probe() -> None:
@@ -4754,6 +4772,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "job-registry-restore-sort-elision",
         "lora-aux-modules-scandir",
         "lora-experiment-run-dir-name-scan",
+        "lora-normalized-manifest-io-count",
         "local-job-followup-scan-scandir",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
