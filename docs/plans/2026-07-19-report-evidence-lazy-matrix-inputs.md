@@ -56,3 +56,17 @@ and rule dispatch checks; this slice reuses that same local binding for the lazy
 
 Expected effect: lower `matrix_roles_elapsed_ms_mean` in the registered probe with
 unchanged emitted role counts and unchanged broader report evidence gate metrics.
+
+## Follow-up: clean probe phase string insertion
+
+The 2026-07-23 follow-up remains inside
+`worker.productization.report_evidence_gate._probe_phases` and keeps the same
+registered `report-evidence-gate-run-kind-set-membership` probe. `_probe_phases`
+now binds the hot exact-type helpers locally and inserts exact `str` phase values
+that are already non-empty and free of leading/trailing whitespace directly after
+the duplicate-membership guard instead of calling `strip()`. Padded strings,
+blank strings, non-string phase values, and dict subclass rows retain the existing
+normalization behavior.
+
+Expected effect: lower `probe_phases_elapsed_ms_mean` in the registered probe
+with unchanged phase counts and broader report evidence gate metrics.

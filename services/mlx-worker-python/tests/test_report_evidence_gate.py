@@ -831,6 +831,25 @@ def test_report_evidence_gate_probe_phases_preserves_clean_string_fast_path() ->
     assert phases == {"runtime_prepare", "model_load", "decode", "42"}
 
 
+def test_report_evidence_gate_probe_phases_keeps_blank_and_padded_string_semantics() -> None:
+    phases = report_evidence_gate_module._probe_phases(
+        {
+            "probe_summary": {
+                "baseline": {
+                    "slowest_phases": [
+                        {"phase": "runtime_prepare"},
+                        {"phase": " runtime_prepare "},
+                        {"phase": "   "},
+                    ],
+                    "failed_phases": [{"phase": "decode"}],
+                }
+            }
+        }
+    )
+
+    assert phases == {"runtime_prepare", "decode"}
+
+
 def test_report_evidence_gate_probe_phases_preserves_dict_subclass_rows() -> None:
     class PhaseRow(dict[str, object]):
         pass
