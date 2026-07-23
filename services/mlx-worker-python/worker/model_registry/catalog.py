@@ -4004,7 +4004,7 @@ class WorkerModelCatalog:
                                 continue
                             if entry.is_dir():
                                 entry_path = entry.path
-                                if current == resolved_root and entry_name.startswith("models--"):
+                                if current is resolved_root and entry_name.startswith("models--"):
                                     child_path = Path(entry_path)
                                     if _hf_cache_repo_id(child_path) is not None:
                                         hf_cache_repo_dirs.append(child_path)
