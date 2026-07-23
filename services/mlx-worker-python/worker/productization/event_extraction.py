@@ -2930,7 +2930,12 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             raise ValueError("LLM response must be a JSON object")
         return parsed
 
-    if response_startswith("```", response_start):
+    if (
+        response_start + 3 <= response_length
+        and response_text[response_start] == "`"
+        and response_text[response_start + 1] == "`"
+        and response_text[response_start + 2] == "`"
+    ):
         newline_index = response_text.find("\n", response_start)
         if newline_index >= 0:
             parsed, end_index = raw_decode(response_text, newline_index + 1)
