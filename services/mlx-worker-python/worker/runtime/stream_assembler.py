@@ -1530,12 +1530,11 @@ class RequestStreamAssembler:
         return bool(self._partial_structural_tag_suffix())
 
     def _partial_structural_tag_suffix(self) -> str:
-        buffer = self._buffer
-        marker_index = buffer.rfind("<")
+        marker_index = self._buffer.rfind("<")
         if marker_index < 0:
             return ""
 
-        suffix = buffer[marker_index:]
+        suffix = self._buffer[marker_index:]
         if suffix in self._partial_structural_tag_suffixes_value:
             return suffix
         return ""
