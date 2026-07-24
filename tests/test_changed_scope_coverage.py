@@ -521,12 +521,15 @@ def test_is_diff_file_marker_matches_only_real_file_markers() -> None:
 
 def test_measurable_changed_lines_filters_blank_comment_and_unmeasured_lines(tmp_path: Path) -> None:
     source_path = tmp_path / "foo.py"
-    source_path.write_text("first\n# comment\n\ncovered\nmissed\n", encoding="utf-8")
+    source_path.write_text(
+        "first\n# comment\n\n    indented_covered\nmissed\n    # indented comment\n",
+        encoding="utf-8",
+    )
     coverage_payload = {
         "files": {
             "foo.py": {
                 "executed_lines": [1, 4],
-                "missing_lines": [5],
+                "missing_lines": [5, 6],
             }
         }
     }
@@ -535,12 +538,37 @@ def test_measurable_changed_lines_filters_blank_comment_and_unmeasured_lines(tmp
         tmp_path,
         coverage_payload,
         "foo.py",
-        {1, 2, 3, 4, 5},
+        {1, 2, 3, 4, 5, 6},
     )
 
     assert measurable == [1, 4, 5]
     assert covered == [1, 4]
     assert missed == [5]
+
+
+def test_measurable_non_comment_lines_preserves_dense_indented_comment_behavior(tmp_path: Path) -> None:
+    source_path = tmp_path / "dense.py"
+    source_path.write_text(
+        "\n".join(
+            [
+                "direct_line",
+                "# direct comment",
+                "    indented_line",
+                "    # indented comment",
+                "",
+                "tail_line",
+                "    tail_indented",
+                "# tail comment",
+                "value = 1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert changed_scope_coverage._measurable_non_comment_lines(
+        source_path,
+        list(range(1, 10)),
+    ) == [1, 3, 6, 7, 9]
 
 
 def test_line_ranges_may_overlap_rejects_disjoint_changed_bounds() -> None:
