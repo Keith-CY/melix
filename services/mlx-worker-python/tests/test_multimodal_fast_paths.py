@@ -26,6 +26,7 @@ from worker.runtime.multimodal_fast_paths import (
     _preprocessing_fingerprint,
     _video_preprocessing_fingerprint,
     _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED,
+    _has_any_loaded_metadata,
     _signature_pairs_repr,
     fast_path_probe_signature,
     media_feature_reuse_unsupported_reason,
@@ -1328,6 +1329,27 @@ def test_fast_path_probe_signature_only_expands_processor_keys_when_present() ->
     processor_signature = fast_path_probe_signature(loaded_model, _request([_image(b"image")]))
     assert "('vision_processor_policy', 'gemma4-multicrop-v1')" in processor_signature[2]
     assert "('vision_projected_feature_shape', '4x256x4096')" in processor_signature[2]
+
+    loaded_model_with_top_level_processor = _loaded_model()
+    loaded_model_with_top_level_processor["vision_processor_policy"] = "top-level-policy"
+    top_level_signature = fast_path_probe_signature(
+        loaded_model_with_top_level_processor,
+        _request([_image(b"image")]),
+    )
+    assert "('vision_processor_policy', 'top-level-policy')" in top_level_signature[2]
+
+    loaded_model_with_non_dict_metadata = _loaded_model()
+    loaded_model_with_non_dict_metadata["metadata"] = "not-a-dict"
+    loaded_model_with_non_dict_metadata["vision_processor_policy"] = "top-level-only-policy"
+    non_dict_signature = fast_path_probe_signature(
+        loaded_model_with_non_dict_metadata,
+        _request([_image(b"image")]),
+    )
+    assert "('vision_processor_policy', 'top-level-only-policy')" in non_dict_signature[2]
+
+
+def test_loaded_metadata_presence_helper_preserves_generic_key_sets() -> None:
+    assert _has_any_loaded_metadata({"metadata": {"custom_key": " value "}}, frozenset({"custom_key"}))
 
 
 def test_fast_path_probe_signature_serializes_pairs_like_tuple_repr() -> None:
