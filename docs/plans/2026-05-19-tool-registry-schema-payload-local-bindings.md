@@ -291,6 +291,28 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, protobuf config handling,
   and tool definitions unchanged.
 
+## Follow-up Slice: Default Catalog Ordered Set Skip
+
+The 2026-07-24 preflight follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` behavior unchanged for the
+already-optimized default catalog branch. When the active catalog supplies the
+canonical ordered tool source and the callable registry is covered by the catalog,
+`_referenced_tool_affordance_names(...)` does not need to allocate or update the
+duplicate suppression set: validated `ToolRegistry` instances already guarantee
+unique catalog names, and the registry-order source is skipped in this branch. The slice
+therefore avoids redundant set allocation/mutations while preserving referenced-tool order,
+missing-tool receipts, invalid-affordance counts, and custom registry/catalog
+fallback behavior.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for the default catalog;
+- preserve behavior for custom catalogs or registries that still require duplicate
+  suppression across multiple order sources;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.

@@ -618,8 +618,9 @@ def _referenced_tool_affordance_names(
     if not seen_tool_names:
         return (), invalid_affordance_count
     ordered_names: list[str] = []
-    ordered_name_set: set[str] = set()
+    ordered_name_set: set[str] | None = None
     if include_builtin_order_source:
+        ordered_name_set = set()
         for ordered_source_names in (catalog_names, SELECTABLE_AGENTIC_TOOL_NAMES):
             for tool_name in ordered_source_names:
                 if tool_name in seen_tool_names and tool_name not in ordered_name_set:
@@ -629,8 +630,9 @@ def _referenced_tool_affordance_names(
         for tool_name in catalog_names:
             if tool_name in seen_tool_names:
                 ordered_names.append(tool_name)
-                ordered_name_set.add(tool_name)
     if include_registry_order_source:
+        if ordered_name_set is None:
+            ordered_name_set = set(ordered_names)
         for tool_name in registry_names:
             if tool_name in seen_tool_names and tool_name not in ordered_name_set:
                 ordered_names.append(tool_name)
