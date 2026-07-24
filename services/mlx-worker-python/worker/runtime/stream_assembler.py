@@ -342,9 +342,6 @@ class RequestStreamAssembler:
         + _TOOL_PREFIXES
         + _PIPE_TOOL_PREFIXES
     )
-    _MAX_STRUCTURAL_TAG_PREFIX_CHARS = max(
-        len(prefix) for prefix in _TOOL_PARSER_PARTIAL_SUFFIXES
-    )
     _THINK_PREFIXES_REVERSED = tuple(reversed(_THINK_PREFIXES))
     _PIPE_REASONING_PREFIXES_REVERSED = tuple(reversed(_PIPE_REASONING_PREFIXES))
     _REASONING_PREFIXES_REVERSED = tuple(reversed(_REASONING_PREFIXES))
@@ -1533,14 +1530,12 @@ class RequestStreamAssembler:
         return bool(self._partial_structural_tag_suffix())
 
     def _partial_structural_tag_suffix(self) -> str:
-        marker_index = self._buffer.rfind("<")
+        buffer = self._buffer
+        marker_index = buffer.rfind("<")
         if marker_index < 0:
             return ""
 
-        if len(self._buffer) - marker_index > self._MAX_STRUCTURAL_TAG_PREFIX_CHARS:
-            return ""
-
-        suffix = self._buffer[marker_index:]
+        suffix = buffer[marker_index:]
         if suffix in self._partial_structural_tag_suffixes_value:
             return suffix
         return ""

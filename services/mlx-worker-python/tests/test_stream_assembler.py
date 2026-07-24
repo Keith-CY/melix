@@ -785,9 +785,6 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
         is RequestStreamAssembler._TOOL_PARSER_PARTIAL_SUFFIXES
     )
     assert "<|channel>tho" in tool_enabled._partial_structural_tag_suffixes_value
-    assert RequestStreamAssembler._MAX_STRUCTURAL_TAG_PREFIX_CHARS == max(
-        len(prefix) for prefix in RequestStreamAssembler._TOOL_PARSER_PARTIAL_SUFFIXES
-    )
     assert tool_enabled._structural_tag_prefixes_reversed == (
         tuple(reversed(pipe_channel_prefixes))
         + tuple(reversed(pipe_tool_prefixes))
@@ -813,12 +810,6 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
         tool_disabled._structural_tag_prefixes_reversed
         is RequestStreamAssembler._REASONING_PREFIXES_REVERSED
     )
-    tool_enabled._buffer = "literal <" + (
-        "x" * RequestStreamAssembler._MAX_STRUCTURAL_TAG_PREFIX_CHARS
-    )
-    assert tool_enabled._partial_structural_tag_suffix() == ""
-    tool_enabled._buffer = "literal <|channel>tho"
-    assert tool_enabled._partial_structural_tag_suffix() == "<|channel>tho"
 
 
 def test_parser_mode_flags_are_computed_once_at_initialization() -> None:
