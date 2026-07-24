@@ -97,6 +97,8 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
     header_separator_len = len(header_separator)
     hunk_new_range_marker = b" +"
     parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit_bytes
+    bytes_find = bytes.find
+    bytes_startswith = bytes.startswith
     ascii_backslash = _ASCII_BACKSLASH
     ascii_plus = _ASCII_PLUS
     ascii_minus = _ASCII_MINUS
@@ -111,8 +113,8 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
                 new_line += 1
             continue
         first_char = line[0]
-        if first_char == ascii_lower_d and line.startswith(header_prefix):
-            separator_index = line.find(header_separator, header_prefix_len)
+        if first_char == ascii_lower_d and bytes_startswith(line, header_prefix):
+            separator_index = bytes_find(line, header_separator, header_prefix_len)
             add_changed_line = None
             if separator_index >= 0:
                 current_path = line[separator_index + header_separator_len :].decode()
@@ -120,7 +122,7 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
             new_line = None
             continue
         if first_char == ascii_at and len(line) > 1 and line[1] == ascii_at:
-            new_range_index = line.find(hunk_new_range_marker)
+            new_range_index = bytes_find(line, hunk_new_range_marker)
             if new_range_index < 0:
                 new_line = None
                 continue
