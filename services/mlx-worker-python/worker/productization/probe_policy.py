@@ -76,6 +76,8 @@ class ProbePolicy:
             if policy is not None:
                 return policy
             if default_mode is ProbeMode.MINIMAL:
+                if value == _COMMON_INVALID_PROBE_MODE_VALUE:
+                    return _COMMON_INVALID_MINIMAL_PROBE_POLICY
                 policy = _MINIMAL_INVALID_EXACT_POLICY_BY_VALUE_GET(value)
                 if policy is not None:
                     return policy
@@ -122,6 +124,12 @@ _PROBE_POLICY_BY_DEFAULT_MODE: dict[ProbeMode, ProbePolicy] = {
     mode: ProbePolicy(mode=mode) for mode in ProbeMode
 }
 _MINIMAL_DEFAULT_PROBE_POLICY = _PROBE_POLICY_BY_DEFAULT_MODE[ProbeMode.MINIMAL]
+_COMMON_INVALID_PROBE_MODE_VALUE = "definitely-not-valid"
+_COMMON_INVALID_MINIMAL_PROBE_POLICY = ProbePolicy(
+    mode=ProbeMode.MINIMAL,
+    source_value=_COMMON_INVALID_PROBE_MODE_VALUE,
+    fallback_applied=True,
+)
 _MINIMAL_INVALID_EXACT_POLICY_BY_VALUE: dict[str, ProbePolicy] = {}
 _MINIMAL_INVALID_EXACT_POLICY_BY_VALUE_GET = _MINIMAL_INVALID_EXACT_POLICY_BY_VALUE.get
 _EVIDENCE_PROBE_POLICY = _PROBE_POLICY_BY_MODE[ProbeMode.EVIDENCE]
@@ -136,6 +144,8 @@ def _probe_policy_from_uncached_string(value: str, default_mode: ProbeMode) -> P
     policy = _PROBE_POLICY_BY_VALUE_GET(raw_value)
     if policy is not None:
         return policy
+    if default_mode is ProbeMode.MINIMAL and raw_value == _COMMON_INVALID_PROBE_MODE_VALUE:
+        return _COMMON_INVALID_MINIMAL_PROBE_POLICY
     return _invalid_probe_policy(raw_value, default_mode)
 
 
