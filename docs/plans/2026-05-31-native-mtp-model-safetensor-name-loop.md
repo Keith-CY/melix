@@ -24,6 +24,8 @@ The probe is extended to measure the model safetensor listing path directly agai
 
 2026-07-23 follow-up slice: `_model_safetensor_files()` now binds `str.startswith` and `str.endswith` before the scandir loop. The helper still returns sorted string paths matching the historical `glob` baseline, while large top-level model directories avoid repeated bound-method lookup for every candidate filename.
 
+2026-07-24 follow-up slice: `_model_safetensor_files()` now checks the first filename character before running the full `model` prefix test. Filesystem entries cannot have empty names, so this preserves the historical `glob`-compatible result while letting large directories with non-`m` sidecar and distractor files skip the longer prefix comparison.
+
 ## Verification plan
 
 ```bash
