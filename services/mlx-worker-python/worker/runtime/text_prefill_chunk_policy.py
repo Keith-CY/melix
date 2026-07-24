@@ -133,12 +133,23 @@ def resolve_configured_text_prefill_chunk_policy(
     prepared_request: object,
     seq_len: int | None,
     execution_ext: object | None = None,
+    has_sequence_aligned_extra_inputs: bool = False,
+    attention_mask_all_valid: bool = True,
+    cache_present: bool = True,
 ) -> TextPrefillChunkDecision | None:
     """Resolve the policy when a text prefill step size is configured.
 
     Returns ``None`` when no step size is configured so callers keep an empty
     receipt and unchanged default behavior, mirroring the attention-budget
     policy's opt-in shape.
+
+    ``has_media`` is derived from the prepared request. The remaining guard
+    signals — ``has_sequence_aligned_extra_inputs``, ``attention_mask_all_valid``,
+    and ``cache_present`` — are decode-loop facts that the receipt-only probe
+    sites cannot observe before the first forward, so they default to the
+    eligible values. They are forwarded explicitly (not silently dropped) so the
+    follow-up that drives real chunked execution can pass the observed values and
+    have the guards fire.
     """
 
     configured = _configured_text_prefill_step_size(loaded_model, execution_ext)
@@ -152,6 +163,9 @@ def resolve_configured_text_prefill_chunk_policy(
         prompt_tokens=seq_len if seq_len is not None else 0,
         requested_prefill_step_size=configured,
         has_media=has_media,
+        has_sequence_aligned_extra_inputs=has_sequence_aligned_extra_inputs,
+        attention_mask_all_valid=attention_mask_all_valid,
+        cache_present=cache_present,
     )
 
 

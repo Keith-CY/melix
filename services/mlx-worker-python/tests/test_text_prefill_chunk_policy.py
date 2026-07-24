@@ -219,6 +219,38 @@ def test_configured_resolver_reads_top_level_and_nested_and_execution_ext() -> N
     assert overridden.effective_prefill_step_size == 4
 
 
+def test_configured_resolver_forwards_partial_mask_and_cache_and_extra_input_guards() -> None:
+    base_kwargs = dict(
+        loaded_model={"melix.vlm.text_prefill_step_size": "4"},
+        prepared_request=SimpleNamespace(images=(), videos=()),
+        seq_len=20_000,
+    )
+
+    # Default (eligible) call still chunks, proving the guards are opt-in.
+    eligible = resolve_configured_text_prefill_chunk_policy(**base_kwargs)
+    assert eligible is not None
+    assert eligible.prefill_mode == TEXT_PREFILL_CHUNKED_PREFIX
+
+    partial_mask = resolve_configured_text_prefill_chunk_policy(
+        **base_kwargs, attention_mask_all_valid=False
+    )
+    assert partial_mask is not None
+    assert partial_mask.prefill_mode == TEXT_PREFILL_SINGLE_FORWARD
+    assert partial_mask.fallback_reason == TEXT_PREFILL_FALLBACK_PARTIAL_ATTENTION_MASK
+
+    missing_cache = resolve_configured_text_prefill_chunk_policy(
+        **base_kwargs, cache_present=False
+    )
+    assert missing_cache is not None
+    assert missing_cache.fallback_reason == TEXT_PREFILL_FALLBACK_CACHE_UNAVAILABLE
+
+    extra_inputs = resolve_configured_text_prefill_chunk_policy(
+        **base_kwargs, has_sequence_aligned_extra_inputs=True
+    )
+    assert extra_inputs is not None
+    assert extra_inputs.fallback_reason == TEXT_PREFILL_FALLBACK_SEQUENCE_ALIGNED_EXTRA_INPUTS
+
+
 def test_configured_resolver_detects_media_on_prepared_request() -> None:
     decision = resolve_configured_text_prefill_chunk_policy(
         loaded_model={"melix.vlm.text_prefill_step_size": "4"},

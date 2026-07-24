@@ -705,6 +705,11 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             )
         attention_budget_receipt = build_attention_budget_receipt(attention_decision)
         hybrid_seq_len = int(position_metadata_receipt["seq_len"])
+        # Receipt-only slice: the partial-mask, cache-presence, and
+        # sequence-aligned-extra-input guards are decode-loop facts unavailable
+        # at probe time, so the resolver applies its eligible defaults here. The
+        # follow-up that drives real chunked execution must pass the observed
+        # signals through resolve_configured_text_prefill_chunk_policy.
         text_prefill_chunk_receipt = build_text_prefill_chunk_receipt(
             resolve_configured_text_prefill_chunk_policy(
                 loaded_model=loaded_model,

@@ -31,6 +31,16 @@ This slice owns the decision and its receipt only. Materializing prefix-only
 cache state between chunks and running the final token separately in the real
 `mlx-vlm`/native-MTP decode loop is follow-up work gated on this policy.
 
+Only `has_media` is observable at the probe-recording sites. The partial-mask,
+cache-presence, and sequence-aligned-extra-input guards are decode-loop facts
+that do not exist before the first forward, so the configured resolver applies
+its eligible defaults at those sites while still forwarding every guard through
+to `resolve_text_prefill_chunk_policy`. The follow-up that lets this decision
+drive chunked execution must pass the observed signals through
+`resolve_configured_text_prefill_chunk_policy`; until then the receipt reports
+`chunked_prefix` for eligible long text-only prompts based on media and length
+alone.
+
 ## Policy Inputs
 
 - `prompt_tokens`: resolved prompt token count.

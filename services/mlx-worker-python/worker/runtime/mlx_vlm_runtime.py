@@ -3984,6 +3984,11 @@ class MLXVLMRuntime:
                     seq_len=seq_len,
                 )
             ),
+            # Receipt-only slice: partial-mask, cache-presence, and
+            # sequence-aligned-extra-input guards are decode-loop facts
+            # unavailable at probe time, so the resolver applies its eligible
+            # defaults here. The follow-up that drives real chunked execution
+            # must pass the observed signals through the resolver.
             text_prefill_chunk_receipt=build_text_prefill_chunk_receipt(
                 resolve_configured_text_prefill_chunk_policy(
                     loaded_model=loaded_model,
