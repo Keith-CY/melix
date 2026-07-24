@@ -15,10 +15,16 @@ the one-iteration bootstrap loop used only to seed running min/max totals.
 ## Approach
 
 The aggregate helper already accepts any iterable and performs a single pass. For
-the no-truncation branch, seed the first entry with `next(iterator, None)` and
-then continue the remaining stream in the existing loop. This preserves generator
-semantics while removing the synthetic `for ... break` bootstrap path from the
-hot aggregation loop.
+the no-truncation branch, keep the generic iterable loop unchanged and add a
+list/tuple-specific fast path that seeds running totals from index 0, then scans
+remaining entries by index. This preserves generator semantics while removing the
+per-entry `sample_count == 0` bootstrap branch from the common materialized
+sequence path used by the registered probe.
+
+2026-07-24 implementation note: a generic `next(iterator, None)` variant was
+measured locally and rejected because it regressed the no-limit probe path. The
+accepted implementation is limited to list/tuple inputs and keeps the existing
+iterator loop for one-pass generators.
 
 ## Verification
 

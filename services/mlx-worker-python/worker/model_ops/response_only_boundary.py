@@ -239,32 +239,68 @@ def aggregate_response_only_boundaries(
                 fully_truncated_response_sample_count += 1
             sample_count += 1
     else:
-        for entry in boundaries:
-            offset = entry.assistant_offset
-            total_tokens = entry.total_tokens
-            response_tokens = total_tokens - offset
-            if response_tokens < 0:
-                response_tokens = 0
-            if sample_count == 0:
+        if isinstance(boundaries, (list, tuple)):
+            sample_count = len(boundaries)
+            if sample_count:
+                first_entry = boundaries[0]
+                offset = first_entry.assistant_offset
+                total_tokens = first_entry.total_tokens
+                response_tokens = total_tokens - offset
+                if response_tokens < 0:
+                    response_tokens = 0
                 boundary_min = offset
                 boundary_max = offset
                 response_tokens_min = response_tokens
                 response_tokens_max = response_tokens
-            else:
-                if offset < boundary_min:
+                total_offset = offset
+                total_response_tokens = response_tokens
+                for index in range(1, sample_count):
+                    entry = boundaries[index]
+                    offset = entry.assistant_offset
+                    total_tokens = entry.total_tokens
+                    response_tokens = total_tokens - offset
+                    if response_tokens < 0:
+                        response_tokens = 0
+                    if offset < boundary_min:
+                        boundary_min = offset
+                    if offset > boundary_max:
+                        boundary_max = offset
+                    if response_tokens < response_tokens_min:
+                        response_tokens_min = response_tokens
+                    if response_tokens > response_tokens_max:
+                        response_tokens_max = response_tokens
+                    total_offset += offset
+                    total_response_tokens += response_tokens
+                trainable_response_tokens_min = response_tokens_min
+                trainable_response_tokens_max = response_tokens_max
+                total_trainable_response_tokens = total_response_tokens
+        else:
+            for entry in boundaries:
+                offset = entry.assistant_offset
+                total_tokens = entry.total_tokens
+                response_tokens = total_tokens - offset
+                if response_tokens < 0:
+                    response_tokens = 0
+                if sample_count == 0:
                     boundary_min = offset
-                if offset > boundary_max:
                     boundary_max = offset
-                if response_tokens < response_tokens_min:
                     response_tokens_min = response_tokens
-                if response_tokens > response_tokens_max:
                     response_tokens_max = response_tokens
-            total_offset += offset
-            total_response_tokens += response_tokens
-            sample_count += 1
-        trainable_response_tokens_min = response_tokens_min
-        trainable_response_tokens_max = response_tokens_max
-        total_trainable_response_tokens = total_response_tokens
+                else:
+                    if offset < boundary_min:
+                        boundary_min = offset
+                    if offset > boundary_max:
+                        boundary_max = offset
+                    if response_tokens < response_tokens_min:
+                        response_tokens_min = response_tokens
+                    if response_tokens > response_tokens_max:
+                        response_tokens_max = response_tokens
+                total_offset += offset
+                total_response_tokens += response_tokens
+                sample_count += 1
+            trainable_response_tokens_min = response_tokens_min
+            trainable_response_tokens_max = response_tokens_max
+            total_trainable_response_tokens = total_response_tokens
     if sample_count == 0:
         return ResponseOnlyBoundaryAggregate(
             sample_count=0,
