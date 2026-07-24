@@ -114,6 +114,21 @@ def test_parse_changed_lines_accepts_git_diff_bytes() -> None:
     assert changed_scope_coverage._parse_changed_lines(diff_text.encode()) == {"foo.py": {2}}
 
 
+def test_parse_changed_lines_keeps_lower_d_context_as_ordinary_line() -> None:
+    diff_text = "\n".join(
+        [
+            "diff --git a/foo.py b/foo.py",
+            "--- a/foo.py",
+            "+++ b/foo.py",
+            "@@ -0,0 +2,2 @@",
+            "def context_line():",
+            "+    return 1",
+        ]
+    )
+
+    assert changed_scope_coverage._parse_changed_lines(diff_text.encode()) == {"foo.py": {3}}
+
+
 def test_parse_hunk_new_start_uses_delimiters_for_counted_and_single_line_ranges() -> None:
     assert changed_scope_coverage._parse_hunk_new_start("@@ -0,0 +3,2 @@") == 3
     assert changed_scope_coverage._parse_hunk_new_start("@@ -10 +12 @@") == 12
