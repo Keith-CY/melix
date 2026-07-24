@@ -274,9 +274,13 @@ def _measurable_non_comment_lines(
         with source_path.open("r", encoding="utf-8") as source_file:
             for index, line in enumerate(source_file, 1):
                 if index in remaining:
-                    stripped = line.strip()
-                    if stripped and not stripped.startswith("#"):
+                    first_char = line[0] if line else ""
+                    if first_char and first_char != "#" and not first_char.isspace():
                         append_measurable(index)
+                    else:
+                        stripped = line.strip()
+                        if stripped and not stripped.startswith("#"):
+                            append_measurable(index)
                     remaining.remove(index)
                     if not remaining:
                         break
@@ -286,9 +290,14 @@ def _measurable_non_comment_lines(
     source_line_count = len(source_lines)
     for line_no in line_numbers:
         if 1 <= line_no <= source_line_count:
-            stripped = source_lines[line_no - 1].strip()
-            if stripped and not stripped.startswith("#"):
+            line = source_lines[line_no - 1]
+            first_char = line[0] if line else ""
+            if first_char and first_char != "#" and not first_char.isspace():
                 append_measurable(line_no)
+            else:
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    append_measurable(line_no)
     return measurable
 
 
