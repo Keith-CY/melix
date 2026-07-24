@@ -2809,8 +2809,9 @@ def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
 
 
 def _matches_any_compiled_glob(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
+    path_startswith = path.startswith
     for prefix, pattern in matchers:
-        if prefix and not path.startswith(prefix):
+        if prefix and not path_startswith(prefix):
             continue
         if pattern.match(path) is not None:
             return True
