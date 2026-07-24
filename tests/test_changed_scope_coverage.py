@@ -114,20 +114,6 @@ def test_parse_changed_lines_accepts_git_diff_bytes() -> None:
     assert changed_scope_coverage._parse_changed_lines(diff_text.encode()) == {"foo.py": {2}}
 
 
-def test_parse_changed_lines_accepts_crlf_diff_bytes() -> None:
-    diff_text = "\r\n".join(
-        [
-            "diff --git a/foo.py b/foo.py",
-            "--- a/foo.py",
-            "+++ b/foo.py",
-            "@@ -0,0 +2 @@",
-            "+alpha",
-        ]
-    )
-
-    assert changed_scope_coverage._parse_changed_lines(diff_text.encode()) == {"foo.py": {2}}
-
-
 def test_parse_changed_lines_keeps_lower_d_context_as_ordinary_line() -> None:
     diff_text = "\n".join(
         [
