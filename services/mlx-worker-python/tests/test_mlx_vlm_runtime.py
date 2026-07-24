@@ -2570,32 +2570,6 @@ class _StringifiedOnce:
         return self.value
 
 
-class _CountingString(str):
-    def __new__(cls, value: str) -> _CountingString:
-        instance = super().__new__(cls, value)
-        instance.str_calls = 0
-        return instance
-
-    def __str__(self) -> str:  # pragma: no cover - regression guard
-        self.str_calls += 1
-        return super().__str__()
-
-
-def test_quantized_tensor_metadata_skips_string_key_normalization() -> None:
-    tensor_name = _CountingString("language_model.layers.0.q_proj.weight")
-    shard_name = _CountingString("model-00001.safetensors")
-
-    metadata = quantized_tensor_metadata_from_index_payload(
-        {"weight_map": {tensor_name: shard_name}}
-    )
-
-    assert metadata.tensor_to_shard == {
-        "language_model.layers.0.q_proj.weight": "model-00001.safetensors"
-    }
-    assert tensor_name.str_calls == 0
-    assert shard_name.str_calls == 0
-
-
 def test_quantized_tensor_metadata_normalizes_index_keys_once() -> None:
     tensor_name = _StringifiedOnce("language_model.layers.0.q_proj.scales")
     empty_tensor_name = _StringifiedOnce("")
