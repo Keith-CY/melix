@@ -171,3 +171,16 @@ missing-itemsize behavior.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Hot Loop Getattr Binding Reuse
+
+The next 2026-07-24 follow-up keeps the same registered probe and narrows to the
+already-bound `getattr` local in `estimate_cache_snapshot_bytes()`. The estimator
+now passes that binding into the scalar and pair tensor byte helpers from every
+state, key, and value path instead of relying on each helper's default argument
+lookup, preserving byte accounting behavior while shaving dispatch overhead in
+the repeated snapshot byte-estimation loop.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
