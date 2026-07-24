@@ -2474,7 +2474,7 @@ def _coverage_paths_by_probe_id(
 ) -> dict[str, tuple[str, ...]]:
     if not changed_paths:
         return {}
-    exact_path_to_probe_indexes, wildcard_glob_matchers, _wildcard_matcher_buckets = _probe_match_indexes(probes)
+    exact_path_to_probe_indexes, _wildcard_glob_matchers, wildcard_matcher_buckets = _probe_match_indexes(probes)
     selected_probe_indexes: frozenset[int] | None = None
     if selected_probe_ids is not None and len(selected_probe_ids) < len(probes):
         probe_id_to_index = _probe_id_to_index(probes)
@@ -2485,17 +2485,21 @@ def _coverage_paths_by_probe_id(
         )
         if not selected_probe_indexes:
             return {}
-        wildcard_glob_matchers = tuple(
-            (prefix, pattern, filtered_probe_indexes)
-            for prefix, pattern, probe_indexes in wildcard_glob_matchers
-            if (
-                filtered_probe_indexes := tuple(
-                    probe_index
-                    for probe_index in probe_indexes
-                    if probe_index in selected_probe_indexes
+        wildcard_matcher_buckets = {
+            bucket_key: tuple(
+                (prefix, pattern, filtered_probe_indexes)
+                for prefix, pattern, probe_indexes in matchers
+                if (
+                    filtered_probe_indexes := tuple(
+                        probe_index
+                        for probe_index in probe_indexes
+                        if probe_index in selected_probe_indexes
+                    )
                 )
             )
-        )
+            for bucket_key, matchers in wildcard_matcher_buckets.items()
+        }
+    unbucketed_matchers = wildcard_matcher_buckets.get("", ())
     coverage_paths_by_probe_index: dict[int, list[str]] = {}
     for path in changed_paths:
         direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
@@ -2515,12 +2519,14 @@ def _coverage_paths_by_probe_id(
                 ):
                     continue
                 coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
-        for prefix, pattern, probe_indexes in wildcard_glob_matchers:
-            if prefix and not path.startswith(prefix):
-                continue
-            if pattern.match(path) is not None:
-                for probe_index in probe_indexes:
-                    coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+        path_matchers = wildcard_matcher_buckets.get(_path_bucket_key(path), ())
+        for matchers in (unbucketed_matchers, path_matchers):
+            for prefix, pattern, probe_indexes in matchers:
+                if prefix and not path.startswith(prefix):
+                    continue
+                if pattern.match(path) is not None:
+                    for probe_index in probe_indexes:
+                        coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
     return {
         probes[probe_index].probe_id: tuple(coverage_paths)
         for probe_index, coverage_paths in coverage_paths_by_probe_index.items()
