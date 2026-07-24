@@ -120,9 +120,11 @@ def quantized_tensor_metadata_from_index_payload(
         return EMPTY_QUANTIZED_TENSOR_METADATA
     tensor_to_shard: dict[str, str] = {}
     for raw_tensor_name, raw_shard_name in weight_map.items():
-        tensor_name = str(raw_tensor_name)
+        tensor_name = raw_tensor_name if isinstance(raw_tensor_name, str) else str(raw_tensor_name)
         if tensor_name:
-            tensor_to_shard[tensor_name] = str(raw_shard_name)
+            tensor_to_shard[tensor_name] = (
+                raw_shard_name if isinstance(raw_shard_name, str) else str(raw_shard_name)
+            )
     return _metadata_from_normalized_mapping(tensor_to_shard)
 
 
