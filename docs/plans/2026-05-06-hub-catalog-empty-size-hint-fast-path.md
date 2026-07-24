@@ -81,3 +81,16 @@ with a short heading followed immediately by a `MODEL SIZE | ...` table-style
 line. Checking the exact `README\nMODEL SIZE | ` prefix before the broader marker
 search preserves all fallback marker parsing while avoiding redundant substring
 searches for that common registered-probe shape.
+
+## 2026-07-24 card library before tag scan slice
+
+This follow-up Python-only slice keeps the same registered
+`hub-catalog-size-hint-regex-precompile` probe and narrows to
+`_payload_is_mlx_compatible(...)`. Hub API payloads can expose the MLX library
+signal under `cardData.library_name` while top-level tags contain only generic
+metadata. When the top-level library is empty and `cardData` is already a plain
+mapping, the compatibility check now accepts exact or atom-equivalent card
+library names before scanning top-level tags. This preserves the existing rule
+that a non-empty top-level non-MLX library takes precedence over the card
+library fallback, while reducing repeated tag scans for common card-backed MLX
+compatibility payloads in the registered probe.

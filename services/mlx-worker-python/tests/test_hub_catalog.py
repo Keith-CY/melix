@@ -216,6 +216,27 @@ def test_payload_mlx_tag_detection_fast_paths_exact_membership(monkeypatch: pyte
     assert calls == 1
 
 
+def test_payload_card_library_detection_skips_tag_scan_when_top_library_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.model_ops import hub_catalog
+
+    def fail_tag_scan(value: object) -> bool:
+        raise AssertionError(  # pragma: no cover - regression guard
+            f"card library exact path should not scan tags: {value!r}"
+        )
+
+    monkeypatch.setattr(hub_catalog, "_tag_payload_contains_mlx", fail_tag_scan)
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation", object()],
+            "cardData": {"library_name": "mlx", "tags": ["audio", object()]},
+        }
+    ) is True
+
+
 class FakeHTTPResponse:
     def __init__(self, payload: object):
         self._payload = json.dumps(payload).encode("utf-8")
