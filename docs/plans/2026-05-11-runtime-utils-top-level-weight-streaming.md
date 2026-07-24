@@ -87,3 +87,16 @@ semantics, missing-file handling, non-regular file rejection, and flat-bundle
 Validation remains the focused runtime-utils pytest selection, changed-scope
 coverage, and the local and CI `runtime-utils-top-level-weight-streaming` probe;
 the indexed metrics are the primary performance signal for this slice.
+
+## 2026-07-24 safetensors suffix fast path
+
+This follow-up Python slice keeps the same registered runtime resident-byte
+probe and narrows only `_is_model_weight_filename(...)`, which is called for
+every candidate entry in flat bundles and every indexed shard path. The common
+lowercase `.safetensors` suffix is checked before the secondary model-weight
+suffix tuple, so flat-bundle scans with many safetensors shards avoid the broader
+tuple suffix check while preserving suffix-only rejection and mixed-case fallback
+semantics for `.safetensors`, `.npz`, `.bin`, and `.gguf` names.
+
+Validation remains the focused runtime-utils pytest selection, changed-scope
+coverage, and the local and CI `runtime-utils-top-level-weight-streaming` probe.
