@@ -293,12 +293,8 @@ def _huggingface_cache_model_path(
     snapshots_root = repo_cache / "snapshots"
     if not snapshots_root.is_dir():
         return None
-    latest_entry_name: str | None = None
     with os.scandir(snapshots_root) as entries:
-        for entry in entries:
-            entry_name = entry.name
-            if latest_entry_name is None or entry_name > latest_entry_name:
-                latest_entry_name = entry_name
+        latest_entry_name = max((entry.name for entry in entries), default=None)
     if latest_entry_name is None:
         return None
 
