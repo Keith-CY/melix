@@ -94,3 +94,15 @@ library names before scanning top-level tags. This preserves the existing rule
 that a non-empty top-level non-MLX library takes precedence over the card
 library fallback, while reducing repeated tag scans for common card-backed MLX
 compatibility payloads in the registered probe.
+
+## 2026-07-24 card tag before top tag scan slice
+
+This follow-up Python-only slice keeps the same registered
+`hub-catalog-size-hint-regex-precompile` probe and narrows to
+`_payload_is_mlx_compatible(...)`. When `cardData.tags` already carries an MLX
+compatibility tag, the payload check now accepts that card-level tag before
+scanning unrelated top-level tags. Top-level library/repo signals and the
+existing card library precedence remain unchanged; non-matching card tags still
+fall through to the same top-level and card-library checks, preserving behavior
+while reducing repeated tag scans for card-backed compatibility payloads in the
+registered probe.
