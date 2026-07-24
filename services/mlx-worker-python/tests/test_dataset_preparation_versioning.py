@@ -255,6 +255,32 @@ def test_dataset_quality_two_message_rows_preserve_content_lengths() -> None:
     ) == [10, 8]
 
 
+def test_dataset_quality_completion_shaped_batches_preserve_mixed_rows() -> None:
+    class MessageItem:
+        def get(self, key: str, default: object = "") -> object:
+            return "tail" if key == "content" else default
+
+    assert _sample_output_lengths(
+        [
+            {"completion": "abc"},
+            {"messages": [{"content": "hello"}, {"content": "world"}]},
+            {"messages": [{"content": "hello"}, {"content": 678}, MessageItem()]},
+            {"messages": "not-a-list"},
+        ],
+        [],
+    ) == [3, 10, 12, 0]
+
+
+def test_dataset_quality_message_shaped_batches_preserve_non_list_rows() -> None:
+    assert _sample_output_lengths(
+        [],
+        [
+            {"messages": "not-a-list"},
+            {"messages": [{"content": "hello"}, {"content": "world"}]},
+        ],
+    ) == [0, 10]
+
+
 def test_dataset_quality_length_stats_accumulates_total_inline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
