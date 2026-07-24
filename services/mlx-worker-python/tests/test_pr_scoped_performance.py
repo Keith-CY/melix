@@ -3299,6 +3299,69 @@ def test_coverage_paths_for_probe_uses_cached_watch_glob_matchers(monkeypatch: p
     assert matcher_calls == [("services/a.py", ("services/", "docs/"))]
 
 
+def test_coverage_paths_by_probe_id_buckets_wildcard_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/*.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="beta",
+            name="Beta",
+            runner="ubuntu-latest",
+            watch_globs=("docs/*.md",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    match_calls: list[tuple[str, str]] = []
+
+    class TrackingPattern:
+        def __init__(self, name: str, matched_path: str) -> None:
+            self.name = name
+            self.matched_path = matched_path
+
+        def match(self, path: str) -> object | None:
+            match_calls.append((self.name, path))
+            return object() if path == self.matched_path else None
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_probe_match_indexes",
+        lambda probe_tuple: (
+            {},
+            (),
+            {
+                "": (("README", TrackingPattern("readme", "README.md"), (1,)),),
+                "services/": (("services/", TrackingPattern("services", "services/a.py"), (0,)),),
+                "docs/": (("docs/", TrackingPattern("docs", "docs/plan.md"), (1,)),),
+            },
+        ),
+    )
+
+    assert _coverage_paths_by_probe_id(
+        changed_paths=("services/a.py",),
+        probes=probes,
+        selected_probe_ids=frozenset({"alpha"}),
+    ) == {"alpha": ("services/a.py",)}
+    assert _coverage_paths_by_probe_id(
+        changed_paths=("services/a.py",),
+        probes=probes,
+        selected_probe_ids=None,
+    ) == {"alpha": ("services/a.py",)}
+    assert match_calls == [("services", "services/a.py"), ("services", "services/a.py")]
+
+
 def test_probe_watch_glob_matchers_reuses_cached_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
     compile_calls: list[str] = []
     original_compile = pr_scoped_performance_module._compiled_glob_pattern
