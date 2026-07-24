@@ -366,6 +366,23 @@ def test_normalized_version_parts_materializes_without_generator(
     assert normalized_version_parts("release") == [0]
 
 
+def test_normalized_version_parts_checks_v_prefix_without_startswith() -> None:
+    class StartswithForbiddenVersion(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - sentinel
+            return self
+
+        def startswith(
+            self,
+            prefix: str | tuple[str, ...],
+            start: Any = None,
+            end: Any = None,
+        ) -> bool:  # pragma: no cover - sentinel
+            raise AssertionError("normalized_version_parts should check the v prefix directly")
+
+    assert normalized_version_parts(StartswithForbiddenVersion("v3.2rc1.0-beta+build")) == [3, 2, 0]
+    assert normalized_version_parts(StartswithForbiddenVersion("release")) == [0]
+
+
 def test_compare_versions_reuses_cached_result_for_repeated_pairs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

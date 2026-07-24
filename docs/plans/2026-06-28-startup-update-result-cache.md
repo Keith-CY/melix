@@ -105,3 +105,17 @@ affected public helper is measured directly in both local Linux runs and the
 PR-scoped performance workflow. Verification remains the registered focused
 tests, changed-scope coverage command, local Linux probe, and PR-scoped
 performance workflow as the merge gate.
+
+## 2026-07-23 follow-up: normalized parts direct v-prefix check
+
+This Python-only follow-up keeps the same registered startup-signals probe and
+narrows further to `normalized_version_parts(...)`. The helper now checks the
+leading `v` prefix with a direct first-character comparison after trimming instead
+of calling `str.startswith("v")` on every normalized version parse. Whitespace
+trimming, suffix cutoff, empty-string fallback, and non-numeric segment behavior
+remain unchanged.
+
+The registered `startup-signals-version-compare-single-pass` probe already
+includes `normalized_parts_*` metrics for this helper, so verification remains
+the focused startup-signals tests, changed-scope coverage command, local Linux
+probe, and PR-scoped performance workflow as the merge gate.

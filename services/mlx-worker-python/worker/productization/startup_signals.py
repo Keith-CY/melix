@@ -318,7 +318,7 @@ def compare_versions(left: str, right: str) -> int:
 def normalized_version_parts(value: str) -> list[int]:
     cleaned = value.strip()
     cleaned_length = len(cleaned)
-    index = 1 if cleaned.startswith("v") else 0
+    index = 1 if cleaned and cleaned[0] == "v" else 0
     parts: list[int] = []
     current_value = 0
     digit_seen = False
