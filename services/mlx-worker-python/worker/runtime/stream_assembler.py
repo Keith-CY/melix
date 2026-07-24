@@ -342,6 +342,8 @@ class RequestStreamAssembler:
         + _TOOL_PREFIXES
         + _PIPE_TOOL_PREFIXES
     )
+    _REASONING_PARTIAL_SUFFIX_MAX_CHARS = max(map(len, _REASONING_PARTIAL_SUFFIXES))
+    _TOOL_PARSER_PARTIAL_SUFFIX_MAX_CHARS = max(map(len, _TOOL_PARSER_PARTIAL_SUFFIXES))
     _THINK_PREFIXES_REVERSED = tuple(reversed(_THINK_PREFIXES))
     _PIPE_REASONING_PREFIXES_REVERSED = tuple(reversed(_PIPE_REASONING_PREFIXES))
     _REASONING_PREFIXES_REVERSED = tuple(reversed(_REASONING_PREFIXES))
@@ -411,6 +413,7 @@ class RequestStreamAssembler:
         )
         self._structural_tag_prefixes_value = self._REASONING_PREFIXES
         self._partial_structural_tag_suffixes_value = self._REASONING_PARTIAL_SUFFIXES
+        self._partial_structural_tag_suffix_max_chars_value = self._REASONING_PARTIAL_SUFFIX_MAX_CHARS
         self._structural_tag_prefixes_reversed_value = self._REASONING_PREFIXES_REVERSED
         self._structural_open_tags_value = self._REASONING_OPEN_TAGS
         if self._tool_parsing_enabled_value:
@@ -420,6 +423,7 @@ class RequestStreamAssembler:
                 self._REASONING_PREFIXES + self._TOOL_PREFIXES + self._PIPE_TOOL_PREFIXES
             )
             self._partial_structural_tag_suffixes_value = self._TOOL_PARSER_PARTIAL_SUFFIXES
+            self._partial_structural_tag_suffix_max_chars_value = self._TOOL_PARSER_PARTIAL_SUFFIX_MAX_CHARS
             self._structural_tag_prefixes_reversed_value = (
                 self._PIPE_CHANNEL_PREFIXES_REVERSED
                 + self._PIPE_TOOL_PREFIXES_REVERSED
@@ -1532,6 +1536,8 @@ class RequestStreamAssembler:
     def _partial_structural_tag_suffix(self) -> str:
         marker_index = self._buffer.rfind("<")
         if marker_index < 0:
+            return ""
+        if len(self._buffer) - marker_index > self._partial_structural_tag_suffix_max_chars_value:
             return ""
 
         suffix = self._buffer[marker_index:]

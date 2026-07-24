@@ -1750,6 +1750,39 @@ def test_partial_structural_tag_suffix_returns_last_marker_match() -> None:
     assert assembler._partial_structural_tag_suffix() == "<tool"
 
 
+def test_partial_structural_tag_suffix_rejects_overlong_literal_tail_before_slicing() -> None:
+    class RecordingBuffer(str):
+        slice_keys: list[object]
+
+        def __new__(cls) -> "RecordingBuffer":
+            instance = str.__new__(cls, "literal <" + ("x" * 4096))
+            instance.slice_keys = []
+            return instance
+
+        def __getitem__(self, key):  # type: ignore[override,no-untyped-def]
+            self.slice_keys.append(key)
+            return super().__getitem__(key)
+
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-suffix-long-literal",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    buffer = RecordingBuffer()
+    assembler._buffer = buffer
+
+    assert assembler._partial_structural_tag_suffix() == ""
+    assert buffer.slice_keys == []
+
+    valid_buffer = str.__new__(RecordingBuffer, "literal <tool")
+    valid_buffer.slice_keys = []
+    assembler._buffer = valid_buffer
+
+    assert assembler._partial_structural_tag_suffix() == "<tool"
+    assert valid_buffer.slice_keys == [slice(8, None, None)]
+
+
 def test_partial_structural_tag_suffix_ignores_complete_or_unknown_markers() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-partial-suffix-no-false-positives",
