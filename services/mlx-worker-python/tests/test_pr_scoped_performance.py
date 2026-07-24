@@ -4076,9 +4076,11 @@ def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
     assert metrics["iteration_count"] == 3.0
     assert metrics["held_suffix_hits"] == 3.0
     assert metrics["partial_suffix_hits"] == 3.0
+    assert metrics["long_literal_empty_hits"] == 3.0
     assert metrics["prefix_identity_hits"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["partial_suffix_elapsed_ms_mean"] >= 0
+    assert metrics["long_literal_suffix_elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
 

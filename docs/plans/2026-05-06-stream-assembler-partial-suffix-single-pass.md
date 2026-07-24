@@ -23,9 +23,11 @@ Registered scoped CI probe:
 
 The probe measures `_partial_structural_tag_suffix()` directly so `origin/main` and the PR branch compare the production suffix-return path. This follow-up keeps the same registered probe and updates its focused test/coverage commands to the new regression tests, switches the probe command to the tracked `python3` probe script, and registers `partial_suffix_elapsed_ms_mean` as a lower-is-better metric.
 
+2026-07-24 follow-up slice: `_partial_structural_tag_suffix()` now bounds the candidate suffix length before slicing and membership lookup. Literal `<...` spans longer than any structural prefix return immediately, avoiding large temporary suffix allocation/hash work while preserving every cached prefix match. The tracked probe now includes `long_literal_suffix_elapsed_ms_mean` so CI compares this rejected-candidate path with the same registered `stream-assembler-structural-prefix-cache` probe.
+
 ## Success metrics
 
 - Focused stream assembler and scoped-probe tests pass.
 - Changed-scope coverage is at least 95% for touched executable Python lines.
-- The probe preserves `held_suffix_hits`, `partial_suffix_hits`, and `prefix_identity_hits`.
-- A detached `origin/main` vs head probe comparison reports lower or equal `elapsed_ms_mean` and `partial_suffix_elapsed_ms_mean` without increasing peak traced allocation materially.
+- The probe preserves `held_suffix_hits`, `partial_suffix_hits`, `long_literal_empty_hits`, and `prefix_identity_hits`.
+- A detached `origin/main` vs head probe comparison reports lower or equal `elapsed_ms_mean`, `partial_suffix_elapsed_ms_mean`, and `long_literal_suffix_elapsed_ms_mean` without increasing peak traced allocation materially.
