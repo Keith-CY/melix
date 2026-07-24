@@ -57,12 +57,15 @@ def test_estimate_cache_snapshot_bytes_sums_state_and_key_value_layers() -> None
         SimpleNamespace(state=TensorWithNbytes(30)),
         SimpleNamespace(state=TensorWithSize()),
         SimpleNamespace(keys=TensorWithSize(), values=TensorWithNbytes(40)),
+        SimpleNamespace(state=[SimpleNamespace(itemsize=8), SimpleNamespace(itemsize=8)]),
+        SimpleNamespace(keys=TensorWithNbytes(5)),
+        SimpleNamespace(values=TensorWithNbytes(6)),
         SimpleNamespace(),
     ]
 
     assert (
         estimate_cache_snapshot_bytes(cache_snapshot)
-        == 10 + 56 + 20 + 56 + 30 + 56 + 56 + 40
+        == 10 + 56 + 20 + 56 + 30 + 56 + 56 + 40 + 5 + 6
     )
 
 
