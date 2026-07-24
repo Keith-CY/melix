@@ -237,6 +237,31 @@ def test_payload_card_library_detection_skips_tag_scan_when_top_library_empty(
     ) is True
 
 
+def test_payload_card_tags_skip_top_tag_scan_when_card_tag_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.model_ops import hub_catalog
+
+    calls: list[object] = []
+    original = hub_catalog._tag_payload_contains_mlx
+
+    def counted_tag_scan(value: object) -> bool:
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog, "_tag_payload_contains_mlx", counted_tag_scan)
+
+    card_tag_sentinel = object()
+    payload = {
+        "id": "plain/model",
+        "tags": ["Text-Generation", object()],
+        "cardData": {"tags": ["MLX", card_tag_sentinel]},
+    }
+
+    assert hub_catalog._payload_is_mlx_compatible(payload) is True
+    assert calls == [["MLX", card_tag_sentinel]]
+
+
 class FakeHTTPResponse:
     def __init__(self, payload: object):
         self._payload = json.dumps(payload).encode("utf-8")
