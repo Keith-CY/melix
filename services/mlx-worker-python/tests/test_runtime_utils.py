@@ -425,7 +425,9 @@ def test_top_level_weight_file_bytes_handles_direntry_non_files_and_errors() -> 
 
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("README.md")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("notes.txt")) == 0
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry(".safetensors")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry(".bin")) == 0
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry(".NPZ")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("nested.safetensors", is_file=False)) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("missing.safetensors", stat_raises=True)) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("model.safetensors")) == 13
