@@ -16,6 +16,7 @@ import textwrap
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
+_CODE_BLOCK_FENCE = "```"
 _PYTHON_CODE_BLOCK_TAG = "python"
 _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
@@ -54,7 +55,7 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     if not raw_response or raw_response.isspace():
         return "", "empty_prediction"
 
-    fence = "```"
+    fence = _CODE_BLOCK_FENCE
     closing = raw_response.rfind(fence)
     if closing >= 0:
         opening = raw_response.rfind(fence, 0, closing)
