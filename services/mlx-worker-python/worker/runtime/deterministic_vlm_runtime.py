@@ -35,6 +35,10 @@ from worker.runtime.multimodal_preprocessing import (
 from worker.runtime.multimodal_speculative_probe import (
     empty_speculative_probe_receipt,
 )
+from worker.runtime.text_prefill_chunk_policy import (
+    build_text_prefill_chunk_receipt,
+    resolve_configured_text_prefill_chunk_policy,
+)
 from worker.runtime.vlm_preprocessing_policy import (
     empty_preprocessing_policy_receipt,
     prepared_request_preprocessing_policy_receipt,
@@ -110,6 +114,7 @@ class VisionProbeSnapshot:
     hybrid_state_advance_count: int = 0
     family_fast_path_override_count: int = 0
     attention_budget_receipt: dict[str, object] = field(default_factory=dict)
+    text_prefill_chunk_receipt: dict[str, object] = field(default_factory=dict)
     position_metadata_receipt: dict[str, object] = field(
         default_factory=lambda: build_position_metadata_receipt()
     )
@@ -700,6 +705,13 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             )
         attention_budget_receipt = build_attention_budget_receipt(attention_decision)
         hybrid_seq_len = int(position_metadata_receipt["seq_len"])
+        text_prefill_chunk_receipt = build_text_prefill_chunk_receipt(
+            resolve_configured_text_prefill_chunk_policy(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                seq_len=seq_len if seq_len is not None else hybrid_seq_len,
+            )
+        )
         if fast_path.hybrid_state_patch_mode == "not_applicable" and not (
             prepared_request.images or prepared_request.videos
         ):
@@ -760,6 +772,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             ),
             family_fast_path_override_count=fast_path.family_fast_path_override_count,
             attention_budget_receipt=attention_budget_receipt,
+            text_prefill_chunk_receipt=text_prefill_chunk_receipt,
             position_metadata_receipt=position_metadata_receipt,
             quantized_kv_mask_receipt=empty_quantized_kv_mask_receipt(),
             hybrid_state_patch_receipt=hybrid_state_patch_receipt,
