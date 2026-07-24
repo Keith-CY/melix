@@ -157,3 +157,17 @@ the membership lookup while preserving the same exact list/tuple, scalar
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Tensor Pair Byte Helper
+
+The 2026-07-24 follow-up keeps the same registered probe and narrows to the
+common two-tensor state/key-value shapes observed by
+`estimate_cache_snapshot_bytes()`. The tensor byte helper now binds Python's
+`getattr` once as a function default, and paired `.state` plus `.keys` / `.values`
+paths use a two-tensor helper so the hot loop avoids an extra helper call while
+preserving the existing `.nbytes`, `size * itemsize`, missing-size, and
+missing-itemsize behavior.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.

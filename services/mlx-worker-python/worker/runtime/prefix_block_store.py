@@ -436,17 +436,39 @@ class ColdPrefixStore:
             _remove_quietly(meta.meta_path)
 
 
-def _tensor_nbytes(tensor: Any) -> Any:
-    nbytes = getattr(tensor, "nbytes", None)
+def _tensor_nbytes(tensor: Any, get_attr: Any = getattr) -> Any:
+    nbytes = get_attr(tensor, "nbytes", None)
     if nbytes is not None:
         return nbytes
-    size = getattr(tensor, "size", None)
+    size = get_attr(tensor, "size", None)
     if size is None:
         return 0
-    itemsize = getattr(tensor, "itemsize", None)
+    itemsize = get_attr(tensor, "itemsize", None)
     if itemsize is None:
         return 0
     return size * itemsize
+
+
+def _tensor_pair_nbytes(first_tensor: Any, second_tensor: Any, get_attr: Any = getattr) -> Any:
+    first_nbytes = get_attr(first_tensor, "nbytes", None)
+    if first_nbytes is None:
+        first_size = get_attr(first_tensor, "size", None)
+        if first_size is None:
+            first_nbytes = 0
+        else:
+            first_itemsize = get_attr(first_tensor, "itemsize", None)
+            first_nbytes = 0 if first_itemsize is None else first_size * first_itemsize
+    second_nbytes = get_attr(second_tensor, "nbytes", None)
+    if second_nbytes is None:
+        second_size = get_attr(second_tensor, "size", None)
+        if second_size is None:
+            second_nbytes = 0
+        else:
+            second_itemsize = get_attr(second_tensor, "itemsize", None)
+            second_nbytes = (
+                0 if second_itemsize is None else second_size * second_itemsize
+            )
+    return first_nbytes + second_nbytes
 
 
 def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
@@ -459,16 +481,19 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
         return 0
     total = 0
     tensor_nbytes = _tensor_nbytes
+    tensor_pair_nbytes = _tensor_pair_nbytes
     get_attr = getattr
     type_of = type
     for layer_cache in cache_snapshot:
         state = get_attr(layer_cache, "state", None)
         if state is None:
             keys = get_attr(layer_cache, "keys", None)
-            if keys is not None:
-                total += tensor_nbytes(keys)
             values = get_attr(layer_cache, "values", None)
-            if values is not None:
+            if keys is not None and values is not None:
+                total += tensor_pair_nbytes(keys, values)
+            elif keys is not None:
+                total += tensor_nbytes(keys)
+            elif values is not None:
                 total += tensor_nbytes(values)
         elif (state_type := type_of(state)) is list or state_type is tuple:
             try:
@@ -477,7 +502,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
                 for tensor in state:
                     total += tensor_nbytes(tensor)
             else:
-                total += tensor_nbytes(first_state) + tensor_nbytes(second_state)
+                total += tensor_pair_nbytes(first_state, second_state)
         else:
             total += tensor_nbytes(state)
     return total if type(total) is int else int(total)
