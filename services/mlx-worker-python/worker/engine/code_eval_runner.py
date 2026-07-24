@@ -507,6 +507,7 @@ _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY = (
     ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"], "string"),
 )
 _CODE_EVAL_PAYLOAD_RUNNER_PREFIX = b'{"compile_status"'
+_CODE_EVAL_SORTED_EMPTY_FAILURE_PREFIX = b'{"failure_detail":""'
 
 _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
 
@@ -585,12 +586,15 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     extract_int_and_end = _extract_json_int_field_value_and_end
     payload_startswith = payload_bytes.startswith
 
-    failure_start = field_value_start(
-        payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"],
-    )
-    if failure_start is None or not payload_startswith(b'""', failure_start):
-        return None
+    if payload_startswith(_CODE_EVAL_SORTED_EMPTY_FAILURE_PREFIX):
+        failure_start = len(b'{"failure_detail":')
+    else:
+        failure_start = field_value_start(
+            payload_bytes,
+            _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"],
+        )
+        if failure_start is None or not payload_startswith(b'""', failure_start):
+            return None
 
     timeout_start = reverse_field_value_start(
         payload_bytes,

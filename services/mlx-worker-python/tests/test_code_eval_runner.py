@@ -1231,6 +1231,42 @@ def test_sorted_payload_fast_path_uses_compact_field_offsets(monkeypatch) -> Non
     }
 
 
+def test_sorted_payload_fast_path_reuses_empty_failure_prefix(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "failure_detail": "",
+            "metadata": {f"case_{index}": "ignored" for index in range(16)},
+            "runtime_status": "ok",
+            "test_status": "passed",
+            "tests_passed": 7,
+            "tests_total": 7,
+            "timeout_status": "ok",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    def fail_forward_compact_scanner(
+        *_args: object, **_kwargs: object
+    ) -> int | None:  # pragma: no cover
+        raise AssertionError("leading empty failure_detail prefix should avoid scanning")
+
+    monkeypatch.setattr(
+        code_eval_runner,
+        "_compact_json_field_value_start_for_token",
+        fail_forward_compact_scanner,
+    )
+
+    assert code_eval_runner._extract_sorted_code_eval_payload_fields(payload) == {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 7,
+        "tests_total": 7,
+        "timeout_status": "ok",
+    }
+
+
 def test_sorted_payload_fast_path_skips_reserved_metadata_keys() -> None:
     payload_path = _BytesOnlyPayloadPath(
         json.dumps(
