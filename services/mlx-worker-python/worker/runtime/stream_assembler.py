@@ -36,11 +36,11 @@ def _whitespace_token_count(text: str) -> int:
 def _cached_compress_delta_token_counts(
     weights: tuple[int, ...],
     token_count: int,
-) -> tuple[int, ...]:
-    compressed = [1 for _ in weights]
+) -> list[int]:
+    compressed = [1] * len(weights)
     remaining = token_count - len(compressed)
     if remaining <= 0:
-        return tuple(compressed[:token_count] + [0 for _ in weights[token_count:]])
+        return compressed[:token_count] + [0] * (len(weights) - token_count)
     extras = [max(weight - 1, 0) for weight in weights]
     active_indexes = [index for index, extra in enumerate(extras) if extra > 0]
     while remaining > 0 and active_indexes:
@@ -56,7 +56,7 @@ def _cached_compress_delta_token_counts(
             extras[index] -= rounds
         remaining -= rounds * len(active_indexes)
         active_indexes = [index for index in active_indexes if extras[index] > 0]
-    return tuple(compressed)
+    return compressed
 
 
 @lru_cache(maxsize=32)
@@ -1389,7 +1389,7 @@ class RequestStreamAssembler:
 
     @staticmethod
     def _compress_delta_token_counts(weights: list[int], token_count: int) -> list[int]:
-        return list(_cached_compress_delta_token_counts(tuple(weights), token_count))
+        return _cached_compress_delta_token_counts(tuple(weights), token_count).copy()
 
     @staticmethod
     def _distribute_extra_delta_tokens(

@@ -50,6 +50,9 @@ def test_token_count_compression_reuses_cached_weight_shape() -> None:
     assert cache_info.hits == 1
     assert cache_info.misses == 1
 
+    expected[0] = -1
+    assert RequestStreamAssembler._compress_delta_token_counts(weights, 8192)[0] != -1
+
     stream_assembler._cached_compress_delta_token_counts.cache_clear()
 
 
