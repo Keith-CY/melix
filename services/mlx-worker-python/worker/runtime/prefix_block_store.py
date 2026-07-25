@@ -488,11 +488,10 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
         state = get_attr(layer_cache, "state", None)
         state_type = type_of(state)
         if state_type is list or state_type is tuple:
-            state_sequence: Any = state
             try:
-                first_state, second_state = state_sequence
+                first_state, second_state = state  # type: ignore[misc]
             except ValueError:
-                for tensor in state_sequence:
+                for tensor in state:  # type: ignore[misc]
                     total += tensor_nbytes(tensor, get_attr)
             else:
                 total += tensor_pair_nbytes(first_state, second_state, get_attr)
