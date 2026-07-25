@@ -368,7 +368,7 @@ class ColdPrefixStore:
         entry_meta_cls = ColdEntryMeta
         remove_path_string_quietly = _remove_path_string_quietly
         open_file = _OPEN
-        json_loads = json.loads
+        json_load = json.load
         for meta_path_string, meta_file_name in meta_paths:
             if precheck_orphan_names:
                 snapshot_name_from_sidecar = f"{meta_file_name[:-meta_suffix_length]}.kv.safetensors"
@@ -381,7 +381,7 @@ class ColdPrefixStore:
                     continue
             try:
                 with open_file(meta_path_string, "rb") as meta_file:
-                    payload = json_loads(meta_file.read())
+                    payload = json_load(meta_file)
                 payload_get = payload.get
                 session_id = str(payload["session_id"])
                 snapshot_name = f"{session_digest(session_id)}.kv.safetensors"

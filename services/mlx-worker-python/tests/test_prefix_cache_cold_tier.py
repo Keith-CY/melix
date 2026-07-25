@@ -641,7 +641,7 @@ def test_cold_store_index_load_reuses_scandir_snapshot_names(
     assert reloaded.entry_count() == 1
 
 
-def test_cold_store_index_load_reads_metadata_as_json_bytes(
+def test_cold_store_index_load_streams_metadata_from_file_handle(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -657,18 +657,26 @@ def test_cold_store_index_load_reads_metadata_as_json_bytes(
         acceleration_mode="",
     )
 
-    def fail_json_load(*args, **kwargs):  # pragma: no cover - regression guard
-        raise AssertionError("ColdPrefixStore index load should avoid json.load")
+    original_load = json.load
+    load_payload_types: list[type] = []
 
-    original_loads = json.loads
-    loads_payload_types: list[type] = []
+    def counted_json_load(payload, *args, **kwargs):
+        load_payload_types.append(type(payload).__name__)
+        return original_load(payload, *args, **kwargs)
 
-    def counted_json_loads(payload, *args, **kwargs):
-        loads_payload_types.append(type(payload))
-        return original_loads(payload, *args, **kwargs)
+    def fail_json_loads(*args, **kwargs):  # pragma: no cover - regression guard
+        raise AssertionError("ColdPrefixStore index load should avoid materialized json.loads payloads")
 
-    monkeypatch.setattr("worker.runtime.prefix_block_store.json.load", fail_json_load)
-    monkeypatch.setattr("worker.runtime.prefix_block_store.json.loads", counted_json_loads)
+    monkeypatch.setattr(
+        prefix_block_store,
+        "json",
+        SimpleNamespace(
+            dump=json.dump,
+            dumps=json.dumps,
+            load=counted_json_load,
+            loads=fail_json_loads,
+        ),
+    )
 
     reloaded = ColdPrefixStore(
         tmp_path / "cold",
@@ -676,7 +684,7 @@ def test_cold_store_index_load_reads_metadata_as_json_bytes(
         deserializer=_fake_deserializer,
     )
     assert reloaded.entry_count() == 1
-    assert loads_payload_types == [bytes]
+    assert load_payload_types == ["BufferedReader"]
 
 
 def test_cold_store_index_load_preserves_string_token_id_coercion(tmp_path: Path) -> None:

@@ -52,3 +52,16 @@ per-sidecar JSON text allocation.
   probe remains at or above 95%.
 - Performance: registered probe `elapsed_ms_mean` is lower than the pre-change
   cold-index reload path, and `path_glob_calls_mean` remains zero.
+
+## 2026-07-25 JSON load handle follow-up
+
+This follow-up keeps the same registered `prefix-cold-index-scandir` probe and
+narrows the slice to sidecar JSON parsing inside `ColdPrefixStore._ensure_loaded_locked`.
+The loader now passes the already-open binary file handle directly to
+`json.load(...)` instead of materializing the full sidecar bytes object and then
+calling `json.loads(...)`. Orphan prechecks, corrupt-sidecar cleanup, snapshot
+name reuse, and token-id coercion remain unchanged.
+
+Acceptance requires the focused cold-tier tests, changed-scope coverage, and the
+registered Linux probe to pass locally, then the PR-scoped CI probe to complete
+successfully before merge.

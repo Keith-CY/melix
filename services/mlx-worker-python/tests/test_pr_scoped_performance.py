@@ -587,6 +587,8 @@ def test_prefix_cold_index_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] >= 0.0
     assert metrics["entry_count"] == 5.0
+    assert metrics["json_load_calls_mean"] == 5.0
+    assert metrics["json_materialized_loads_calls_mean"] == 0.0
     assert metrics["loaded_count_mean"] == 5.0
     assert metrics["path_glob_calls_mean"] == 0.0
     assert metrics["sample_count"] == 1.0

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 REPO_ROOT = Path(os.environ.get("MELIX_PREFIX_COLD_INDEX_REPO_ROOT", Path.cwd()))
@@ -75,10 +76,13 @@ def measure(*, entry_count: int, orphan_count: int, samples: int) -> dict[str, f
     loaded_counts: list[float] = []
     scandir_calls: list[float] = []
     path_glob_calls: list[float] = []
-    json_load_calls: list[float] = []
+    json_decode_calls: list[float] = []
+    json_materialized_loads_calls: list[float] = []
     original_scandir = target.os.scandir
     original_glob = target.Path.glob
-    original_json_load = target.json.load
+    original_json_module = target.json
+    original_json_load = json.load
+    original_json_loads = json.loads
 
     with tempfile.TemporaryDirectory(prefix="melix-prefix-cold-index-") as tmp:
         root = Path(tmp) / "cold"
@@ -88,7 +92,8 @@ def measure(*, entry_count: int, orphan_count: int, samples: int) -> dict[str, f
                 _write_orphan_sidecars(root, orphan_count=orphan_count)
                 sample_scandir_calls = 0
                 sample_path_glob_calls = 0
-                sample_json_load_calls = 0
+                sample_json_decode_calls = 0
+                sample_json_materialized_loads_calls = 0
 
                 def counted_scandir(path: str | os.PathLike[str]):
                     nonlocal sample_scandir_calls
@@ -101,13 +106,24 @@ def measure(*, entry_count: int, orphan_count: int, samples: int) -> dict[str, f
                     return original_glob(self, pattern)
 
                 def counted_json_load(fp):
-                    nonlocal sample_json_load_calls
-                    sample_json_load_calls += 1
+                    nonlocal sample_json_decode_calls
+                    sample_json_decode_calls += 1
                     return original_json_load(fp)
+
+                def counted_json_loads(payload):  # pragma: no cover - exercised by base-repo comparison
+                    nonlocal sample_json_decode_calls, sample_json_materialized_loads_calls
+                    sample_json_decode_calls += 1
+                    sample_json_materialized_loads_calls += 1
+                    return original_json_loads(payload)
 
                 target.os.scandir = counted_scandir
                 target.Path.glob = counted_glob
-                target.json.load = counted_json_load
+                target.json = SimpleNamespace(
+                    dump=json.dump,
+                    dumps=json.dumps,
+                    load=counted_json_load,
+                    loads=counted_json_loads,
+                )
                 cold = ColdPrefixStore(root, serializer=_fake_serializer, deserializer=_fake_deserializer)
                 started = time.perf_counter()
                 loaded = cold.entry_count()
@@ -115,13 +131,14 @@ def measure(*, entry_count: int, orphan_count: int, samples: int) -> dict[str, f
                 loaded_counts.append(float(loaded))
                 scandir_calls.append(float(sample_scandir_calls))
                 path_glob_calls.append(float(sample_path_glob_calls))
-                json_load_calls.append(float(sample_json_load_calls))
+                json_decode_calls.append(float(sample_json_decode_calls))
+                json_materialized_loads_calls.append(float(sample_json_materialized_loads_calls))
                 if loaded != entry_count:
                     raise RuntimeError(f"unexpected loaded count: {loaded} != {entry_count}")
         finally:
             target.os.scandir = original_scandir
             target.Path.glob = original_glob
-            target.json.load = original_json_load
+            target.json = original_json_module
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_ms),
@@ -129,7 +146,8 @@ def measure(*, entry_count: int, orphan_count: int, samples: int) -> dict[str, f
         "elapsed_ms_p95": sorted(elapsed_ms)[int((len(elapsed_ms) - 1) * 0.95)],
         "entry_count": float(entry_count),
         "orphan_count": float(orphan_count),
-        "json_load_calls_mean": statistics.fmean(json_load_calls),
+        "json_load_calls_mean": statistics.fmean(json_decode_calls),
+        "json_materialized_loads_calls_mean": statistics.fmean(json_materialized_loads_calls),
         "loaded_count_mean": statistics.fmean(loaded_counts),
         "path_glob_calls_mean": statistics.fmean(path_glob_calls),
         "sample_count": float(samples),
