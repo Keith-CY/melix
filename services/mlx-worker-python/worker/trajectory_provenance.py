@@ -666,6 +666,29 @@ def _fast_adapter_manifest_trajectory_provenance(
         or trace_digest[-1].isspace()
     ):
         return None
+    if len(token_metrics) != 6:
+        return None
+    try:
+        estimator = token_metrics["estimator"]
+        source_trace_count = token_metrics["source_trace_count"]
+        trace_tokens = token_metrics["trace_tokens"]
+        tool_call_tokens = token_metrics["tool_call_tokens"]
+        observation_tokens = token_metrics["observation_tokens"]
+        final_answer_tokens = token_metrics["final_answer_tokens"]
+    except KeyError:
+        return None
+    if (
+        value_type(estimator) is not str
+        or estimator == ""
+        or estimator[0].isspace()
+        or estimator[-1].isspace()
+        or value_type(source_trace_count) is not int
+        or value_type(trace_tokens) is not int
+        or value_type(tool_call_tokens) is not int
+        or value_type(observation_tokens) is not int
+        or value_type(final_answer_tokens) is not int
+    ):
+        return None
     payload: dict[str, Any] = {
         "trajectory_dataset_id": dataset_id,
         "trajectory_dataset_version": dataset_version,
@@ -674,11 +697,23 @@ def _fast_adapter_manifest_trajectory_provenance(
         "trajectory_quality_metrics": _copy_trajectory_provenance_value(
             quality_metrics
         ),
-        "agentic_sft_token_metrics": _copy_json_dict(token_metrics),
+        "agentic_sft_token_metrics": {
+            "estimator": estimator,
+            "source_trace_count": source_trace_count,
+            "trace_tokens": trace_tokens,
+            "tool_call_tokens": tool_call_tokens,
+            "observation_tokens": observation_tokens,
+            "final_answer_tokens": final_answer_tokens,
+        },
         "trajectory_provenance_field_count": 6,
         "trajectory_reward_policy_present": False,
+        "training.agentic_sft.token_estimator": estimator,
+        "training.agentic_sft.source_trace_count": source_trace_count,
+        "training.agentic_sft.trace_tokens": trace_tokens,
+        "training.agentic_sft.tool_call_tokens": tool_call_tokens,
+        "training.agentic_sft.observation_tokens": observation_tokens,
+        "training.agentic_sft.final_answer_tokens": final_answer_tokens,
     }
-    payload.update(_agentic_sft_token_metric_aliases(token_metrics))
     return payload
 
 

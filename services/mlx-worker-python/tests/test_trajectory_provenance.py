@@ -1149,7 +1149,19 @@ def test_adapter_manifest_trajectory_provenance_fast_paths_clean_exact_payload(
     def fail_normalize(value: object) -> dict[str, object]:  # pragma: no cover
         raise AssertionError(f"unexpected normalize fallback for {value!r}")
 
+    def fail_token_copy(value: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError(f"unexpected token metric copy helper for {value!r}")
+
+    def fail_alias_helper(value: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError(f"unexpected token alias helper for {value!r}")
+
     monkeypatch.setattr(trajectory_provenance_module, "normalize_trajectory_provenance", fail_normalize)
+    monkeypatch.setattr(trajectory_provenance_module, "_copy_json_dict", fail_token_copy)
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_agentic_sft_token_metric_aliases",
+        fail_alias_helper,
+    )
 
     payload = adapter_manifest_trajectory_provenance(provenance)
 
@@ -1189,16 +1201,41 @@ def test_adapter_manifest_trajectory_provenance_falls_back_for_dirty_fast_path_s
     }
     bad_type_shape = dict(exact_shape)
     bad_type_shape["agentic_sft_token_metrics"] = {"estimator": "fixture-tokenizer"}.items()
+    short_token_shape = dict(exact_shape)
+    missing_key_shape = dict(exact_shape)
+    missing_key_shape["agentic_sft_token_metrics"] = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "extra": 1,
+    }
+    dirty_counter_shape = dict(exact_shape)
+    dirty_counter_shape["agentic_sft_token_metrics"] = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": "64",
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
     whitespace_shape = dict(exact_shape)
     whitespace_shape["trajectory_dataset_id"] = " agentic-snapshot "
 
     bad_type_payload = adapter_manifest_trajectory_provenance(bad_type_shape)
+    short_token_payload = adapter_manifest_trajectory_provenance(short_token_shape)
+    missing_key_payload = adapter_manifest_trajectory_provenance(missing_key_shape)
+    dirty_counter_payload = adapter_manifest_trajectory_provenance(dirty_counter_shape)
     whitespace_payload = adapter_manifest_trajectory_provenance(whitespace_shape)
 
     assert bad_type_payload["trajectory_provenance_field_count"] == 6
     assert bad_type_payload["agentic_sft_token_metrics"] == bad_type_shape[
         "agentic_sft_token_metrics"
     ]
+    assert short_token_payload["training.agentic_sft.token_estimator"] == "fixture-tokenizer"
+    assert missing_key_payload["training.agentic_sft.final_answer_tokens"] == 0
+    assert dirty_counter_payload["training.agentic_sft.source_trace_count"] == 64
     assert whitespace_payload["trajectory_dataset_id"] == " agentic-snapshot "
     assert whitespace_payload["trajectory_provenance_field_count"] == 6
 
