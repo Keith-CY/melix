@@ -50,7 +50,6 @@ def _expected_job_id(path: Path) -> str:
 def _payload_for(operation: str, path: Path) -> dict[str, object]:
     job_id = _expected_job_id(path)
     return {
-        "job_id": job_id,
         "operation": operation,
         "source_model": SOURCE_MODEL_ID,
         "derived_model_id": job_id,
