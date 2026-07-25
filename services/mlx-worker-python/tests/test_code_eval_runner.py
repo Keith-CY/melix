@@ -95,12 +95,7 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
         "",
         "parsed_code_block",
     )
-    assert count_calls == [
-        (
-            "```",
-            (0, empty_trailing_block.rfind("```", 0, empty_trailing_block.rfind("```"))),
-        )
-    ]
+    assert count_calls == []
     assert code_eval_runner.extract_candidate_code(
         "```python\nprint('complete')\n```\nfinal commentary after the answer"
     ) == ("print('complete')", "parsed_code_block")
