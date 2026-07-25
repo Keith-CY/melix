@@ -35,8 +35,6 @@ def _is_mtp_weight_key(key: Any) -> bool:
     prefixes = _MTP_WEIGHT_KEY_PREFIXES
     if type(key) is str:
         return key.startswith(prefixes)
-    if isinstance(key, str):
-        return key.startswith(prefixes)
     return str(key).startswith(prefixes)
 
 
