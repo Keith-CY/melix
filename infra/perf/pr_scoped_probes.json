@@ -687,6 +687,12 @@
         "warn_pct": 5.0
       },
       {
+        "key": "close_marker_prefix_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
         "key": "prefix_identity_hits",
         "unit": "count",
         "direction": "informational"
