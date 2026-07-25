@@ -14,6 +14,7 @@ from worker.engine.image_generation_core import _supports_image_generation
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime import deterministic_image_generation_runtime as image_runtime
 from worker.runtime.deterministic_image_generation_runtime import (
     DeterministicImageGenerationRuntime,
     ImageGenerationCancelled,
@@ -245,6 +246,52 @@ def test_image_generation_and_edit_bind_model_id_once_per_loop(tmp_path: Path) -
 
     assert len(edited.images) == 5
     assert CountingLoadedModel.get_calls == 1
+
+
+def test_image_generate_binds_monotonic_once_per_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CountingTime:
+        monotonic_lookups = 0
+
+        @staticmethod
+        def _monotonic() -> float:
+            return 1000.0
+
+        def __getattribute__(self, name: str):
+            if name == "monotonic":
+                type(self).monotonic_lookups += 1
+                return type(self)._monotonic
+            return super().__getattribute__(name)
+
+    runtime = DeterministicImageGenerationRuntime()
+    counting_time = CountingTime()
+    monkeypatch.setattr(image_runtime, "time", counting_time)
+
+    generated = runtime.generate_images(
+        {"model_id": "melix-dev-image"},
+        inference_pb2.ImageGenerateRequest(
+            prompt="red fox in snow",
+            size="128x128",
+            response_format="png",
+            artifact_namespace="tests",
+            n=5,
+        ),
+        job_id="image-generate-monotonic-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(generated.images) == 5
+    assert generated.images[3] == DeterministicImageGenerationRuntime._render_payload(
+        prompt="red fox in snow",
+        width=128,
+        height=128,
+        variant=3,
+        model_id="melix-dev-image",
+    )
+    assert CountingTime.monotonic_lookups == 1
 
 
 def test_image_edit_binds_strength_once_per_loop(tmp_path: Path) -> None:
