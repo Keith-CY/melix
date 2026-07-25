@@ -18,6 +18,8 @@ The probe includes focused `test_command`, `coverage_command`, and `probe_comman
 
 Run the registered focused tests, changed-scope coverage command, and registered probe locally on Linux before pushing. GitHub Actions PR-scoped performance remains the merge gate after the PR is opened.
 
-## Expected metrics
+## Follow-up Slice: One Fill Compression Initialization
 
-The primary expected metric is a lower `token_count_compression_ms_mean`. `elapsed_ms_mean`, `delta_token_count_new_ms_mean`, and `token_count_annotation_ms_mean` should remain stable because this slice does not change token-byte decoding or whitespace token estimation behavior.
+The 2026-07-25 follow-up keeps the same registered probe and remains limited to `_cached_compress_delta_token_counts` plus the public `_compress_delta_token_counts` wrapper. The cached helper now initializes the all-one compressed-count vector with Python's repeated-list construction and stores the cached result as a list. The public wrapper still returns a fresh mutable `list[int]` by copying the cached value, so caller mutation cannot pollute subsequent cache hits while reducing hit-path materialization overhead.
+
+Success is accepted only if the focused tests, changed-scope coverage command, and registered Linux probe pass, with `token_count_compression_ms_mean` improving or remaining non-regressive. GitHub Actions PR-scoped performance remains the merge gate.
