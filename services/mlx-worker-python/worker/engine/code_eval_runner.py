@@ -291,6 +291,8 @@ def _count_plain_assert_statement_lines(
     *,
     _assert_prefix="assert",
     _assert_prefix_length=6,
+    _assert_line_prefix="assert ",
+    _newline_assert_prefix="\nassert ",
     _find=str.find,
     _isalnum=str.isalnum,
     _line_spacing=_ASSERT_LINE_SPACING,
@@ -304,9 +306,22 @@ def _count_plain_assert_statement_lines(
     mixed statements, inline asserts, comments, and multiline assertions.
     """
 
+    text_length = len(test_code)
+    if text_length and _startswith(test_code, _assert_line_prefix):
+        count = 1
+        newline_index = _find(test_code, "\n")
+        while newline_index >= 0:
+            if newline_index == text_length - 1:
+                return count
+            if not _startswith(test_code, _newline_assert_prefix, newline_index):
+                break
+            count += 1
+            newline_index = _find(test_code, "\n", newline_index + 1)
+        else:
+            return count
+
     count = 0
     start = 0
-    text_length = len(test_code)
     while start < text_length:
         newline_index = _find(test_code, "\n", start)
         end = text_length if newline_index < 0 else newline_index
