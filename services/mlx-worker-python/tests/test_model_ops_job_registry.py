@@ -193,6 +193,87 @@ def test_restore_manifest_operation_match_fast_path_preserves_fallback(
     assert set(registry._jobs) == {"model-ops-0001", "model-ops-0002", "model-ops-0003"}
 
 
+def test_restore_manifest_jobs_derives_job_id_from_path_when_manifest_omits_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    train_manifest_path = tmp_path / "train_lora" / "model-ops-0042" / "train_lora.adapter.json"
+    activate_manifest_path = tmp_path / "activate_adapter" / "model-ops-0043" / "one" / "manifest.json"
+    payloads = {
+        train_manifest_path: {"operation": "train_lora", "source_model": "src-42"},
+        activate_manifest_path: {"operation": "activate_adapter", "source_model": "src-43"},
+    }
+    monkeypatch.setattr(
+        ModelOpsJobRegistry,
+        "_read_manifest_dict",
+        staticmethod(lambda path: payloads.get(path, {})),
+    )
+
+    registry = ModelOpsJobRegistry()
+    registry._restore_manifest_jobs(
+        operation="train_lora",
+        manifest_paths=(train_manifest_path,),
+        pct=0.97,
+    )
+    registry._restore_manifest_jobs(
+        operation="activate_adapter",
+        manifest_paths=(activate_manifest_path,),
+        pct=0.95,
+    )
+
+    assert set(registry._jobs) == {"model-ops-0042", "model-ops-0043"}
+    assert registry._jobs["model-ops-0042"].source_model == "src-42"
+    assert registry._jobs["model-ops-0043"].source_model == "src-43"
+    assert (
+        ModelOpsJobRegistry._resolved_job_id(
+            Path("model-ops-0044"),
+            {"operation": "train_lora"},
+        )
+        == "model-ops-0044"
+    )
+    assert (
+        ModelOpsJobRegistry._resolved_job_id(
+            Path("train_lora") / "no-job" / "manifest.json",
+            {"operation": "train_lora"},
+        )
+        == ""
+    )
+    assert (
+        ModelOpsJobRegistry._resolved_job_id(
+            Path("model-ops-0045") / "nested" / "deeper" / "manifest.json",
+            {"operation": "train_lora"},
+        )
+        == "model-ops-0045"
+    )
+    assert (
+        ModelOpsJobRegistry._resolved_restore_path_job_id(
+            "train_lora",
+            Path("model-ops-0046") / "train_lora.adapter.json",
+        )
+        == "model-ops-0046"
+    )
+    assert (
+        ModelOpsJobRegistry._resolved_restore_path_job_id(
+            "activate_adapter",
+            Path("model-ops-0047") / "manifest.json",
+        )
+        == "model-ops-0047"
+    )
+    assert (
+        ModelOpsJobRegistry._resolved_restore_path_job_id(
+            "train_lora",
+            Path("model-ops-0048"),
+        )
+        == "model-ops-0048"
+    )
+    assert (
+        ModelOpsJobRegistry._resolved_restore_path_job_id(
+            "train_lora",
+            Path("model-ops-0049") / "nested" / "deeper" / "manifest.json",
+        )
+        == "model-ops-0049"
+    )
+
+
 def test_job_registry_restore_reads_manifest_bytes_without_text_decode(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
