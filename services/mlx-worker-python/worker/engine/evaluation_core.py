@@ -678,7 +678,7 @@ class EvaluationCore:
         job_parameters.setdefault("sample_size", str(len(sample_records)))
         sample_probe_means = self._sample_probe_means(
             sample_records,
-            tuple(field_name for _, field_name in _SAMPLE_PROBE_MEAN_FIELDS),
+            _SAMPLE_PROBE_MEAN_FIELD_NAMES,
         )
         agentic_tool_metrics = self._agentic_tool_metric_totals(sample_records)
         result_metrics = {

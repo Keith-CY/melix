@@ -698,7 +698,8 @@ def test_sample_probe_means_aggregate_multiple_fields_in_one_pass() -> None:
         )
     )
 
-    aggregated = EvaluationCore._sample_probe_means(samples, field_names)
+    assert field_names == evaluation_core_module._SAMPLE_PROBE_MEAN_FIELD_NAMES
+    aggregated = EvaluationCore._sample_probe_means(samples, evaluation_core_module._SAMPLE_PROBE_MEAN_FIELD_NAMES)
     expected = {
         field_name: round(
             sum(float(getattr(sample, field_name, 0.0) or 0.0) for sample in samples._values)
