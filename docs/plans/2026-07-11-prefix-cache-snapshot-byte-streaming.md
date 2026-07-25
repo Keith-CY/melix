@@ -197,3 +197,17 @@ list/tuple state sequences, scalar state objects, and `.keys` / `.values` layers
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: State Sequence Alias Elision
+
+The 2026-07-25 follow-up keeps the same registered probe and narrows to the
+exact list/tuple `.state` branch in `estimate_cache_snapshot_bytes()`. The branch
+already proves the local `state` object is a sequence, so this slice removes the
+extra `state_sequence` alias and unpacks / iterates `state` directly. Behavior is
+unchanged for pair sequences, non-pair sequences, scalar `.state` values, and
+`.keys` / `.values` fallback layers; the change only trims one local assignment
+inside the repeated byte-estimation hot loop.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
