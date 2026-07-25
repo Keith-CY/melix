@@ -26,6 +26,8 @@ The probe is extended to measure the model safetensor listing path directly agai
 
 2026-07-24 follow-up slice: `_model_safetensor_files()` now checks the first filename character before running the full `model` prefix test. Filesystem entries cannot have empty names, so this preserves the historical `glob`-compatible result while letting large directories with non-`m` sidecar and distractor files skip the longer prefix comparison.
 
+2026-07-25 follow-up slice: `_is_mtp_weight_key()` keeps the exact `str` fast path and lets `str()` handle non-exact strings and custom key objects in one fallback branch. The compatibility behavior for `str` subclasses and custom keys is unchanged, while direct JSON-decoded keys avoid the redundant `isinstance()` branch measured by the registered probe's `key_*` metrics.
+
 ## Verification plan
 
 ```bash
