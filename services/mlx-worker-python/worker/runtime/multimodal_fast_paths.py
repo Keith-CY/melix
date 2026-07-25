@@ -62,6 +62,9 @@ _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS = frozenset(
         "vision_projected_feature_shape",
     }
 )
+_FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS_SORTED = tuple(
+    sorted(_FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS)
+)
 _FAST_PATH_SIGNATURE_METADATA_KEYS = (
     _FAST_PATH_SIGNATURE_CORE_METADATA_KEYS | _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS
 )
@@ -960,7 +963,23 @@ def _loaded_metadata_value(loaded_model: Any, key: str) -> str:
 
 
 def _has_any_loaded_metadata(loaded_model: dict[str, Any], keys: frozenset[str]) -> bool:
-    for source in (loaded_model, loaded_model.get("metadata", {})):
+    nested_metadata = loaded_model.get("metadata", {})
+    if keys is _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS:
+        if isinstance(nested_metadata, dict):
+            for key in _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS_SORTED:
+                value = loaded_model.get(key, "")
+                if value and str(value).strip():
+                    return True
+                value = nested_metadata.get(key, "")
+                if value and str(value).strip():
+                    return True
+        else:
+            for key in _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS_SORTED:
+                value = loaded_model.get(key, "")
+                if value and str(value).strip():
+                    return True
+        return False
+    for source in (loaded_model, nested_metadata):
         if not isinstance(source, dict) or keys.isdisjoint(source):
             continue
         for key in keys:
