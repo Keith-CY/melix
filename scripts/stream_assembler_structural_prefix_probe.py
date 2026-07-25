@@ -48,7 +48,9 @@ def main() -> None:
     prefix_identity_hits = 0
     partial_elapsed_samples: list[float] = []
     long_literal_elapsed_samples: list[float] = []
+    close_marker_elapsed_samples: list[float] = []
     long_literal_empty_hits = 0
+    close_marker_hits = 0
 
     assembler = _build_assembler()
     long_literal_assembler = _build_long_literal_assembler()
@@ -79,6 +81,18 @@ def main() -> None:
                 long_literal_empty_hits += 1
         long_literal_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
+        started = time.perf_counter()
+        for _index in range(iterations):
+            if (
+                RequestStreamAssembler._longest_marker_prefix_suffix(
+                    "reasoning body </thi",
+                    "</think>",
+                )
+                == "</thi"
+            ):
+                close_marker_hits += 1
+        close_marker_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
     expected_hits = iterations * sample_count
     if held_suffix_hits != expected_hits:
         raise RuntimeError(
@@ -96,6 +110,10 @@ def main() -> None:
         raise RuntimeError(
             "unexpected long literal structural suffix hits: "
             f"{long_literal_empty_hits} != {expected_hits}"
+        )
+    if close_marker_hits != expected_hits:  # pragma: no cover - probe safety guard
+        raise RuntimeError(
+            f"unexpected close marker prefix hits: {close_marker_hits} != {expected_hits}"
         )
 
     print(
@@ -116,12 +134,21 @@ def main() -> None:
                     min(long_literal_elapsed_samples),
                     6,
                 ),
+                "close_marker_prefix_elapsed_ms_mean": round(
+                    statistics.fmean(close_marker_elapsed_samples),
+                    6,
+                ),
+                "close_marker_prefix_elapsed_ms_min": round(
+                    min(close_marker_elapsed_samples),
+                    6,
+                ),
                 "peak_bytes_mean": round(statistics.fmean(peak_samples), 3),
                 "iteration_count": float(iterations),
                 "sample_count": float(sample_count),
                 "held_suffix_hits": float(held_suffix_hits),
                 "partial_suffix_hits": float(partial_suffix_hits),
                 "long_literal_empty_hits": float(long_literal_empty_hits),
+                "close_marker_hits": float(close_marker_hits),
                 "prefix_identity_hits": float(prefix_identity_hits),
             },
             sort_keys=True,

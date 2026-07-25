@@ -1237,9 +1237,9 @@ class RequestStreamAssembler:
     def _longest_marker_prefix_suffix(text: str, marker: str) -> str:
         maximum_length = min(len(text), len(marker) - 1)
         for length in range(maximum_length, 0, -1):
-            suffix = text[-length:]
-            if marker.startswith(suffix):
-                return suffix
+            prefix = marker[:length]
+            if text.endswith(prefix):
+                return prefix
         return ""
 
     def _drain_rescue_before_standard_tag(

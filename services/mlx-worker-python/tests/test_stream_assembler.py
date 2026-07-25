@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -1811,6 +1812,33 @@ def test_partial_structural_tag_suffix_ignores_complete_or_unknown_markers() -> 
 
     assembler._buffer = "answer"
     assert assembler._partial_structural_tag_suffix() == ""
+
+
+def test_longest_marker_prefix_suffix_uses_marker_prefix_without_text_slice() -> None:
+    class RecordingText(str):
+        slice_keys: list[object]
+        endswith_args: list[str]
+
+        def __new__(cls) -> "RecordingText":
+            instance = str.__new__(cls, "reasoning body </thi")
+            instance.slice_keys = []
+            instance.endswith_args = []
+            return instance
+
+        def __getitem__(self, key):  # type: ignore[override,no-untyped-def]  # pragma: no cover
+            self.slice_keys.append(key)
+            return super().__getitem__(key)
+
+        def endswith(self, suffix: Any, *args: Any) -> bool:  # type: ignore[override]
+            self.endswith_args.append(suffix)
+            return super().endswith(suffix, *args)
+
+    text = RecordingText()
+
+    assert RequestStreamAssembler._longest_marker_prefix_suffix(text, "</think>") == "</thi"
+    assert text.slice_keys == []
+    assert text.endswith_args == ["</think", "</thin", "</thi"]
+
 
 
 def test_partial_pipe_reasoning_marker_is_suppressed_at_completion() -> None:
