@@ -321,25 +321,24 @@ _CAPABILITY_SINGLE_VALUE_CACHE_MISSING = object()
 
 def _split_capability_values(raw_value: str) -> list[str]:
     if "," not in raw_value:
-        single_value_cache = _CAPABILITY_SINGLE_VALUE_CACHE
         try:
-            stripped = single_value_cache[raw_value]
+            stripped = _CAPABILITY_SINGLE_VALUE_CACHE[raw_value]
         except KeyError:
             stripped = raw_value.strip()
-            if len(single_value_cache) >= _CAPABILITY_SINGLE_VALUE_CACHE_MAX_SIZE:
-                single_value_cache.clear()
-            single_value_cache[raw_value] = stripped
+            if len(_CAPABILITY_SINGLE_VALUE_CACHE) >= _CAPABILITY_SINGLE_VALUE_CACHE_MAX_SIZE:
+                _CAPABILITY_SINGLE_VALUE_CACHE.clear()
+            _CAPABILITY_SINGLE_VALUE_CACHE[raw_value] = stripped
         return [stripped] if stripped else []
-    return [*_split_capability_value_tuple(raw_value)]
+    return _split_capability_value_list(raw_value).copy()
 
 
 @lru_cache(maxsize=128)
-def _split_capability_value_tuple(raw_value: str) -> tuple[str, ...]:
-    return tuple(
+def _split_capability_value_list(raw_value: str) -> list[str]:
+    return [
         stripped
         for part in raw_value.split(",")
         if (stripped := part.strip())
-    )
+    ]
 
 
 def _default_capability_lists(model_kind: str) -> tuple[list[str], list[str]]:
