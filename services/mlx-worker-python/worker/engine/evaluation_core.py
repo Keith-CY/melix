@@ -4134,6 +4134,22 @@ class EvaluationCore:
 
     @staticmethod
     def _normalized_answer(value: str) -> str:
+        if (
+            len(value) > 1
+            and value.isascii()
+            and value[0] not in "+-0123456789`\"'"
+            and value[-1] not in "`\"'."
+            and not value[0].isspace()
+            and not value[-1].isspace()
+            and "  " not in value
+            and "\t" not in value
+            and "\n" not in value
+            and "\r" not in value
+            and "\f" not in value
+            and "\v" not in value
+        ):
+            return value.lower()
+
         stripped = EvaluationCore._strip_wrapping(value)
         if len(stripped) == 1:
             option = stripped.upper()

@@ -3572,6 +3572,25 @@ def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.Mo
     assert option_calls == 0
 
 
+def test_normalized_answer_plain_ascii_fast_path_skips_strip_wrapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    strip_calls = 0
+    original_strip = EvaluationCore._strip_wrapping
+
+    def counting_strip(value: str) -> str:
+        nonlocal strip_calls
+        strip_calls += 1
+        return original_strip(value)
+
+    monkeypatch.setattr(EvaluationCore, "_strip_wrapping", staticmethod(counting_strip))
+
+    assert EvaluationCore._normalized_answer("Final Answer: Paris") == "final answer: paris"
+    assert strip_calls == 0
+    assert EvaluationCore._normalized_answer("  Final Answer: Paris. ") == "final answer: paris"
+    assert strip_calls == 1
+
+
 def test_evaluation_helpers_cover_timeout_fallback_and_digit_choice_resolution() -> None:
     assert (
         EvaluationCore._sample_code_timeout_seconds({}, {"code_timeout_seconds": "invalid"}) == 5.0
