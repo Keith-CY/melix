@@ -3462,6 +3462,19 @@
         "warn_pct": 0.0
       },
       {
+        "key": "dense_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0,
+        "warn_abs": 0.05
+      },
+      {
+        "key": "dense_source_read_calls_mean",
+        "unit": "reads",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
         "key": "measured_lines_per_path",
         "unit": "count",
         "direction": "informational"

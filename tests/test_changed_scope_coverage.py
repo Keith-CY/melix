@@ -561,7 +561,10 @@ def test_measurable_changed_lines_filters_blank_comment_and_unmeasured_lines(tmp
     assert missed == [5]
 
 
-def test_measurable_non_comment_lines_preserves_dense_indented_comment_behavior(tmp_path: Path) -> None:
+def test_measurable_non_comment_lines_preserves_dense_indented_comment_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     source_path = tmp_path / "dense.py"
     source_path.write_text(
         "\n".join(
@@ -580,10 +583,34 @@ def test_measurable_non_comment_lines_preserves_dense_indented_comment_behavior(
         encoding="utf-8",
     )
 
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("ASCII dense scans should avoid Path.read_text")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
     assert changed_scope_coverage._measurable_non_comment_lines(
         source_path,
         list(range(1, 10)),
     ) == [1, 3, 6, 7, 9]
+
+
+def test_measurable_non_comment_lines_falls_back_for_unicode_whitespace(tmp_path: Path) -> None:
+    source_path = tmp_path / "dense_unicode.py"
+    source_path.write_text(
+        "\n".join(
+            [
+                "\u00a0value = 1",
+                "\u00a0# unicode-space comment",
+                "plain = 2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert changed_scope_coverage._measurable_non_comment_lines(
+        source_path,
+        [1, 2, 3],
+    ) == [1, 3]
 
 
 def test_line_ranges_may_overlap_rejects_disjoint_changed_bounds() -> None:
@@ -1028,7 +1055,7 @@ def test_changed_scope_coverage_measured_probe_emits_large_measured_metrics() ->
     assert metrics["allowlist_parse_count"] == 10000.0
     assert metrics["source_read_calls_mean"] == 0.0
     assert metrics["sparse_source_read_calls_mean"] == 0.0
-    assert metrics["dense_source_read_calls_mean"] == 5.0
+    assert metrics["dense_source_read_calls_mean"] == 0.0
 
 
 def test_changed_scope_coverage_singleton_probe_emits_range_metrics() -> None:
