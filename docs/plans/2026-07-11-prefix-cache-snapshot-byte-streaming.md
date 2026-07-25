@@ -184,3 +184,16 @@ the repeated snapshot byte-estimation loop.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: State Sequence Branch First
+
+The 2026-07-25 follow-up keeps the same registered probe and narrows to the
+branch order inside `estimate_cache_snapshot_bytes()`. The synthetic prompt-cache
+workload and MLX prompt-cache layers are dominated by exact list/tuple `.state`
+sequences, so this slice checks that sequence branch before the less-common
+`.state is None` keys/values fallback. Behavior remains unchanged for exact
+list/tuple state sequences, scalar state objects, and `.keys` / `.values` layers.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
