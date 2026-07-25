@@ -609,6 +609,10 @@ def load_trajectory_provenance_from_snapshot_dir(
 def adapter_manifest_trajectory_provenance(
     provenance: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
+    if type(provenance) is dict:
+        fast_payload = _fast_adapter_manifest_trajectory_provenance(provenance)
+        if fast_payload is not None:
+            return fast_payload
     normalized = normalize_trajectory_provenance(provenance)
     if not normalized:
         return {}
@@ -622,6 +626,59 @@ def adapter_manifest_trajectory_provenance(
         payload.update(_agentic_sft_token_metric_aliases(token_metrics))
     elif isinstance(token_metrics, Mapping):
         payload.update(_agentic_sft_token_metric_aliases(token_metrics))
+    return payload
+
+
+def _fast_adapter_manifest_trajectory_provenance(
+    provenance: dict[str, Any],
+) -> dict[str, Any] | None:
+    if len(provenance) != 6:
+        return None
+    provenance_get = provenance.get
+    dataset_id = provenance_get("trajectory_dataset_id")
+    dataset_version = provenance_get("trajectory_dataset_version")
+    schema_version = provenance_get("trajectory_schema_version")
+    trace_digest = provenance_get("trajectory_trace_digest")
+    quality_metrics = provenance_get("trajectory_quality_metrics")
+    token_metrics = provenance_get("agentic_sft_token_metrics")
+    value_type = _TYPE
+    if (
+        value_type(dataset_id) is not str
+        or dataset_id == ""
+        or value_type(dataset_version) is not str
+        or dataset_version == ""
+        or value_type(schema_version) is not str
+        or schema_version == ""
+        or value_type(trace_digest) is not str
+        or trace_digest == ""
+        or value_type(quality_metrics) is not dict
+        or value_type(token_metrics) is not dict
+    ):
+        return None
+    if (
+        dataset_id[0].isspace()
+        or dataset_id[-1].isspace()
+        or dataset_version[0].isspace()
+        or dataset_version[-1].isspace()
+        or schema_version[0].isspace()
+        or schema_version[-1].isspace()
+        or trace_digest[0].isspace()
+        or trace_digest[-1].isspace()
+    ):
+        return None
+    payload: dict[str, Any] = {
+        "trajectory_dataset_id": dataset_id,
+        "trajectory_dataset_version": dataset_version,
+        "trajectory_schema_version": schema_version,
+        "trajectory_trace_digest": trace_digest,
+        "trajectory_quality_metrics": _copy_trajectory_provenance_value(
+            quality_metrics
+        ),
+        "agentic_sft_token_metrics": _copy_json_dict(token_metrics),
+        "trajectory_provenance_field_count": 6,
+        "trajectory_reward_policy_present": False,
+    }
+    payload.update(_agentic_sft_token_metric_aliases(token_metrics))
     return payload
 
 
