@@ -26,6 +26,7 @@ _ASCII_PLUS = ord("+")
 _ASCII_MINUS = ord("-")
 _ASCII_AT = ord("@")
 _ASCII_LOWER_D = ord("d")
+_ASCII_COMMENT = ord("#")
 _DIFF_PARSER_ACCEPTS_BYTES = True
 _EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
 _DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
@@ -265,6 +266,35 @@ def _sorted_line_list_contains(lines: list[int], line_no: int) -> bool:
     return index < len(lines) and lines[index] == line_no
 
 
+def _ascii_bytes_measurable_non_comment_lines(
+    source_path: Path,
+    line_numbers: list[int],
+) -> list[int] | None:
+    source_bytes = source_path.read_bytes()
+    if not source_bytes.isascii():
+        return None
+
+    source_lines = source_bytes.splitlines()
+    source_line_count = len(source_lines)
+    measurable: list[int] = []
+    append_measurable = measurable.append
+    ascii_comment = _ASCII_COMMENT
+    ascii_space = _ASCII_SPACE
+    for line_no in line_numbers:
+        if 1 <= line_no <= source_line_count:
+            line = source_lines[line_no - 1]
+            if not line:
+                continue
+            first_byte = line[0]
+            if first_byte != ascii_comment and first_byte > ascii_space:
+                append_measurable(line_no)
+                continue
+            stripped = line.strip()
+            if stripped and not stripped.startswith(b"#"):
+                append_measurable(line_no)
+    return measurable
+
+
 def _measurable_non_comment_lines(
     source_path: Path,
     line_numbers: list[int],
@@ -287,6 +317,10 @@ def _measurable_non_comment_lines(
                     if not remaining:
                         break
         return measurable
+
+    ascii_measurable = _ascii_bytes_measurable_non_comment_lines(source_path, line_numbers)
+    if ascii_measurable is not None:
+        return ascii_measurable
 
     source_lines = source_path.read_text(encoding="utf-8").splitlines()
     source_line_count = len(source_lines)
