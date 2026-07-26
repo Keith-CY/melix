@@ -115,6 +115,35 @@ def test_export_target_diagnostics_target_relative_text_handles_root_slash_bound
     assert _target_relative_text("/tmp/melix-target/", "/tmp/melix-target") is None
 
 
+def test_export_target_diagnostics_target_path_fast_path_skips_absolute_path_regex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FailAbsolutePathPattern:
+        def sub(self, *_args: object, **_kwargs: object) -> str:  # pragma: no cover - regression guard
+            raise AssertionError("target-root path redaction should use the lexical fast path")
+
+    monkeypatch.setattr(
+        export_target_diagnostics_module,
+        "_ABSOLUTE_PATH_PATTERN",
+        FailAbsolutePathPattern(),
+    )
+    summary = export_target_diagnostics_module._RedactionSummary()
+    target_root = tmp_path / "target"
+    raw_path = target_root / "artifacts" / "model.gguf"
+
+    redacted = export_target_diagnostics_module._redact_text(
+        f"runtime load failed at {raw_path}",
+        target_root,
+        str(target_root),
+        summary,
+    )
+
+    assert redacted == "runtime load failed at <target>/artifacts/model.gguf"
+    assert summary.redacted_absolute_path_count == 1
+    assert summary.redaction_count == 1
+
+
 @pytest.mark.parametrize(
     ("expected_code", "log_line"),
     [

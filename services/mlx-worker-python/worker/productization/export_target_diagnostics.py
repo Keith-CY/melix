@@ -699,6 +699,9 @@ def _redact_text(
             )
     if "/" not in text:
         return text
+    fast_redacted = _redact_target_root_paths_text(text, resolved_target_root_text, summary)
+    if fast_redacted is not None:
+        return fast_redacted
     return _ABSOLUTE_PATH_PATTERN.sub(
         lambda match: _redact_absolute_path(
             match.group(0),
@@ -708,6 +711,23 @@ def _redact_text(
         ),
         text,
     )
+
+
+def _redact_target_root_paths_text(
+    text: str,
+    resolved_target_root_text: str,
+    summary: _RedactionSummary,
+) -> str | None:
+    if not resolved_target_root_text or "/../" in text or text.endswith("/.."):
+        return None
+    target_root_prefix = resolved_target_root_text + "/"
+    if target_root_prefix not in text:
+        return None
+    redacted = text.replace(target_root_prefix, "<target>/")
+    redaction_count = text.count(target_root_prefix)
+    summary.redacted_absolute_path_count += redaction_count
+    summary.redaction_count += redaction_count
+    return redacted
 
 
 def _has_secret_redaction_marker(text: str) -> bool:

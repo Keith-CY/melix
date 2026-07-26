@@ -261,6 +261,14 @@ that already match the canonical source spelling now skip `str.lower()` entirely
 case variants and non-exact lines continue through the same lowercase exact,
 marker, phrase, and regex fallbacks.
 
+A follow-up 2026-07-26 target-root path prefix slice keeps redacted excerpt text
+semantics unchanged for clean target-local absolute paths while replacing the
+resolved target-root prefix directly before invoking the generic absolute-path
+regex. Paths with parent-directory segments still use the existing regex and
+normalization fallback, but ordinary runtime log lines such as
+`... /target/artifacts/model.gguf` now emit the same `<target>/artifacts/...`
+label without running the broader absolute-path matcher.
+
 Focused verification:
 
 ```bash
