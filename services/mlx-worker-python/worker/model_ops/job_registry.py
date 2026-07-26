@@ -651,7 +651,7 @@ class ModelOpsJobRegistry:
     def _removed_derived_targets_from_ordered_jobs(
         cls,
         jobs: tuple[ModelOpsJob, ...],
-    ) -> dict[str, set[str]]:
+    ) -> tuple[set[str], set[str], set[str], set[str]]:
         removed_model_ids: set[str] = set()
         removed_manifest_paths: set[str] = set()
         removed_adapter_manifest_paths: set[str] = set()
@@ -672,22 +672,24 @@ class ModelOpsJobRegistry:
             activation_job_id = str(manifest.get("activation_job_id", "")).strip()
             if activation_job_id:
                 removed_activation_job_ids.add(activation_job_id)
-        return {
-            "model_ids": removed_model_ids,
-            "manifest_paths": removed_manifest_paths,
-            "adapter_manifest_paths": removed_adapter_manifest_paths,
-            "activation_job_ids": removed_activation_job_ids,
-        }
+        return (
+            removed_model_ids,
+            removed_manifest_paths,
+            removed_adapter_manifest_paths,
+            removed_activation_job_ids,
+        )
 
     @classmethod
     def _active_derived_model_job_rows(
         cls,
         jobs: tuple[ModelOpsJob, ...],
     ) -> tuple[tuple[ModelOpsJob, dict[str, Any], str], ...]:
-        removed_targets = cls._removed_derived_targets_from_ordered_jobs(jobs)
-        removed_model_ids = removed_targets["model_ids"]
-        removed_manifest_paths = removed_targets["manifest_paths"]
-        removed_activation_job_ids = removed_targets["activation_job_ids"]
+        (
+            removed_model_ids,
+            removed_manifest_paths,
+            _removed_adapter_manifest_paths,
+            removed_activation_job_ids,
+        ) = cls._removed_derived_targets_from_ordered_jobs(jobs)
         active_rows: list[tuple[ModelOpsJob, dict[str, Any], str]] = []
         for job in jobs:
             if job.operation != "activate_adapter" or job.status != "completed":
