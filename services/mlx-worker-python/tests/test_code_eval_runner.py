@@ -1251,6 +1251,7 @@ def test_sorted_payload_fast_path_reuses_empty_failure_prefix(monkeypatch) -> No
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+    assert code_eval_runner._CODE_EVAL_SORTED_EMPTY_FAILURE_VALUE_START == payload.find(b'""')
 
     def fail_forward_compact_scanner(
         *_args: object, **_kwargs: object
