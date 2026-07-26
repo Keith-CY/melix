@@ -70,3 +70,17 @@ normalization behavior.
 
 Expected effect: lower `probe_phases_elapsed_ms_mean` in the registered probe
 with unchanged phase counts and broader report evidence gate metrics.
+
+## Follow-up: run-kind value set explicit loop
+
+The 2026-07-26 follow-up remains inside
+`worker.productization.report_evidence_gate._report_run_kind_values` and keeps the
+same registered `report-evidence-gate-run-kind-set-membership` probe. The hot
+run-kind scan now builds the normalized value set with an explicit loop and local
+bindings for `set.add`, `type`, `str`, and the `run_kind` key, avoiding the set
+comprehension frame while preserving exact-string pass-through and non-string
+stringification behavior.
+
+Expected effect: lower `run_kind_elapsed_ms_mean` and non-regressive
+`elapsed_ms_mean` in the registered probe with unchanged run-kind counts and
+match counts.
