@@ -2486,6 +2486,19 @@ def test_cross_shard_quantized_metadata_fixup_count_avoids_shard_dict_allocation
 
     assert cross_shard_quantized_metadata_fixup_count(metadata) == 1
 
+    class UnexpectedMappingIteration(dict[str, str]):
+        def items(self):  # pragma: no cover - regression guard
+            raise AssertionError(
+                "repeated cross-shard fixup reads should use the cached count"
+            )
+
+    object.__setattr__(
+        metadata,
+        "tensor_to_shard",
+        UnexpectedMappingIteration(metadata.tensor_to_shard),
+    )
+    assert cross_shard_quantized_metadata_fixup_count(metadata) == 1
+
     scales_heavy_metadata = QuantizedTensorMetadata(
         {
             "language_model.layers.3.q_proj.scales": "model-00005.safetensors",
