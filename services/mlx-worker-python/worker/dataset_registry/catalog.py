@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
 import heapq
+from operator import itemgetter
 import json
 import os
 from pathlib import Path
@@ -538,7 +539,7 @@ def _first_supported_scan_entries(
                 for name, path_raw, is_dir, is_file in heapq.nsmallest(
                     limit,
                     _supported_scan_entry_records(entries, after=after),
-                    key=lambda item: item[0],
+                    key=itemgetter(0),
                 )
             ]
     except OSError:

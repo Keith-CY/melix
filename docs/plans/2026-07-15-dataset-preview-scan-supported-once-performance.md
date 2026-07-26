@@ -41,3 +41,11 @@ Use the registered probe metrics:
 The change is accepted only if focused tests pass, changed-scope coverage is at
 least 95%, and the registered probe improves or remains non-regressive locally
 on Linux and in PR-scoped CI.
+
+## 2026-07 heap key helper slice
+
+A follow-up Python-only slice keeps the same registered probe and narrows the
+`heapq.nsmallest()` callback overhead in `_first_supported_scan_entries()` by
+replacing the per-call `lambda item: item[0]` key with the C-level
+`operator.itemgetter(0)` helper. Traversal order, filtering semantics, and the
+limited preview result shape remain unchanged.
