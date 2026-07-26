@@ -99,6 +99,54 @@ def test_string_list_preserves_exact_list_and_list_subclass_inputs() -> None:
     assert _string_list("mlx") == ["mlx"]
 
 
+def test_summary_record_inlines_exact_tag_list_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_string_list(value: object) -> list[str]:
+        raise AssertionError(  # pragma: no cover - exact-list fast path guard
+            f"exact list tags should not call _string_list: {value!r}"
+        )
+
+    monkeypatch.setattr(hub_catalog_module, "_string_list", fail_string_list)
+    record = HubCatalog(local_memory_gb=64.0)._summary_record(
+        {
+            "id": "plain/model",
+            "pipeline_tag": "text-generation",
+            "tags": ["Transformers", "mlx", object()],
+            "siblings": [{"rfilename": "config.json"}],
+            "cardData": {},
+        }
+    )
+
+    assert record.tags == ["Transformers", "mlx"]
+    assert record.mlx_compatible is True
+
+
+def test_summary_record_preserves_tag_list_subclass_helper_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    class TagList(list[str]):
+        pass
+
+    calls = 0
+    original = hub_catalog_module._string_list
+
+    def counted_string_list(value: object) -> list[str]:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog_module, "_string_list", counted_string_list)
+    record = HubCatalog(local_memory_gb=64.0)._summary_record(
+        {
+            "id": "plain/model",
+            "pipeline_tag": "text-generation",
+            "tags": TagList(["Transformers", "mlx"]),
+            "siblings": [{"rfilename": "config.json"}],
+            "cardData": {},
+        }
+    )
+
+    assert record.tags == ["Transformers", "mlx"]
+    assert calls == 1
+
+
 def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tags() -> None:
     assert _bytes_per_parameter([], lowered_tags={"family", "2bit", "float32"}) == 0.25
     assert _bytes_per_parameter([], lowered_tags={"family", "float32", "4-bit"}) == 0.5
@@ -1951,7 +1999,7 @@ def test_summary_record_reuses_lowered_tags_for_local_fit(monkeypatch: pytest.Mo
     assert model.estimated_resident_bytes == int(
         2_000_000_000 * 0.5 * hub_catalog_module.RESIDENT_MEMORY_OVERHEAD_FACTOR
     )
-    assert calls == 1
+    assert calls == 0
 
 
 def test_summary_record_reads_card_data_once() -> None:

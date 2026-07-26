@@ -3882,7 +3882,7 @@ def test_hub_catalog_tag_normalization_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["record_count"] == 3.0
     assert metrics["sample_count"] == 1.0
-    assert metrics["tag_normalization_calls_mean"] == 3.0
+    assert metrics["tag_normalization_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 

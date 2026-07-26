@@ -276,8 +276,19 @@ class HubCatalog:
         card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
         card_get = card_data.get
         repo_id = _string(payload_get("id") or payload_get("modelId"))
-        tags = _string_list(payload_get("tags"))
-        lowered_tags = _lowered_tag_set(tags)
+        raw_tags = payload_get("tags")
+        if type(raw_tags) is list:
+            tags = []
+            lowered_tags = set()
+            tags_append = tags.append
+            lowered_tags_add = lowered_tags.add
+            for item in raw_tags:
+                if isinstance(item, str):
+                    tags_append(item)
+                    lowered_tags_add(item.lower())
+        else:
+            tags = _string_list(raw_tags)
+            lowered_tags = _lowered_tag_set(tags)
         library_name = _string(payload_get("library_name") or card_get("library_name"))
         pipeline_tag = _string(payload_get("pipeline_tag") or card_get("pipeline_tag"))
         sibling_files = _sibling_files(payload_get("siblings"))
