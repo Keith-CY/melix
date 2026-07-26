@@ -97,3 +97,17 @@ Expected metrics are lower or neutral `elapsed_ms_mean` for
 `scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain stable
 because the slice only replaces a repeated constant computation with an immutable
 module constant.
+
+## 2026-07-26 Follow-up: empty failure-detail value offset constant
+
+This follow-up Python-only slice keeps the same sorted code-evaluation payload
+fast path and registered `code-eval-payload-json-bytes` probe. The common compact
+payload prefix already proves that the `failure_detail` value begins at a fixed
+offset; the extractor now reuses a module-level offset constant instead of
+recomputing `len(...)` on every successful sorted payload parse. Behavior is
+unchanged for compact, whitespace-tolerant, malformed, and full-JSON fallback
+payloads.
+
+Expected metrics are lower or neutral `elapsed_ms_mean` for
+`scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain stable
+because the slice only reuses an immutable integer constant.

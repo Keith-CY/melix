@@ -559,6 +559,7 @@ _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY = (
 )
 _CODE_EVAL_PAYLOAD_RUNNER_PREFIX = b'{"compile_status"'
 _CODE_EVAL_SORTED_EMPTY_FAILURE_PREFIX = b'{"failure_detail":""'
+_CODE_EVAL_SORTED_EMPTY_FAILURE_VALUE_START = len(b'{"failure_detail":')
 
 _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
 
@@ -638,7 +639,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     payload_startswith = payload_bytes.startswith
 
     if payload_startswith(_CODE_EVAL_SORTED_EMPTY_FAILURE_PREFIX):
-        failure_start = len(b'{"failure_detail":')
+        failure_start = _CODE_EVAL_SORTED_EMPTY_FAILURE_VALUE_START
     else:
         failure_start = field_value_start(
             payload_bytes,
