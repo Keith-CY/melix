@@ -136,6 +136,8 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
     if value_type in _JSON_IMMUTABLE_TYPE_SET:
         return value
     if value_type is dict:
+        type_of = _TYPE
+        immutable_types = _JSON_IMMUTABLE_TYPE_SET
         value_len = len(value)
         if value_len == 4:
             try:
@@ -147,17 +149,17 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
                 pass
             else:
                 if (
-                    _TYPE(name) in _JSON_IMMUTABLE_TYPE_SET
-                    and _TYPE(score) in _JSON_IMMUTABLE_TYPE_SET
-                    and _TYPE(passed) in _JSON_IMMUTABLE_TYPE_SET
-                    and _TYPE(labels) is list
+                    type_of(name) in immutable_types
+                    and type_of(score) in immutable_types
+                    and type_of(passed) in immutable_types
+                    and type_of(labels) is list
                 ):
                     if len(labels) == 3:
                         label_0, label_1, label_2 = labels
                         if (
-                            _TYPE(label_0) in _JSON_IMMUTABLE_TYPE_SET
-                            and _TYPE(label_1) in _JSON_IMMUTABLE_TYPE_SET
-                            and _TYPE(label_2) in _JSON_IMMUTABLE_TYPE_SET
+                            type_of(label_0) in immutable_types
+                            and type_of(label_1) in immutable_types
+                            and type_of(label_2) in immutable_types
                         ):
                             return {
                                 "name": name,
@@ -167,7 +169,7 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
                             }
                     else:
                         for label in labels:
-                            if _TYPE(label) not in _JSON_IMMUTABLE_TYPE_SET:
+                            if type_of(label) not in immutable_types:
                                 break
                         else:
                             return {
@@ -177,17 +179,17 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
                                 "labels": [*labels],
                             }
                 if (
-                    _TYPE(name) in _JSON_IMMUTABLE_TYPE_SET
-                    and _TYPE(score) in _JSON_IMMUTABLE_TYPE_SET
-                    and _TYPE(passed) in _JSON_IMMUTABLE_TYPE_SET
-                    and _TYPE(labels) is tuple
+                    type_of(name) in immutable_types
+                    and type_of(score) in immutable_types
+                    and type_of(passed) in immutable_types
+                    and type_of(labels) is tuple
                 ):
                     if len(labels) == 3:
                         label_0, label_1, label_2 = labels
                         if (
-                            _TYPE(label_0) in _JSON_IMMUTABLE_TYPE_SET
-                            and _TYPE(label_1) in _JSON_IMMUTABLE_TYPE_SET
-                            and _TYPE(label_2) in _JSON_IMMUTABLE_TYPE_SET
+                            type_of(label_0) in immutable_types
+                            and type_of(label_1) in immutable_types
+                            and type_of(label_2) in immutable_types
                         ):
                             return {
                                 "name": name,
@@ -197,7 +199,7 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
                             }
                     else:
                         for label in labels:
-                            if _TYPE(label) not in _JSON_IMMUTABLE_TYPE_SET:
+                            if type_of(label) not in immutable_types:
                                 break
                         else:
                             return {
@@ -214,8 +216,8 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
                 pass
             else:
                 if (
-                    _TYPE(reward_coverage_count) in _JSON_IMMUTABLE_TYPE_SET
-                    and _TYPE(components) is list
+                    type_of(reward_coverage_count) in immutable_types
+                    and type_of(components) is list
                 ):
                     return {
                         "reward_coverage_count": reward_coverage_count,
