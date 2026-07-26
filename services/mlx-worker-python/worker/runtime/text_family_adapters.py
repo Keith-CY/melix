@@ -469,7 +469,10 @@ def _config_mapping(config_payload: Mapping[str, Any] | None) -> Mapping[str, An
 
 
 def _string_value(metadata: Mapping[str, str], key: str, default: str) -> str:
-    value = metadata.get(key, "").strip()
+    value = metadata.get(key)
+    if not value:
+        return default
+    value = value.strip()
     return value or default
 
 
