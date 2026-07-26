@@ -1241,10 +1241,10 @@ def _source_read_cap_bytes(*, upload_cap_bytes: int, source_cap_bytes: int) -> i
 def _read_source_text(path: Path, *, cap_bytes: int = 0) -> str:
     raw_path = os.fspath(path)
     open_file = open
-    decode_bytes = bytes.decode
     if cap_bytes <= 0:
         with open_file(raw_path, "rb") as handle:
-            return decode_bytes(handle.read(), "utf-8")
+            return handle.read().decode("utf-8")
+    decode_bytes = bytes.decode
     chunks: list[bytes] = []
     chunks_append = chunks.append
     observed = 0
