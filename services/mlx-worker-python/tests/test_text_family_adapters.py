@@ -14,6 +14,7 @@ from worker.runtime.text_family_adapters import (
     _inferred_expert_count,
     _inferred_rope_profile,
     _split_csv,
+    _string_value,
     detect_text_family_identity,
     resolve_text_family_config,
 )
@@ -75,6 +76,18 @@ def test_split_csv_short_circuits_empty_values_without_split() -> None:
 
     assert _split_csv(NoSplitEmpty("")) == []
     assert _split_csv(" text, qwen ,, tools ") == ["text", "qwen", "tools"]
+
+
+def test_string_value_short_circuits_missing_values_without_strip() -> None:
+    class NoStripEmpty(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("missing metadata values should not allocate strip results")
+
+    class MissingMetadata(dict[str, str]):
+        def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
+            return NoStripEmpty("")
+
+    assert _string_value(MissingMetadata(), "missing", "fallback") == "fallback"
 
 
 def test_inferred_attention_profile_skips_non_string_hints_and_preserves_use_mla_fallback() -> None:
