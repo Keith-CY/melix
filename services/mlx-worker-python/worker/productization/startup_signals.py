@@ -316,9 +316,16 @@ def compare_versions(left: str, right: str) -> int:
 
 
 def normalized_version_parts(value: str) -> list[int]:
-    cleaned = value.strip()
-    cleaned_length = len(cleaned)
-    index = 1 if cleaned and cleaned[0] == "v" else 0
+    value_length = len(value)
+    index = 0
+    while index < value_length and value[index].isspace():
+        index += 1
+    end = value_length
+    while end > index and value[end - 1].isspace():
+        end -= 1
+    if index < end and value[index] == "v":
+        index += 1
+
     parts: list[int] = []
     current_value = 0
     digit_seen = False
@@ -326,8 +333,8 @@ def normalized_version_parts(value: str) -> list[int]:
     part_has_chars = False
     ord_ = _ORD
 
-    while index < cleaned_length:
-        character_code = ord_(cleaned[index])
+    while index < end:
+        character_code = ord_(value[index])
         index += 1
         if character_code == 43 or character_code == 45:
             break

@@ -369,7 +369,7 @@ def test_normalized_version_parts_materializes_without_generator(
 def test_normalized_version_parts_checks_v_prefix_without_startswith() -> None:
     class StartswithForbiddenVersion(str):
         def strip(self, chars: str | None = None) -> str:  # pragma: no cover - sentinel
-            return self
+            raise AssertionError("normalized_version_parts should scan strip bounds without allocation")
 
         def startswith(
             self,
@@ -379,8 +379,8 @@ def test_normalized_version_parts_checks_v_prefix_without_startswith() -> None:
         ) -> bool:  # pragma: no cover - sentinel
             raise AssertionError("normalized_version_parts should check the v prefix directly")
 
-    assert normalized_version_parts(StartswithForbiddenVersion("v3.2rc1.0-beta+build")) == [3, 2, 0]
-    assert normalized_version_parts(StartswithForbiddenVersion("release")) == [0]
+    assert normalized_version_parts(StartswithForbiddenVersion(" v3.2rc1.0-beta+build ")) == [3, 2, 0]
+    assert normalized_version_parts(StartswithForbiddenVersion(" release ")) == [0]
 
 
 def test_compare_versions_reuses_cached_result_for_repeated_pairs(
