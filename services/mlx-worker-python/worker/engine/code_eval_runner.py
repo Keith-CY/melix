@@ -23,6 +23,7 @@ _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 _ASCII_SPLITLINE_BOUNDARIES = frozenset("\n\r\v\f\x1c\x1d\x1e")
 _ASCII_NON_LINE_WHITESPACE = frozenset(" \t\x1f")
 _ORD_ZERO = ord("0")
+_ORD_MINUS = ord("-")
 _ORD_QUOTE = ord('"')
 _ORD_COLON = ord(":")
 _ORD_OBJECT_START = ord("{")
@@ -870,7 +871,7 @@ def _extract_json_int_field_value_and_end(
     cursor = start
     payload_length = len(payload_bytes)
     sign = 1
-    if cursor < payload_length and payload_bytes[cursor] == ord("-"):
+    if cursor < payload_length and payload_bytes[cursor] == _ORD_MINUS:
         sign = -1
         cursor += 1
     if cursor >= payload_length:
