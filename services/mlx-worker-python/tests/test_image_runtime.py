@@ -248,16 +248,18 @@ def test_image_generation_and_edit_bind_model_id_once_per_loop(tmp_path: Path) -
     assert CountingLoadedModel.get_calls == 1
 
 
-def test_image_generate_binds_monotonic_once_per_call(
+def test_image_write_bytes_uses_default_monotonic_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class CountingTime:
+    class SteppingTime:
         monotonic_lookups = 0
+        current = 1000.0
 
         @staticmethod
         def _monotonic() -> float:
-            return 1000.0
+            SteppingTime.current += 0.25
+            return SteppingTime.current
 
         def __getattribute__(self, name: str):
             if name == "monotonic":
@@ -265,6 +267,34 @@ def test_image_generate_binds_monotonic_once_per_call(
                 return type(self)._monotonic
             return super().__getattribute__(name)
 
+    payload_path = tmp_path / "payload.bin"
+    monkeypatch.setattr(image_runtime, "time", SteppingTime())
+
+    elapsed_ms = DeterministicImageGenerationRuntime._write_bytes(payload_path, b"payload")
+
+    assert payload_path.read_bytes() == b"payload"
+    assert elapsed_ms == pytest.approx(250.0)
+    assert SteppingTime.monotonic_lookups == 1
+
+
+class CountingTime:
+    monotonic_lookups = 0
+
+    @staticmethod
+    def _monotonic() -> float:
+        return 1000.0
+
+    def __getattribute__(self, name: str):
+        if name == "monotonic":
+            type(self).monotonic_lookups += 1
+            return type(self)._monotonic
+        return super().__getattribute__(name)
+
+
+def test_image_generate_binds_monotonic_once_per_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = DeterministicImageGenerationRuntime()
     counting_time = CountingTime()
     monkeypatch.setattr(image_runtime, "time", counting_time)
@@ -290,6 +320,45 @@ def test_image_generate_binds_monotonic_once_per_call(
         height=128,
         variant=3,
         model_id="melix-dev-image",
+    )
+    assert CountingTime.monotonic_lookups == 1
+
+
+def test_image_edit_reuses_one_monotonic_binding_for_probe_timing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DeterministicImageGenerationRuntime()
+    CountingTime.monotonic_lookups = 0
+    monkeypatch.setattr(image_runtime, "time", CountingTime())
+
+    edited = runtime.edit_image(
+        {"model_id": "melix-dev-image"},
+        inference_pb2.ImageEditRequest(
+            prompt="add stars",
+            image=b"SOURCE_IMAGE",
+            mask=b"MASK_IMAGE",
+            size="128x128",
+            response_format="png",
+            n=5,
+        ),
+        job_id="image-edit-monotonic-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(edited.images) == 5
+    source_digest = runtime._edit_input_digest_from_sha256(runtime._edit_input_sha256(b"SOURCE_IMAGE"))
+    mask_digest = runtime._edit_input_digest_from_sha256(runtime._edit_input_sha256(b"MASK_IMAGE"))
+    assert edited.images[3] == DeterministicImageGenerationRuntime._render_edit_payload(
+        prompt="add stars",
+        width=128,
+        height=128,
+        variant=3,
+        model_id="melix-dev-image",
+        strength=0.0,
+        source_digest=source_digest,
+        mask_digest=mask_digest,
     )
     assert CountingTime.monotonic_lookups == 1
 
