@@ -170,3 +170,13 @@ adapter-manifest micro path. Bool and non-int numeric-like values still fall bac
 through the existing coercion branch, preserving previous alias semantics and key
 order. The registered `trajectory-provenance-copy-elision` probe remains the
 local Linux and CI validation gate for this small Python-only slice.
+
+## 2026-07-26 follow-up: component type-check local bindings
+
+This follow-up remains limited to the exact-dict branch in
+`worker.trajectory_provenance._copy_trajectory_provenance_value`. The component
+and quality-metrics fast paths now bind the module-level `type` helper and JSON
+immutable-type set once before their unrolled scalar guards. Copy isolation,
+canonical payload shape, token alias semantics, and all fallback paths stay
+unchanged. The registered `trajectory-provenance-copy-elision` probe remains the
+local Linux and CI validation gate for this small Python-only slice.
