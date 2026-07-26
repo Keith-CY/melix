@@ -29,6 +29,15 @@ The output remains sorted and uses the same slash-separated relative paths for
 files, file symlinks, and special entries. Directory symlink exclusion behavior
 is unchanged.
 
+2026-07-26 follow-up slice: the same registered probe now covers a narrower
+file-first branch optimization inside the `os.scandir(...)` traversal. The
+synthetic publish tree is file-heavy, so the traversal now tests
+`DirEntry.is_file(follow_symlinks=False)` before the directory branch. Directory
+entries still enter the explicit stack, directory symlinks remain excluded,
+file symlinks and special entries remain published, and sorted relative output
+is unchanged while regular files avoid the previous extra no-follow directory
+check.
+
 ## Verification plan
 
 1. Extend focused upload receipt tests to assert nested published paths still use
