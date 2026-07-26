@@ -849,6 +849,9 @@ def test_measurable_changed_lines_streams_sparse_source_lines(
     def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
         raise AssertionError("sparse changed-line source filtering should stream target lines")
 
+    def fail_set(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("sparse changed-line source filtering should avoid set allocation")
+
     def counted_open(self: Path, *args: object, **kwargs: object) -> object:
         if self == source_path:
             open_calls.append(self)
@@ -856,6 +859,7 @@ def test_measurable_changed_lines_streams_sparse_source_lines(
 
     monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
     monkeypatch.setattr(changed_scope_coverage.Path, "open", counted_open)
+    monkeypatch.setattr(changed_scope_coverage, "set", fail_set, raising=False)
 
     measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
         tmp_path,
@@ -868,6 +872,14 @@ def test_measurable_changed_lines_streams_sparse_source_lines(
     assert covered == [51]
     assert missed == [2]
     assert open_calls == [source_path]
+
+
+def test_sparse_measurable_non_comment_lines_handles_empty_and_short_sources(tmp_path: Path) -> None:
+    source_path = tmp_path / "short.py"
+    source_path.write_text("value = 1\n", encoding="utf-8")
+
+    assert changed_scope_coverage._sparse_measurable_non_comment_lines(source_path, []) == []
+    assert changed_scope_coverage._sparse_measurable_non_comment_lines(source_path, [1, 2]) == [1]
 
 
 def test_measurable_changed_lines_ignores_out_of_range_source_lines(tmp_path: Path) -> None:

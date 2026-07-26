@@ -295,6 +295,56 @@ def _ascii_bytes_measurable_non_comment_lines(
     return measurable
 
 
+def _sparse_measurable_non_comment_lines(
+    source_path: Path,
+    line_numbers: list[int],
+) -> list[int]:
+    if not line_numbers:
+        return []
+
+    measurable: list[int] = []
+    append_measurable = measurable.append
+    target_index = 0
+    target_count = len(line_numbers)
+    target_line = line_numbers[0]
+    with source_path.open("r", encoding="utf-8") as source_file:
+        if target_line == 1:
+            consecutive_count = 1
+            while (
+                consecutive_count < target_count
+                and line_numbers[consecutive_count] == consecutive_count + 1
+            ):
+                consecutive_count += 1
+            if consecutive_count == target_count:
+                for index in range(1, target_count + 1):
+                    line = source_file.readline()
+                    if not line:
+                        break
+                    first_char = line[0]
+                    if first_char != "#" and not first_char.isspace():
+                        append_measurable(index)
+                    else:
+                        stripped = line.strip()
+                        if stripped and not stripped.startswith("#"):
+                            append_measurable(index)
+                return measurable
+        for index, line in enumerate(source_file, 1):
+            if index != target_line:
+                continue
+            first_char = line[0] if line else ""
+            if first_char and first_char != "#" and not first_char.isspace():
+                append_measurable(index)
+            else:
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    append_measurable(index)
+            target_index += 1
+            if target_index == target_count:
+                break
+            target_line = line_numbers[target_index]
+    return measurable
+
+
 def _measurable_non_comment_lines(
     source_path: Path,
     line_numbers: list[int],
@@ -302,21 +352,7 @@ def _measurable_non_comment_lines(
     measurable: list[int] = []
     append_measurable = measurable.append
     if len(line_numbers) <= _SPARSE_SOURCE_LINE_SCAN_THRESHOLD:
-        remaining = set(line_numbers)
-        with source_path.open("r", encoding="utf-8") as source_file:
-            for index, line in enumerate(source_file, 1):
-                if index in remaining:
-                    first_char = line[0] if line else ""
-                    if first_char and first_char != "#" and not first_char.isspace():
-                        append_measurable(index)
-                    else:
-                        stripped = line.strip()
-                        if stripped and not stripped.startswith("#"):
-                            append_measurable(index)
-                    remaining.remove(index)
-                    if not remaining:
-                        break
-        return measurable
+        return _sparse_measurable_non_comment_lines(source_path, line_numbers)
 
     ascii_measurable = _ascii_bytes_measurable_non_comment_lines(source_path, line_numbers)
     if ascii_measurable is not None:
