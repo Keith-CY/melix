@@ -596,6 +596,9 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
     best_path_raw = ""
     best_is_dir = False
     best_is_file = False
+    readme_names = _README_NAMES
+    is_supported_dataset_file_name = _is_supported_dataset_file_name
+    make_path = Path
     try:
         with os.scandir(os.fspath(directory)) as entries:
             for entry in entries:
@@ -608,7 +611,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                     continue
                 if is_dir:
                     is_file = False
-                elif name in _README_NAMES or not _is_supported_dataset_file_name(name):
+                elif name in readme_names or not is_supported_dataset_file_name(name):
                     continue
                 else:
                     try:
@@ -625,7 +628,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
         return None
     if not best_path_raw:
         return None
-    return best_name, Path(best_path_raw), best_is_dir, best_is_file
+    return best_name, make_path(best_path_raw), best_is_dir, best_is_file
 
 
 def _selected_dataset_files(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:

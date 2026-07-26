@@ -21,3 +21,15 @@ Run the registered probe locally on Linux before opening the PR, then rely on th
 PR-scoped performance workflow for CI validation. The expected signal is lower
 `elapsed_ms_mean` and a small reduction in `peak_bytes_mean` for the registered
 `dataset-registry-preview-limit-short-circuit` probe.
+
+## Follow-up Slice: First-File Helper Local Bindings
+
+The 2026-07-26 follow-up keeps the same registered probe and narrows to
+`_next_supported_scan_entry()` in the `limit=1` preview path. The first-file scan
+now binds the README-name set, supported-suffix helper, and `Path` constructor as
+locals for the loop, preserving existing OSError and recursive directory
+semantics while reducing global lookups in the synthetic first-preview workload.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
