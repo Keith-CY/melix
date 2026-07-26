@@ -683,6 +683,22 @@ def test_bundle_slimming_helpers_cover_runtime_edge_cases(
         site_so,
     }
 
+    path_constructor_calls = 0
+    real_path = Path
+
+    def counting_path(value: object = ".", *args: object, **kwargs: object) -> Path:
+        nonlocal path_constructor_calls
+        path_constructor_calls += 1
+        return real_path(value, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(macos_app_bundle_module, "Path", counting_path)
+    assert set(_iter_python_native_binary_candidates(runtime, site_packages)) == {
+        python_versioned,
+        runtime_so,
+        site_so,
+    }
+    assert path_constructor_calls == 3
+
     monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/strip")
 
     def fake_strip(command: list[str], check: bool, **kwargs: object) -> None:
