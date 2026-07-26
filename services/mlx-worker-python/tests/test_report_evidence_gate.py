@@ -891,6 +891,23 @@ def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     )
 
 
+def test_report_evidence_gate_load_report_payload_reuses_exact_path_instances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / "report.json"
+    report_path.write_text('{"schema_version":"fixture","metrics":[]}', encoding="utf-8")
+
+    def fail_path_constructor(path: object) -> Path:
+        raise AssertionError(  # pragma: no cover - only exercised on regression
+            f"Path constructor should not run for exact Path input: {path!r}"
+        )
+
+    monkeypatch.setattr(report_evidence_gate_module, "Path", fail_path_constructor)
+
+    assert load_report_payload(report_path) == {"schema_version": "fixture", "metrics": []}
+
+
 def test_report_evidence_gate_passes_complete_release_matrix(tmp_path: Path) -> None:
     serving_report = _write_report(tmp_path, "serving", run_kind="serving_benchmark")
     evaluation_report = _write_report(tmp_path, "evaluation", run_kind="evaluation")

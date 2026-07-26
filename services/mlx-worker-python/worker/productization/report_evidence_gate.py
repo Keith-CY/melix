@@ -11,6 +11,7 @@ from worker.productization.benchmark_evaluation_report import validate_report_pa
 REPORT_EVIDENCE_GATE_SCHEMA_VERSION = "melix.report_evidence_gate.v1"
 _EMPTY_PROBE_PHASES: frozenset[str] = frozenset()
 _JSON_LOADS = json.loads
+_PATH_TYPE = type(Path())
 _PROBE_PHASE_BUCKETS = ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases")
 _PROBE_PHASE_SIDES = ("baseline", "candidate")
 
@@ -36,7 +37,7 @@ DEFAULT_RELEASE_EVIDENCE_MATRIX: dict[str, dict[str, object]] = {
 
 
 def load_report_payload(path: str | Path) -> dict[str, object]:
-    report_path = Path(path)
+    report_path = cast(Path, path) if type(path) is _PATH_TYPE else Path(path)
     try:
         payload = _JSON_LOADS(report_path.read_bytes())
     except json.JSONDecodeError as exc:
@@ -675,14 +676,15 @@ def _dict_list(value: object) -> list[dict[str, object]]:
     dict_type = dict
     list_type = list
     is_dict = isinstance
-    if type(value) is list_type:
+    value_type = type
+    if value_type(value) is list_type:
         for item in value:
-            if type(item) is not dict_type and not is_dict(item, dict_type):
+            if value_type(item) is not dict_type and not is_dict(item, dict_type):
                 return [item for item in value if is_dict(item, dict_type)]
         return cast(list[dict[str, object]], value)
     if not is_dict(value, list_type):
         return []
     for item in value:
-        if type(item) is not dict_type and not is_dict(item, dict_type):
+        if value_type(item) is not dict_type and not is_dict(item, dict_type):
             return [item for item in value if is_dict(item, dict_type)]
     return cast(list[dict[str, object]], value)
