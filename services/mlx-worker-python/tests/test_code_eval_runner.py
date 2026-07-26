@@ -1273,6 +1273,37 @@ def test_sorted_payload_fast_path_reuses_empty_failure_prefix(monkeypatch) -> No
     }
 
 
+def test_sorted_payload_fast_path_uses_bound_key_tokens(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "failure_detail": "",
+            "metadata": {f"case_{index}": "ignored" for index in range(16)},
+            "runtime_status": "ok",
+            "test_status": "passed",
+            "tests_passed": 7,
+            "tests_total": 7,
+            "timeout_status": "ok",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    class FailingTokenDict(dict):
+        def __getitem__(self, key: str) -> bytes:  # pragma: no cover
+            raise AssertionError(f"sorted fast path should use bound key token for {key}")
+
+    monkeypatch.setattr(code_eval_runner, "_CODE_EVAL_PAYLOAD_KEY_TOKENS", FailingTokenDict())
+
+    assert code_eval_runner._extract_sorted_code_eval_payload_fields(payload) == {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 7,
+        "tests_total": 7,
+        "timeout_status": "ok",
+    }
+
+
 def test_sorted_payload_fast_path_skips_reserved_metadata_keys() -> None:
     payload_path = _BytesOnlyPayloadPath(
         json.dumps(

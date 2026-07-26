@@ -70,3 +70,16 @@ Expected metrics are lower or neutral `elapsed_ms_mean` for
 `scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain stable
 because the slice only removes the first successful key scan on the compact
 sorted payload path.
+
+## 2026-07-26 Follow-up: bound key-token constants
+
+This follow-up Python-only slice keeps the sorted code-evaluation payload fast
+path and registered `code-eval-payload-json-bytes` probe. The extractor now binds
+the known JSON key tokens at module import time and reuses those constants in the
+runner-friendly and sorted payload hot paths, avoiding repeated global dict
+lookups while keeping full-JSON fallback and generic field lookup behavior
+unchanged.
+
+Expected metrics are lower or neutral `elapsed_ms_mean` for
+`scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain stable
+because the slice only reuses immutable key-token constants.

@@ -512,6 +512,23 @@ _CODE_EVAL_PAYLOAD_KEY_TOKENS = {
     key: json.dumps(key, separators=(",", ":")).encode("utf-8")
     for key in (*_CODE_EVAL_PAYLOAD_STRING_KEYS, *_CODE_EVAL_PAYLOAD_INT_KEYS)
 }
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_COMPILE_STATUS = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "compile_status"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "runtime_status"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_TIMEOUT_STATUS = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "timeout_status"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_TEST_STATUS = _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "failure_detail"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_PASSED = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "tests_passed"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_TOTAL = _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"]
 _CODE_EVAL_PAYLOAD_STRING_FIELD_TOKENS = tuple(
     (key, _CODE_EVAL_PAYLOAD_KEY_TOKENS[key]) for key in _CODE_EVAL_PAYLOAD_STRING_KEYS
 )
@@ -519,25 +536,25 @@ _CODE_EVAL_PAYLOAD_INT_FIELD_TOKENS = tuple(
     (key, _CODE_EVAL_PAYLOAD_KEY_TOKENS[key]) for key in _CODE_EVAL_PAYLOAD_INT_KEYS
 )
 _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY = (
-    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"], "string"),
-    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"], "string"),
-    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"], "string"),
-    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"], "int"),
-    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"], "int"),
-    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"], "string"),
+    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL, "string"),
+    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS, "string"),
+    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TEST_STATUS, "string"),
+    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_PASSED, "int"),
+    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_TOTAL, "int"),
+    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TIMEOUT_STATUS, "string"),
 )
 _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_WITH_COMPILE = (
-    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["compile_status"], "string"),
+    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_COMPILE_STATUS, "string"),
     *_CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY,
 )
 _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY = (
-    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["compile_status"], "string"),
-    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"], "string"),
-    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"], "string"),
-    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"], "string"),
-    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"], "int"),
-    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"], "int"),
-    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"], "string"),
+    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_COMPILE_STATUS, "string"),
+    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS, "string"),
+    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TIMEOUT_STATUS, "string"),
+    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TEST_STATUS, "string"),
+    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_PASSED, "int"),
+    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_TOTAL, "int"),
+    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL, "string"),
 )
 _CODE_EVAL_PAYLOAD_RUNNER_PREFIX = b'{"compile_status"'
 _CODE_EVAL_SORTED_EMPTY_FAILURE_PREFIX = b'{"failure_detail":""'
@@ -573,8 +590,8 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
 
     payload_startswith = payload_bytes.startswith
     if payload_startswith(_CODE_EVAL_PAYLOAD_RUNNER_PREFIX, bounds[0]):
-        failure_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"])
-        runtime_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"])
+        failure_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL)
+        runtime_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS)
         if 0 <= failure_index < runtime_index:
             field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_WITH_COMPILE
         else:
@@ -624,14 +641,14 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     else:
         failure_start = field_value_start(
             payload_bytes,
-            _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"],
+            _CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL,
         )
         if failure_start is None or not payload_startswith(b'""', failure_start):
             return None
 
     timeout_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"],
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_TIMEOUT_STATUS,
         start=failure_start + 2,
     )
     if timeout_start is None or not payload_startswith(b'"ok"', timeout_start):
@@ -639,7 +656,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
 
     total_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"],
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_TOTAL,
         start=failure_start + 2,
         end=timeout_start,
     )
@@ -650,7 +667,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
 
     passed_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"],
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_PASSED,
         start=failure_start + 2,
         end=total_start,
     )
@@ -661,7 +678,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
 
     test_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"],
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_TEST_STATUS,
         start=failure_start + 2,
         end=passed_start,
     )
@@ -670,7 +687,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
 
     runtime_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"],
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS,
         start=failure_start + 2,
         end=test_start,
     )
