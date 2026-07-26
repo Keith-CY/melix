@@ -555,30 +555,39 @@ def _iter_python_native_binary_candidates(
 ) -> list[Path]:
     def collect(root_path: Path, *, include_runtime_executables: bool) -> list[Path]:
         selected: list[Path] = []
-        stack = [root_path]
+        selected_append = selected.append
+        stack = [os.fspath(root_path)]
+        stack_append = stack.append
+        stack_pop = stack.pop
+        path_cls = Path
+        scandir = os.scandir
+        native_suffixes = _PYTHON_NATIVE_BINARY_SUFFIXES
+        runtime_executable_names = _PYTHON_RUNTIME_EXECUTABLE_NAMES
+        bin_path_suffix = f"{os.sep}bin"
         while stack:
-            current = stack.pop()
+            current = stack_pop()
+            include_current_runtime_executables = include_runtime_executables and (
+                current.endswith(bin_path_suffix) or current == "bin"
+            )
             try:
-                with os.scandir(current) as entries:
-                    include_current_runtime_executables = (
-                        include_runtime_executables and current.name == "bin"
-                    )
+                with scandir(current) as entries:
                     for entry in entries:
+                        entry_name = entry.name
                         try:
                             if entry.is_dir(follow_symlinks=False):
-                                stack.append(Path(entry.path))
+                                stack_append(entry.path)
                                 continue
                             if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
                                 continue
                         except OSError:
                             continue
-                        if entry.name.endswith(_PYTHON_NATIVE_BINARY_SUFFIXES):
-                            selected.append(Path(entry.path))
+                        if entry_name.endswith(native_suffixes):
+                            selected_append(path_cls(entry.path))
                             continue
                         if not include_current_runtime_executables:
                             continue
-                        if entry.name in _PYTHON_RUNTIME_EXECUTABLE_NAMES or entry.name.startswith("python3."):
-                            selected.append(Path(entry.path))
+                        if entry_name in runtime_executable_names or entry_name.startswith("python3."):
+                            selected_append(path_cls(entry.path))
             except OSError:
                 continue
         return selected
