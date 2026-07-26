@@ -84,3 +84,22 @@ stringification behavior.
 Expected effect: lower `run_kind_elapsed_ms_mean` and non-regressive
 `elapsed_ms_mean` in the registered probe with unchanged run-kind counts and
 match counts.
+
+## Follow-up: exact Path payload load fast path
+
+The 2026-07-26 follow-up remains inside
+`worker.productization.report_evidence_gate.load_report_payload` and keeps the
+same registered `report-evidence-gate-run-kind-set-membership` probe. The report
+loader now reuses exact `Path` instances passed by the gate and probe instead of
+constructing a replacement `Path` for every load; string path inputs and custom
+path-like wrappers still go through the existing `Path(...)` normalization path.
+
+Expected effect: lower `load_report_payload_elapsed_ms_mean` and non-regressive
+`elapsed_ms_mean` in the registered probe with unchanged payload checksum.
+
+The CI rerun for this Path slice exposed `dict_list_elapsed_ms_mean` noise inside
+the same registered probe. To keep the direct probe green without widening the
+behavioral surface, `_dict_list` now also binds `type` locally for its existing
+exact-list / exact-dict checks. Filtering behavior for non-lists, dict subclasses,
+list subclasses, mixed invalid rows, and identity-preserving all-dict lists is
+unchanged by the existing `_dict_list` tests.
