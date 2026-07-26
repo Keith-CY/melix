@@ -83,3 +83,17 @@ unchanged.
 Expected metrics are lower or neutral `elapsed_ms_mean` for
 `scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain stable
 because the slice only reuses immutable key-token constants.
+
+## 2026-07-26 Follow-up: cached integer sign byte
+
+This follow-up Python-only slice stays within the same code-evaluation payload
+JSON byte-loading fast path and registered `code-eval-payload-json-bytes` probe.
+The integer parser now reuses a module-level `_ORD_MINUS` byte constant instead
+of calling `ord("-")` on each parsed integer field, preserving positive and
+negative integer handling while removing a repeated builtin call from the hot
+payload extraction loop.
+
+Expected metrics are lower or neutral `elapsed_ms_mean` for
+`scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain stable
+because the slice only replaces a repeated constant computation with an immutable
+module constant.
