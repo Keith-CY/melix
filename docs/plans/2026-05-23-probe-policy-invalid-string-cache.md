@@ -36,3 +36,13 @@ small exact-value cache for default-minimal invalid strings after their first
 normalization. Repeated exact invalid values can then return the immutable
 fallback policy by direct dictionary lookup while preserving the same
 `source_value`, fallback mode, and subclass/whitespace normalization behavior.
+
+## 2026-07-26 follow-up: exact debug and common-invalid direct returns
+
+This Python-only slice keeps the same `ProbePolicy.from_value(...)` boundary and
+registered `probe-policy-noop-overhead` probe. The exact built-in `str` branch now
+returns the common `debug` policy and the common default-minimal invalid policy
+before the generic value dictionary lookup. Empty strings, other valid modes,
+custom defaults, string subclasses, whitespace normalization, and cached invalid
+fallback semantics remain unchanged. Local Linux validation uses the registered
+focused tests, changed-scope coverage command, and PR-scoped probe.

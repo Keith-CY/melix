@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from worker.productization import probe_policy as probe_policy_module
 from worker.productization.probe_policy_overhead import (
     NoOpProbeRecorder,
     measure_no_op_probe_policy_overhead,
@@ -75,6 +76,19 @@ def test_probe_policy_exact_lowercase_strings_keep_source_value() -> None:
     assert non_string_policy.mode is ProbeMode.MINIMAL
     assert non_string_policy.source_value == "123"
     assert non_string_policy.fallback_applied is True
+
+
+def test_probe_policy_exact_common_modes_skip_generic_value_lookup(monkeypatch) -> None:
+    def fail_value_lookup(value: str) -> ProbePolicy | None:  # pragma: no cover - regression guard
+        raise AssertionError(f"exact common modes should skip generic lookup: {value}")
+
+    monkeypatch.setattr(probe_policy_module, "_PROBE_POLICY_BY_VALUE_GET", fail_value_lookup)
+
+    assert ProbePolicy.from_value("debug") is ProbePolicy.debug()
+    invalid_policy = ProbePolicy.from_value("definitely-not-valid")
+    assert invalid_policy.mode is ProbeMode.MINIMAL
+    assert invalid_policy.source_value == "definitely-not-valid"
+    assert invalid_policy.fallback_applied is True
 
 
 def test_probe_policy_empty_env_uses_production_default() -> None:
