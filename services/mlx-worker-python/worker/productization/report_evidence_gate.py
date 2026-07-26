@@ -369,12 +369,16 @@ def _run_kind_rule_matches(run_kinds: object, run_kind_values: AbstractSet[str])
 
 
 def _report_run_kind_values(runs: list[dict[str, object]]) -> set[str]:
+    values: set[str] = set()
+    values_add = values.add
     run_kind_key = "run_kind"
     to_string = str
-    return {
-        run_kind if type(run_kind := run.get(run_kind_key, "")) is str else to_string(run_kind)
-        for run in runs
-    }
+    value_type = type
+    str_type = str
+    for run in runs:
+        run_kind = run.get(run_kind_key, "")
+        values_add(run_kind if value_type(run_kind) is str_type else to_string(run_kind))
+    return values
 
 
 def _rule_matches_report(
