@@ -1528,10 +1528,13 @@ def _record(
     normalized: bool = False,
 ) -> dict[str, Any]:
     normalized_text = text if normalized else _normalize_line_endings(text)
-    content_sha256, byte_size = _record_content_digest_and_size(normalized_text)
+    content_digest_and_size = _record_content_digest_and_size
+    source_id_for_path = _record_source_id
+    path_text = os.fspath(path)
+    content_sha256, byte_size = content_digest_and_size(normalized_text)
     record_metadata = dict(metadata) if metadata else {}
     return {
-        "source_id": _record_source_id(os.fspath(path)),
+        "source_id": source_id_for_path(path_text),
         "source_uri": path.name,
         "source_kind": source_kind,
         "content_sha256": content_sha256,
