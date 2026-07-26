@@ -72,12 +72,14 @@ class ProbePolicy:
                 if default_mode is ProbeMode.MINIMAL:
                     return _MINIMAL_DEFAULT_PROBE_POLICY
                 return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
+            if value == "debug":
+                return _DEBUG_PROBE_POLICY
+            if default_mode is ProbeMode.MINIMAL and value == _COMMON_INVALID_PROBE_MODE_VALUE:
+                return _COMMON_INVALID_MINIMAL_PROBE_POLICY
             policy = _PROBE_POLICY_BY_VALUE_GET(value)
             if policy is not None:
                 return policy
             if default_mode is ProbeMode.MINIMAL:
-                if value == _COMMON_INVALID_PROBE_MODE_VALUE:
-                    return _COMMON_INVALID_MINIMAL_PROBE_POLICY
                 policy = _MINIMAL_INVALID_EXACT_POLICY_BY_VALUE_GET(value)
                 if policy is not None:
                     return policy
