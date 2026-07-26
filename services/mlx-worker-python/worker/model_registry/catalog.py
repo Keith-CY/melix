@@ -82,6 +82,7 @@ _GEMMA4_QAT_AUTOMATIC_SCOPE = "mlx-community-gemma4-q4"
 _GEMMA4_QAT_BASE_MODEL_MARKER = "base_model:"
 _GEMMA4_QAT_BASE_MODEL_MARKER_LEN = len(_GEMMA4_QAT_BASE_MODEL_MARKER)
 _GEMMA4_QAT_BASE_MODEL_STRIP_CHARS = " \t\r\n'\"[]"
+_GEMMA4_QAT_QUOTED_BASE_MODEL_PREFIX_LEN = len("\n  '")
 _GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER = "\n  'base_model:"
 _GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER_LEN = len(_GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER)
 _GEMMA4_QAT_SIZE_NAMES = {
@@ -2050,7 +2051,7 @@ def _gemma4_qat_source_model(
     marker_len = _GEMMA4_QAT_BASE_MODEL_MARKER_LEN
     quoted_marker_index = readme_text.find(_GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER)
     if quoted_marker_index >= 0:
-        quoted_marker_start = quoted_marker_index + len("\n  '")
+        quoted_marker_start = quoted_marker_index + _GEMMA4_QAT_QUOTED_BASE_MODEL_PREFIX_LEN
         marker_index = readme_text.rfind(marker, 0, quoted_marker_start)
         while marker_index >= 0:
             line_start = readme_text.rfind("\n", 0, marker_index) + 1
