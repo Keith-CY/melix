@@ -101,6 +101,7 @@ class BenchmarkQueueStore:
             return []
 
         records = []
+        records_append = records.append
         load_record = self._load_record
         metadata_key_from_stat = self._metadata_key_from_stat
         is_regular_file = stat.S_ISREG
@@ -115,7 +116,7 @@ class BenchmarkQueueStore:
                         continue
                     if not is_regular_file(stat_result.st_mode):
                         continue
-                    records.append(
+                    records_append(
                         load_record(
                             entry.path,
                             metadata_key=metadata_key_from_stat(stat_result),
