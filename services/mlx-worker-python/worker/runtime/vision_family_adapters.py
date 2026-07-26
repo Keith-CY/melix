@@ -202,6 +202,10 @@ _VISION_PROCESSOR_DEFAULTS: dict[str, tuple[str, str, str, int, str, str]] = {
         "4x256x4096",
     ),
 }
+_BOOL_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_BOOL_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+
+
 _VISION_FAMILY_ADAPTERS: dict[str, VisionFamilyAdapter] = {
     "llava-v1": VisionFamilyAdapter(
         descriptor=VisionFamilyDescriptor(
@@ -325,8 +329,8 @@ def _bool_value(metadata: Mapping[str, str], key: str, default: bool) -> bool:
     raw_value = metadata.get(key, "").strip().lower()
     if not raw_value:
         return default
-    if raw_value in {"1", "true", "yes", "on"}:
+    if raw_value in _BOOL_TRUE_VALUES:
         return True
-    if raw_value in {"0", "false", "no", "off"}:
+    if raw_value in _BOOL_FALSE_VALUES:
         return False
     return default
