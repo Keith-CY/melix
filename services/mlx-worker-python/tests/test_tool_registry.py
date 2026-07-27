@@ -695,7 +695,7 @@ def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
             return super().strip(chars)
 
     selected_names: list[str] = []
-    selected_sources: dict[str, str] = {}
+    selected_sources: set[str] = set()
     selected_tools: list[dict[str, str]] = []
     canonical_name = StripCountingName("text_search")
 
@@ -710,7 +710,7 @@ def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
 
     assert StripCountingName.strip_calls == 0
     assert selected_names == ["text_search"]
-    assert selected_sources == {"text_search": "keyword"}
+    assert selected_sources == {"text_search"}
     assert selected_tools == [{"tool_id": "text_search", "source": "keyword"}]
 
     whitespace_name = StripCountingName("  visit  ")
@@ -724,7 +724,7 @@ def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
     )
     assert StripCountingName.strip_calls == 1
     assert selected_names == ["text_search", "visit"]
-    assert selected_sources["visit"] == "keyword"
+    assert "visit" in selected_sources
     assert selected_tools == [
         {"tool_id": "text_search", "source": "keyword"},
         {"tool_id": "visit", "source": "keyword"},
@@ -1502,7 +1502,7 @@ def test_agentic_tool_selection_explicit_web_deny_blocks_keyword_visit_with_poli
 
 def test_agentic_policy_append_rejects_invalid_duplicate_and_denied_tools() -> None:
     selected_names: list[str] = []
-    selected_sources: dict[str, str] = {}
+    selected_sources: set[str] = set()
     selected_tools: list[dict[str, str]] = []
     denied_tool_names: list[str] = []
 

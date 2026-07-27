@@ -697,7 +697,7 @@ def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> co
 
 def _append_selected_tool(
     selected_names: list[str],
-    selected_sources: dict[str, str],
+    selected_sources: set[str],
     selected_tools: list[dict[str, str]],
     tool_name: str,
     source: str,
@@ -715,7 +715,7 @@ def _append_selected_tool(
         return False
     if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
         return False
-    selected_sources[normalized_name] = source
+    selected_sources.add(normalized_name)
     selected_names.append(normalized_name)
     selected_tools.append({"tool_id": normalized_name, "source": source})
     return True
@@ -723,7 +723,7 @@ def _append_selected_tool(
 
 def _append_policy_selected_tool(
     selected_names: list[str],
-    selected_sources: dict[str, str],
+    selected_sources: set[str],
     selected_tools: list[dict[str, str]],
     tool_name: str,
     source: str,
@@ -747,7 +747,7 @@ def _append_policy_selected_tool(
         if denied_tool_names is not None and normalized_name not in denied_tool_names:
             denied_tool_names.append(normalized_name)
         return False
-    selected_sources[normalized_name] = source
+    selected_sources.add(normalized_name)
     selected_names.append(normalized_name)
     selected_tools.append({"tool_id": normalized_name, "source": source})
     return True
@@ -786,7 +786,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             else:
                 return _build_always_only_tool_selection_result(registry, selection_input)
     selected_name = "local_compute"
-    selected_sources: dict[str, str] = {selected_name: "always"}
+    selected_sources: set[str] = {selected_name}
     selected_names: list[str] = [selected_name]
     selected_tools: list[dict[str, str]] = [{"tool_id": selected_name, "source": "always"}]
     append_selected_tool = _append_selected_tool
@@ -939,7 +939,7 @@ def _select_agentic_tools_for_turn_with_policy(selection_input: ToolSelectionInp
                         else allowed_policy_receipt
                     ),
                 )
-    selected_sources: dict[str, str] = {}
+    selected_sources: set[str] = set()
     selected_names: list[str] = []
     selected_tools: list[dict[str, str]] = []
     append_selected_tool = _append_policy_selected_tool
