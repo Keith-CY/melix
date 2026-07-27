@@ -76,6 +76,11 @@ class RecordingEmbeddingRuntime(DeterministicEmbeddingRuntime):
         return super().embed_inputs(loaded_model, inputs)
 
 
+class FailingEmbeddingRuntime(DeterministicEmbeddingRuntime):
+    def embed_inputs(self, loaded_model, inputs):
+        raise RuntimeError("embedding backend unavailable")
+
+
 def build_services(
     model_catalog: WorkerModelCatalog | None = None,
     *,
@@ -204,6 +209,25 @@ def test_embed_rejects_missing_and_wrong_model_kinds() -> None:
 
     assert missing.error.code == "not_found"
     assert wrong_kind.error.code == "invalid_argument"
+
+
+def test_embed_returns_runtime_error_when_backend_raises() -> None:
+    _, runtime_service, inference_service = build_services(
+        embedding_runtime=FailingEmbeddingRuntime()
+    )
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
+
+    response = inference_service.Embed(
+        inference_pb2.EmbedRequest(
+            id=common_pb2.RequestIdentity(request_id="embed-runtime-error"),
+            model_handle=model_handle,
+            inputs=["alpha"],
+        ),
+        context=None,
+    )
+
+    assert response.error.code == "runtime_error"
+    assert response.error.message == "embedding backend unavailable"
 
 
 def test_load_model_exposes_embedding_backend_metadata_for_bert_and_xlmr() -> None:

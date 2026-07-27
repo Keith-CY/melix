@@ -5,6 +5,10 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 from worker.registry import WorkerRegistry
 
 
+_EMBED_RESPONSE = inference_pb2.EmbedResponse
+_ERROR_STATUS = common_pb2.ErrorStatus
+
+
 class EmbeddingCore:
     def __init__(self, registry: WorkerRegistry) -> None:
         self._registry = registry
@@ -13,13 +17,13 @@ class EmbeddingCore:
         registry = self._registry
         loaded_model = registry.get_loaded_model(request.model_handle)
         if loaded_model is None:
-            return inference_pb2.EmbedResponse(
-                error=common_pb2.ErrorStatus(code="not_found", message="Unknown model handle.")
+            return _EMBED_RESPONSE(
+                error=_ERROR_STATUS(code="not_found", message="Unknown model handle.")
             )
 
         if loaded_model.runtime_kind != "embedding":
-            return inference_pb2.EmbedResponse(
-                error=common_pb2.ErrorStatus(
+            return _EMBED_RESPONSE(
+                error=_ERROR_STATUS(
                     code="invalid_argument",
                     message="Loaded model does not support embeddings.",
                 )
@@ -35,11 +39,11 @@ class EmbeddingCore:
                 request_inputs,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
-            return inference_pb2.EmbedResponse(
-                error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc))
+            return _EMBED_RESPONSE(
+                error=_ERROR_STATUS(code="runtime_error", message=str(exc))
             )
 
-        response = inference_pb2.EmbedResponse()
+        response = _EMBED_RESPONSE()
         embeddings = response.embeddings
         add_embedding = embeddings.add
         for values in vectors:
