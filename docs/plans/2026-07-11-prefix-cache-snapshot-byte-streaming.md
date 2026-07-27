@@ -243,3 +243,17 @@ by `estimate_cache_snapshot_bytes()` before return.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Scalar Tensor Direct Nbytes
+
+The next 2026-07-27 follow-up keeps the same registered probe and narrows to the
+scalar tensor path in `_tensor_nbytes()`. The prompt-cache byte estimator now
+reads `.nbytes` directly for scalar state, key-only, value-only, and generic
+sequence tensors, then falls back to the existing `size * itemsize` path when
+`.nbytes` is missing or explicitly `None`. This mirrors the pair first-tensor
+fast path while preserving fallback behavior for tensor-like objects that expose
+only shape metadata.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.

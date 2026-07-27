@@ -81,6 +81,15 @@ def test_estimate_cache_snapshot_bytes_ignores_tensors_without_byte_shape() -> N
     assert estimate_cache_snapshot_bytes(cache_snapshot) == 0
 
 
+def test_estimate_cache_snapshot_bytes_falls_back_when_nbytes_is_none() -> None:
+    class TensorWithNoneNbytes:
+        nbytes = None
+        size = 9
+        itemsize = 4
+
+    assert estimate_cache_snapshot_bytes([SimpleNamespace(state=TensorWithNoneNbytes())]) == 36
+
+
 def test_estimate_cache_snapshot_bytes_coerces_non_int_totals() -> None:
     class TensorWithFloatNbytes:
         nbytes = 12.9
