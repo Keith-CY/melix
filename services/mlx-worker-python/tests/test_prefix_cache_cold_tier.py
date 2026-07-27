@@ -81,6 +81,21 @@ def test_estimate_cache_snapshot_bytes_ignores_tensors_without_byte_shape() -> N
     assert estimate_cache_snapshot_bytes(cache_snapshot) == 0
 
 
+def test_estimate_cache_snapshot_bytes_ignores_pair_second_without_itemsize() -> None:
+    class TensorWithNbytes:
+        nbytes = 10
+
+    class TensorWithoutItemsize:
+        size = 4
+
+    cache_snapshot = [
+        SimpleNamespace(state=[TensorWithNbytes(), TensorWithoutItemsize()]),
+        SimpleNamespace(keys=TensorWithNbytes(), values=TensorWithoutItemsize()),
+    ]
+
+    assert estimate_cache_snapshot_bytes(cache_snapshot) == 20
+
+
 def test_estimate_cache_snapshot_bytes_falls_back_when_nbytes_is_none() -> None:
     class TensorWithNoneNbytes:
         nbytes = None

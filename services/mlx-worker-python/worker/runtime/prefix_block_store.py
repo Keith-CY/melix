@@ -465,14 +465,19 @@ def _tensor_pair_nbytes(first_tensor: Any, second_tensor: Any, get_attr: Any = g
             first_nbytes = 0 if first_itemsize is None else first_size * first_itemsize
     second_nbytes = get_attr(second_tensor, "nbytes", None)
     if second_nbytes is None:
-        second_size = get_attr(second_tensor, "size", None)
-        if second_size is None:
+        try:
+            second_size = second_tensor.size
+        except AttributeError:
             second_nbytes = 0
         else:
-            second_itemsize = get_attr(second_tensor, "itemsize", None)
-            second_nbytes = (
-                0 if second_itemsize is None else second_size * second_itemsize
-            )
+            try:
+                second_itemsize = second_tensor.itemsize
+            except AttributeError:
+                second_nbytes = 0
+            else:
+                second_nbytes = (
+                    0 if second_itemsize is None else second_size * second_itemsize
+                )
     return first_nbytes + second_nbytes
 
 
