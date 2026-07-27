@@ -23,3 +23,13 @@ The primary expected metric is a lower `selector_planning_elapsed_ms_mean` in th
 This incremental Python performance slice keeps the same registered `tool-registry-select-name-index-cache` probe. The default catalog always-only fallback now copies a precomputed receipt base and an isolated selected-tool payload instead of rebuilding the unchanged metrics fields for every no-keyword/whitespace fallback result. Behavior remains unchanged: callers still receive mutable per-call `receipt` and `selected_tools` objects, vector-enabled fallback receipts still preserve `vector_available=True`, and policy receipts continue through the existing full assembly path.
 
 Expected metrics are lower `always_only_planning_elapsed_ms_mean`, `no_keyword_fallback_planning_elapsed_ms_mean`, and `whitespace_turn_planning_elapsed_ms_mean` in `scripts/tool_registry_select_probe.py`; selection/config metrics outside the always-only fallback path should remain stable.
+
+## 2026-07-27 Follow-up: Policy selector input local bindings
+
+This incremental Python performance slice keeps the same registered
+`tool-registry-select-name-index-cache` probe. The policy-aware selector now
+binds repeated `ToolSelectionInput` hot-path fields (`vector_selected_tool_ids`,
+`recent_user_turns`, `current_user_turn`, and `vector_available`) once before the
+policy selection loops. Behavior remains unchanged; the slice only reduces
+repeated attribute lookups in the policy branch exercised by
+`policy_planning_elapsed_ms_mean` in `scripts/tool_registry_select_probe.py`.
