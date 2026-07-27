@@ -91,6 +91,12 @@ def test_probe_policy_exact_common_modes_skip_generic_value_lookup(monkeypatch) 
     assert invalid_policy.fallback_applied is True
 
 
+def test_probe_policy_from_env_defaults_to_ambient_environment(monkeypatch) -> None:
+    monkeypatch.setenv("MELIX_PROBE_MODE", "debug")
+
+    assert ProbePolicy.from_env() is ProbePolicy.debug()
+
+
 def test_probe_policy_empty_env_uses_production_default() -> None:
     policy = probe_policy_from_env({"MELIX_PROBE_MODE": ""})
 

@@ -45,11 +45,14 @@ class ProbePolicy:
         *,
         default_mode: ProbeMode = ProbeMode.MINIMAL,
     ) -> ProbePolicy:
-        if env is not None and not env:
-            if default_mode is ProbeMode.MINIMAL:
-                return _MINIMAL_DEFAULT_PROBE_POLICY
-            return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
-        values = os.environ if env is None else env
+        if env is not None:
+            if not env:
+                if default_mode is ProbeMode.MINIMAL:
+                    return _MINIMAL_DEFAULT_PROBE_POLICY
+                return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
+            values = env
+        else:
+            values = os.environ
         raw_value = values.get(MELIX_PROBE_MODE_ENV, "")
         if not raw_value:
             if default_mode is ProbeMode.MINIMAL:
