@@ -32,6 +32,12 @@ This follow-up Python-only slice keeps the same `services/mlx-worker-python/work
 
 Expected metrics are lower `elapsed_ms_mean` and `executable_elapsed_ms_mean` in `scripts/model_load_config_json_bytes_probe.py`; config/executable rejection counts must remain unchanged.
 
+## 2026-07-27 Non-Text Runtime Kind Early Return Follow-up Slice
+
+This follow-up Python-only slice keeps the same `services/mlx-worker-python/worker/model_load_trust.py` boundary and the registered `model-load-config-json-bytes` probe. The trust-applicability helper now returns `False` immediately for runtime kinds outside the text/VLM trust-policy surface, avoiding the lower/replace normalization membership fallback that can only affect text and VLM loaders. Behavior remains identical for supported text/VLM runtime kinds and for non-text/VLM runtimes, which continue to resolve to `not_applicable` unless the runtime explicitly exposes `supports_trust_policy`.
+
+Expected metrics are neutral-to-lower `elapsed_ms_mean` in `scripts/model_load_config_json_bytes_probe.py`; rejection counts must remain unchanged.
+
 ## Verification Plan
 
 Run locally on Linux before PR:
