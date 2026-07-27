@@ -211,3 +211,17 @@ inside the repeated byte-estimation hot loop.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Final Type Check Binding Reuse
+
+The 2026-07-27 follow-up keeps the same registered probe and narrows to the
+final return coercion in `estimate_cache_snapshot_bytes()`. The hot loop already
+binds `type` to `type_of` for per-layer state dispatch, so the final public
+integer-preserving check now reuses that same local binding instead of resolving
+the global `type` builtin again. Behavior is unchanged: exact `int` totals are
+returned directly, and uncommon non-`int` numeric totals are still coerced with
+`int(total)` before returning.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.

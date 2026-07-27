@@ -506,7 +506,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
                 total += tensor_nbytes(values, get_attr)
         else:
             total += tensor_nbytes(state, get_attr)
-    return total if type(total) is int else int(total)
+    return total if type_of(total) is int else int(total)
 
 
 def _session_digest(session_id: str) -> str:
