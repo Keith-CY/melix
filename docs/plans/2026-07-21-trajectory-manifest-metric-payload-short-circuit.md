@@ -16,6 +16,12 @@ Common probe and training manifests contain only the required identity fields pl
 
 The fallback path remains unchanged for manifests with optional toolset, registry, policy, leakage, package, explicit schema, explicit split, malformed text, or mapping-subclass inputs.
 
+The 2026-07-27 follow-up slice keeps the same registered probe and moves the
+exact six-key metric payload branch ahead of the broader clean-identity path.
+Common probe and training manifests can now return after one compact payload
+shape check, while malformed six-key manifests still fall through to the broader
+compatibility path.
+
 ## Verification Plan
 
 Run the registered focused test command, changed-scope coverage command, and `trajectory-manifest-json-load` probe locally on Linux before opening the PR. The probe compares the slow compatibility baseline with the optimized loader and records elapsed time plus peak allocation metrics.
