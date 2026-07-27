@@ -51,6 +51,7 @@ VALID_REQUESTED_TRUST_MODES = frozenset(
 )
 TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_TEXT_LOADERS_COMMON = frozenset({"mlx-lm", "mlx_lm", "mlx_lm_unavailable"})
+CANONICAL_MLX_LM_LOADER = "mlx-lm"
 TRUST_APPLICABLE_VLM_LOADERS = frozenset({"mlx_vlm", "python_vlm", "mlx_vlm_unavailable"})
 TRUST_APPLICABLE_VLM_LOADERS_COMMON = frozenset(
     {"mlx-vlm", "mlx_vlm", "python_vlm", "mlx_vlm_unavailable"}
@@ -279,6 +280,11 @@ def _is_trust_applicable(
     if supports_trust_policy is not None:
         return bool(supports_trust_policy)
     if runtime_kind == "text":
+        if (
+            loader_family == CANONICAL_MLX_LM_LOADER
+            or runtime_name == CANONICAL_MLX_LM_LOADER
+        ):
+            return True
         if (
             loader_family in TRUST_APPLICABLE_TEXT_LOADERS_COMMON
             or runtime_name in TRUST_APPLICABLE_TEXT_LOADERS_COMMON
