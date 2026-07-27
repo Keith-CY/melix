@@ -87,6 +87,11 @@ reusing that resolved root for manifest rows and evidence files. This avoids
 repeated target-root resolution during layout materialization without relaxing
 per-file path normalization or target-root containment checks.
 
+A follow-up 2026-07-27 metrics aggregation slice tracks the aggregate `ok` state
+and target count while materializing export reports. The metrics report no longer
+rescans the completed export report list solely to recompute those aggregate
+fields, while preserving the same report payload and error behavior.
+
 ## Verification
 
 Focused verification:
