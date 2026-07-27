@@ -424,6 +424,27 @@ def test_trust_policy_common_loader_fast_path_skips_normalized_membership(
     ) is True
 
 
+def test_trust_policy_canonical_text_loader_fast_path_skips_common_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingCommonLoaders:
+        def __contains__(self, value: object) -> bool:  # pragma: no cover - regression only
+            raise AssertionError(f"canonical text loader should not query common set: {value!r}")
+
+    monkeypatch.setattr(
+        model_load_trust_module,
+        "TRUST_APPLICABLE_TEXT_LOADERS_COMMON",
+        FailingCommonLoaders(),
+    )
+
+    assert model_load_trust_module._is_trust_applicable(
+        "text",
+        "mlx-lm",
+        "mlx-lm",
+        RecordingTextBackend(),
+    ) is True
+
+
 def test_trust_policy_reads_config_json_bytes_with_direct_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

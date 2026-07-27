@@ -33,6 +33,11 @@ explicit request loader family still takes precedence, while default text policy
 resolution now avoids the unused request lookup/coercion branch before returning
 the runtime name.
 
+The 2026-07-27 canonical-loader follow-up keeps the same registered probe and
+adds a direct equality fast path for the common `mlx-lm` text loader before the
+shared loader-membership set checks. Non-canonical text loaders, explicit runtime
+support contracts, VLM loaders, and normalized fallback behavior are unchanged.
+
 ## Validation
 
 - Focused model-load trust tests cover default route-class behavior and add a
