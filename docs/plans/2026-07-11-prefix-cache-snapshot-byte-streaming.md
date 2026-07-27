@@ -225,3 +225,21 @@ returned directly, and uncommon non-`int` numeric totals are still coerced with
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Pair First Tensor Direct Nbytes
+
+The next 2026-07-27 follow-up keeps the same registered probe and narrows to the
+first tensor in `_tensor_pair_nbytes()`. The synthetic prompt-cache workload and
+common MLX pair shapes expose `.nbytes` on the first tensor, so this slice reads
+that attribute directly and only falls back to the existing `size * itemsize`
+path on `AttributeError`. The second tensor keeps the previous defaulted
+`getattr()` flow because fallback-shaped tensors are common there.
+
+Behavior remains unchanged for pair state and key/value layers: first tensors
+with `.nbytes` use the fast path, first tensors without `.nbytes` still use the
+fallback byte shape when present, and unusual non-`int` totals are still coerced
+by `estimate_cache_snapshot_bytes()` before return.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
