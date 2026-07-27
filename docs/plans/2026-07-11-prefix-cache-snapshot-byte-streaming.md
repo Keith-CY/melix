@@ -257,3 +257,22 @@ only shape metadata.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Pair Second Tensor Direct Fallback Bytes
+
+The 2026-07-27 follow-up keeps the same registered probe and narrows to the
+second tensor fallback inside `_tensor_pair_nbytes()`. The registered workload's
+pair state and key/value layers commonly expose `.nbytes` on the first tensor and
+`size * itemsize` metadata on the second tensor, so this slice reads the second
+tensor's fallback `size` and `itemsize` attributes directly and only takes the
+zero-byte path on `AttributeError` or missing `itemsize`.
+
+Behavior remains unchanged for pair state and key/value layers: second tensors
+with `.nbytes` still return that value, fallback-shaped tensors still use
+`size * itemsize`, missing-size or missing-itemsize tensors still contribute zero,
+and uncommon non-`int` totals are still coerced by
+`estimate_cache_snapshot_bytes()` before return.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
