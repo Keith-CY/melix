@@ -1699,6 +1699,19 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
                     {"window": 9},
                     {"span": 10},
                 ],
+                "eleven_scores": [
+                    3,
+                    4,
+                    {"rank": 0},
+                    {"score": 0.9},
+                    {"shard": 2},
+                    {"page": 2},
+                    {"section": 7},
+                    {"chunk": 8},
+                    {"window": 9},
+                    {"span": 10},
+                    {"line": 11},
+                ],
                 "long_scores": [3, 4, {"rank": 0}, {"score": 0.9}, {"shard": 2}],
                 "quad_scores": [3, 4, {"rank": 0}, {"score": 0.9}],
                 "scores": [3, 4, {"rank": 0}],
@@ -1875,6 +1888,18 @@ def test_retrieval_lookup_payload_copy_preserves_scalar_and_none_values() -> Non
     assert (
         copied["retrieved_context"]["metadata"]["ten_scores"][2]
         is not payload["retrieved_context"]["metadata"]["ten_scores"][2]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["eleven_scores"]
+        == payload["retrieved_context"]["metadata"]["eleven_scores"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["eleven_scores"]
+        is not payload["retrieved_context"]["metadata"]["eleven_scores"]
+    )
+    assert (
+        copied["retrieved_context"]["metadata"]["eleven_scores"][2]
+        is not payload["retrieved_context"]["metadata"]["eleven_scores"][2]
     )
     assert (
         copied["retrieved_context"]["metadata"]["long_scores"]
