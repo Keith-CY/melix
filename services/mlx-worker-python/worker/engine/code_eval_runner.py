@@ -30,6 +30,11 @@ _ORD_OBJECT_START = ord("{")
 _ORD_OBJECT_END = ord("}")
 _ASSERT_PRECEDING_BOUNDARIES = frozenset("\n\r;:")
 _ASSERT_LINE_SPACING = frozenset(" \t")
+_OS_OPEN = os.open
+_OS_FSTAT = os.fstat
+_OS_READ = os.read
+_OS_CLOSE = os.close
+_OS_RDONLY = os.O_RDONLY
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,8 +484,12 @@ def _load_payload_file(
 
 
 def _read_payload_file_bytes(payload_path: Path) -> bytes | None:
+    os_open = _OS_OPEN
+    os_fstat = _OS_FSTAT
+    os_read = _OS_READ
+    os_close = _OS_CLOSE
     try:
-        fd = os.open(payload_path, os.O_RDONLY)
+        fd = os_open(payload_path, _OS_RDONLY)
     except TypeError:
         try:
             return payload_path.read_bytes()
@@ -490,13 +499,13 @@ def _read_payload_file_bytes(payload_path: Path) -> bytes | None:
         return None
 
     try:
-        size = os.fstat(fd).st_size
-        return os.read(fd, size) if size > 0 else b""
+        size = os_fstat(fd).st_size
+        return os_read(fd, size) if size > 0 else b""
     except OSError:
         return None
     finally:
         try:
-            os.close(fd)
+            os_close(fd)
         except OSError:
             pass
 

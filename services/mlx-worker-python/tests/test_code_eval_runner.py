@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -1126,19 +1127,60 @@ def test_read_payload_file_bytes_handles_fallback_and_fd_errors(
         is None
     )
 
-    monkeypatch.setattr(code_eval_runner.os, "open", lambda *_args, **_kwargs: 123)
+    monkeypatch.setattr(code_eval_runner, "_OS_OPEN", lambda *_args, **_kwargs: 123)
 
     def fail_fstat(_fd: int) -> object:
         raise OSError("fstat failed")
 
-    monkeypatch.setattr(code_eval_runner.os, "fstat", fail_fstat)
+    monkeypatch.setattr(code_eval_runner, "_OS_FSTAT", fail_fstat)
     assert code_eval_runner._read_payload_file_bytes(Path("payload.json")) is None
 
     def fail_close(_fd: int) -> None:
         raise OSError("close failed")
 
-    monkeypatch.setattr(code_eval_runner.os, "close", fail_close)
+    monkeypatch.setattr(code_eval_runner, "_OS_CLOSE", fail_close)
     assert code_eval_runner._read_payload_file_bytes(Path("payload.json")) is None
+
+
+def test_read_payload_file_bytes_uses_bound_fd_helpers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_bytes(b'{"runtime_status":"ok"}')
+    original_open = code_eval_runner._OS_OPEN
+    original_fstat = code_eval_runner._OS_FSTAT
+    original_read = code_eval_runner._OS_READ
+    original_close = code_eval_runner._OS_CLOSE
+    calls: list[str] = []
+
+    def counted_open(path: os.PathLike[str], flags: int) -> int:
+        calls.append("open")
+        return original_open(path, flags)
+
+    def counted_fstat(fd: int) -> object:
+        calls.append("fstat")
+        return original_fstat(fd)
+
+    def counted_read(fd: int, size: int) -> bytes:
+        calls.append("read")
+        return original_read(fd, size)
+
+    def counted_close(fd: int) -> None:
+        calls.append("close")
+        original_close(fd)
+
+    def fail_os_open(*_args: object) -> int:  # pragma: no cover - regression guard
+        raise AssertionError("payload byte loading should use bound os.open")
+
+    monkeypatch.setattr(code_eval_runner, "_OS_OPEN", counted_open)
+    monkeypatch.setattr(code_eval_runner, "_OS_FSTAT", counted_fstat)
+    monkeypatch.setattr(code_eval_runner, "_OS_READ", counted_read)
+    monkeypatch.setattr(code_eval_runner, "_OS_CLOSE", counted_close)
+    monkeypatch.setattr(code_eval_runner.os, "open", fail_os_open)
+
+    assert code_eval_runner._read_payload_file_bytes(payload_path) == b'{"runtime_status":"ok"}'
+    assert calls == ["open", "fstat", "read", "close"]
 
 
 def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_parse() -> None:
