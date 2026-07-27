@@ -291,6 +291,25 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, protobuf config handling,
   and tool definitions unchanged.
 
+## Follow-up Slice: Selected Source Membership Set
+
+The 2026-07-27 selected-source follow-up keeps agentic tool selection receipts
+unchanged, but tracks duplicate selected tool names in a `set[str]` instead of a
+`dict[str, str]`. The receipt source remains stored in the ordered
+`selected_tools` payload, so the membership structure only needs set semantics.
+This removes two-value dict entry writes from vector, keyword, and policy-aware
+selection append paths while preserving selected tool order and source labels.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `selector_planning_elapsed_ms_mean`, `current_capacity_planning_elapsed_ms_mean`,
+  and `policy_planning_elapsed_ms_mean` workloads;
+- preserve selected registry identity, selected tool order, source labels,
+  selected schema bytes, full schema bytes, and denial receipts;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
@@ -300,9 +319,12 @@ Expected effect:
    compare the relevant registered metric (`schema_payload_elapsed_ms_mean` for
    schema-payload slices, `elapsed_ms_mean` for the OpenAI tool payload slice,
    `no_keyword_fallback_planning_elapsed_ms_mean` for the no-keyword fallback
-   slice, `preflight_consistency_elapsed_ms_mean` for preflight slices, or
+   slice, `preflight_consistency_elapsed_ms_mean` for preflight slices,
    `selector_planning_elapsed_ms_mean` and
-   `current_capacity_planning_elapsed_ms_mean` for the local-compute seed slice)
+   `current_capacity_planning_elapsed_ms_mean` for the local-compute seed slice,
+   or `selector_planning_elapsed_ms_mean`,
+   `current_capacity_planning_elapsed_ms_mean`, and
+   `policy_planning_elapsed_ms_mean` for the selected-source membership slice)
    over repeated samples.
 4. Push only if local evidence is neutral-to-improved and rely on the GitHub
    PR-scoped performance workflow as the merge gate.
