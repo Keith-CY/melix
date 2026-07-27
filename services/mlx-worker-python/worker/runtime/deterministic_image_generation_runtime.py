@@ -86,12 +86,13 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         sha256_hex = hashlib.sha256
         append_image = images.append
         append_artifact = artifacts.append
+        sleep_image = sleep_if_configured
 
         for index in range(image_count):
             if cancel_event.is_set():
                 raise ImageGenerationCancelled("Image generation was canceled.")
 
-            sleep_if_configured("image")
+            sleep_image("image")
             payload = render_payload_header + str(index).encode("ascii") + b"\n"
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_started = monotonic()
@@ -230,11 +231,12 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         artifact_metadata = self._artifact_metadata
         append_image = images.append
         append_artifact = artifacts.append
+        sleep_image = sleep_if_configured
         for index in range(image_count):
             if cancel_event.is_set():
                 raise ImageGenerationCancelled("Image edit was canceled.")
 
-            sleep_if_configured("image")
+            sleep_image("image")
             payload = render_edit_payload(
                 prompt=request.prompt,
                 width=width,
