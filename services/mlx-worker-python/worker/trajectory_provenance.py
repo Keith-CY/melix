@@ -131,6 +131,53 @@ def _copy_json_dict(value: dict[str, Any]) -> dict[str, Any]:
     return {**value}
 
 
+def _copy_quality_components_list(value: list[Any]) -> list[Any] | None:
+    copied: list[Any] = []
+    copied_append = copied.append
+    immutable_types = _JSON_IMMUTABLE_TYPE_SET
+    value_type = _TYPE
+    for component in value:
+        if value_type(component) is not dict or len(component) != 4:
+            return None
+        try:
+            name = component["name"]
+            score = component["score"]
+            passed = component["passed"]
+            labels = component["labels"]
+        except KeyError:
+            return None
+        if (
+            value_type(name) not in immutable_types
+            or value_type(score) not in immutable_types
+            or value_type(passed) not in immutable_types
+            or value_type(labels) is not list
+        ):
+            return None
+        if len(labels) == 3:
+            label_0, label_1, label_2 = labels
+            if (
+                value_type(label_0) not in immutable_types
+                or value_type(label_1) not in immutable_types
+                or value_type(label_2) not in immutable_types
+            ):
+                return None
+            copied_labels = [label_0, label_1, label_2]
+        else:
+            for label in labels:
+                if value_type(label) not in immutable_types:
+                    return None
+            copied_labels = [*labels]
+        copied_append(
+            {
+                "name": name,
+                "score": score,
+                "passed": passed,
+                "labels": copied_labels,
+            }
+        )
+    return copied
+
+
 def _copy_trajectory_provenance_value(value: Any) -> Any:
     value_type = _TYPE(value)
     if value_type in _JSON_IMMUTABLE_TYPE_SET:
@@ -219,6 +266,12 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
                     type_of(reward_coverage_count) in immutable_types
                     and type_of(components) is list
                 ):
+                    copied_components = _copy_quality_components_list(components)
+                    if copied_components is not None:
+                        return {
+                            "reward_coverage_count": reward_coverage_count,
+                            "components": copied_components,
+                        }
                     return {
                         "reward_coverage_count": reward_coverage_count,
                         "components": [
