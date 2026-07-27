@@ -424,6 +424,35 @@ def test_trust_policy_common_loader_fast_path_skips_normalized_membership(
     ) is True
 
 
+def test_trust_policy_non_text_vlm_kind_skips_normalized_membership() -> None:
+    class FailingNormalizeString(str):
+        def strip(self, *args, **kwargs):  # pragma: no cover - regression only
+            _ = args, kwargs
+            raise AssertionError("non text/vlm trust check should skip normalization")
+
+    assert model_load_trust_module._is_trust_applicable(
+        "embedding",
+        FailingNormalizeString("mlx-lm"),
+        FailingNormalizeString("mlx-lm"),
+        NamedRuntime("mlx-lm"),
+    ) is False
+
+
+def test_trust_policy_vlm_normalized_membership_preserves_fallbacks() -> None:
+    assert model_load_trust_module._is_trust_applicable(
+        "vlm",
+        "MLX-VLM",
+        "wrapped-vlm",
+        NamedRuntime("wrapped-vlm"),
+    ) is True
+    assert model_load_trust_module._is_trust_applicable(
+        "vlm",
+        "custom-vlm",
+        "Deterministic-VLM",
+        NamedRuntime("Deterministic-VLM"),
+    ) is False
+
+
 def test_trust_policy_canonical_text_loader_fast_path_skips_common_membership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

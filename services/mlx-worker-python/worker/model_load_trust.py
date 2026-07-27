@@ -298,15 +298,15 @@ def _is_trust_applicable(
             or runtime_name in TRUST_APPLICABLE_VLM_LOADERS_COMMON
         ):
             return True
+    else:
+        return False
     normalized_runtime_name = runtime_name.strip().lower().replace("-", "_")
     family = loader_family.strip().lower().replace("-", "_")
     if runtime_kind == "text":
         return family in TRUST_APPLICABLE_TEXT_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_TEXT_LOADERS
-    if runtime_kind == "vlm":
-        if normalized_runtime_name.startswith("deterministic"):
-            return False
-        return family in TRUST_APPLICABLE_VLM_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_VLM_LOADERS
-    return False
+    if normalized_runtime_name.startswith("deterministic"):
+        return False
+    return family in TRUST_APPLICABLE_VLM_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_VLM_LOADERS
 
 
 def _runtime_name(runtime: Any) -> str:
