@@ -24,6 +24,7 @@ CRASH_PATTERNS = (
     "abort trap",
 )
 _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
+_ASCII_WHITESPACE_FLAGS = tuple(chr(value).isspace() for value in range(128))
 _ORD = ord
 _VERSION_KEY = b"version"
 _VERSION_CANONICAL_PREFIX = b'version = "'
@@ -276,23 +277,45 @@ def _read_update_channel_version(
 def compare_versions(left: str, right: str) -> int:
     if left == right:
         return 0
+    ord_ = _ORD
+    ascii_whitespace_flags = _ASCII_WHITESPACE_FLAGS
     left_length = len(left)
     right_length = len(right)
     if left_length == right_length + 1 and left[0] == "v" and left.startswith(right, 1):
         return 0
     if right_length == left_length + 1 and right[0] == "v" and right.startswith(left, 1):
         return 0
-    if (
-        left
-        and right
-        and not left[0].isspace()
-        and not left[-1].isspace()
-        and not right[0].isspace()
-        and not right[-1].isspace()
-    ):
-        left_index = 1 if left[0] == "v" else 0
-        right_index = 1 if right[0] == "v" else 0
-        return _compare_normalized_version_parts(left, right, left_index, right_index)
+    if left and right:
+        left_start_code = ord_(left[0])
+        left_end_code = ord_(left[-1])
+        right_start_code = ord_(right[0])
+        right_end_code = ord_(right[-1])
+        left_boundary_clean = (
+            left_start_code < 128
+            and left_end_code < 128
+            and not ascii_whitespace_flags[left_start_code]
+            and not ascii_whitespace_flags[left_end_code]
+        ) or (
+            left_start_code >= 128
+            and left_end_code >= 128
+            and not left[0].isspace()
+            and not left[-1].isspace()
+        )
+        right_boundary_clean = (
+            right_start_code < 128
+            and right_end_code < 128
+            and not ascii_whitespace_flags[right_start_code]
+            and not ascii_whitespace_flags[right_end_code]
+        ) or (
+            right_start_code >= 128
+            and right_end_code >= 128
+            and not right[0].isspace()
+            and not right[-1].isspace()
+        )
+        if left_boundary_clean and right_boundary_clean:
+            left_index = 1 if left[0] == "v" else 0
+            right_index = 1 if right[0] == "v" else 0
+            return _compare_normalized_version_parts(left, right, left_index, right_index)
 
     left_cleaned = left.strip()
     right_cleaned = right.strip()

@@ -364,6 +364,7 @@ def test_normalized_version_parts_materializes_without_generator(
 
     assert normalized_version_parts(" v3.2rc1.0-beta+build ") == [3, 2, 0]
     assert normalized_version_parts("release") == [0]
+    assert normalized_version_parts("\u2003v4.5.6\u2003") == [4, 5, 6]
 
 
 def test_normalized_version_parts_checks_v_prefix_without_startswith() -> None:
@@ -498,6 +499,9 @@ def test_compare_versions_clean_differing_values_skip_stripping() -> None:
 def test_compare_versions_whitespace_differing_values_still_normalize() -> None:
     assert compare_versions(" v3.2.1+build ", "v3.2.0+build") == 1
     assert compare_versions("2.9.99", " 2.10.0 ") == -1
+    assert compare_versions(" v2.10rc1.0-beta+build ", "2.9.99") == 1
+    assert compare_versions("\u2003v2.10\u2003", "2.9.99") == 1
+
 
 
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
