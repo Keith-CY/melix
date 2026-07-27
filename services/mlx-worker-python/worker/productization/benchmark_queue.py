@@ -29,7 +29,7 @@ def _string_dict(value: object) -> dict[str, str]:
             if type(key) is not str or type(item) is not str:
                 break
         else:
-            return dict(value)
+            return value.copy()
         return {str(key): str(item) for key, item in value.items()}
     return {str(key): str(item) for key, item in dict(value).items()}  # type: ignore[arg-type]
 
@@ -209,7 +209,7 @@ class BenchmarkQueueStore:
             job_kind=record.job_kind,
             model_id=record.model_id,
             suite_ids=record.suite_ids,
-            parameters=dict(record.parameters),
+            parameters=record.parameters.copy(),
             status=record.status,
             created_at_unix_ms=record.created_at_unix_ms,
             updated_at_unix_ms=record.updated_at_unix_ms,
