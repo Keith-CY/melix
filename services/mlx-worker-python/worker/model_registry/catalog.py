@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -2041,6 +2042,7 @@ def _gemma4_qat_is_draft_companion(value: str, *, model_id_lower: str) -> bool:
     )
 
 
+@lru_cache(maxsize=8)
 def _gemma4_qat_source_model(
     readme_text: str,
     *,

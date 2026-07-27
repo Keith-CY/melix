@@ -16,6 +16,7 @@ from worker.model_registry.catalog import (
     _config_positive_int,
     _default_embedding_family_for_backend,
     _gemma4_mtp_assistant_metadata,
+    _gemma4_qat_source_model,
     _gemma4_index_has_vision_weights,
     _has_mlx_signal,
     _has_model_weight_files,
@@ -1949,6 +1950,25 @@ def test_gemma4_qat_source_model_rejects_non_marker_prefix_without_prefix_strip(
         )
         == "google/gemma-4-12B-it-qat-q4_0-unquantized"
     )
+
+
+def test_gemma4_qat_source_model_caches_repeated_readme_lookup() -> None:
+    _gemma4_qat_source_model.cache_clear()
+    readme_text = (
+        "---\n"
+        "library_name: mlx\n"
+        "tags:\n"
+        + "\n".join(f"- metadata-line-{index:04d}" for index in range(256))
+        + "\n  'base_model: [google/gemma-4-E4B-it-qat-q4_0-unquantized]'\n"
+        "---\n"
+    )
+
+    first = _gemma4_qat_source_model(readme_text, model_size="e4b", companion=False)
+    second = _gemma4_qat_source_model(readme_text, model_size="e4b", companion=False)
+
+    assert first == "google/gemma-4-E4B-it-qat-q4_0-unquantized"
+    assert second == first
+    assert _gemma4_qat_source_model.cache_info().hits == 1
 
 
 def test_registry_snapshot_does_not_stat_plain_local_manifest_after_tree_scan(
