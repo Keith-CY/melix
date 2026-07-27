@@ -373,7 +373,9 @@ def _build_export_report(
         preserving_proto_field_name=True,
         use_integers_for_enums=False,
     )
-    file_rows = [row for _section, rows in _file_sections(manifest) for row in rows]
+    declared_file_count = int(
+        retention_report.get("retention_decision_count", 0)  # type: ignore[arg-type]
+    )
     return {
         "schema_version": EXPORT_LAYOUT_REPORT_SCHEMA_VERSION,
         "ok": True,
@@ -392,7 +394,7 @@ def _build_export_report(
         "retention_decision_count": int(retention_report.get("retention_decision_count", 0)),
         "retained_file_count": int(retention_report.get("retained_file_count", 0)),
         "cleanable_file_count": int(retention_report.get("cleanable_file_count", 0)),
-        "declared_file_count": len(file_rows),
+        "declared_file_count": declared_file_count,
         "layout_directories": {
             "artifacts": _relative_to_workspace(layout, layout.artifacts_dir),
             "intermediates": _relative_to_workspace(layout, layout.intermediates_dir),
