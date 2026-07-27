@@ -450,8 +450,9 @@ def _tensor_nbytes(tensor: Any, get_attr: Any = getattr) -> Any:
 
 
 def _tensor_pair_nbytes(first_tensor: Any, second_tensor: Any, get_attr: Any = getattr) -> Any:
-    first_nbytes = get_attr(first_tensor, "nbytes", None)
-    if first_nbytes is None:
+    try:
+        first_nbytes = first_tensor.nbytes
+    except AttributeError:
         first_size = get_attr(first_tensor, "size", None)
         if first_size is None:
             first_nbytes = 0
