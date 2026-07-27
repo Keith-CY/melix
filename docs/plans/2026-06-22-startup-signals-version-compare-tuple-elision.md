@@ -25,10 +25,18 @@ Previous compare logic called `_next_normalized_version_part` for each side of
 each parsed segment. That helper returns `(value, index, done)` tuples, so every
 non-short-circuited comparison allocates temporary tuple objects.
 
-This slice adds a paired comparator that scans both version strings in one loop
-and returns the comparison directly, avoiding per-segment tuple allocation while
-preserving existing raw-equality, stripped-equality, and `v`-prefix
+The first slice added a paired comparator that scans both version strings in one
+loop and returns the comparison directly, avoiding per-segment tuple allocation
+while preserving existing raw-equality, stripped-equality, and `v`-prefix
 short-circuits.
+
+This follow-up slice keeps the same version semantics but tightens
+`compare_versions` boundary-whitespace detection: ASCII boundary characters now
+use a precomputed ordinal lookup before the existing strip fallback, while
+non-ASCII boundary characters still fall back to `str.isspace()` so Unicode
+whitespace keeps normalizing correctly. The focused probe measures the repeated
+compare path with `elapsed_ms_mean` and guards unchanged behavior through
+`comparison_total`.
 
 ## Acceptance
 
