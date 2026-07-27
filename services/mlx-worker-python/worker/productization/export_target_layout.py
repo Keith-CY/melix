@@ -298,6 +298,8 @@ def build_layout_metrics_report(
     export_reports: list[dict[str, object]] = []
     retention_reports: list[dict[str, object]] = []
     errors: list[str] = []
+    reports_ok = True
+    target_count = 0
 
     for manifest_path in manifest_paths:
         export_report, retention_report = _materialize_export_target_layout_reports(
@@ -306,8 +308,10 @@ def build_layout_metrics_report(
             create_placeholder_files=create_placeholder_files,
             now=now,
         )
+        target_count += 1
         export_reports.append(export_report)
         if export_report.get("ok") is not True:
+            reports_ok = False
             errors.extend(str(error) for error in export_report.get("errors", []))
             continue
         if cleanup == "apply":
@@ -343,8 +347,8 @@ def build_layout_metrics_report(
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     return {
         "schema_version": EXPORT_TARGET_LAYOUT_METRICS_SCHEMA_VERSION,
-        "ok": not errors and all(report.get("ok") is True for report in export_reports),
-        "target_count": len(export_reports),
+        "ok": not errors and reports_ok,
+        "target_count": target_count,
         "layout_materialization_latency_ms": elapsed_ms,
         "retained_byte_size": retained_byte_size,
         "cleanable_byte_size": cleanable_byte_size,

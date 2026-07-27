@@ -449,6 +449,48 @@ def test_layout_metrics_report_aggregates_target_retention_counts(tmp_path: Path
     assert payload["layout_materialization_latency_ms"] >= 0
 
 
+def test_layout_metrics_report_tracks_report_ok_during_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reports = iter(
+        (
+            ({"ok": True, "target_root": "one", "retention_report_path": "one.json"}, None),
+            ({"ok": False, "errors": ["invalid manifest"]}, None),
+        )
+    )
+    calls = 0
+
+    def fake_materialize(
+        manifest_path: Path,
+        workspace_root: Path,
+        *,
+        create_placeholder_files: bool,
+        now: float | None,
+    ) -> tuple[dict[str, object], dict[str, object] | None]:
+        nonlocal calls
+        calls += 1
+        _ = (manifest_path, workspace_root, create_placeholder_files, now)
+        return next(reports)
+
+    monkeypatch.setattr(
+        export_target_layout_module,
+        "_materialize_export_target_layout_reports",
+        fake_materialize,
+    )
+
+    payload = build_layout_metrics_report(
+        [Path("one.json"), Path("two.json")],
+        tmp_path,
+        cleanup="dry-run",
+    )
+
+    assert calls == 2
+    assert payload["target_count"] == 2
+    assert payload["ok"] is False
+    assert payload["errors"] == ["invalid manifest"]
+
+
 def test_layout_metrics_report_reuses_materialized_dry_run_retention_report(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
