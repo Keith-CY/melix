@@ -44,6 +44,7 @@ from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.trajectory_provenance import (
+    _copy_quality_components_list,
     _copy_trajectory_provenance_value,
     adapter_manifest_trajectory_provenance,
     alignment_metrics_trajectory_provenance,
@@ -500,6 +501,89 @@ def test_load_trajectory_provenance_from_snapshot_manifest_short_circuits_clean_
         "trajectory_split": "train",
         "trajectory_trace_digest": "abc123",
     }
+
+
+def test_trajectory_quality_metric_component_list_fast_copy_preserves_isolation() -> None:
+    components = [
+        {
+            "name": "component-a",
+            "score": 0.75,
+            "passed": True,
+            "labels": ["agentic", "trajectory", "accepted"],
+        },
+        {
+            "name": "component-b",
+            "score": 0.25,
+            "passed": False,
+            "labels": ["agentic", "trajectory", "rejected"],
+        },
+    ]
+    copied = _copy_trajectory_provenance_value(
+        {"reward_coverage_count": 2, "components": components}
+    )
+
+    assert copied == {"reward_coverage_count": 2, "components": components}
+    assert copied["components"] is not components
+    assert copied["components"][0] is not components[0]
+    assert copied["components"][0]["labels"] is not components[0]["labels"]
+    components[0]["labels"].append("mutated")
+    assert copied["components"][0]["labels"] == [
+        "agentic",
+        "trajectory",
+        "accepted",
+    ]
+
+    variable_label_components = [
+        {
+            "name": "component-c",
+            "score": 1.0,
+            "passed": True,
+            "labels": ["agentic", "trajectory", "accepted", "verified"],
+        }
+    ]
+    variable_label_copy = _copy_quality_components_list(variable_label_components)
+
+    assert variable_label_copy is not None
+    assert variable_label_copy == variable_label_components
+    assert variable_label_copy is not variable_label_components
+    assert variable_label_copy[0]["labels"] is not variable_label_components[0]["labels"]
+
+
+@pytest.mark.parametrize(
+    "components",
+    [
+        [{"name": "component-a", "score": 0.75, "passed": True}],
+        [{"name": "component-a", "score": 0.75, "passed": True, "extra": "field"}],
+        [
+            {
+                "name": "component-a",
+                "score": 0.75,
+                "passed": True,
+                "labels": {"not": "a-list"},
+            }
+        ],
+        [
+            {
+                "name": "component-a",
+                "score": 0.75,
+                "passed": True,
+                "labels": ["agentic", object(), "accepted"],
+            }
+        ],
+        [
+            {
+                "name": "component-a",
+                "score": 0.75,
+                "passed": True,
+                "labels": ["agentic", "trajectory", "accepted", object()],
+            }
+        ],
+    ],
+)
+def test_trajectory_quality_metric_component_list_fast_copy_declines_non_common_shapes(
+    components: list[object],
+) -> None:
+    assert _copy_quality_components_list(components) is None
 
 
 @pytest.mark.parametrize(
