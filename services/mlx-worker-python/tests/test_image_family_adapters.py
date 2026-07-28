@@ -165,5 +165,29 @@ def test_resolve_image_family_config_recovers_when_role_flags_are_disabled() -> 
     assert edit_only.supports_edit is True
     assert generate_only.supports_generation is True
     assert generate_only.supports_edit is False
+    exact_false = resolve_image_family_config(
+        {
+            "melix.image.family_id": "qwenimage-v1",
+            "melix.image.supports_generation": "true",
+            "melix.image.supports_edit": "false",
+        },
+        model_path="models/qwen-image-dev",
+        default_task_kind="text-to-image",
+    )
+
+    padded_true = resolve_image_family_config(
+        {
+            "melix.image.family_id": "qwenimage-v1",
+            "melix.image.supports_generation": " On ",
+            "melix.image.supports_edit": "false",
+        },
+        model_path="models/qwen-image-dev",
+        default_task_kind="text-to-image",
+    )
+
     assert bool_false.supports_generation is False
     assert bool_false.supports_edit is True
+    assert exact_false.supports_generation is True
+    assert exact_false.supports_edit is False
+    assert padded_true.supports_generation is True
+    assert padded_true.supports_edit is False
