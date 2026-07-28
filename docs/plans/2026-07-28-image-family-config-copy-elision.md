@@ -19,8 +19,11 @@ probe watches:
 - `docs/plans/2026-07-28-image-family-config-copy-elision.md`
 
 The registry entry includes focused `test_command`, `coverage_command`, and
-`probe_command` entries. The probe reports resolver elapsed time, peak bytes,
-and metadata iteration calls so the no-copy behavior is directly measurable.
+`probe_command` entries. The probe command keeps an inline fallback so CI can
+run the same measurement against the base checkout before
+`scripts/image_family_config_probe.py` exists there. The probe reports resolver
+elapsed time, peak bytes, and metadata iteration calls so the no-copy behavior
+is directly measurable.
 
 ## Behavior
 
