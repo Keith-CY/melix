@@ -1,5 +1,7 @@
+from collections.abc import Sequence
 import hashlib
 import math
+from typing import overload
 
 import pytest
 
@@ -490,10 +492,38 @@ def test_embed_runtime_replays_single_input_cycles_without_generator_reentry() -
     assert vectors[-1] == [1.0, 1.0]
 
 
+class SliceCountingInputs(Sequence[str]):
+    def __init__(self, values: list[str]) -> None:
+        self._values = values
+        self.slice_count = 0
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[str]: ...
+
+    def __getitem__(self, index: int | slice) -> str | list[str]:
+        if isinstance(index, slice):
+            self.slice_count += 1  # pragma: no cover - regression-only branch
+        return self._values[index]
+
+
 def test_repeated_input_cycle_length_rejects_partial_single_input_cycles() -> None:
     inputs = ["same-document"] * 1024 + ["different-document"]
 
     assert _repeated_input_cycle_length(inputs) == 0
+
+
+def test_repeated_input_cycle_length_validates_multi_input_cycles_without_slices() -> None:
+    cycle = [f"document-{index}" for index in range(512)]
+    inputs = SliceCountingInputs(cycle * 3)
+
+    assert _repeated_input_cycle_length(inputs) == len(cycle)
+    assert inputs.slice_count == 0
 
 
 def test_load_model_rejects_unsupported_embedding_backend() -> None:
