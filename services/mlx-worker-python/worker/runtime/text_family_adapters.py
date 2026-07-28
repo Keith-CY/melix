@@ -274,12 +274,18 @@ def resolve_text_family_config(
             config_payload,
             default=descriptor.rope_profile,
         )
-    moe_gate_dequant_metadata = metadata.get("melix.text.moe.gate_dequant", "").strip()
-    moe_gate_dequant = (
-        _bool_from_any(moe_gate_dequant_metadata)
-        if moe_gate_dequant_metadata
-        else _inferred_moe_gate_dequant(config_payload, default=descriptor.moe_gate_dequant)
-    )
+    moe_gate_dequant_metadata = metadata.get("melix.text.moe.gate_dequant", "")
+    if moe_gate_dequant_metadata in _TRUE_BOOL_LITERALS:
+        moe_gate_dequant = True
+    elif moe_gate_dequant_metadata in _FALSE_BOOL_LITERALS:
+        moe_gate_dequant = False
+    else:
+        moe_gate_dequant_metadata = moe_gate_dequant_metadata.strip()
+        moe_gate_dequant = (
+            _bool_from_any(moe_gate_dequant_metadata)
+            if moe_gate_dequant_metadata
+            else _inferred_moe_gate_dequant(config_payload, default=descriptor.moe_gate_dequant)
+        )
     return ResolvedTextFamilyConfig(
         family_id=detection.family_id,
         architecture=_string_value(metadata, "model_architecture", detection.architecture or descriptor.default_architecture),

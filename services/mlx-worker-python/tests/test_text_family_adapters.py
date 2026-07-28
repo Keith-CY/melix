@@ -523,6 +523,54 @@ def test_resolve_text_family_config_reads_config_mapping_without_copying() -> No
     assert config.copy_attempts == 1
 
 
+def test_resolve_text_family_config_skips_gate_dequant_strip_for_exact_bool_metadata() -> None:
+    class NoStripLiteral(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("exact gate dequant metadata literals should avoid strip allocation")
+
+    resolved = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.gate_dequant": NoStripLiteral("true"),
+        },
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe", "moe_gate_dequant": False},
+        default_route_kind="swift_text",
+    )
+    exact_false = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.gate_dequant": NoStripLiteral("false"),
+        },
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe", "moe_gate_dequant": True},
+        default_route_kind="swift_text",
+    )
+    padded = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.gate_dequant": " false ",
+        },
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe", "moe_gate_dequant": True},
+        default_route_kind="swift_text",
+    )
+    blank = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.gate_dequant": "   ",
+        },
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe", "moe_gate_dequant": True},
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.moe_gate_dequant is True
+    assert exact_false.moe_gate_dequant is False
+    assert padded.moe_gate_dequant is False
+    assert blank.moe_gate_dequant is True
+
+
 def test_resolve_text_family_config_skips_config_hints_when_metadata_overrides() -> None:
     class AccessCountingConfig(Mapping[str, Any]):
         def __init__(self, payload: Mapping[str, Any]) -> None:
