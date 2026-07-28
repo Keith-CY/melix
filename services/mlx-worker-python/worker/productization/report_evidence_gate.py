@@ -248,6 +248,7 @@ def _release_matrix_rows(
     evidence_by_role: dict[str, set[str]] = {}
     to_string = str
     evidence_by_role_get = evidence_by_role.get
+    matrix_contains = matrix.__contains__
     for report in reports:
         roles = report.get("release_matrix_roles")
         source_evidence_ids = report.get("source_evidence_ids", [])
@@ -259,7 +260,7 @@ def _release_matrix_rows(
             continue
         if len(roles) == 1:
             role = roles[0]
-            if role in matrix:
+            if matrix_contains(role):
                 evidence_ids_for_role = evidence_by_role_get(role)
                 if evidence_ids_for_role is None:
                     evidence_ids_for_role = set()
@@ -267,15 +268,17 @@ def _release_matrix_rows(
                 for evidence_id in source_evidence_ids:
                     evidence_ids_for_role.add(to_string(evidence_id))
             continue
-        evidence_ids = tuple(to_string(item) for item in source_evidence_ids)
+        evidence_id_strings: tuple[str, ...] | None = None
         for role in roles:
-            if role not in matrix:
+            if not matrix_contains(role):
                 continue
             evidence_ids_for_role = evidence_by_role_get(role)
             if evidence_ids_for_role is None:
                 evidence_ids_for_role = set()
                 evidence_by_role[role] = evidence_ids_for_role
-            evidence_ids_for_role.update(evidence_ids)
+            if evidence_id_strings is None:
+                evidence_id_strings = tuple(to_string(item) for item in source_evidence_ids)
+            evidence_ids_for_role.update(evidence_id_strings)
 
     rows: list[dict[str, object]] = []
     rows_append = rows.append

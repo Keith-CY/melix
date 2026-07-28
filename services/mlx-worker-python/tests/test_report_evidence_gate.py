@@ -339,6 +339,36 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
     assert mutable_roles == ["dynamic", "numeric_rule"]
 
 
+def test_report_evidence_gate_release_matrix_rows_defers_unmatched_id_strings() -> None:
+    class StringTrackedEvidence:
+        calls = 0
+
+        def __str__(self) -> str:  # pragma: no cover - this slice verifies no calls
+            type(self).calls += 1
+            return "unmatched-evidence"
+
+    rows = report_evidence_gate_module._release_matrix_rows(
+        [
+            {
+                "release_matrix_roles": ["unknown-a", "unknown-b"],
+                "source_evidence_ids": [StringTrackedEvidence()],
+            }
+        ],
+        {"serving": {"description": "Serving evidence"}},
+    )
+
+    assert rows == [
+        {
+            "role": "serving",
+            "required": True,
+            "present": False,
+            "evidence_ids": [],
+            "description": "Serving evidence",
+        }
+    ]
+    assert StringTrackedEvidence.calls == 0
+
+
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
     report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_clear()
     rule: dict[str, object] = {"metric_prefixes": ("adapter.", "runtime.")}

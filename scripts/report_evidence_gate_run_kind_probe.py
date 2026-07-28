@@ -163,6 +163,48 @@ def _measure_release_matrix_rows(iterations: int, sample_count: int) -> tuple[di
     )
 
 
+def _measure_release_matrix_unmatched_roles(
+    iterations: int,
+    sample_count: int,
+) -> tuple[dict[str, float], float]:
+    matrix = {
+        f"role_{index}": {"run_kinds": (f"kind_{index}",), "description": "probe role"}
+        for index in range(16)
+    }
+    reports = [
+        {
+            "release_matrix_roles": [
+                f"unmatched_role_{index % 64}",
+                f"also_unmatched_{(index + 11) % 64}",
+            ],
+            "source_evidence_ids": [f"evidence_{index % 48}", f"evidence_{(index + 7) % 48}"],
+        }
+        for index in range(96)
+    ]
+    elapsed_samples: list[float] = []
+    empty_rows = 0
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        for _index in range(iterations):
+            rows = _release_matrix_rows(reports, matrix)
+            if any(row["present"] for row in rows):  # pragma: no cover - probe invariant guard
+                raise RuntimeError("expected unmatched roles to leave matrix rows absent")
+            empty_rows += len(rows)
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+    elapsed_mean = statistics.fmean(elapsed_samples)
+    return (
+        {
+            "release_matrix_unmatched_elapsed_ms_mean": elapsed_mean,
+            "release_matrix_unmatched_role_count": float(len(matrix)),
+            "release_matrix_unmatched_report_count": float(len(reports)),
+            "release_matrix_unmatched_empty_rows": float(empty_rows),
+        },
+        elapsed_mean,
+    )
+
+
 def _measure_matrix_roles(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
     matrix = {
         f"role_{index}": {"run_kinds": (f"kind_{index}",), "description": "probe role"}
@@ -358,6 +400,10 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         release_matrix_iterations,
         sample_count,
     )
+    (
+        release_matrix_unmatched_metrics,
+        release_matrix_unmatched_elapsed,
+    ) = _measure_release_matrix_unmatched_roles(release_matrix_iterations, sample_count)
     matrix_roles_iterations = max(1, iterations // 200)
     matrix_roles_metrics, matrix_roles_elapsed = _measure_matrix_roles(
         matrix_roles_iterations,
@@ -384,6 +430,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         "elapsed_ms_mean": run_kind_elapsed
         + metric_prefix_elapsed
         + target_field_elapsed
+        + release_matrix_elapsed
+        + release_matrix_unmatched_elapsed
         + matrix_roles_elapsed
         + slowest_probe_phase_elapsed
         + dict_list_elapsed
@@ -395,6 +443,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         **metric_prefix_metrics,
         **target_field_metrics,
         **release_matrix_metrics,
+        **release_matrix_unmatched_metrics,
         **matrix_roles_metrics,
         **slowest_probe_phase_metrics,
         **dict_list_metrics,
