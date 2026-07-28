@@ -428,6 +428,39 @@ def test_resolve_text_family_config_prefers_live_config_over_stale_expert_metada
     assert preserved_default.expert_count_source == "family_default"
 
 
+def test_resolve_text_family_config_skips_expert_metadata_strip_for_missing_values() -> None:
+    class MissingExpertMetadata(dict[str, str]):
+        def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
+            return super().get(key, default)
+
+    class NoStripEmpty(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("missing expert metadata should avoid strip allocation")
+
+    metadata = MissingExpertMetadata({"text_family_id": "qwen3moe"})
+    metadata["melix.text.moe.expert_count"] = NoStripEmpty("")
+    metadata["melix.text.moe.expert_count_source"] = NoStripEmpty("")
+
+    resolved = resolve_text_family_config(
+        metadata,
+        model_path="models/qwen3-moe",
+        config_payload={"model_type": "qwen3_moe"},
+        default_route_kind="swift_text",
+    )
+
+    invalid_metadata = resolve_text_family_config(
+        {"text_family_id": "qwen3moe", "melix.text.moe.expert_count": "bogus"},
+        model_path="models/qwen3-moe",
+        config_payload={"model_type": "qwen3_moe"},
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.expert_count == 128
+    assert resolved.expert_count_source == "family_default"
+    assert invalid_metadata.expert_count == 128
+    assert invalid_metadata.expert_count_source == "family_default"
+
+
 def test_inferred_expert_count_preserves_config_before_family_default() -> None:
     assert _inferred_expert_count({"num_experts": 4}, default=128) == 4
     assert _inferred_expert_count({"num_local_experts": 8.0}, default=128) == 8
