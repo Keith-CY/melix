@@ -2955,6 +2955,27 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
 def _has_only_optional_closing_fence(response_text: str, start: int, response_length: int) -> bool:
     if start == response_length:
         return True
+    if (
+        start + 7 == response_length
+        and response_text[start] == "\n"
+        and response_text[start + 1] == "`"
+        and response_text[start + 2] == "`"
+        and response_text[start + 3] == "`"
+        and response_text[start + 4] == " "
+        and response_text[start + 5] == " "
+        and response_text[start + 6] == " "
+    ):
+        return True
+    if (
+        start + 6 == response_length
+        and response_text[start] == "`"
+        and response_text[start + 1] == "`"
+        and response_text[start + 2] == "`"
+        and response_text[start + 3] == " "
+        and response_text[start + 4] == " "
+        and response_text[start + 5] == " "
+    ):
+        return True
     skip_json_whitespace = _skip_json_whitespace
     if (
         start + _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH <= response_length

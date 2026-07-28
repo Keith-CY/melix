@@ -158,6 +158,16 @@ def test_parse_response_json_closing_fence_check_avoids_startswith() -> None:
     )
 
 
+def test_parse_response_json_common_closing_fence_tail_skips_whitespace_scan(monkeypatch) -> None:
+    def fail_skip_json_whitespace(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("common closing-fence tail should return without whitespace scan")
+
+    monkeypatch.setattr(event_extraction_module, "_skip_json_whitespace", fail_skip_json_whitespace)
+
+    assert event_extraction_module._has_only_optional_closing_fence('\n```   ', 0, 7)
+    assert event_extraction_module._has_only_optional_closing_fence('```   ', 0, 6)
+
+
 def test_parse_response_json_accepts_leading_whitespace_before_fence() -> None:
     response = '  \n```json\n{"events": [{"event_type": "handoff"}]}\n```'
 
