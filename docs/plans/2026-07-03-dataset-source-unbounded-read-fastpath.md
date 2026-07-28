@@ -10,6 +10,17 @@ This slice adds a no-cap fast path that performs one binary `read()` and decodes
 
 No dataset schema, source discovery, source-kind classification, segmentation, PII masking, deduplication, or output artifact behavior changes in this slice.
 
+## 2026-07-28 follow-up: uncapped read via `Path.read_bytes()`
+
+This slice keeps the no-cap fast path semantics from the original plan while
+routing uncapped reads through `Path.read_bytes().decode("utf-8")`. The bounded
+`open(...).read(cap_bytes + 1)` branch remains unchanged for positive caps, so
+limit enforcement still reads one sentinel byte and raises on overflow.
+
+Expected direction: lower `read_elapsed_ms_mean` and overall probe timing for
+small-file dataset source records, with capped-read and record-construction
+metrics monitored as guards.
+
 ## Registered probe
 
 The affected path is covered by the registered PR-scoped probe `dataset-source-records-scandir` in `infra/perf/pr_scoped_probes.json`. The registry entry includes focused `test_command`, `coverage_command`, and `probe_command` entries for:
