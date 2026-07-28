@@ -22,7 +22,7 @@ from typing import Any
 
 
 def _glob_has_magic(glob: str) -> bool:
-    return any(character in glob for character in "*?[")
+    return "*" in glob or "?" in glob or "[" in glob
 
 
 _COMMENT_MARKER = "<!-- melix-pr-scoped-performance-report -->"
