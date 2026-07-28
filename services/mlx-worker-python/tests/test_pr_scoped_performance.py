@@ -4107,6 +4107,8 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["checksum"] > 0
+    assert metrics["sequence_cycle_detection_elapsed_ms_mean"] >= 0
+    assert metrics["sequence_cycle_detection_slices_mean"] == 0.0
 
 
 def test_embedding_core_inputs_probe_script_emits_metrics(
