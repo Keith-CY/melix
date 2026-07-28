@@ -3897,6 +3897,7 @@ def test_event_extraction_response_json_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["checksum"] == 12.0
     assert metrics["direct_checksum"] == 12.0
+    assert metrics["json_fence_startswith_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["direct_elapsed_ms_mean"] >= 0

@@ -17,6 +17,17 @@ sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 from worker.productization import event_extraction as event_extraction_module  # noqa: E402
 
 
+class _StartswithCountingText(str):
+    def __new__(cls, value: str):
+        instance = super().__new__(cls, value)
+        instance.startswith_calls = 0
+        return instance
+
+    def startswith(self, *args, **kwargs):  # pragma: no cover - covered by base-ref probe comparison
+        self.startswith_calls += 1
+        return super().startswith(*args, **kwargs)
+
+
 def _env_int(name: str, default: int) -> int:
     value = os.getenv(name)
     if value is None:
@@ -68,7 +79,9 @@ def _measure_response(response: str, *, event_count: int, iterations: int, sampl
             payload = event_extraction_module._parse_response_json(response)
             events = payload.get("events")
             if not isinstance(events, list) or len(events) != event_count:
-                raise AssertionError("event-extraction response JSON probe parsed an unexpected payload")
+                raise AssertionError(  # pragma: no cover - defensive probe invariant
+                    "event-extraction response JSON probe parsed an unexpected payload"
+                )
             checksum += len(events)
         elapsed_ms.append((time.perf_counter() - started) * 1000.0)
         _, peak = tracemalloc.get_traced_memory()
@@ -79,6 +92,23 @@ def _measure_response(response: str, *, event_count: int, iterations: int, sampl
         "peak_bytes_mean": statistics.fmean(peak_bytes),
         "checksum": float(checksum),
     }
+
+
+def _measure_startswith_calls(*, event_count: int, iterations: int, samples: int) -> float:
+    calls: list[float] = []
+    for _ in range(samples):
+        response = _StartswithCountingText(
+            _response(event_count, leading_whitespace=False, fenced=True)
+        )
+        for _index in range(iterations):
+            payload = event_extraction_module._parse_response_json(response)
+            events = payload.get("events")
+            if not isinstance(events, list) or len(events) != event_count:
+                raise AssertionError(  # pragma: no cover - defensive probe invariant
+                    "event-extraction response JSON probe parsed an unexpected payload"
+                )
+        calls.append(float(response.startswith_calls))
+    return statistics.fmean(calls)
 
 
 def run_probe(*, event_count: int = 1600, iterations: int = 80, samples: int = 5) -> dict[str, float]:
@@ -106,6 +136,11 @@ def run_probe(*, event_count: int = 1600, iterations: int = 80, samples: int = 5
     return {
         "elapsed_ms_mean": fenced_metrics["elapsed_ms_mean"],
         "peak_bytes_mean": fenced_metrics["peak_bytes_mean"],
+        "json_fence_startswith_calls_mean": _measure_startswith_calls(
+            event_count=event_count,
+            iterations=iterations,
+            samples=samples,
+        ),
         "leading_elapsed_ms_mean": leading_metrics["elapsed_ms_mean"],
         "leading_peak_bytes_mean": leading_metrics["peak_bytes_mean"],
         "direct_elapsed_ms_mean": direct_metrics["elapsed_ms_mean"],
