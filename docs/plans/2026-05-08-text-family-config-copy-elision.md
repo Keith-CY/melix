@@ -26,6 +26,8 @@ The 2026-05-09 follow-up slice keeps the same registered probe and narrows the n
 
 The 2026-07-23 follow-up keeps the same registered probe and narrows the new behavior change to `_bool_from_any()`: exact normalized string literals (`"true"`, `"false"`, `"on"`, etc.) return before the fallback `strip().lower()` normalization. Whitespace-padded and mixed-case strings still use the fallback path, preserving the existing bool parsing behavior while avoiding per-resolution string normalization for already-normalized metadata values.
 
+The 2026-07-28 follow-up keeps the same registered probe and narrows the behavior-preserving change to `_bool_value()`: missing and empty metadata still return the caller default, exact normalized bool literals now return before `strip()`, and whitespace-only metadata still falls back to the default after the strip. This avoids one string strip on common already-normalized metadata flags while preserving padded and mixed-case bool parsing through `_bool_from_any()`.
+
 Local Linux registered probe samples for the 2026-07-23 follow-up on this host:
 
 - baseline `origin/main`: `156.5028017386794`, `164.59141615778208`, `158.0336649902165` ms; mean `159.709294295559` ms.
