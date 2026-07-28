@@ -35,6 +35,7 @@ from worker.productization.pr_scoped_performance import (
     _float_or_none,
     _format_delta,
     _format_value,
+    _glob_has_magic,
     _glob_literal_prefix,
     _is_relative_to,
     _load_upload_receipt_pipeline_module,
@@ -7485,6 +7486,13 @@ def test_glob_matching_preserves_wildcard_semantics() -> None:
         "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
         "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
     ) is True
+
+
+def test_glob_has_magic_preserves_fnmatch_magic_detection() -> None:
+    assert _glob_has_magic("services/*.py") is True
+    assert _glob_has_magic("services/test?.py") is True
+    assert _glob_has_magic("tests/test_[ab].py") is True
+    assert _glob_has_magic("services/mlx-worker-python/tests/test_pr_scoped_performance.py") is False
 
 
 def test_glob_matching_exact_path_skips_regex_compile(monkeypatch: pytest.MonkeyPatch) -> None:
