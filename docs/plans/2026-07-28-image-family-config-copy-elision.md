@@ -31,6 +31,22 @@ No behavior changes are intended. Image family ID, task kind, backend ID,
 workflow role, and generation/edit support resolution continue to use the same
 fallbacks and validation rules.
 
+## 2026-07-28 exact bool literal follow-up
+
+This follow-up keeps the same registered probe and narrows the behavior-preserving
+change to `_bool_value()`: exact normalized bool metadata literals now return
+before `strip().lower()`, while padded or mixed-case literals still flow through
+the existing normalization fallback. The registered probe uses exact
+`melix.image.supports_generation` and `melix.image.supports_edit` literals, so it
+measures the avoided string normalization work directly.
+
+Local Linux registered probe samples for this follow-up on this host:
+
+- baseline `origin/main`: `1098.599725`, `1102.834226`, `1100.484947` ms; mean `1100.639633` ms.
+- exact bool literal fast path: `1007.095734`, `1001.498386`, `1021.254512` ms; mean `1009.949544` ms.
+- delta: `-90.690089` ms, `8.239762%` faster (`1.089797x`).
+- `metadata_iteration_calls_mean`: unchanged at `0.0`; `peak_bytes_mean`: unchanged at `1160.4`.
+
 ## Verification plan
 
 Run the registered focused test command, changed-scope coverage command, and the

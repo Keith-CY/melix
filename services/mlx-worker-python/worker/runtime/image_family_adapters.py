@@ -55,6 +55,8 @@ class ResolvedImageFamilyConfig:
 
 _DEFAULT_IMAGE_FAMILY_ID = "deterministic-v1"
 _SUPPORTED_IMAGE_TASK_KINDS = {"text-to-image", "image-text-to-image"}
+_TRUE_BOOL_LITERALS = frozenset(("true", "1", "yes", "on"))
+_FALSE_BOOL_LITERALS = frozenset(("false", "0", "no", "off"))
 _IMAGE_FAMILY_ADAPTERS: dict[str, ImageFamilyDescriptor] = {
     "deterministic-v1": ImageFamilyDescriptor(
         family_id="deterministic-v1",
@@ -241,9 +243,14 @@ def _string_value(metadata: Mapping[str, str], key: str, default: str) -> str:
 
 
 def _bool_value(metadata: Mapping[str, str], key: str, *, default: bool) -> bool:
-    raw = metadata.get(key, "").strip().lower()
-    if raw in {"true", "1", "yes", "on"}:
+    raw = metadata.get(key, "")
+    if raw in _TRUE_BOOL_LITERALS:
         return True
-    if raw in {"false", "0", "no", "off"}:
+    if raw in _FALSE_BOOL_LITERALS:
+        return False
+    raw = raw.strip().lower()
+    if raw in _TRUE_BOOL_LITERALS:
+        return True
+    if raw in _FALSE_BOOL_LITERALS:
         return False
     return default
