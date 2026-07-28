@@ -20,7 +20,7 @@ The probe defines focused `test_command`, `coverage_command`, and `probe_command
 
 Add an early branch for plain ASCII answers that are already trimmed, not wrapped, not numeric literals, not single-option answers, and do not require whitespace collapsing. The branch returns `value.lower()` directly.
 
-Behavior remains unchanged because values outside that narrow shape continue through the existing normalization path.
+This follow-up slice keeps that branch behavior-equivalent while binding the first and last characters once inside the ASCII branch, avoiding repeated boundary indexing/attribute lookups before the plain-text fast-path return.
 
 ## Validation plan
 
@@ -37,4 +37,12 @@ Local Linux probe (`scripts/evaluation_answer_normalization_probe.py`, default 5
 - head: `elapsed_ms_mean=108.239728`, `answer_match_elapsed_ms_mean=43.770581`
 - normalization delta: `-14.843561 ms` (`-12.06%`)
 - answer-match delta: `-0.866281 ms` (`-1.94%`)
+- checksum unchanged: `normalization_checksum=7724000`, `answer_match_checksum=324000`
+
+Follow-up boundary-binding slice (`scripts/pr_scoped_performance_run.py`, base/head worktrees, 2026-07-28):
+
+- base (`origin/main`): `elapsed_ms_mean=107.328982`, `answer_match_elapsed_ms_mean=46.076059`
+- head: `elapsed_ms_mean=99.065209`, `answer_match_elapsed_ms_mean=43.856885`
+- normalization delta: `-8.263773 ms` (`-7.70%`)
+- answer-match delta: `-2.219174 ms` (`-4.82%`)
 - checksum unchanged: `normalization_checksum=7724000`, `answer_match_checksum=324000`
