@@ -133,6 +133,23 @@ def test_project_digest_preserves_legacy_projection_values() -> None:
         assert actual == expected
 
 
+def test_project_digest_zero_dimensions_skips_digest_projection() -> None:
+    backend = BERTEmbeddingBackend()
+    digest_calls = 0
+
+    def counting_sha256(payload: bytes = b""):
+        nonlocal digest_calls
+        digest_calls += 1
+        return hashlib.sha256(payload)
+
+    assert backend._project_digest("bert::zero dimensions", 0, _sha256=counting_sha256) == []
+    assert backend._project_digest("bert::negative dimensions", -1, _sha256=counting_sha256) == []
+    assert digest_calls == 0
+
+    assert len(backend._project_digest("bert::positive dimensions", 1, _sha256=counting_sha256)) == 1
+    assert digest_calls == 1
+
+
 def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
     _, runtime_service, inference_service = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())

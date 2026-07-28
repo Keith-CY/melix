@@ -33,8 +33,10 @@ def main() -> int:
 
     dimensions = 4097
     default_dimensions = 8
+    zero_dimensions = 0
     vector_count = 500
     default_vector_count = 5000
+    zero_dimension_vector_count = 50000
     sample_count = int(
         os.environ.get(
             "MELIX_EMBEDDING_PROJECT_DIGEST_SAMPLES",
@@ -45,12 +47,19 @@ def main() -> int:
     default_seed_texts = [
         f"bert::default projection row {index % 251}::{index}" for index in range(default_vector_count)
     ]
+    zero_dimension_seed_texts = [
+        f"bert::zero dimension row {index % 251}::{index}"
+        for index in range(zero_dimension_vector_count)
+    ]
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     default_elapsed_samples: list[float] = []
     default_peak_samples: list[float] = []
+    zero_dimension_elapsed_samples: list[float] = []
+    zero_dimension_peak_samples: list[float] = []
     checksum = 0.0
     default_checksum = 0.0
+    zero_dimension_checksum = 0.0
 
     for _ in range(sample_count):
         gc.collect()
@@ -81,6 +90,20 @@ def main() -> int:
         default_elapsed_samples.append(default_elapsed_ms)
         default_peak_samples.append(float(default_peak_bytes))
 
+        gc.collect()
+        tracemalloc.start()
+        zero_dimension_started = time.perf_counter()
+        for seed_text in zero_dimension_seed_texts:
+            vector = backend._project_digest(seed_text, zero_dimensions)
+            if vector:  # pragma: no cover - defensive probe contract guard
+                raise AssertionError(f"unexpected zero-dimension vector: {vector!r}")
+            zero_dimension_checksum += len(vector)
+        zero_dimension_elapsed_ms = (time.perf_counter() - zero_dimension_started) * 1000.0
+        _, zero_dimension_peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        zero_dimension_elapsed_samples.append(zero_dimension_elapsed_ms)
+        zero_dimension_peak_samples.append(float(zero_dimension_peak_bytes))
+
     payload = {
         "elapsed_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
         "peak_bytes_mean": round(sum(peak_samples) / len(peak_samples), 6),
@@ -92,13 +115,24 @@ def main() -> int:
             sum(default_peak_samples) / len(default_peak_samples),
             6,
         ),
+        "zero_dimension_elapsed_ms_mean": round(
+            sum(zero_dimension_elapsed_samples) / len(zero_dimension_elapsed_samples),
+            6,
+        ),
+        "zero_dimension_peak_bytes_mean": round(
+            sum(zero_dimension_peak_samples) / len(zero_dimension_peak_samples),
+            6,
+        ),
         "sample_count": float(sample_count),
         "vector_count": float(vector_count),
         "default_dimension_vector_count": float(default_vector_count),
+        "zero_dimension_vector_count": float(zero_dimension_vector_count),
         "dimensions": float(dimensions),
         "default_dimensions": float(default_dimensions),
+        "zero_dimensions": float(zero_dimensions),
         "checksum": round(checksum, 6),
         "default_dimension_checksum": round(default_checksum, 6),
+        "zero_dimension_checksum": round(zero_dimension_checksum, 6),
     }
     print(json.dumps(payload, sort_keys=True))
     return 0
