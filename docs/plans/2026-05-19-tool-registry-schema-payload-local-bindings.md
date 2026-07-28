@@ -310,6 +310,28 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, protobuf config handling,
   and tool definitions unchanged.
 
+## Follow-up Slice: Worker ToolConfig Serialized Copy
+
+The 2026-07-28 follow-up keeps `ToolRegistry.as_worker_tool_config()` behavior
+unchanged and still returns a fresh mutable protobuf message, but copies cached
+worker tool configs from the registry's serialized `ToolConfig` bytes instead of
+keeping and `CopyFrom`-cloning a cached template message. The built-in full
+catalog fast paths keep their existing template-copy behavior because local
+measurement showed cached-byte parsing was slower for that path; this slice is
+limited to registry-owned selected/config materialization.
+
+Expected effect:
+
+- reduce `tool-registry-schema-bytes-cache`
+  `partial_selection_tool_config_elapsed_ms_mean` for repeated partial-selection
+  config materialization;
+- keep `built_in_tool_config_elapsed_ms_mean` and
+  `full_selection_tool_config_elapsed_ms_mean` neutral-to-improved by leaving the
+  full-catalog template branch unchanged;
+- preserve fresh mutable protobuf return objects and mutation isolation;
+- leave registry selection, OpenAI schema generation, and tool definitions
+  unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
@@ -322,9 +344,10 @@ Expected effect:
    slice, `preflight_consistency_elapsed_ms_mean` for preflight slices,
    `selector_planning_elapsed_ms_mean` and
    `current_capacity_planning_elapsed_ms_mean` for the local-compute seed slice,
-   or `selector_planning_elapsed_ms_mean`,
+   `selector_planning_elapsed_ms_mean`,
    `current_capacity_planning_elapsed_ms_mean`, and
-   `policy_planning_elapsed_ms_mean` for the selected-source membership slice)
-   over repeated samples.
+   `policy_planning_elapsed_ms_mean` for the selected-source membership slice, or
+   `partial_selection_tool_config_elapsed_ms_mean` for the worker ToolConfig
+   serialized-copy slice) over repeated samples.
 4. Push only if local evidence is neutral-to-improved and rely on the GitHub
    PR-scoped performance workflow as the merge gate.

@@ -410,11 +410,18 @@ def test_built_in_tool_config_returns_isolated_template_copies() -> None:
     assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
 
 
-def test_tool_registry_worker_config_reuses_isolated_template_copy() -> None:
+def test_tool_registry_worker_config_reuses_cached_serialized_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     first_config = registry.as_worker_tool_config()
     first_config.tools.pop()
     first_config.schema_version = "mutated"
+
+    def fail_template_copy(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:  # pragma: no cover
+        raise AssertionError("cached worker tool config should copy from serialized bytes")
+
+    monkeypatch.setattr(tool_registry_module, "_copy_tool_config", fail_template_copy)
 
     second_config = registry.as_worker_tool_config()
 
