@@ -50,6 +50,11 @@ def _write_orphan_sidecars(root: Path, *, orphan_count: int) -> None:
         )
 
 
+def _write_stray_snapshots(root: Path, *, snapshot_count: int) -> None:
+    for index in range(snapshot_count):
+        (root / f"stray-{index:05d}.kv.safetensors").write_bytes(b"snapshot")
+
+
 def _build_cold_index(root: Path, *, entry_count: int, orphan_count: int) -> None:
     cold = ColdPrefixStore(root, serializer=_fake_serializer, deserializer=_fake_deserializer)
     for index in range(entry_count):
@@ -67,6 +72,7 @@ def _build_cold_index(root: Path, *, entry_count: int, orphan_count: int) -> Non
             raise RuntimeError(f"failed to build cold entry {index}")
     (root / "ignored.tmp").write_text("ignored\n", encoding="utf-8")
     (root / "nested.meta.json").mkdir()
+    _write_stray_snapshots(root, snapshot_count=orphan_count)
     _write_orphan_sidecars(root, orphan_count=orphan_count)
 
 
@@ -78,7 +84,7 @@ def measure(*, entry_count: int, orphan_count: int, samples: int) -> dict[str, f
     json_load_calls: list[float] = []
     original_scandir = target.os.scandir
     original_glob = target.Path.glob
-    original_json_load = target.json.load
+    original_json_loads = target.json.loads
 
     with tempfile.TemporaryDirectory(prefix="melix-prefix-cold-index-") as tmp:
         root = Path(tmp) / "cold"
@@ -100,14 +106,14 @@ def measure(*, entry_count: int, orphan_count: int, samples: int) -> dict[str, f
                     sample_path_glob_calls += 1
                     return original_glob(self, pattern)
 
-                def counted_json_load(fp):
+                def counted_json_loads(payload, *args, **kwargs):
                     nonlocal sample_json_load_calls
                     sample_json_load_calls += 1
-                    return original_json_load(fp)
+                    return original_json_loads(payload, *args, **kwargs)
 
                 target.os.scandir = counted_scandir
                 target.Path.glob = counted_glob
-                target.json.load = counted_json_load
+                target.json.loads = counted_json_loads
                 cold = ColdPrefixStore(root, serializer=_fake_serializer, deserializer=_fake_deserializer)
                 started = time.perf_counter()
                 loaded = cold.entry_count()
@@ -121,7 +127,7 @@ def measure(*, entry_count: int, orphan_count: int, samples: int) -> dict[str, f
         finally:
             target.os.scandir = original_scandir
             target.Path.glob = original_glob
-            target.json.load = original_json_load
+            target.json.loads = original_json_loads
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_ms),
