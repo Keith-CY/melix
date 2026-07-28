@@ -3677,6 +3677,18 @@
         "unit": "bytes",
         "direction": "lower_is_better",
         "warn_pct": 5.0
+      },
+      {
+        "key": "zero_dimension_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "zero_dimension_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
       }
     ]
   },
