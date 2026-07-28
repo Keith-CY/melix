@@ -200,6 +200,33 @@ def test_parse_response_json_generic_fence_uses_direct_marker_check() -> None:
     assert response.calls == 1
 
 
+def test_parse_response_json_zero_offset_generic_fence_skips_whitespace_scan(monkeypatch) -> None:
+    def fail_skip_json_whitespace(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("zero-offset generic fence fast path should skip whitespace scan")
+
+    monkeypatch.setattr(event_extraction_module, "_skip_json_whitespace", fail_skip_json_whitespace)
+
+    response = '```javascript\n{"events": [{"event_type": "generic"}]}\n```'
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "generic"}]
+    }
+
+
+def test_parse_response_json_zero_offset_generic_fence_rejects_trailing_text() -> None:
+    response = '```javascript\n{"events": []}\n``` trailing'
+
+    with pytest.raises(json.JSONDecodeError, match="Extra data"):
+        event_extraction_module._parse_response_json(response)
+
+
+def test_parse_response_json_zero_offset_generic_fence_rejects_non_object_payload() -> None:
+    response = "```javascript\n[]\n```"
+
+    with pytest.raises(ValueError, match="JSON object"):
+        event_extraction_module._parse_response_json(response)
+
+
 def test_parse_response_json_accepts_unfenced_json_without_pretrim_copy() -> None:
     response = '  {"events": [{"event_type": "pickup"}]}  '
 

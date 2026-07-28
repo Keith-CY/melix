@@ -2911,6 +2911,21 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             raise ValueError("LLM response must be a JSON object")
         return parsed
 
+    if (
+        response_length >= 3
+        and response_text[0] == "`"
+        and response_text[1] == "`"
+        and response_text[2] == "`"
+    ):
+        newline_index = response_text.find("\n", 0)
+        if newline_index >= 0:
+            parsed, end_index = raw_decode(response_text, newline_index + 1)
+            if not has_only_optional_closing_fence(response_text, end_index, response_length):
+                raise json.JSONDecodeError("Extra data", response_text, end_index)
+            if not isinstance(parsed, dict):
+                raise ValueError("LLM response must be a JSON object")
+            return parsed
+
     response_start = _skip_json_whitespace(response_text, 0, response_length)
 
     if response_start < response_length and response_text[response_start] == "{":
@@ -2985,7 +3000,9 @@ def _has_only_optional_closing_fence(response_text: str, start: int, response_le
         and response_text[start + 3] == "`"
     ):
         start += _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH
-        return skip_json_whitespace(response_text, start, response_length) == response_length
+        return start == response_length or skip_json_whitespace(
+            response_text, start, response_length
+        ) == response_length
     start = skip_json_whitespace(response_text, start, response_length)
     if start == response_length:
         return True
