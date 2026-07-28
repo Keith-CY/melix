@@ -1,11 +1,29 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+
 import pytest
 
 from worker.runtime.image_family_adapters import (
     detect_image_family_identity,
     resolve_image_family_config,
 )
+
+
+class IterationCountingMetadata(Mapping[str, str]):
+    def __init__(self, values: dict[str, str]) -> None:
+        self._values = values
+        self.iteration_count = 0
+
+    def __iter__(self) -> Iterator[str]:
+        self.iteration_count += 1
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, key: str) -> str:
+        return self._values[key]
 
 
 def test_detect_image_family_identity_supports_explicit_overrides_and_path_inference() -> None:
@@ -81,6 +99,35 @@ def test_resolve_image_family_config_projects_generation_and_edit_roles() -> Non
     assert kontext.supports_generation is True
     assert kontext.supports_edit is True
     assert kontext.capability_metadata()["melix.capability.supported_tasks"] == "image_generate,image_edit"
+
+
+def test_resolve_image_family_config_reads_mapping_without_copy() -> None:
+    iteration_probe = IterationCountingMetadata({"melix.image.family_id": "kontext-v1"})
+    assert list(iteration_probe) == ["melix.image.family_id"]
+    assert iteration_probe.iteration_count == 1
+
+    metadata = IterationCountingMetadata(
+        {
+            "melix.image.family_id": "kontext-v1",
+            "melix.image.backend_id": "deterministic",
+            "melix.image.task_kind": "image-text-to-image",
+            "melix.image.supports_generation": "true",
+            "melix.image.supports_edit": "true",
+            "melix.image.default_workflow_role": "edit",
+        }
+    )
+
+    config = resolve_image_family_config(
+        metadata,
+        model_path="models/flux-kontext-dev",
+        default_task_kind="text-to-image",
+    )
+
+    assert config.family_id == "kontext-v1"
+    assert config.task_kind == "image-text-to-image"
+    assert config.supports_generation is True
+    assert config.supports_edit is True
+    assert metadata.iteration_count == 0
 
 
 def test_resolve_image_family_config_recovers_when_role_flags_are_disabled() -> None:

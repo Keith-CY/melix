@@ -128,6 +128,33 @@ def test_scope_report_selects_event_extraction_probe() -> None:
     }
 
 
+def test_scope_report_selects_image_family_config_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/image_family_adapters.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["image-family-config-copy-elision"]
+
+
+def test_image_family_config_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_IMAGE_FAMILY_CONFIG_ITERATIONS", "128")
+    monkeypatch.setenv("MELIX_IMAGE_FAMILY_CONFIG_SAMPLES", "2")
+
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/image_family_config_probe.py"))
+    probe_script["main"]()
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0.0
+    assert metrics["metadata_iteration_calls_mean"] == 0.0
+    assert metrics["iteration_count"] == 128.0
+    assert metrics["sample_count"] == 2.0
+
+
 def test_scope_report_selects_hub_catalog_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -4803,6 +4830,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "hub-catalog-tag-normalization-single-pass",
         "hub-catalog-next-cursor-fast-parse",
         "hub-catalog-size-hint-regex-precompile",
+        "image-family-config-copy-elision",
         "integration-swift-binary-resolution-scandir",
         "benchmark-evaluation-report-running-aggregates",
         "stream-assembler-parser-mode-cache",
