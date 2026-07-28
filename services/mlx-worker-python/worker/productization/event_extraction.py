@@ -2897,10 +2897,19 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
-    response_startswith = response_text.startswith
     json_fence_prefix = _JSON_FENCE_PREFIX
     json_fence_prefix_length = _JSON_FENCE_PREFIX_LENGTH
-    if response_length and response_text[0] == "`" and response_startswith(json_fence_prefix):
+    if (
+        response_length >= json_fence_prefix_length
+        and response_text[0] == "`"
+        and response_text[1] == "`"
+        and response_text[2] == "`"
+        and response_text[3] == "j"
+        and response_text[4] == "s"
+        and response_text[5] == "o"
+        and response_text[6] == "n"
+        and response_text[7] == "\n"
+    ):
         parsed, end_index = raw_decode(
             response_text,
             json_fence_prefix_length,
@@ -2934,6 +2943,7 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
+    response_startswith = response_text.startswith
     if response_startswith(json_fence_prefix, response_start):
         parsed, end_index = raw_decode(
             response_text,

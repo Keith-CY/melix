@@ -133,6 +133,18 @@ def test_parse_response_json_trims_partial_fenced_json_without_line_list() -> No
     }
 
 
+def test_parse_response_json_zero_offset_json_fence_skips_startswith() -> None:
+    class NoStartswithText(str):
+        def startswith(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("zero-offset JSON fence should use direct marker checks")
+
+    response = NoStartswithText('```json\n{"events": [{"event_type": "delivery"}]}\n```')
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "delivery"}]
+    }
+
+
 def test_parse_response_json_trims_closing_fence_with_trailing_space() -> None:
     response = '```json\n{"events": []}\n```   '
 
