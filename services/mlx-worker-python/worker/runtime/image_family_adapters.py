@@ -175,7 +175,7 @@ def resolve_image_family_config(
     model_path: str = "",
     default_task_kind: str = "text-to-image",
 ) -> ResolvedImageFamilyConfig:
-    metadata = dict(metadata or {})
+    metadata = metadata or {}
     detection = detect_image_family_identity(
         model_path=model_path,
         explicit_family_id=metadata.get("melix.image.family_id", ""),

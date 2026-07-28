@@ -428,6 +428,44 @@
     ]
   },
   {
+    "id": "image-family-config-copy-elision",
+    "name": "Image family config copy elision",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/image_family_adapters.py",
+      "services/mlx-worker-python/tests/test_image_family_adapters.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/image_family_config_probe.py",
+      "docs/plans/2026-07-28-image-family-config-copy-elision.md",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_image_family_adapters.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_image_family_config_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_image_family_config_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_image_family_adapters.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_image_family_config_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_image_family_config_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/image_family_adapters.py services/mlx-worker-python/tests/test_image_family_adapters.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/image_family_config_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/image_family_config_probe.py ]; then python3 scripts/image_family_config_probe.py; else python3 -c \"import base64; exec(base64.b64decode(\\\"ZnJvbSBfX2Z1dHVyZV9fIGltcG9ydCBhbm5vdGF0aW9ucwoKaW1wb3J0IGpzb24KaW1wb3J0IG9zCmltcG9ydCBzdGF0aXN0aWNzCmltcG9ydCBzeXMKaW1wb3J0IHRpbWUKaW1wb3J0IHRyYWNlbWFsbG9jCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aApmcm9tIHR5cGluZyBpbXBvcnQgTWFwcGluZwoKUkVQT19ST09UID0gUGF0aC5jd2QoKQpzeXMucGF0aC5pbnNlcnQoMCwgc3RyKFJFUE9fUk9PVCkpCnN5cy5wYXRoLmluc2VydCgwLCBzdHIoUkVQT19ST09UIC8gInNlcnZpY2VzL21seC13b3JrZXItcHl0aG9uIikpCgpmcm9tIHdvcmtlci5ydW50aW1lLmltYWdlX2ZhbWlseV9hZGFwdGVycyBpbXBvcnQgcmVzb2x2ZV9pbWFnZV9mYW1pbHlfY29uZmlnCgoKY2xhc3MgQ29weUNvdW50aW5nTWV0YWRhdGEoTWFwcGluZ1tzdHIsIHN0cl0pOgogICAgZGVmIF9faW5pdF9fKHNlbGYsIHBheWxvYWQ6IE1hcHBpbmdbc3RyLCBzdHJdKSAtPiBOb25lOgogICAgICAgIHNlbGYuX3BheWxvYWQgPSBkaWN0KHBheWxvYWQpCiAgICAgICAgc2VsZi5pdGVyYXRpb25fY291bnQgPSAwCgogICAgZGVmIF9faXRlcl9fKHNlbGYpOgogICAgICAgIHNlbGYuaXRlcmF0aW9uX2NvdW50ICs9IDEKICAgICAgICByZXR1cm4gaXRlcihzZWxmLl9wYXlsb2FkKQoKICAgIGRlZiBfX2xlbl9fKHNlbGYpIC0+IGludDoKICAgICAgICByZXR1cm4gbGVuKHNlbGYuX3BheWxvYWQpCgogICAgZGVmIF9fZ2V0aXRlbV9fKHNlbGYsIGtleTogc3RyKSAtPiBzdHI6CiAgICAgICAgcmV0dXJuIHNlbGYuX3BheWxvYWRba2V5XQoKCmRlZiBfcGF5bG9hZChpbmRleDogaW50KSAtPiBkaWN0W3N0ciwgc3RyXToKICAgIGZhbWlsaWVzID0gKCJkZXRlcm1pbmlzdGljLXYxIiwgImtvbnRleHQtdjEiLCAiZmlsbC12MSIsICJxd2VuaW1hZ2UtdjEiLCAiZmliby12MSIsICJrbGVpbi12MSIpCiAgICB0YXNrX2tpbmQgPSAiaW1hZ2UtdGV4dC10by1pbWFnZSIgaWYgaW5kZXggJSAzIGVsc2UgInRleHQtdG8taW1hZ2UiCiAgICByZXR1cm4gewogICAgICAgICJtZWxpeC5pbWFnZS5mYW1pbHlfaWQiOiBmYW1pbGllc1tpbmRleCAlIGxlbihmYW1pbGllcyldLAogICAgICAgICJtZWxpeC5pbWFnZS5iYWNrZW5kX2lkIjogImRldGVybWluaXN0aWMiLAogICAgICAgICJtZWxpeC5pbWFnZS50YXNrX2tpbmQiOiB0YXNrX2tpbmQsCiAgICAgICAgIm1lbGl4LmltYWdlLnN1cHBvcnRzX2dlbmVyYXRpb24iOiAidHJ1ZSIgaWYgaW5kZXggJSA1IGVsc2UgImZhbHNlIiwKICAgICAgICAibWVsaXguaW1hZ2Uuc3VwcG9ydHNfZWRpdCI6ICJ0cnVlIiBpZiBpbmRleCAlIDcgZWxzZSAiZmFsc2UiLAogICAgICAgICJtZWxpeC5pbWFnZS5kZWZhdWx0X3dvcmtmbG93X3JvbGUiOiAiZWRpdCIgaWYgdGFza19raW5kID09ICJpbWFnZS10ZXh0LXRvLWltYWdlIiBlbHNlICJnZW5lcmF0ZSIsCiAgICB9CgoKZGVmIF9tZWFzdXJlKGl0ZXJhdGlvbnM6IGludCkgLT4gZGljdFtzdHIsIGZsb2F0XToKICAgIG1ldGFkYXRhX3NhbXBsZXMgPSBbQ29weUNvdW50aW5nTWV0YWRhdGEoX3BheWxvYWQoaW5kZXgpKSBmb3IgaW5kZXggaW4gcmFuZ2UoNjQpXQogICAgY2hlY2tzdW0gPSAwCiAgICB0cmFjZW1hbGxvYy5zdGFydCgpCiAgICBzdGFydGVkID0gdGltZS5wZXJmX2NvdW50ZXIoKQogICAgZm9yIGluZGV4IGluIHJhbmdlKGl0ZXJhdGlvbnMpOgogICAgICAgIG1ldGFkYXRhID0gbWV0YWRhdGFfc2FtcGxlc1tpbmRleCAlIGxlbihtZXRhZGF0YV9zYW1wbGVzKV0KICAgICAgICBjb25maWcgPSByZXNvbHZlX2ltYWdlX2ZhbWlseV9jb25maWcoCiAgICAgICAgICAgIG1ldGFkYXRhLAogICAgICAgICAgICBtb2RlbF9wYXRoPWYibW9kZWxzL2ltYWdlLWZhbWlseS1wcm9iZS17aW5kZXggJSAxMX0iLAogICAgICAgICAgICBkZWZhdWx0X3Rhc2tfa2luZD0idGV4dC10by1pbWFnZSIsCiAgICAgICAgKQogICAgICAgIGNoZWNrc3VtICs9IGxlbihjb25maWcuZmFtaWx5X2lkKSArIGludChjb25maWcuc3VwcG9ydHNfZ2VuZXJhdGlvbikgKyBpbnQoY29uZmlnLnN1cHBvcnRzX2VkaXQpCiAgICBlbGFwc2VkX21zID0gKHRpbWUucGVyZl9jb3VudGVyKCkgLSBzdGFydGVkKSAqIDEwMDAuMAogICAgXywgcGVha19ieXRlcyA9IHRyYWNlbWFsbG9jLmdldF90cmFjZWRfbWVtb3J5KCkKICAgIHRyYWNlbWFsbG9jLnN0b3AoKQogICAgaXRlcmF0aW9uX2NhbGxzID0gc3VtKHNhbXBsZS5pdGVyYXRpb25fY291bnQgZm9yIHNhbXBsZSBpbiBtZXRhZGF0YV9zYW1wbGVzKQogICAgcmV0dXJuIHsKICAgICAgICAiZWxhcHNlZF9tcyI6IGVsYXBzZWRfbXMsCiAgICAgICAgInBlYWtfYnl0ZXMiOiBmbG9hdChwZWFrX2J5dGVzKSwKICAgICAgICAibWV0YWRhdGFfaXRlcmF0aW9uX2NhbGxzIjogZmxvYXQoaXRlcmF0aW9uX2NhbGxzKSwKICAgICAgICAiY2hlY2tzdW0iOiBmbG9hdChjaGVja3N1bSksCiAgICB9CgoKZGVmIG1haW4oKSAtPiBOb25lOgogICAgaXRlcmF0aW9ucyA9IGludChvcy5lbnZpcm9uLmdldCgiTUVMSVhfSU1BR0VfRkFNSUxZX0NPTkZJR19JVEVSQVRJT05TIiwgIjgwMDAwIikpCiAgICBzYW1wbGVfY291bnQgPSBpbnQob3MuZW52aXJvbi5nZXQoIk1FTElYX0lNQUdFX0ZBTUlMWV9DT05GSUdfU0FNUExFUyIsICI1IikpCiAgICBlbGFwc2VkX3NhbXBsZXM6IGxpc3RbZmxvYXRdID0gW10KICAgIHBlYWtfc2FtcGxlczogbGlzdFtmbG9hdF0gPSBbXQogICAgaXRlcmF0aW9uX2NhbGxfc2FtcGxlczogbGlzdFtmbG9hdF0gPSBbXQogICAgY2hlY2tzdW0gPSAwLjAKCiAgICBmb3IgXyBpbiByYW5nZShzYW1wbGVfY291bnQpOgogICAgICAgIHNhbXBsZSA9IF9tZWFzdXJlKGl0ZXJhdGlvbnMpCiAgICAgICAgZWxhcHNlZF9zYW1wbGVzLmFwcGVuZChzYW1wbGVbImVsYXBzZWRfbXMiXSkKICAgICAgICBwZWFrX3NhbXBsZXMuYXBwZW5kKHNhbXBsZVsicGVha19ieXRlcyJdKQogICAgICAgIGl0ZXJhdGlvbl9jYWxsX3NhbXBsZXMuYXBwZW5kKHNhbXBsZVsibWV0YWRhdGFfaXRlcmF0aW9uX2NhbGxzIl0pCiAgICAgICAgY2hlY2tzdW0gPSBzYW1wbGVbImNoZWNrc3VtIl0KCiAgICBwcmludCgKICAgICAgICBqc29uLmR1bXBzKAogICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAiZWxhcHNlZF9tc19tZWFuIjogcm91bmQoc3RhdGlzdGljcy5mbWVhbihlbGFwc2VkX3NhbXBsZXMpLCA2KSwKICAgICAgICAgICAgICAgICJlbGFwc2VkX21zX21pbiI6IHJvdW5kKG1pbihlbGFwc2VkX3NhbXBsZXMpLCA2KSwKICAgICAgICAgICAgICAgICJwZWFrX2J5dGVzX21lYW4iOiByb3VuZChzdGF0aXN0aWNzLmZtZWFuKHBlYWtfc2FtcGxlcyksIDMpLAogICAgICAgICAgICAgICAgIm1ldGFkYXRhX2l0ZXJhdGlvbl9jYWxsc19tZWFuIjogcm91bmQoc3RhdGlzdGljcy5mbWVhbihpdGVyYXRpb25fY2FsbF9zYW1wbGVzKSwgMyksCiAgICAgICAgICAgICAgICAiaXRlcmF0aW9uX2NvdW50IjogZmxvYXQoaXRlcmF0aW9ucyksCiAgICAgICAgICAgICAgICAic2FtcGxlX2NvdW50IjogZmxvYXQoc2FtcGxlX2NvdW50KSwKICAgICAgICAgICAgICAgICJjaGVja3N1bSI6IGNoZWNrc3VtLAogICAgICAgICAgICB9LAogICAgICAgICAgICBzb3J0X2tleXM9VHJ1ZSwKICAgICAgICApCiAgICApCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQo=\\\"))\"; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "metadata_iteration_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "text-family-config-copy-elision",
     "name": "Text family config copy elision",
     "runner": "ubuntu-latest",
