@@ -717,6 +717,78 @@ def test_measurable_changed_lines_singleton_skips_range_helper_for_measured_list
     assert missed == []
 
 
+def test_measurable_changed_lines_singleton_classifies_measured_line_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 101)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 100, 2)),
+                "missing_lines": list(range(2, 101, 2)),
+            }
+        }
+    }
+
+    def fail_range_overlap(*args: object, **kwargs: object) -> bool:  # pragma: no cover
+        raise AssertionError("measured singleton changed sets should check measured bounds directly")
+
+    original_contains = changed_scope_coverage._sorted_line_list_contains
+    contains_calls = 0
+
+    def counting_contains(lines: list[int], line_no: int) -> bool:
+        nonlocal contains_calls
+        contains_calls += 1
+        return original_contains(lines, line_no)
+
+    monkeypatch.setattr(changed_scope_coverage, "_line_ranges_may_overlap", fail_range_overlap)
+    monkeypatch.setattr(changed_scope_coverage, "_sorted_line_list_contains", counting_contains)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {77},
+    )
+
+    assert measurable == [77]
+    assert covered == [77]
+    assert missed == []
+    assert contains_calls == 2
+
+
+def test_measurable_changed_lines_singleton_inside_bounds_but_unmeasured_skips_source_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [1, 5],
+                "missing_lines": [2, 6],
+            }
+        }
+    }
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("unmeasured singleton changed line should not read source")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {3},
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+
+
 def test_measurable_changed_lines_singleton_handles_reversed_executed_bounds(
     tmp_path: Path,
 ) -> None:
@@ -1060,13 +1132,17 @@ def test_changed_scope_coverage_measured_probe_emits_large_measured_metrics() ->
 
 def test_changed_scope_coverage_singleton_probe_emits_range_metrics() -> None:
     metrics = changed_scope_coverage_singleton_probe.run_probe(
-        Path(__file__).resolve().parents[1], path_count=5, measured_lines_per_path=10, samples=2
+        Path(__file__).resolve().parents[1],
+        path_count=5,
+        measured_lines_per_path=10,
+        samples=2,
     )
 
     assert metrics["path_count"] == 5.0
     assert metrics["measured_lines_per_path"] == 10.0
     assert metrics["sample_count"] == 2.0
     assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["singleton_measured_elapsed_ms_mean"] > 0
     assert metrics["source_read_calls_mean"] == 0.0
 
 

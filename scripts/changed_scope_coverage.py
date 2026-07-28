@@ -372,12 +372,14 @@ def _measurable_changed_lines(
             for changed_line in changed:
                 break
             singleton_may_overlap = False
+            singleton_combined_sorted = False
             if (
                 executed_lines
                 and missing_lines
                 and executed_lines[0] <= executed_lines[-1]
                 and missing_lines[0] <= missing_lines[-1]
             ):
+                singleton_combined_sorted = True
                 first_line = executed_lines[0] if executed_lines[0] < missing_lines[0] else missing_lines[0]
                 last_line = executed_lines[-1] if executed_lines[-1] > missing_lines[-1] else missing_lines[-1]
                 singleton_may_overlap = first_line <= changed_line <= last_line
@@ -398,6 +400,23 @@ def _measurable_changed_lines(
                     singleton_may_overlap = first_line <= changed_line <= last_line
             if not singleton_may_overlap:
                 return [], [], []
+            if singleton_combined_sorted or (
+                executed_lines and executed_lines[0] <= executed_lines[-1]
+            ):
+                covered_singleton = _sorted_line_list_contains(executed_lines, changed_line)
+            else:
+                covered_singleton = changed_line in executed_lines
+            if singleton_combined_sorted or (
+                missing_lines and missing_lines[0] <= missing_lines[-1]
+            ):
+                missed_singleton = _sorted_line_list_contains(missing_lines, changed_line)
+            else:
+                missed_singleton = changed_line in missing_lines
+            if not covered_singleton and not missed_singleton:
+                return [], [], []
+            measured_changed = [changed_line]
+            executed_lookup = (changed_line,) if covered_singleton else ()
+            missing_lookup = (changed_line,) if missed_singleton else ()
         else:
             dense_sorted_measured = (
                 changed_count >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
