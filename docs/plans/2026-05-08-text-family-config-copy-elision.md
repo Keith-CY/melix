@@ -28,6 +28,15 @@ The 2026-07-23 follow-up keeps the same registered probe and narrows the new beh
 
 The 2026-07-28 follow-up keeps the same registered probe and narrows the behavior-preserving change to `_bool_value()`: missing and empty metadata still return the caller default, exact normalized bool literals now return before `strip()`, and whitespace-only metadata still falls back to the default after the strip. This avoids one string strip on common already-normalized metadata flags while preserving padded and mixed-case bool parsing through `_bool_from_any()`.
 
+A second 2026-07-28 follow-up keeps the same registered probe and narrows to `_resolved_expert_count()`: missing or empty `melix.text.moe.expert_count` metadata now returns to config/default inference before calling `strip()`, and an empty `melix.text.moe.expert_count_source` similarly avoids a source normalization call. Invalid non-empty expert-count metadata still falls through to the existing family-default path after the guarded `ValueError` handling.
+
+Local Linux registered probe samples for the 2026-07-28 expert-metadata follow-up on this host:
+
+- baseline `origin/main`: `151.5909326262772`, `158.11064094305038`, `149.95074956677854` ms; mean `153.217441045368` ms.
+- expert-metadata empty fast path: `148.41943220235407`, `148.65166936069727`, `151.46144940517843` ms; mean `149.510850322743` ms.
+- delta: `-3.706590722625` ms, `2.419170231100%` faster (`1.024791449681x`).
+- `config_copy_calls_mean`: unchanged at `0.0`; `config_key_accesses_mean`: unchanged at `20000.0`; `peak_bytes_mean`: unchanged at `1008.0`.
+
 Local Linux registered probe samples for the 2026-07-23 follow-up on this host:
 
 - baseline `origin/main`: `156.5028017386794`, `164.59141615778208`, `158.0336649902165` ms; mean `159.709294295559` ms.

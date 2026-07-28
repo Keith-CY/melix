@@ -405,15 +405,19 @@ def _resolved_expert_count(
     if inferred is not None:
         return inferred, "config"
 
-    raw_metadata = metadata.get("melix.text.moe.expert_count", "").strip()
+    raw_metadata = metadata.get("melix.text.moe.expert_count", "")
     if raw_metadata:
-        try:
-            metadata_source = metadata.get("melix.text.moe.expert_count_source", "").strip().lower()
-            if metadata_source == "family_default":
-                return max(0, int(raw_metadata)), "family_default"
-            return max(0, int(raw_metadata)), "metadata"
-        except ValueError:
-            pass
+        raw_metadata = raw_metadata.strip()
+        if raw_metadata:
+            try:
+                metadata_source = metadata.get("melix.text.moe.expert_count_source", "")
+                if metadata_source:
+                    metadata_source = metadata_source.strip().lower()
+                if metadata_source == "family_default":
+                    return max(0, int(raw_metadata)), "family_default"
+                return max(0, int(raw_metadata)), "metadata"
+            except ValueError:
+                pass
 
     if default > 0:
         return max(0, default), "family_default"
