@@ -501,6 +501,39 @@ def test_cold_store_index_reload_skips_json_decode_for_filename_orphans(
     assert list((tmp_path / "cold").glob("*.meta.json")) == []
 
 
+def test_cold_store_index_reload_skips_json_decode_for_balanced_filename_orphans(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    first = _make_cold(tmp_path)
+    first.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+    cold_root = tmp_path / "cold"
+    snapshot_files = list(cold_root.glob("*.kv.safetensors"))
+    assert len(snapshot_files) == 1
+    snapshot_files[0].unlink()
+    (cold_root / "stray.kv.safetensors").write_bytes(b"snapshot")
+
+    def fail_json_loads(*args, **kwargs):  # pragma: no cover - regression guard
+        raise AssertionError(
+            "filename-orphaned cold-prefix sidecars should be pruned before json.loads"
+        )
+
+    monkeypatch.setattr("worker.runtime.prefix_block_store.json.loads", fail_json_loads)
+
+    second = _make_cold(tmp_path)
+    assert second.entry_count() == 0
+    assert list(cold_root.glob("*.meta.json")) == []
+
+
 def test_cold_store_index_reload_unlinks_filename_orphans_by_path_string(
     monkeypatch,
     tmp_path: Path,

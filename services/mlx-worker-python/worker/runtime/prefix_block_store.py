@@ -359,7 +359,6 @@ class ColdPrefixStore:
                         continue
         except OSError:
             return
-        precheck_orphan_names = len(snapshot_file_names) < len(meta_paths)
         meta_suffix_length = len(".meta.json")
         root = self._root
         index = self._index
@@ -370,15 +369,16 @@ class ColdPrefixStore:
         open_file = _OPEN
         json_loads = json.loads
         for meta_path_string, meta_file_name in meta_paths:
-            if precheck_orphan_names:
-                snapshot_name_from_sidecar = f"{meta_file_name[:-meta_suffix_length]}.kv.safetensors"
-                if snapshot_name_from_sidecar not in snapshot_file_names:
-                    # Orphaned sidecar (crash between snapshot write and meta
-                    # write, or manual snapshot deletion) — drop it before parsing
-                    # JSON so orphan-heavy cold dirs do not pay per-sidecar decode
-                    # cost on every restart.
-                    remove_path_string_quietly(meta_path_string)
-                    continue
+            snapshot_name_from_sidecar = f"{meta_file_name[:-meta_suffix_length]}.kv.safetensors"
+            if snapshot_name_from_sidecar not in snapshot_file_names:
+                # Orphaned sidecar (crash between snapshot write and meta
+                # write, or manual snapshot deletion) — drop it before parsing
+                # JSON so orphan-heavy cold dirs do not pay per-sidecar decode
+                # cost on every restart. Always run the filename precheck because
+                # unrelated stray snapshots can otherwise mask balanced orphan
+                # directories when comparing only sidecar counts.
+                remove_path_string_quietly(meta_path_string)
+                continue
             try:
                 with open_file(meta_path_string, "rb") as meta_file:
                     payload = json_loads(meta_file.read())
