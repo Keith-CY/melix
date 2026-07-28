@@ -64,6 +64,7 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
     elapsed_ms: list[float] = []
     source_kind_elapsed_ms: list[float] = []
     read_elapsed_ms: list[float] = []
+    capped_read_elapsed_ms: list[float] = []
     record_elapsed_ms: list[float] = []
     file_counts: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-dataset-source-records-probe-") as tmp:
@@ -115,6 +116,14 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
                 if source_texts[0] != "Melix source row\n" or source_texts[-1] != "Melix source row\n":
                     raise RuntimeError("source text reading changed")  # pragma: no cover - guard only.
                 started = time.perf_counter()
+                capped_source_texts = [
+                    dataset_preparation._read_source_text(path, cap_bytes=32)
+                    for path in paths
+                ]
+                capped_read_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+                if capped_source_texts[0] != "Melix source row\n" or capped_source_texts[-1] != "Melix source row\n":
+                    raise RuntimeError("capped source text reading changed")  # pragma: no cover - guard only.
+                started = time.perf_counter()
                 records = [
                     dataset_preparation._record(
                         path=path,
@@ -144,6 +153,9 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
         "read_elapsed_ms_mean": statistics.fmean(read_elapsed_ms),
         "read_elapsed_ms_min": min(read_elapsed_ms),
         "read_elapsed_ms_p95": sorted(read_elapsed_ms)[int((len(read_elapsed_ms) - 1) * 0.95)],
+        "capped_read_elapsed_ms_mean": statistics.fmean(capped_read_elapsed_ms),
+        "capped_read_elapsed_ms_min": min(capped_read_elapsed_ms),
+        "capped_read_elapsed_ms_p95": sorted(capped_read_elapsed_ms)[int((len(capped_read_elapsed_ms) - 1) * 0.95)],
         "record_elapsed_ms_mean": statistics.fmean(record_elapsed_ms),
         "record_elapsed_ms_min": min(record_elapsed_ms),
         "record_elapsed_ms_p95": sorted(record_elapsed_ms)[int((len(record_elapsed_ms) - 1) * 0.95)],

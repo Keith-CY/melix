@@ -5882,6 +5882,23 @@
         "warn_pct": 5.0
       },
       {
+        "key": "capped_read_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "capped_read_elapsed_ms_min",
+        "unit": "ms",
+        "direction": "lower_is_better"
+      },
+      {
+        "key": "capped_read_elapsed_ms_p95",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
         "direction": "lower_is_better",
         "key": "record_elapsed_ms_mean",
         "unit": "ms",

@@ -135,6 +135,79 @@ def test_dataset_ingest_unbounded_source_reader_uses_single_binary_read(
     assert counting_file.read_calls == 1
 
 
+def test_dataset_ingest_capped_source_reader_uses_single_bounded_binary_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "notes.txt"
+    source_path.write_text("hello\nworld\n", encoding="utf-8")
+
+    class CountingBinaryFile:
+        read_calls = 0
+
+        def __enter__(self) -> "CountingBinaryFile":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_calls += 1
+            assert size == 13
+            return b"hello\nworld\n"
+
+    counting_file = CountingBinaryFile()
+
+    def counted_open(path: str | os.PathLike[str], mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert os.fspath(path) == os.fspath(source_path)
+        assert mode == "rb"
+        assert args == ()
+        assert kwargs == {}
+        return counting_file
+
+    monkeypatch.setattr(dataset_preparation_module, "open", counted_open, raising=False)
+
+    assert _read_source_text(source_path, cap_bytes=12) == "hello\nworld\n"
+    assert counting_file.read_calls == 1
+
+
+def test_dataset_ingest_capped_source_reader_rejects_cap_overflow_with_single_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "notes.txt"
+    source_path.write_text("too long", encoding="utf-8")
+
+    class CountingBinaryFile:
+        read_calls = 0
+
+        def __enter__(self) -> "CountingBinaryFile":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_calls += 1
+            assert size == 4
+            return b"too "
+
+    counting_file = CountingBinaryFile()
+
+    def counted_open(path: str | os.PathLike[str], mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert os.fspath(path) == os.fspath(source_path)
+        assert mode == "rb"
+        assert args == ()
+        assert kwargs == {}
+        return counting_file
+
+    monkeypatch.setattr(dataset_preparation_module, "open", counted_open, raising=False)
+
+    with pytest.raises(OSError, match="source exceeded configured read cap of 3 bytes"):
+        _read_source_text(source_path, cap_bytes=3)
+    assert counting_file.read_calls == 1
+
+
 def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
     _SOURCE_KIND_BY_NAME.clear()
 

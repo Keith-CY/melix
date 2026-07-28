@@ -980,6 +980,10 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["elapsed_ms_p95"] >= 0.0
     assert metrics["source_kind_elapsed_ms_mean"] >= 0.0
     assert metrics["source_kind_elapsed_ms_p95"] >= 0.0
+    assert metrics["read_elapsed_ms_mean"] >= 0.0
+    assert metrics["read_elapsed_ms_p95"] >= 0.0
+    assert metrics["capped_read_elapsed_ms_mean"] >= 0.0
+    assert metrics["capped_read_elapsed_ms_p95"] >= 0.0
     assert metrics["record_elapsed_ms_mean"] >= 0.0
     assert metrics["record_elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0

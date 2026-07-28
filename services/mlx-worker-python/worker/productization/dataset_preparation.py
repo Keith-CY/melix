@@ -1244,20 +1244,11 @@ def _read_source_text(path: Path, *, cap_bytes: int = 0) -> str:
     if cap_bytes <= 0:
         with open_file(raw_path, "rb") as handle:
             return handle.read().decode("utf-8")
-    decode_bytes = bytes.decode
-    chunks: list[bytes] = []
-    chunks_append = chunks.append
-    observed = 0
     with open_file(raw_path, "rb") as handle:
-        while True:
-            chunk = handle.read(64 * 1024)
-            if not chunk:
-                break
-            observed += len(chunk)
-            if cap_bytes > 0 and observed > cap_bytes:
-                raise OSError(f"source exceeded configured read cap of {cap_bytes} bytes")
-            chunks_append(chunk)
-    return decode_bytes(b"".join(chunks), "utf-8")
+        payload = handle.read(cap_bytes + 1)
+    if len(payload) > cap_bytes:
+        raise OSError(f"source exceeded configured read cap of {cap_bytes} bytes")
+    return payload.decode("utf-8")
 
 
 def _iter_source_file_paths(input_path: Path) -> list[Path]:
