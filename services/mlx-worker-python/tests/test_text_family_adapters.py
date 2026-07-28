@@ -10,6 +10,7 @@ from worker.runtime.text_family_adapters import (
     TextFamilyDescriptor,
     TextFamilyDetection,
     _bool_from_any,
+    _bool_value,
     _inferred_attention_profile,
     _inferred_expert_count,
     _inferred_rope_profile,
@@ -361,6 +362,17 @@ def test_bool_from_any_preserves_literal_string_variants() -> None:
     assert _bool_from_any("off") is False
     assert _bool_from_any(" NO ") is False
     assert _bool_from_any("maybe") is False
+
+
+def test_bool_value_uses_exact_literal_fast_path_and_preserves_blank_default() -> None:
+    class NoStripLiteral(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("exact bool metadata literals should avoid strip allocation")
+
+    assert _bool_value({"flag": NoStripLiteral("true")}, "flag", default=False) is True
+    assert _bool_value({"flag": NoStripLiteral("false")}, "flag", default=True) is False
+    assert _bool_value({"flag": "   "}, "flag", default=True) is True
+    assert _bool_value({"flag": " YES "}, "flag", default=False) is True
 
 
 def test_resolve_text_family_config_marks_family_default_expert_count_source() -> None:

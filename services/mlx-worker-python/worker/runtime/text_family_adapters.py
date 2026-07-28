@@ -494,7 +494,14 @@ def _int_value(metadata: Mapping[str, str], key: str, *, default: int) -> int:
 
 
 def _bool_value(metadata: Mapping[str, str], key: str, *, default: bool) -> bool:
-    raw_value = metadata.get(key, "").strip()
+    raw_value = metadata.get(key, "")
+    if not raw_value:
+        return default
+    if raw_value in _TRUE_BOOL_LITERALS:
+        return True
+    if raw_value in _FALSE_BOOL_LITERALS:
+        return False
+    raw_value = raw_value.strip()
     if not raw_value:
         return default
     return _bool_from_any(raw_value)
