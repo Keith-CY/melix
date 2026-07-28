@@ -1133,6 +1133,14 @@ def test_serving_diagnostics_queue_append_uses_retained_count_without_len() -> N
     assert buffer.events == [event]
 
 
+def test_serving_diagnostics_queue_caches_lock_methods_for_hot_append_path() -> None:
+    queue = BoundedServingDiagnosticsEventQueue(max_events=1)
+
+    assert hasattr(queue, "__dict__") is False
+    assert queue._lock_acquire == queue._lock.acquire
+    assert queue._lock_release == queue._lock.release
+
+
 def test_serving_diagnostics_event_instances_use_slots_for_debug_queue() -> None:
     event = ServingDiagnosticsEvent(
         request_id="req-slots",
