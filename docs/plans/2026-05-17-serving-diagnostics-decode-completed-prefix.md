@@ -16,6 +16,13 @@ more specific fast path for the common debug probe shape: `phase == "decode"` an
 JSON prefixes/suffixes and falls back to the generic string-literal path for all
 other phases and statuses.
 
+The follow-up saturated-drop slice keeps queue semantics unchanged while caching
+the underlying lock acquire/release bound methods at queue construction time.
+This removes repeated lock-method attribute lookup from the hot append path used
+by debug queues after they reach their retention bound. The registered probe for
+this follow-up prebuilds deterministic event objects before timing so the metric
+isolates queue append overhead rather than event construction cost.
+
 ## Verification plan
 
 - Run focused serving diagnostics tests and PR-scoped probe selection tests.
