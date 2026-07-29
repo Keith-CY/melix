@@ -34,6 +34,7 @@ _EXPLICIT_SIZE_HINT_SEARCH = _EXPLICIT_SIZE_HINT_RE.search
 _README_MODEL_SIZE_TABLE_PREFIX = "README\nMODEL SIZE | "
 _README_MODEL_SIZE_TABLE_PREFIX_LENGTH = len(_README_MODEL_SIZE_TABLE_PREFIX)
 _NEXT_LINK_REL_MARKER = 'rel="next"'
+_NEXT_LINK_REL_SUFFIX = '>; rel="next"'
 _CURSOR_QUERY_KEY = "cursor="
 _CURSOR_QUERY_KEY_LEN = len(_CURSOR_QUERY_KEY)
 _URL_HEX_DIGITS = {
@@ -352,6 +353,13 @@ class HubCatalog:
 
 
 def _next_cursor_from_link(link_header: str) -> str:
+    suffix_start = link_header.find(_NEXT_LINK_REL_SUFFIX)
+    if suffix_start >= 0:
+        url_start = link_header.rfind("<", 0, suffix_start)
+        if url_start >= 0:
+            return _cursor_query_value(link_header, url_start + 1, suffix_start)
+        return ""
+
     marker = _NEXT_LINK_REL_MARKER
     marker_len = len(marker)
     search_start = 0
@@ -367,21 +375,7 @@ def _next_cursor_from_link(link_header: str) -> str:
         if url_start < 0:
             search_start = relation_start + marker_len
             continue
-        url_content_start = url_start + 1
-        query_end = link_header.find("#", url_content_start, url_end)
-        if query_end < 0:
-            query_end = url_end
-        cursor_start = link_header.find(_CURSOR_QUERY_KEY, url_content_start, query_end)
-        while cursor_start >= 0:
-            previous_char = link_header[cursor_start - 1] if cursor_start > url_content_start else ""
-            if previous_char == "?" or previous_char == "&":
-                value_start = cursor_start + _CURSOR_QUERY_KEY_LEN
-                value_end = link_header.find("&", value_start, query_end)
-                if value_end < 0:
-                    value_end = query_end
-                return _unquote_plus_ascii_cursor(link_header[value_start:value_end])
-            cursor_start = link_header.find(_CURSOR_QUERY_KEY, cursor_start + _CURSOR_QUERY_KEY_LEN, query_end)
-        return ""
+        return _cursor_query_value(link_header, url_start + 1, url_end)
 
 
 def _cursor_query_value(url: str, start: int, end: int) -> str:
