@@ -403,6 +403,50 @@ def test_image_edit_binds_strength_once_per_loop(tmp_path: Path) -> None:
     assert all(b"STRENGTH=0.65" in payload for payload in edited.images)
 
 
+def test_image_edit_builds_static_payload_frame_once_per_loop(tmp_path: Path) -> None:
+    class CountingPrompt:
+        bool_calls = 0
+        format_calls = 0
+
+        def __bool__(self) -> bool:
+            type(self).bool_calls += 1
+            return True
+
+        def __format__(self, format_spec: str) -> str:
+            type(self).format_calls += 1
+            assert format_spec == ""
+            return "add stars"
+
+    class EditRequest:
+        prompt = CountingPrompt()
+        image = b"SOURCE_IMAGE"
+        image_uri = ""
+        mask = b"MASK_IMAGE"
+        mask_uri = ""
+        size = "128x128"
+        response_format = "png"
+        n = 5
+        strength = 0.65
+        source_artifact_id = ""
+        prompt_delta = ""
+        edit_mode = inference_pb2.IMAGE_EDIT_MODE_EDIT
+        ext: dict[str, str] = {}
+
+    runtime = DeterministicImageGenerationRuntime()
+    edited = runtime.edit_image(
+        {"model_id": "melix-dev-image"},
+        EditRequest(),
+        job_id="image-edit-payload-frame-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(edited.images) == 5
+    assert CountingPrompt.bool_calls == 1
+    assert CountingPrompt.format_calls == 1
+    assert all(b"PROMPT=add stars\n" in payload for payload in edited.images)
+
+
 def test_image_artifact_metadata_reuses_supplied_payload_byte_length(tmp_path: Path) -> None:
     class CountingBytes(bytes):
         len_calls = 0
