@@ -881,6 +881,7 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
             "items": [scalar_payload],
             "triple": ("a", scalar_payload, 3),
             "quad": ("phase", scalar_payload, 4, True),
+            "quint": ("phase", scalar_payload, 4, True, None),
             "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
         }
     )
@@ -890,6 +891,7 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
         "items": [scalar_payload],
         "triple": ("a", scalar_payload, 3),
         "quad": ("phase", scalar_payload, 4, True),
+        "quint": ("phase", scalar_payload, 4, True, None),
         "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
     }
     assert copied is not scalar_payload
@@ -898,11 +900,14 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
     assert copied["items"][0] is not scalar_payload
     assert copied["triple"][1] is not scalar_payload
     assert copied["quad"][1] is not scalar_payload
+    assert copied["quint"][1] is not scalar_payload
     assert copied["summary"]["text"] is scalar_text
     assert copied["triple"][0] == "a"
     assert copied["triple"][2] == 3
     assert copied["quad"][0] == "phase"
     assert copied["quad"][2:] == (4, True)
+    assert copied["quint"][0] == "phase"
+    assert copied["quint"][2:] == (4, True, None)
     copied["summary"]["text"] = "downstream mutation"
     assert scalar_payload["text"] == scalar_text
 
@@ -923,11 +928,13 @@ def test_copy_json_like_value_exact_scalar_tuple_avoids_recursive_dispatch(
     copied = counted_copy(("status", 7, True))
     copied_pair = counted_copy(("id", None))
     copied_quad = counted_copy(("phase", 7, True, None))
+    copied_quint = counted_copy(("phase", 7, True, None, "done"))
 
     assert copied == ("status", 7, True)
     assert copied_pair == ("id", None)
     assert copied_quad == ("phase", 7, True, None)
-    assert dispatch_count == 3
+    assert copied_quint == ("phase", 7, True, None, "done")
+    assert dispatch_count == 4
 
 
 class _CopyDict(dict):
