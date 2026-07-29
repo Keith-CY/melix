@@ -226,27 +226,30 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         total_output_bytes = 0
         model_id = str(loaded_model.get("model_id", "image-model"))
         edit_strength = float(request.strength or 0.0)
-        render_edit_payload = self._render_edit_payload
         write_bytes = self._write_bytes
         artifact_metadata = self._artifact_metadata
         append_image = images.append
         append_artifact = artifacts.append
         sleep_image = sleep_if_configured
+        prompt_text = request.prompt or "<empty>"
+        render_edit_payload_prefix = b"\x89PNG\r\n\x1a\n" + (
+            f"MELIX_IMAGE_EDIT\n"
+            f"MODEL={model_id}\n"
+            f"PROMPT={prompt_text}\n"
+            f"SIZE={width}x{height}\n"
+            f"VARIANT="
+        ).encode("utf-8")
+        render_edit_payload_suffix = (
+            f"\nSTRENGTH={edit_strength:.2f}\n"
+            f"SOURCE_SHA={source_digest}\n"
+            f"MASK_SHA={mask_digest}\n"
+        ).encode("utf-8")
         for index in range(image_count):
             if cancel_event.is_set():
                 raise ImageGenerationCancelled("Image edit was canceled.")
 
             sleep_image("image")
-            payload = render_edit_payload(
-                prompt=request.prompt,
-                width=width,
-                height=height,
-                variant=index,
-                model_id=model_id,
-                strength=edit_strength,
-                source_digest=source_digest,
-                mask_digest=mask_digest,
-            )
+            payload = render_edit_payload_prefix + str(index).encode("ascii") + render_edit_payload_suffix
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_publish_ms += write_bytes(artifact_path, payload, monotonic=monotonic)
             payload_byte_length = len(payload)
