@@ -33,6 +33,7 @@ from worker.model_ops.training_config import LoRATrainingConfig
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker import registry as registry_module
+from worker.engine.request_state import RequestState
 from worker.registry import LoadedModel, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_delay import configured_delay_ms
@@ -674,6 +675,17 @@ def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch:
     assert len(invalidated_handles) == 2
     assert sorted_calls == 2
 
+
+def test_request_state_uses_slots_for_lifecycle_hot_path() -> None:
+    state = RequestState(request_id="req-slots", runtime_kind="vlm", phase="prefill")
+
+    assert not hasattr(state, "__dict__")
+    assert state.allocate_seq() == 1
+    state.append_token("hello")
+    state.append_token(" world")
+    assert state.assistant_text == "hello world"
+
+
 def test_registry_capabilities_and_request_lifecycle() -> None:
     assert registry_module._non_negative_float(object()) == 0.0
     assert registry_module._non_negative_float(float("nan")) == 0.0
@@ -700,6 +712,20 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
 
     registry.finish_request("req-1")
     assert registry.get_request("req-1") is None
+
+    registry.start_request("req-phase")
+    registry.set_request_phase("req-phase", "prefill")
+    registry.set_request_phase("req-phase", "prefill")
+    assert registry.runtime_stats().active_prefills == 1
+    registry.set_request_phase("req-phase", "decode")
+    phase_stats = registry.runtime_stats()
+    assert phase_stats.active_prefills == 0
+    assert phase_stats.active_decodes == 1
+    registry.set_request_phase("req-phase", "generate")
+    phase_stats = registry.runtime_stats()
+    assert phase_stats.active_prefills == 0
+    assert phase_stats.active_decodes == 0
+    registry.finish_request("req-phase")
 
     leased_model = registry.load_model(WorkerModelCatalog.dev_text_model())
     with registry.acquire_request_runtime_lease(
