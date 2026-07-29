@@ -482,6 +482,8 @@ def _string_value(metadata: Mapping[str, str], key: str, default: str) -> str:
     value = metadata.get(key)
     if not value:
         return default
+    if not value[0].isspace() and not value[-1].isspace():
+        return value
     value = value.strip()
     return value or default
 
