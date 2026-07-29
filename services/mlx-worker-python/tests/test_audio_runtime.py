@@ -300,6 +300,36 @@ def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     assert stat_calls == 1
 
 
+def test_audio_preprocessing_local_uri_reads_request_fields_once(tmp_path: Path) -> None:
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"field access audio")
+
+    class CountingRequest:
+        format = "wav"
+        audio = None
+        audio_bytes_calls = 0
+        audio_uri_calls = 0
+
+        @property
+        def audio_bytes(self) -> bytes:
+            self.audio_bytes_calls += 1
+            return b""
+
+        @property
+        def audio_uri(self) -> str:
+            self.audio_uri_calls += 1
+            return audio_path.as_uri()
+
+    request = CountingRequest()
+
+    prepared = prepare_audio_input(request, read_uri_bytes=False)
+
+    assert prepared.local_path == str(audio_path)
+    assert prepared.reference == audio_path.as_uri()
+    assert request.audio_bytes_calls == 1
+    assert request.audio_uri_calls == 1
+
+
 def test_audio_preprocessing_derives_uri_suffix_without_splitext(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -7188,6 +7188,7 @@ def test_mlx_audio_local_uri_probe_script_emits_metrics() -> None:
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["local_uri_exists_calls_mean"] == 0.0
+    assert metrics["local_uri_field_access_calls_mean"] == 1.0
     assert metrics["local_uri_read_bytes_calls_mean"] == 0.0
     assert metrics["audio_size_bytes"] == 8_388_608.0
     assert metrics["sample_count"] == 5.0
@@ -7223,6 +7224,7 @@ def test_mlx_audio_local_uri_probe_script_main_covers_checked_in_file(
     payload = json.loads(capsys.readouterr().out.strip())
 
     assert payload["local_uri_exists_calls_mean"] == 0.0
+    assert payload["local_uri_field_access_calls_mean"] == 1.0
     assert payload["local_uri_read_bytes_calls_mean"] == 0.0
     assert payload["audio_size_bytes"] == 1024.0
     assert payload["sample_count"] == 1.0
