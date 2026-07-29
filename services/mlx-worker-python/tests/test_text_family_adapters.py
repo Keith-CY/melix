@@ -91,6 +91,21 @@ def test_string_value_short_circuits_missing_values_without_strip() -> None:
     assert _string_value(MissingMetadata(), "missing", "fallback") == "fallback"
 
 
+def test_string_value_preserves_exact_values_without_strip() -> None:
+    class NoStripExact(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("exact metadata values should not allocate strip results")
+
+    assert (
+        _string_value({"text_backend_id": NoStripExact("mlx_lm")}, "text_backend_id", "fallback")
+        == "mlx_lm"
+    )
+    assert (
+        _string_value({"text_backend_id": " mlx_lm "}, "text_backend_id", "fallback")
+        == "mlx_lm"
+    )
+
+
 def test_inferred_attention_profile_skips_non_string_hints_and_preserves_use_mla_fallback() -> None:
     assert (
         _inferred_attention_profile(
