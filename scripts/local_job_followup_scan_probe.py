@@ -174,6 +174,7 @@ def _scalar_copy_payload() -> dict[str, object]:
         "scalar_pair": ("job", None),
         "scalar_triple": ("phase", 3, True),
         "scalar_quad": ("phase", 3, True, None),
+        "scalar_quint": ("phase", 3, True, None, "done"),
     }
 
 
