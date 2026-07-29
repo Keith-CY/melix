@@ -942,10 +942,18 @@ class WorkerRegistry:
     def set_request_phase(self, request_id: str, phase: str) -> None:
         with self._lock:
             state = self._requests.get(request_id)
-            if state is not None:
-                self._remove_request_from_counters(state)
-                state.phase = phase
-                self._add_request_to_counters(state)
+            if state is None or state.phase == phase:
+                return
+            old_phase = state.phase
+            if old_phase == "prefill" and self._active_prefill_count > 0:
+                self._active_prefill_count -= 1
+            elif old_phase == "decode" and self._active_decode_count > 0:
+                self._active_decode_count -= 1
+            state.phase = phase
+            if phase == "prefill":
+                self._active_prefill_count += 1
+            elif phase == "decode":
+                self._active_decode_count += 1
 
     def finish_request(self, request_id: str) -> None:
         loaded_to_close: LoadedModel | None = None
