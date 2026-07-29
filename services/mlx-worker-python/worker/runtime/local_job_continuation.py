@@ -1187,6 +1187,52 @@ def _copy_json_like_value(value: Any) -> Any:
                 _copy_json_like_value(second),
                 _copy_json_like_value(third),
             )
+        if value_len == 4:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            fourth = value[3]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            fourth_type = value_type_of(fourth)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+                and (
+                    fourth_type is str
+                    or fourth_type is int
+                    or fourth_type is float
+                    or fourth_type is bool
+                    or fourth is None
+                )
+            ):
+                return (first, second, third, fourth)
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+                _copy_json_like_value(fourth),
+            )
         return tuple(_copy_json_like_value(item) for item in value)
     if isinstance(value, dict):
         return {key: _copy_json_like_value(nested) for key, nested in value.items()}
