@@ -613,12 +613,28 @@ def test_runtime_model_preflight_accepts_index_weight_files(tmp_path: Path) -> N
 def test_has_recognized_model_weight_files_skips_path_iterdir(monkeypatch, tmp_path: Path) -> None:
     model_dir = tmp_path / "weights"
     model_dir.mkdir()
-    (model_dir / "model.safetensors").write_text("{}", encoding="utf-8")
+    (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
 
-    def fail_iterdir(_: Path):
+    def fail_iterdir(self: Path):  # pragma: no cover - sentinel
         raise AssertionError("path.iterdir should not be called in _has_recognized_model_weight_files")
 
     monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    assert _has_recognized_model_weight_files(model_dir) is True
+
+
+def test_has_recognized_model_weight_files_uses_fspath_directory_probe_for_common_file(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "weights"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+
+    def fail_is_dir(self: Path) -> bool:  # pragma: no cover - sentinel
+        raise AssertionError("Path.is_dir should not run before common weight filename checks")
+
+    monkeypatch.setattr(Path, "is_dir", fail_is_dir)
 
     assert _has_recognized_model_weight_files(model_dir) is True
 
@@ -629,6 +645,13 @@ def test_has_recognized_model_weight_files_preserves_uppercase_suffix_fallback(t
     (model_dir / "MODEL.SAFETENSORS").write_text("{}", encoding="utf-8")
 
     assert _has_recognized_model_weight_files(model_dir) is True
+
+
+def test_has_recognized_model_weight_files_returns_false_for_non_directory(tmp_path: Path) -> None:
+    model_file = tmp_path / "weights"
+    model_file.write_text("not a directory\n", encoding="utf-8")
+
+    assert _has_recognized_model_weight_files(model_file) is False
 
 
 def test_has_recognized_model_weight_files_prefilters_names_before_stat(
