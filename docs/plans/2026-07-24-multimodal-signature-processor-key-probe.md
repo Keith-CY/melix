@@ -25,9 +25,13 @@ The probe entry includes focused `test_command`, `coverage_command`, and
 - `services/mlx-worker-python/tests/test_pr_scoped_performance.py`
 - `scripts/multimodal_fast_path_signature_probe.py`
 
-This slice uses the registered probe's `elapsed_ms_mean` as the primary metric
-because the workload repeatedly calls `fast_path_probe_signature(...)` against a
-representative VLM loaded-model dictionary with no processor metadata present.
+This slice uses the registered probe's `elapsed_ms_mean` as the primary timing
+metric because the workload repeatedly calls `fast_path_probe_signature(...)`
+against a representative VLM loaded-model dictionary with no processor metadata
+present. It also reports `processor_metadata_key_gets_mean` to make the targeted
+absence fast path auditable: the optimized path should avoid per-key `dict.get`
+lookups when both top-level and nested metadata dictionaries are disjoint from
+the fixed processor-metadata key set.
 
 ## Implementation plan
 

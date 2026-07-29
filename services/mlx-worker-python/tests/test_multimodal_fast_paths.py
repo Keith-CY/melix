@@ -26,6 +26,7 @@ from worker.runtime.multimodal_fast_paths import (
     _preprocessing_fingerprint,
     _video_preprocessing_fingerprint,
     _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED,
+    _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS,
     _has_any_loaded_metadata,
     _signature_pairs_repr,
     fast_path_probe_signature,
@@ -147,6 +148,33 @@ def _loaded_model(
     if top_level_family_id is not None:
         loaded_model["vision_family_id"] = top_level_family_id
     return loaded_model
+
+
+def test_processor_metadata_absent_uses_disjoint_fast_path() -> None:
+    class CountingDict(dict[str, object]):
+        processor_key_gets = 0
+
+        def get(self, key: str, default: object = None) -> object:
+            if key in _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS:
+                self.processor_key_gets += 1
+            return super().get(key, default)
+
+    metadata = CountingDict(
+        {
+            "melix.vlm.execution_mode": "multimodal",
+            "vision_family_id": "gemma4-v1",
+        }
+    )
+    loaded_model = CountingDict(
+        {
+            "model_id": "melix-dev-vlm",
+            "metadata": metadata,
+        }
+    )
+
+    assert _has_any_loaded_metadata(loaded_model, _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS) is False
+    assert loaded_model.processor_key_gets == 0
+    assert metadata.processor_key_gets == 0
 
 
 def test_fast_path_records_cache_miss_then_hit_for_repeated_image() -> None:
