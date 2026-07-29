@@ -966,6 +966,8 @@ def _has_any_loaded_metadata(loaded_model: dict[str, Any], keys: frozenset[str])
     nested_metadata = loaded_model.get("metadata", {})
     if keys is _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS:
         if isinstance(nested_metadata, dict):
+            if keys.isdisjoint(loaded_model) and keys.isdisjoint(nested_metadata):
+                return False
             for key in _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS_SORTED:
                 value = loaded_model.get(key, "")
                 if value and str(value).strip():

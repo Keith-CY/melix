@@ -157,6 +157,12 @@
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0
+      },
+      {
+        "key": "processor_metadata_key_gets_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
       }
     ]
   },

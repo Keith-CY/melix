@@ -4052,6 +4052,7 @@ def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iterations_per_sample"] == 3.0
     assert metrics["signature_count"] == 3.0
+    assert metrics["processor_metadata_key_gets_mean"] == 0.0
     assert metrics["top_level_item_count"] == 4.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
