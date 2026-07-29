@@ -882,6 +882,7 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
             "triple": ("a", scalar_payload, 3),
             "quad": ("phase", scalar_payload, 4, True),
             "quint": ("phase", scalar_payload, 4, True, None),
+            "sext": ("phase", scalar_payload, 4, True, None, "done"),
             "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
         }
     )
@@ -892,6 +893,7 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
         "triple": ("a", scalar_payload, 3),
         "quad": ("phase", scalar_payload, 4, True),
         "quint": ("phase", scalar_payload, 4, True, None),
+        "sext": ("phase", scalar_payload, 4, True, None, "done"),
         "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
     }
     assert copied is not scalar_payload
@@ -901,6 +903,7 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
     assert copied["triple"][1] is not scalar_payload
     assert copied["quad"][1] is not scalar_payload
     assert copied["quint"][1] is not scalar_payload
+    assert copied["sext"][1] is not scalar_payload
     assert copied["summary"]["text"] is scalar_text
     assert copied["triple"][0] == "a"
     assert copied["triple"][2] == 3
@@ -908,6 +911,8 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
     assert copied["quad"][2:] == (4, True)
     assert copied["quint"][0] == "phase"
     assert copied["quint"][2:] == (4, True, None)
+    assert copied["sext"][0] == "phase"
+    assert copied["sext"][2:] == (4, True, None, "done")
     copied["summary"]["text"] = "downstream mutation"
     assert scalar_payload["text"] == scalar_text
 
@@ -929,12 +934,14 @@ def test_copy_json_like_value_exact_scalar_tuple_avoids_recursive_dispatch(
     copied_pair = counted_copy(("id", None))
     copied_quad = counted_copy(("phase", 7, True, None))
     copied_quint = counted_copy(("phase", 7, True, None, "done"))
+    copied_sext = counted_copy(("phase", 7, True, None, "done", 9.5))
 
     assert copied == ("status", 7, True)
     assert copied_pair == ("id", None)
     assert copied_quad == ("phase", 7, True, None)
     assert copied_quint == ("phase", 7, True, None, "done")
-    assert dispatch_count == 4
+    assert copied_sext == ("phase", 7, True, None, "done", 9.5)
+    assert dispatch_count == 5
 
 
 class _CopyDict(dict):

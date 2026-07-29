@@ -24,6 +24,24 @@ for:
 This slice extends the probe payload with a representative exact five-item scalar
 tuple. No Swift runtime behavior is changed.
 
+## Follow-up Slice: Tuple6 Scalar Copy Fast Path
+
+The tuple6 follow-up keeps `_copy_json_like_value(...)` behavior unchanged, but
+extends the exact scalar tuple fast path to six-element scalar tuples. Compact
+local-job follow-up receipts can carry short positional scalar tuples in metrics
+and status metadata; this slice avoids generator construction for the six-item
+shape while preserving recursive copy isolation whenever any tuple member is a
+mutable JSON-like container.
+
+Expected effect:
+
+- reduce `local-job-followup-scan-scandir`
+  `scalar_copy_optimized_elapsed_ms_mean` when the probe payload includes a
+  representative scalar six-tuple;
+- preserve recursive copy isolation for mixed tuple payloads;
+- leave directory scanning, follow-up projection, receipt schema, and Swift
+  runtime behavior unchanged.
+
 ## Verification plan
 
 1. Run the registered focused local-job tests and registry/probe tests locally on
