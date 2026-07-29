@@ -179,16 +179,16 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
         return 0
     total = 0
     seen: set[str] = set()
-    path_is_absolute = os.path.isabs
     path_factory = Path
     model_dir_joinpath = model_dir.joinpath
     weight_file_size = _weight_file_size
+    path_separator = os.sep
     for raw_shard in weight_map.values():
         shard_name = str(raw_shard or "").strip()
         if not shard_name or shard_name in seen:
             continue
         seen.add(shard_name)
-        if path_is_absolute(shard_name):
+        if shard_name[0] == path_separator:
             shard_path = path_factory(shard_name)
         else:
             shard_path = model_dir_joinpath(shard_name)

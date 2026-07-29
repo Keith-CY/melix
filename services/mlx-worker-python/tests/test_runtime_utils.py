@@ -304,6 +304,28 @@ def test_indexed_safetensors_shard_bytes_preserves_absolute_shard_paths(tmp_path
     assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"absolute-weights")
 
 
+def test_indexed_safetensors_shard_bytes_strips_legacy_shard_whitespace(tmp_path) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = bundle / "model-00001-of-00001.safetensors"
+    shard.write_bytes(b"legacy-whitespace")
+    (bundle / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "layers.0.weight": f"  {shard.name}\t",
+                    "layers.blank.weight": "   ",
+                    "layers.none.weight": None,
+                    "layers.zero.weight": 0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"legacy-whitespace")
+
+
 def test_estimate_model_weight_resident_bytes_skips_expanduser_for_plain_paths(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
