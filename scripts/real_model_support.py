@@ -353,12 +353,12 @@ def _is_deterministic_development_model(model_id: str) -> bool:
 
 
 def _has_recognized_model_weight_files(path: Path) -> bool:
-    if not path.is_dir():
-        return False
     path_string = os.fspath(path)
     for filename in _REAL_MODEL_COMMON_WEIGHT_FILENAMES:
         if os.path.isfile(os.path.join(path_string, filename)):
             return True
+    if not os.path.isdir(path_string):
+        return False
     with os.scandir(path) as entries:
         for entry in entries:
             name = entry.name
