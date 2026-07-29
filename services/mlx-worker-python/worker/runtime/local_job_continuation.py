@@ -1289,6 +1289,72 @@ def _copy_json_like_value(value: Any) -> Any:
                 _copy_json_like_value(fourth),
                 _copy_json_like_value(fifth),
             )
+        if value_len == 6:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            fourth = value[3]
+            fifth = value[4]
+            sixth = value[5]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            fourth_type = value_type_of(fourth)
+            fifth_type = value_type_of(fifth)
+            sixth_type = value_type_of(sixth)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+                and (
+                    fourth_type is str
+                    or fourth_type is int
+                    or fourth_type is float
+                    or fourth_type is bool
+                    or fourth is None
+                )
+                and (
+                    fifth_type is str
+                    or fifth_type is int
+                    or fifth_type is float
+                    or fifth_type is bool
+                    or fifth is None
+                )
+                and (
+                    sixth_type is str
+                    or sixth_type is int
+                    or sixth_type is float
+                    or sixth_type is bool
+                    or sixth is None
+                )
+            ):
+                return (first, second, third, fourth, fifth, sixth)
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+                _copy_json_like_value(fourth),
+                _copy_json_like_value(fifth),
+                _copy_json_like_value(sixth),
+            )
         return tuple(_copy_json_like_value(item) for item in value)
     if isinstance(value, dict):
         return {key: _copy_json_like_value(nested) for key, nested in value.items()}
