@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from packages.protocol.python.worker.v1 import inference_pb2  # noqa: E402
 from worker.runtime.audio_runtime_protocols import AudioRuntimeLoadedModel  # noqa: E402
+from worker.runtime.audio_preprocessing import prepare_audio_input  # noqa: E402
 from worker.runtime.mlx_audio_runtime import MLXAudioTranscriptionRuntime  # noqa: E402
 
 AUDIO_SIZE_BYTES = 8 * 1024 * 1024
@@ -76,6 +77,32 @@ def _measure_once(audio_path: Path) -> tuple[float, int, int, float]:
     return elapsed_ms, read_count, exists_count, float(peak_bytes)
 
 
+def _measure_field_access_once(audio_path: Path) -> float:
+    class CountingRequest:
+        format = "wav"
+        audio = None
+        audio_bytes_calls = 0
+        audio_uri_calls = 0
+
+        @property
+        def audio_bytes(self) -> bytes:
+            self.audio_bytes_calls += 1
+            return b""
+
+        @property
+        def audio_uri(self) -> str:
+            self.audio_uri_calls += 1
+            return audio_path.as_uri()
+
+    request = CountingRequest()
+    prepared = prepare_audio_input(request, read_uri_bytes=False)
+    if prepared.local_path != str(audio_path):
+        raise AssertionError("unexpected local audio path")  # pragma: no cover
+    if request.audio_bytes_calls != 1:
+        raise AssertionError("unexpected audio_bytes field access count")  # pragma: no cover
+    return float(request.audio_uri_calls)
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="melix-audio-uri-probe-") as tmp:
         audio_path = Path(tmp) / "large-local.wav"
@@ -84,17 +111,20 @@ def main() -> int:
         read_samples: list[float] = []
         peak_samples: list[float] = []
         exists_samples: list[float] = []
+        field_access_samples: list[float] = []
         for _ in range(SAMPLE_COUNT):
             elapsed_ms, read_count, exists_count, peak_bytes = _measure_once(audio_path)
             elapsed_samples.append(elapsed_ms)
             read_samples.append(float(read_count))
             exists_samples.append(float(exists_count))
             peak_samples.append(peak_bytes)
+            field_access_samples.append(_measure_field_access_once(audio_path))
 
     payload = {
         "audio_size_bytes": float(AUDIO_SIZE_BYTES),
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
         "local_uri_exists_calls_mean": statistics.fmean(exists_samples),
+        "local_uri_field_access_calls_mean": statistics.fmean(field_access_samples),
         "local_uri_read_bytes_calls_mean": statistics.fmean(read_samples),
         "peak_bytes_mean": statistics.fmean(peak_samples),
         "sample_count": float(SAMPLE_COUNT),

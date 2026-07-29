@@ -36,27 +36,29 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
     mime_type = getattr(media, "mime_type", "")
     format_name = request.format or getattr(media, "format", "")
     filename = getattr(media, "filename", "")
+    audio_bytes = request.audio_bytes
+    audio_uri = request.audio_uri
     input_bytes: int | None = None
 
-    if request.audio_bytes:
-        bytes_data = bytes(request.audio_bytes)
+    if audio_bytes:
+        bytes_data = bytes(audio_bytes)
         local_path = ""
         source_kind = "inline"
         reference = "inline:audio"
-    elif request.audio_uri:
+    elif audio_uri:
         try:
             if read_uri_bytes:
-                path = _path_from_uri(request.audio_uri)
+                path = _path_from_uri(audio_uri)
                 local_path = os.fspath(path)
                 bytes_data = path.read_bytes()
             else:
-                local_path = _local_path_from_uri(request.audio_uri)
+                local_path = _local_path_from_uri(audio_uri)
                 bytes_data = b""
                 input_bytes = os.stat(local_path).st_size
         except OSError as exc:
-            raise AudioPreprocessError(f"Missing local audio input: {request.audio_uri}") from exc
+            raise AudioPreprocessError(f"Missing local audio input: {audio_uri}") from exc
         source_kind = "uri"
-        reference = request.audio_uri
+        reference = audio_uri
         if not format_name:
             format_name = _suffix_format_from_path(local_path)
         if not filename:
