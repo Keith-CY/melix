@@ -1119,6 +1119,62 @@ def test_agentic_tool_selection_seeds_local_compute_without_append_helper(
     assert appended_tool_names == ["text_search"]
 
 
+def test_policy_agentic_tool_selection_seeds_local_compute_without_append_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appended_tool_names: list[str] = []
+    original_append_selected_tool = tool_registry_module._append_policy_selected_tool
+
+    def tracking_append_selected_tool(
+        selected_names: list[str],
+        selected_sources: set[str],
+        selected_tools: list[dict[str, str]],
+        tool_name: str,
+        source: str,
+        max_selected_tools: int,
+        disabled_tool_names: frozenset[str] | None,
+        denied_tool_names: list[str] | None,
+    ) -> bool:
+        appended_tool_names.append(tool_name)
+        return original_append_selected_tool(
+            selected_names,
+            selected_sources,
+            selected_tools,
+            tool_name,
+            source,
+            max_selected_tools,
+            disabled_tool_names,
+            denied_tool_names,
+        )
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_append_policy_selected_tool",
+        tracking_append_selected_tool,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=(
+                "Search local evidence, then visit fixture://docs/provider-contract "
+                "without web access."
+            ),
+            vector_selected_tool_ids=("visit", "text_search"),
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "keyword"},
+    ]
+    assert result.receipt["tool_policy_receipt"]["requested_tools"] == ["visit"]
+    assert appended_tool_names == ["text_search", "visit"]
+
+
 def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hits() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(

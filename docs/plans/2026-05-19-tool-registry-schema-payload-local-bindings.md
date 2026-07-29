@@ -332,6 +332,23 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, and tool definitions
   unchanged.
 
+## Follow-up Slice: Policy Local Compute Seed Fast Path
+
+The 2026-07-29 follow-up keeps policy-aware agentic tool selection receipts
+unchanged, but seeds the always-available `local_compute` entry directly after
+the early policy fallback exits. `allow_web=False` only disables network-capable
+tools, so the built-in `local_compute` seed does not need to pass through the
+generic policy append helper before vector or keyword candidates are considered.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `policy_planning_elapsed_ms_mean` workload;
+- preserve selected registry identity, selected tool order, source labels,
+  selected schema bytes, full schema bytes, and denied-tool receipts;
+- leave non-policy selection, registry selection, OpenAI schema generation,
+  protobuf config handling, and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
@@ -346,7 +363,8 @@ Expected effect:
    `current_capacity_planning_elapsed_ms_mean` for the local-compute seed slice,
    `selector_planning_elapsed_ms_mean`,
    `current_capacity_planning_elapsed_ms_mean`, and
-   `policy_planning_elapsed_ms_mean` for the selected-source membership slice, or
+   `policy_planning_elapsed_ms_mean` for the selected-source membership slice or
+   policy local-compute seed slice, or
    `partial_selection_tool_config_elapsed_ms_mean` for the worker ToolConfig
    serialized-copy slice) over repeated samples.
 4. Push only if local evidence is neutral-to-improved and rely on the GitHub
