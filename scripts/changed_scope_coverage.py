@@ -368,9 +368,7 @@ def _measurable_changed_lines(
         measured_changed = None
         dense_sorted_measured = False
         if changed_count == 1:
-            changed_line = 0
-            for changed_line in changed:
-                break
+            changed_line = next(iter(changed))
             singleton_may_overlap = False
             singleton_combined_sorted = False
             if (
@@ -489,15 +487,16 @@ def _measurable_changed_lines(
         repo_root / rel_path, sorted_measured_changed
     )
     if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
+        sorted_line_list_contains = _sorted_line_list_contains
         covered = [
             line_no
             for line_no in measurable
-            if _sorted_line_list_contains(executed_lookup, line_no)
+            if sorted_line_list_contains(executed_lookup, line_no)
         ]
         missed = [
             line_no
             for line_no in measurable
-            if _sorted_line_list_contains(missing_lookup, line_no)
+            if sorted_line_list_contains(missing_lookup, line_no)
         ]
     else:
         covered = []
