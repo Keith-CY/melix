@@ -301,6 +301,23 @@ def _measurable_non_comment_lines(
 ) -> list[int]:
     measurable: list[int] = []
     append_measurable = measurable.append
+    if len(line_numbers) == 1:
+        target_line = line_numbers[0]
+        if target_line < 1:
+            return measurable
+        with source_path.open("r", encoding="utf-8") as source_file:
+            for index, line in enumerate(source_file, 1):
+                if index != target_line:
+                    continue
+                first_char = line[0] if line else ""
+                if first_char and first_char != "#" and not first_char.isspace():
+                    append_measurable(index)
+                else:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        append_measurable(index)
+                break
+        return measurable
     if len(line_numbers) <= _SPARSE_SOURCE_LINE_SCAN_THRESHOLD:
         remaining = set(line_numbers)
         with source_path.open("r", encoding="utf-8") as source_file:
