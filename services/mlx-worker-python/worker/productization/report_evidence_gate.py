@@ -424,46 +424,49 @@ def _rule_matches_report(
             cached_metric_prefix_state = rule_get("_melix_cached_metric_prefix_state")
             if (
                 isinstance(cached_metric_prefix_state, tuple)
-                and len(cached_metric_prefix_state) == 4
+                and len(cached_metric_prefix_state) == 5
                 and cached_metric_prefix_state[0] is metric_prefixes
                 and isinstance(cached_metric_prefix_state[1], tuple)
                 and isinstance(cached_metric_prefix_state[2], frozenset)
                 and isinstance(cached_metric_prefix_state[3], bool)
+                and isinstance(cached_metric_prefix_state[4], dict)
             ):
                 metric_prefix_tuple = cached_metric_prefix_state[1]
                 metric_prefix_initials = cached_metric_prefix_state[2]
                 metric_prefix_matches_empty = cached_metric_prefix_state[3]
+                metric_prefix_by_initial = cached_metric_prefix_state[4]
             else:
                 (
                     metric_prefix_tuple,
                     metric_prefix_initials,
                     metric_prefix_matches_empty,
+                    metric_prefix_by_initial,
                 ) = _string_prefix_tuple_from_tuple(metric_prefixes)
                 rule["_melix_cached_metric_prefix_state"] = (
                     metric_prefixes,
                     metric_prefix_tuple,
                     metric_prefix_initials,
                     metric_prefix_matches_empty,
+                    metric_prefix_by_initial,
                 )
         else:
             (
                 metric_prefix_tuple,
                 metric_prefix_initials,
                 metric_prefix_matches_empty,
+                metric_prefix_by_initial,
             ) = _string_prefix_tuple(metric_prefixes)
         metric_key = "metric"
         to_string = str
         if metric_prefix_matches_empty:
             return bool(metrics)
+        metric_prefix_for_initial = metric_prefix_by_initial.__getitem__
         for metric in metrics:
             metric_raw = metric.get(metric_key, "")
             metric_value = metric_raw if type(metric_raw) is str else to_string(metric_raw)
-            if (
-                metric_value
-                and metric_value[0] in metric_prefix_initials
-                and metric_value.startswith(metric_prefix_tuple)
-            ):
-                return True
+            if metric_value and metric_value[0] in metric_prefix_initials:
+                if metric_value.startswith(metric_prefix_for_initial(metric_value[0])):
+                    return True
     target_fields = rule_get("target_fields", ())
     if target_fields:
         if isinstance(target_fields, tuple):
@@ -531,9 +534,21 @@ def _string_tuple_from_tuple(values: tuple[object, ...]) -> tuple[str, ...]:
 @lru_cache(maxsize=128)
 def _string_prefix_tuple_from_tuple(
     values: tuple[object, ...],
-) -> tuple[tuple[str, ...], frozenset[str], bool]:
+) -> tuple[tuple[str, ...], frozenset[str], bool, dict[str, str | tuple[str, ...]]]:
     prefixes = tuple(str(item) for item in values)
-    return prefixes, frozenset(prefix[0] for prefix in prefixes if prefix), "" in prefixes
+    prefix_by_initial: dict[str, list[str]] = {}
+    for prefix in prefixes:
+        if prefix:
+            prefix_by_initial.setdefault(prefix[0], []).append(prefix)
+    return (
+        prefixes,
+        frozenset(prefix_by_initial),
+        "" in prefixes,
+        {
+            initial: grouped[0] if len(grouped) == 1 else tuple(grouped)
+            for initial, grouped in prefix_by_initial.items()
+        },
+    )
 
 
 def _string_frozenset(values: object) -> frozenset[str]:
@@ -550,11 +565,23 @@ def _string_tuple(values: object) -> tuple[str, ...]:
 
 def _string_prefix_tuple(
     values: object,
-) -> tuple[tuple[str, ...], frozenset[str], bool]:
+) -> tuple[tuple[str, ...], frozenset[str], bool, dict[str, str | tuple[str, ...]]]:
     if isinstance(values, tuple):
         return _string_prefix_tuple_from_tuple(values)
     prefixes = tuple(str(item) for item in values)  # type: ignore[union-attr]
-    return prefixes, frozenset(prefix[0] for prefix in prefixes if prefix), "" in prefixes
+    prefix_by_initial: dict[str, list[str]] = {}
+    for prefix in prefixes:
+        if prefix:
+            prefix_by_initial.setdefault(prefix[0], []).append(prefix)
+    return (
+        prefixes,
+        frozenset(prefix_by_initial),
+        "" in prefixes,
+        {
+            initial: grouped[0] if len(grouped) == 1 else tuple(grouped)
+            for initial, grouped in prefix_by_initial.items()
+        },
+    )
 
 
 def _telemetry_failures(report: dict[str, object]) -> list[str]:

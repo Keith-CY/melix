@@ -397,6 +397,7 @@ def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple()
     assert cached_state[1] == ("adapter.", "runtime.")
     assert cached_state[2] == frozenset({"a", "r"})
     assert cached_state[3] is False
+    assert cached_state[4] == {"a": "adapter.", "r": "runtime."}
 
 
 def test_report_evidence_gate_metric_prefix_fast_reject_preserves_empty_prefix() -> None:
