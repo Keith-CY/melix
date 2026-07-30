@@ -839,6 +839,28 @@ def test_pipe_channel_name_lowercases_only_the_channel_token() -> None:
     assert RequestStreamAssembler._pipe_channel_name("\r\n") == ""
 
 
+def test_longest_marker_prefix_suffix_reuses_precomputed_marker_prefixes() -> None:
+    prefixes = RequestStreamAssembler._MARKER_PREFIX_SUFFIXES[
+        RequestStreamAssembler._THINK_CLOSE
+    ]
+
+    assert prefixes[2] == "</thi"
+    assert (
+        RequestStreamAssembler._longest_marker_prefix_suffix(
+            "reasoning body </thi",
+            RequestStreamAssembler._THINK_CLOSE,
+        )
+        is prefixes[2]
+    )
+    assert (
+        RequestStreamAssembler._longest_marker_prefix_suffix(
+            "body <custom",
+            "<custom-end>",
+        )
+        == "<custom"
+    )
+
+
 def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-tool-first",

@@ -32,6 +32,10 @@ def _whitespace_token_count(text: str) -> int:
     return len(text.split())
 
 
+def _marker_prefix_suffixes(marker: str) -> tuple[str, ...]:
+    return tuple(marker[:index] for index in range(len(marker) - 1, 0, -1))
+
+
 @lru_cache(maxsize=128)
 def _cached_compress_delta_token_counts(
     weights: tuple[int, ...],
@@ -316,6 +320,12 @@ class RequestStreamAssembler:
     _PIPE_TOOL_CLOSE = "<tool_call|>"
     _PIPE_CHANNEL_OPEN = "<|channel>"
     _PIPE_CHANNEL_HEADER_CLOSE = "<channel|>"
+    _MARKER_PREFIX_SUFFIXES = {
+        _THINK_CLOSE: _marker_prefix_suffixes(_THINK_CLOSE),
+        _TOOL_CLOSE: _marker_prefix_suffixes(_TOOL_CLOSE),
+        _PIPE_TOOL_CLOSE: _marker_prefix_suffixes(_PIPE_TOOL_CLOSE),
+        _PIPE_CHANNEL_HEADER_CLOSE: _marker_prefix_suffixes(_PIPE_CHANNEL_HEADER_CLOSE),
+    }
     _REASONING_OPEN_TAGS = (_THINK_OPEN, _PIPE_CHANNEL_OPEN)
     _TOOL_OPEN_TAGS = (_TOOL_OPEN, _PIPE_TOOL_OPEN)
     _TOOL_PARSER_STRUCTURAL_OPEN_TAGS = _REASONING_OPEN_TAGS + _TOOL_OPEN_TAGS
@@ -1235,9 +1245,11 @@ class RequestStreamAssembler:
 
     @staticmethod
     def _longest_marker_prefix_suffix(text: str, marker: str) -> str:
-        maximum_length = min(len(text), len(marker) - 1)
-        for length in range(maximum_length, 0, -1):
-            prefix = marker[:length]
+        prefixes = RequestStreamAssembler._MARKER_PREFIX_SUFFIXES.get(marker)
+        if prefixes is None:
+            maximum_length = min(len(text), len(marker) - 1)
+            prefixes = tuple(marker[:length] for length in range(maximum_length, 0, -1))
+        for prefix in prefixes:
             if text.endswith(prefix):
                 return prefix
         return ""
