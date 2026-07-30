@@ -57,6 +57,14 @@ def test_token_count_compression_reuses_cached_weight_shape() -> None:
     stream_assembler._cached_compress_delta_token_counts.cache_clear()
 
 
+def test_single_delta_single_token_annotation_reuses_existing_list() -> None:
+    assembler = RequestStreamAssembler("req-single-delta", False, "", "")
+    deltas = [AssemblyDelta(content_text="visible")]
+
+    assert assembler._annotate_token_counts(deltas, 1) is deltas
+    assert assembler._annotate_token_counts(deltas, 2)[0].token_count == 2
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _token_count_routing_probe() -> None:
     assembler = RequestStreamAssembler(

@@ -1365,6 +1365,8 @@ class RequestStreamAssembler:
         if token_count <= 0 or not deltas:
             return deltas
         if len(deltas) == 1:
+            if token_count == 1:
+                return deltas
             return [self._with_token_count(deltas[0], token_count)]
 
         weights = [self._estimated_delta_token_count(delta) for delta in deltas]
