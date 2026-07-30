@@ -15,14 +15,29 @@ WORKER_ROOT = REPO_ROOT / "services" / "mlx-worker-python"
 if str(WORKER_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKER_ROOT))
 
-from mlx_lm import load, stream_generate
-from mlx_lm.sample_utils import make_sampler
-
 from worker.runtime.structured_output_constraints import (
     _compile_json_schema,
     _schema_value_satisfies_node,
     build_structured_output_logits_processors,
 )
+
+
+def load(*args: Any, **kwargs: Any) -> Any:
+    from mlx_lm import load as mlx_lm_load
+
+    return mlx_lm_load(*args, **kwargs)
+
+
+def stream_generate(*args: Any, **kwargs: Any) -> Any:
+    from mlx_lm import stream_generate as mlx_lm_stream_generate
+
+    return mlx_lm_stream_generate(*args, **kwargs)
+
+
+def make_sampler(*args: Any, **kwargs: Any) -> Any:
+    from mlx_lm.sample_utils import make_sampler as mlx_lm_make_sampler
+
+    return mlx_lm_make_sampler(*args, **kwargs)
 
 
 _CONFORMANCE_FIXTURES: tuple[dict[str, object], ...] = (

@@ -4,13 +4,14 @@ import builtins
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+import importlib.util
 import json
 import math
 import sys
 from threading import Barrier, Lock
 from time import sleep
 from time import monotonic
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -25,6 +26,48 @@ from worker.runtime.structured_output_constraints import (
 
 
 _MISSING = object()
+
+
+def test_real_model_probe_import_does_not_require_mlx_lm(monkeypatch) -> None:
+    original_import = builtins.__import__
+
+    def reject_mlx_lm(name: str, *args, **kwargs):
+        if name == "mlx_lm" or name.startswith("mlx_lm."):
+            raise ImportError("mlx_lm runtime unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_mlx_lm)
+    spec = importlib.util.spec_from_file_location(
+        "structured_output_real_model_probe_without_mlx_lm",
+        real_model_probe.__file__,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert callable(module.load)
+    assert callable(module.stream_generate)
+    assert callable(module.make_sampler)
+    with pytest.raises(ImportError, match="mlx_lm runtime unavailable"):
+        module.load("model")
+
+
+def test_real_model_probe_lazy_mlx_lm_entrypoints_delegate(monkeypatch) -> None:
+    mlx_lm = ModuleType("mlx_lm")
+    mlx_lm.load = lambda path: ("model", path)
+    mlx_lm.stream_generate = lambda *args, **kwargs: (args, kwargs)
+    sample_utils = ModuleType("mlx_lm.sample_utils")
+    sample_utils.make_sampler = lambda **kwargs: kwargs
+    monkeypatch.setitem(sys.modules, "mlx_lm", mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.sample_utils", sample_utils)
+
+    assert real_model_probe.load("model-path") == ("model", "model-path")
+    assert real_model_probe.stream_generate("model", max_tokens=2) == (
+        ("model",),
+        {"max_tokens": 2},
+    )
+    assert real_model_probe.make_sampler(temp=0) == {"temp": 0}
 
 
 @pytest.fixture
