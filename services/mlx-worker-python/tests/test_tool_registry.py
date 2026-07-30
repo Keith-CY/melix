@@ -362,6 +362,37 @@ def test_safe_tool_affordance_source_preserves_normalized_fallback_behavior() ->
     assert tool_registry_module._safe_tool_affordance_source("bad source") == "unspecified"
 
 
+def test_tool_affordance_name_exact_dict_fast_path_preserves_key_precedence() -> None:
+    assert (
+        tool_registry_module._tool_affordance_name(
+            {"tool_name": "visit", "source": "workflow_selected"}
+        )
+        == "visit"
+    )
+    assert (
+        tool_registry_module._tool_affordance_name(
+            {"tool_id": "local_compute", "tool_name": "visit"}
+        )
+        == "local_compute"
+    )
+    assert (
+        tool_registry_module._tool_affordance_name(
+            {"tool_id": 42, "tool_name": "visit"}
+        )
+        is None
+    )
+    assert (
+        tool_registry_module._tool_affordance_name({"name": "text_search"})
+        == "text_search"
+    )
+    assert tool_registry_module._tool_affordance_name({"tool_name": 42}) is None
+    assert tool_registry_module._tool_affordance_name({"name": object()}) is None
+    assert (
+        tool_registry_module._tool_affordance_name({"source": "workflow_selected"})
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

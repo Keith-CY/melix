@@ -369,6 +369,26 @@ Expected effect:
   OpenAI schema generation, protobuf config handling, and tool definitions
   unchanged.
 
+## Follow-up Slice: Exact Dict Affordance Name Fast Path
+
+The 2026-07-30 exact-dict follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts unchanged, but handles
+plain `dict` affordance payloads directly before falling back to the generic
+`Mapping.get(...)` loop. Workflow-selected and retrieved-context affordances are
+constructed as regular dictionaries on the hot path, so direct key checks avoid
+repeated mapping method dispatch while preserving the existing `tool_id`,
+`tool_name`, then `name` precedence and invalid non-string handling.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for repeated dict affordance
+  preflights;
+- preserve referenced-tool ordering, invalid-affordance counting, missing-tool
+  receipts, and receipt redaction behavior;
+- leave custom `Mapping` affordances, registry selection, OpenAI schema
+  generation, protobuf config handling, and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
