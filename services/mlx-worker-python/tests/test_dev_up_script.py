@@ -1121,6 +1121,17 @@ def test_spawn_background_process_recreates_stale_unwritable_log_file(
         kwargs["stdout"].flush()
         return FakeProcess()
 
+    original_open = dev_up.Path.open
+    first_append_attempt = True
+
+    def fake_open(self: Path, mode: str = "r", *args: object, **kwargs: object):
+        nonlocal first_append_attempt
+        if self == log_path and mode == "ab" and first_append_attempt:
+            first_append_attempt = False
+            raise PermissionError("stale root-owned log")
+        return original_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(dev_up.Path, "open", fake_open)
     monkeypatch.setattr(dev_up.subprocess, "Popen", fake_popen)
 
     pid = dev_up.spawn_background_process(
