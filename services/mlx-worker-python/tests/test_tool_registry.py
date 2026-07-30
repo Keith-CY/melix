@@ -344,6 +344,24 @@ def test_tool_schema_consistency_preflight_sanitizes_empty_invalid_batch_and_sou
     assert "SECRET_SOURCE" not in receipt_text
 
 
+def test_safe_tool_affordance_source_fast_paths_common_exact_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RejectingToolNameRegex:
+        def fullmatch(self, value: str) -> object:  # pragma: no cover
+            raise AssertionError(f"unexpected regex validation for {value!r}")
+
+    monkeypatch.setattr(tool_registry_module, "_TOOL_NAME_RE", RejectingToolNameRegex())
+
+    assert tool_registry_module._safe_tool_affordance_source("workflow_selected") == "workflow_selected"
+    assert tool_registry_module._safe_tool_affordance_source("retrieved_context") == "retrieved_context"
+
+
+def test_safe_tool_affordance_source_preserves_normalized_fallback_behavior() -> None:
+    assert tool_registry_module._safe_tool_affordance_source(" workflow_selected ") == "workflow_selected"
+    assert tool_registry_module._safe_tool_affordance_source("bad source") == "unspecified"
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

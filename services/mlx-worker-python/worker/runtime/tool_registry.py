@@ -42,6 +42,14 @@ _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SELECTION_CACHE_MAX_SIZE = 32
 _KEYWORD_LITERAL_HINT_CHARACTERS = ":/_"
 _KEYWORD_TOKEN_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
+_SAFE_TOOL_AFFORDANCE_SOURCE_FAST_PATHS = frozenset(
+    (
+        "retrieved_context",
+        "tool_affordance",
+        "viewed_procedure",
+        "workflow_selected",
+    )
+)
 _KEYWORD_BOUNDARY_TRANSLATION = str.maketrans(
     {
         chr(codepoint): " "
@@ -662,6 +670,8 @@ def _normalized_tool_affordance_name(raw_name: str) -> str | None:
 
 
 def _safe_tool_affordance_source(source: str) -> str:
+    if source in _SAFE_TOOL_AFFORDANCE_SOURCE_FAST_PATHS:
+        return source
     normalized_source = source.strip()
     if _TOOL_NAME_RE.fullmatch(normalized_source):
         return normalized_source
