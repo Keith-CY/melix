@@ -132,11 +132,10 @@ def _copy_json_dict(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def _copy_quality_components_list(value: list[Any]) -> list[Any] | None:
-    copied: list[Any] = []
-    copied_append = copied.append
+    copied: list[Any] = [None] * len(value)
     immutable_types = _JSON_IMMUTABLE_TYPE_SET
     value_type = _TYPE
-    for component in value:
+    for index, component in enumerate(value):
         if value_type(component) is not dict or len(component) != 4:
             return None
         try:
@@ -167,14 +166,12 @@ def _copy_quality_components_list(value: list[Any]) -> list[Any] | None:
                 if value_type(label) not in immutable_types:
                     return None
             copied_labels = [*labels]
-        copied_append(
-            {
-                "name": name,
-                "score": score,
-                "passed": passed,
-                "labels": copied_labels,
-            }
-        )
+        copied[index] = {
+            "name": name,
+            "score": score,
+            "passed": passed,
+            "labels": copied_labels,
+        }
     return copied
 
 
