@@ -135,7 +135,7 @@ Once a schema-backed or JSON-object grammar reaches a complete JSON value and th
 
 ## Completion Verification
 
-- The completed Python-worker implementation is integrated with `origin/main` at `fdd1ddbba24f73aee4c86b0d9112f0f5541feca0`.
+- The completed Python-worker implementation is integrated with `origin/main` at `d2d8e94eadfb26eddbd6fb765ea1930ca86a8d3a`.
 - Post-review structured-output, adjacent runtime, and performance-gate tests pass together (`320 passed`, `2 warnings`). The review-fix transaction has 99 percent aggregate changed-line coverage, with direct production coverage of 98.04 percent for the structured-output runtime and 100 percent for the tool-wire runtime. The follow-up Linux import transaction has 100 percent changed-line coverage.
 - Independent Standards and Spec reviews report no remaining findings after the synchronized mask-cache and parser-dialect fixes. Focused verification includes `176` structured-output Python tests and `34` Swift tool-parser registry tests.
 - The final pre-commit transaction must rerun `make swift-test`, `make py-test`, `make integration-test`, and the current-base PR-scoped performance report before PR handoff.
