@@ -174,7 +174,10 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
     weight_file_size = _weight_file_size
     path_separator = os.sep
     for raw_shard in weight_map.values():
-        shard_name = str(raw_shard or "").strip()
+        if type(raw_shard) is str:
+            shard_name = raw_shard.strip()
+        else:
+            shard_name = str(raw_shard or "").strip()
         if not shard_name or shard_name in seen:
             continue
         seen.add(shard_name)

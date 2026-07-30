@@ -598,6 +598,35 @@ class RuntimeStructuredOutputFailingRuntime:
         )
 
 
+class RuntimeStructuredOutputAcceptingRuntime:
+    runtime_name = "fake-structured-output-accepting-runtime"
+
+    def __init__(self) -> None:
+        self.seen_execution_ext: dict[str, str] | None = None
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        _ = model_spec
+        return 0
+
+    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+        _ = (messages, loaded_model, template_kwargs, execution_ext)
+        return "structured output prompt"
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+        _ = (loaded_model, prompt, sampling, cancel_event)
+        self.seen_execution_ext = dict(execution_ext or {})
+        yield RuntimeTokenEvent(
+            text='{"answer":"ok"}',
+            raw_text='{"answer":"ok"}',
+            prompt_tokens=1,
+            completion_tokens=1,
+            finish_reason="stop",
+        )
+
+
 def build_services():
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StreamingFakeBackend()),
@@ -1794,7 +1823,7 @@ def test_generate_stream_preserves_explicit_tool_parser_with_structured_json_mod
     assert completed.parser_metrics["reasoning_leak_count"] == "0"
 
 
-def test_generate_rejects_schema_backed_json_schema_when_sampler_cannot_enforce() -> None:
+def test_generate_rejects_unsupported_schema_backed_json_schema() -> None:
     _, inference_service, model_handle = build_services()
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
@@ -1803,7 +1832,9 @@ def test_generate_rejects_schema_backed_json_schema_when_sampler_cannot_enforce(
             ext={
                 "melix.structured_output.mode": "json_schema",
                 "melix.structured_output.schema_name": "answer",
-                "melix.structured_output.schema_json": '{"type":"object","required":["answer"]}',
+                "melix.structured_output.schema_json": (
+                    '{"type":"object","patternProperties":{"^x-":{"type":"string"}}}'
+                ),
                 "melix.structured_output.strict": "true",
             },
         ),
@@ -1823,8 +1854,138 @@ def test_generate_rejects_schema_backed_json_schema_when_sampler_cannot_enforce(
     assert error.code == "unsupported_structured_output"
     assert error.details["mode"] == "json_schema"
     assert error.details["enforcement"] == "sampler"
-    assert error.details["reason"] == "json_schema_grammar_unavailable"
+    assert error.details["reason"] == "json_schema_unsupported_keyword"
+    assert error.details["keyword"] == "patternProperties"
     assert not any(event.HasField("completed") for event in events)
+
+
+def test_generate_allows_supported_schema_backed_json_schema_to_runtime() -> None:
+    runtime = RuntimeStructuredOutputAcceptingRuntime()
+    registry = WorkerRegistry(
+        runtime=runtime,
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-json-schema-supported"),
+            model_handle=load_response.model_handle,
+            ext={
+                "melix.structured_output.mode": "json_schema",
+                "melix.structured_output.schema_name": "answer",
+                "melix.structured_output.schema_json": (
+                    '{"type":"object","required":["answer"],'
+                    '"additionalProperties":false,'
+                    '"properties":{"answer":{"type":"string","const":"ok"}}}'
+                ),
+                "melix.structured_output.strict": "true",
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Return an answer object.")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    completed = next(event.completed for event in events if event.HasField("completed"))
+    assert completed.assistant_text == '{"answer":"ok"}'
+    assert runtime.seen_execution_ext is not None
+    assert runtime.seen_execution_ext["melix.structured_output.mode"] == "json_schema"
+    assert not any(event.HasField("error") for event in events)
+
+
+def test_generate_prepares_required_tool_schema_before_sampler_preflight() -> None:
+    runtime = RuntimeStructuredOutputAcceptingRuntime()
+    registry = WorkerRegistry(runtime=runtime, model_catalog=WorkerModelCatalog())
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    model_handle = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    ).model_handle
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-required-tool-constraint"),
+            model_handle=model_handle,
+            ext={
+                "melix.compat.tool_choice_resolved": "required",
+                "melix.compat.reasoning_mode": "disabled",
+                "melix.tool_parser.mode": "qwen",
+            },
+            tool_config=common_pb2.ToolConfig(
+                tool_choice="required",
+                tools=[
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        json_schema=(
+                            '{"type":"object","required":["q"],'
+                            '"additionalProperties":false,'
+                            '"properties":{"q":{"type":"string"}}}'
+                        ),
+                    )
+                ],
+            ),
+        ),
+        messages=[common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Search")])],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    assert not any(event.HasField("error") for event in events)
+    assert runtime.seen_execution_ext is not None
+    assert runtime.seen_execution_ext["melix.tool_config.tool_choice"] == "required"
+    assert '"name":"search"' in runtime.seen_execution_ext["melix.tool_config.tools_json"]
+
+
+def test_generate_refuses_reasoning_required_tool_constraint_before_runtime() -> None:
+    runtime = RuntimeStructuredOutputAcceptingRuntime()
+    registry = WorkerRegistry(runtime=runtime, model_catalog=WorkerModelCatalog())
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    model_handle = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    ).model_handle
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-reasoning-required-tool-constraint"),
+            model_handle=model_handle,
+            ext={
+                "melix.compat.tool_choice_resolved": "required",
+                "melix.compat.reasoning_mode": "enabled",
+                "melix.tool_parser.mode": "qwen",
+            },
+            tool_config=common_pb2.ToolConfig(
+                tool_choice="required",
+                tools=[
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        json_schema='{"type":"object","properties":{}}',
+                    )
+                ],
+            ),
+        )
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    error = next(event.error.error for event in events if event.HasField("error"))
+
+    assert error.code == "tool_constraint_reasoning_unsupported"
+    assert error.details["reason"] == "tool_constraint_reasoning_unsupported"
+    assert runtime.seen_execution_ext is None
 
 
 def test_generate_reports_runtime_structured_output_constraint_error() -> None:
@@ -2436,6 +2597,7 @@ def test_prepare_native_template_tools_preserves_existing_payload_and_skips_inva
 
     invalid = inference_pb2.ExecutionMetadata(
         tool_config=common_pb2.ToolConfig(
+            tool_choice="required",
             tools=[
                 common_pb2.ToolDefinition(name=" ", description="skip blank"),
                 common_pb2.ToolDefinition(name="bad_schema", json_schema="{not-json"),
@@ -2443,8 +2605,35 @@ def test_prepare_native_template_tools_preserves_existing_payload_and_skips_inva
         )
     )
     EngineCore._prepare_native_template_tools(invalid)
+    assert invalid.ext["melix.tool_config.tool_choice"] == "required"
     assert '"name":"bad_schema"' in invalid.ext["melix.tool_config.tools_json"]
     assert '"parameters":{}' in invalid.ext["melix.tool_config.tools_json"]
+
+
+def test_prepare_native_template_tools_keeps_parameterless_constraints_enforceable() -> None:
+    from worker.runtime.tool_wire_constraints import (
+        tool_constraint_preflight_error,
+        tool_wire_accepts_text,
+    )
+
+    for tool_choice in (
+        "required",
+        '{"type":"function","function":{"name":"ping"}}',
+    ):
+        execution = inference_pb2.ExecutionMetadata(
+            tool_config=common_pb2.ToolConfig(
+                tool_choice=tool_choice,
+                tools=[common_pb2.ToolDefinition(name="ping")],
+            )
+        )
+
+        EngineCore._prepare_native_template_tools(execution)
+
+        assert tool_constraint_preflight_error(execution.ext) is None
+        assert tool_wire_accepts_text(
+            execution.ext,
+            '<tool_call>{"name":"ping","arguments":{}}</tool_call>',
+        )
 
 
 def test_generate_rejects_non_object_chat_template_kwargs_payloads() -> None:
