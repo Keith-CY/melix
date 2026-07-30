@@ -336,6 +336,11 @@ class EngineCore:
         active_kv_quant_profile = str(execution.acceleration.active_kv_quant_profile or "").strip()
         if active_kv_quant_profile:
             _routing_ext["_melix.active_kv_quant_profile"] = active_kv_quant_profile
+        # Acceleration-policy ext carries opt-in knobs (prompt lookup today) that
+        # the runtime reads directly. Request ext already present wins, so a
+        # per-request override is not clobbered by the session-level policy.
+        for _accel_key, _accel_value in execution.acceleration.ext.items():
+            _routing_ext.setdefault(str(_accel_key), str(_accel_value))
         sampling = request.sampling
         reasoning = execution.reasoning
         request_id = execution.id.request_id
