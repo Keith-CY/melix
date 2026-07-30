@@ -171,6 +171,58 @@ struct OpenAIConformanceMatrixTests {
                 return .pass
             },
             MatrixRow(
+                field: "response_format.json_schema=worker_typed_refusal",
+                route: "/v1/chat/completions -> typed worker sampler refusal",
+                expectedBehavior: "A worker that cannot enforce the schema returns a typed structured-output error with sampler details.",
+                requestBody: """
+                {
+                  "model": "melix-dev-text",
+                  "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                      "name": "answer",
+                      "strict": true,
+                      "schema": {
+                        "type": "object",
+                        "required": ["answer"],
+                        "additionalProperties": false,
+                        "properties": {
+                          "answer": { "type": "string", "enum": ["yes", "no"] }
+                        }
+                      }
+                    }
+                  },
+                  "messages": [
+                    { "role": "user", "content": "Return JSON." }
+                  ]
+                }
+                """,
+                events: [
+                    makeConformanceErrorEvent(
+                        requestID: "req-response_format.json_schema=worker_typed_refusal",
+                        code: "unsupported_structured_output",
+                        message: "The runtime cannot enforce this JSON schema.",
+                        details: [
+                            "mode": "json_schema",
+                            "enforcement": "sampler",
+                            "reason": "json_schema_unsupported_keyword",
+                        ]
+                    ),
+                ]
+            ) { response, request in
+                let error = try await conformanceErrorPayload(from: response.body)
+                let details = try #require(error["details"] as? [String: Any])
+                let generated = try #require(request)
+                #expect(response.statusCode == 500)
+                #expect(error["code"] as? String == "unsupported_structured_output")
+                #expect(details["mode"] as? String == "json_schema")
+                #expect(details["enforcement"] as? String == "sampler")
+                #expect(details["reason"] as? String == "json_schema_unsupported_keyword")
+                #expect(generated.execution.ext["melix.structured_output.mode"] == "json_schema")
+                #expect(generated.execution.ext["melix.structured_output.schema_json"]?.isEmpty == false)
+                return .pass
+            },
+            MatrixRow(
                 field: "tool_choice.required=sampler_wire",
                 route: "/v1/chat/completions -> required tool sampler grammar",
                 expectedBehavior: "Required tool selection forwards a token-zero wire descriptor and declared argument schema to the worker.",
@@ -423,6 +475,7 @@ struct OpenAIConformanceMatrixTests {
         #expect(reportJSON.contains("\"field\":\"logprobs,top_logprobs\""))
         #expect(reportJSON.contains("\"field\":\"response_format.json_schema=null\""))
         #expect(reportJSON.contains("\"field\":\"response_format.json_schema=sampler_enforced\""))
+        #expect(reportJSON.contains("\"field\":\"response_format.json_schema=worker_typed_refusal\""))
         #expect(reportJSON.contains("\"field\":\"tool_choice.required=sampler_wire\""))
         #expect(reportJSON.contains("\"field\":\"tool_choice.named=sampler_wire\""))
     }
@@ -1630,6 +1683,23 @@ private func conformanceErrorPayload(from body: HTTPBody) async throws -> [Strin
     let data = try #require(payload.data(using: .utf8))
     let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     return try #require(object["error"] as? [String: Any])
+}
+
+private func makeConformanceErrorEvent(
+    requestID: String,
+    code: String,
+    message: String,
+    details: [String: String]
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.seq = 1
+    event.executionKind = "generate"
+    event.phase = .executionFailed
+    event.error.error.code = code
+    event.error.error.message = message
+    event.error.error.details = details
+    return event
 }
 
 private actor StreamPayloadCapture {

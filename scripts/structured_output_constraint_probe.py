@@ -403,6 +403,7 @@ def _schema_unavailable_metrics() -> dict[str, float]:
         "schema_peak_bytes": 0.0,
         "schema_initial_allowed_count": 0.0,
         "schema_complete_allowed_count": 0.0,
+        "schema_compile_p95_ms": 0.0,
         "schema_complexity_refusal_elapsed_ms": 0.0,
         "schema_enum_mask_elapsed_ms": 0.0,
         "schema_free_text_mask_cache_entries": 0.0,
@@ -416,6 +417,23 @@ def _schema_hardening_metrics(
     prompt_token_id: int,
     logits: Any,
 ) -> dict[str, float]:
+    from worker.runtime.structured_output_constraints import _compile_json_schema
+
+    compile_schema_json = _schema_ext()["melix.structured_output.schema_json"]
+    compile_samples: list[float] = []
+    for _ in range(20):
+        _compile_json_schema.cache_clear()
+        compile_started = time.perf_counter()
+        _compile_json_schema(compile_schema_json)
+        compile_samples.append((time.perf_counter() - compile_started) * 1_000.0)
+    compile_samples.sort()
+    p95_index = max(0, math.ceil(len(compile_samples) * 0.95) - 1)
+    compile_p95_ms = compile_samples[p95_index]
+    if compile_p95_ms >= 50.0:
+        raise RuntimeError(
+            f"cold JSON schema compile p95 exceeded 50 ms: {compile_p95_ms:.3f} ms"
+        )
+
     oversized_enum_ext = _schema_ext_for(
         {
             "type": "object",
@@ -434,6 +452,11 @@ def _schema_hardening_metrics(
     else:
         raise RuntimeError("oversized schema was not rejected")
     complexity_refusal_elapsed_ms = (time.perf_counter() - refusal_started) * 1000.0
+    if complexity_refusal_elapsed_ms >= 50.0:
+        raise RuntimeError(
+            "JSON schema complexity refusal exceeded 50 ms: "
+            f"{complexity_refusal_elapsed_ms:.3f} ms"
+        )
 
     enum_ext = _schema_ext_for(
         {
@@ -476,6 +499,7 @@ def _schema_hardening_metrics(
         free_text_processor(_mx().array([prompt_token_id, *generated]), logits)
 
     return {
+        "schema_compile_p95_ms": compile_p95_ms,
         "schema_complexity_refusal_elapsed_ms": complexity_refusal_elapsed_ms,
         "schema_enum_mask_elapsed_ms": enum_mask_elapsed_ms,
         "schema_free_text_mask_cache_entries": float(len(free_text_processor._mask_cache)),
@@ -617,6 +641,7 @@ def _tool_metrics(
         )
         from worker.runtime.tool_call_rescue import parse_tool_body
         from worker.runtime.tool_wire_constraints import (
+            _compile_tool_definitions,
             tool_constraint_preflight_error,
             tool_wire_accepts_text,
         )
@@ -627,6 +652,7 @@ def _tool_metrics(
     xml_ext = _tool_ext(parser_mode="xml")
     compile_samples: list[float] = []
     for _ in range(20):
+        _compile_tool_definitions.cache_clear()
         started = time.perf_counter()
         error = tool_constraint_preflight_error(json_ext)
         compile_samples.append((time.perf_counter() - started) * 1_000.0)
@@ -634,6 +660,11 @@ def _tool_metrics(
             raise RuntimeError("supported tool grammar failed bounded preflight") from error
     compile_samples.sort()
     p95_index = max(0, math.ceil(len(compile_samples) * 0.95) - 1)
+    compile_p95_ms = compile_samples[p95_index]
+    if compile_p95_ms >= 50.0:
+        raise RuntimeError(
+            f"cold tool grammar compile p95 exceeded 50 ms: {compile_p95_ms:.3f} ms"
+        )
 
     json_wire = '<tool_call>{"name":"weather","arguments":{"count":2,"unit":"c"}}</tool_call>'
     xml_wire = (
@@ -685,10 +716,14 @@ def _tool_metrics(
     else:
         raise RuntimeError("numeric state audit did not stop at its hard budget")
     budget_elapsed_ms = (time.perf_counter() - budget_started) * 1_000.0
+    if budget_elapsed_ms >= 50.0:
+        raise RuntimeError(
+            f"schema state-budget refusal exceeded 50 ms: {budget_elapsed_ms:.3f} ms"
+        )
 
     return {
         "tool_available": 1.0,
-        "tool_compile_p95_ms": compile_samples[p95_index],
+        "tool_compile_p95_ms": compile_p95_ms,
         "tool_roundtrip_mismatch_count": float(mismatches),
         "tool_mask_vocab_words": float(receipt.get("mask_vocab_words", 0)),
         "schema_state_budget_refusal_elapsed_ms": budget_elapsed_ms,
@@ -764,6 +799,7 @@ def main() -> int:
                 "schema_complete_allowed_count_mean": schema_mean(
                     "schema_complete_allowed_count"
                 ),
+                "schema_compile_p95_ms_mean": schema_mean("schema_compile_p95_ms"),
                 "schema_complexity_refusal_elapsed_ms_mean": schema_mean(
                     "schema_complexity_refusal_elapsed_ms"
                 ),

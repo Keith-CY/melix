@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from functools import lru_cache
+from decimal import Decimal
 import json
 import math
 from time import monotonic
@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import Any
 
 from worker.runtime import structured_output_constraints as structured
+from worker.runtime import tool_call_rescue
 
 
 _TOOL_CHOICE_KEYS = (
@@ -21,7 +22,16 @@ _TOOLS_JSON_KEY = "melix.tool_config.tools_json"
 _PARSER_MODE_KEY = "melix.tool_parser.mode"
 _MAX_TOOL_COUNT = 32
 _MAX_TOOL_NAME_BYTES = 256
+_MAX_XML_PARAMETER_NAME_BYTES = 256
+_MAX_SENTINEL_TOKEN_COUNT = 16
+_MAX_SENTINEL_TOKEN_BYTES = 256
 _TOOL_COMPILE_DEADLINE_SECONDS = 0.050
+_MAX_TOOL_CACHE_ENTRIES = 32
+_MAX_TOOL_CACHE_ESTIMATED_BYTES = 16 * 1024 * 1024
+_MAX_TOOL_TRIE_CACHE_ENTRIES = 32
+_MAX_TOOL_TRIE_CACHE_ESTIMATED_BYTES = 16 * 1024 * 1024
+_MAX_XML_STATE_CACHE_ENTRIES = 64
+_MAX_XML_STATE_CACHE_ESTIMATED_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,22 +130,34 @@ def tool_wire_descriptor(execution_ext: object) -> ToolWireGrammarDescriptor:
     raw_style = _ext_get(execution_ext, "melix.tool_wire.argument_style").strip().lower()
     raw_dialect = _ext_get(execution_ext, "melix.tool_wire.dialect").strip().lower()
     parser_mode = _ext_get(execution_ext, _PARSER_MODE_KEY).strip().lower()
-    base = (
-        XML_PARAMETER_TOOL_WIRE
-        if raw_style == "xml_parameters"
-        or raw_dialect == "xml_parameter_blocks"
-        or parser_mode == "xml"
-        else JSON_OBJECT_TOOL_WIRE
-    )
-    begin = _bounded_wire_marker(execution_ext, "melix.tool_wire.begin", base.begin)
-    end = _bounded_wire_marker(execution_ext, "melix.tool_wire.end", base.end)
-    trigger = _bounded_wire_marker(execution_ext, "melix.tool_wire.trigger", base.trigger)
+    if parser_mode:
+        base = XML_PARAMETER_TOOL_WIRE if parser_mode == "xml" else JSON_OBJECT_TOOL_WIRE
+    else:
+        base = (
+            XML_PARAMETER_TOOL_WIRE
+            if raw_style == "xml_parameters" or raw_dialect == "xml_parameter_blocks"
+            else JSON_OBJECT_TOOL_WIRE
+        )
+    if raw_style and raw_style != base.argument_style:
+        raise _tool_error(
+            "Tool wire argument style does not match the selected dialect.",
+            "tool_wire_descriptor_mismatch",
+        )
+    if raw_dialect and raw_dialect != base.dialect:
+        raise _tool_error(
+            "Tool wire dialect does not match the selected argument style.",
+            "tool_wire_descriptor_mismatch",
+        )
+    begin = _validated_wire_marker(execution_ext, "melix.tool_wire.begin", base.begin)
+    end = _validated_wire_marker(execution_ext, "melix.tool_wire.end", base.end)
+    trigger = _validated_wire_marker(execution_ext, "melix.tool_wire.trigger", base.trigger)
+    sentinel_tokens = _sentinel_tokens(execution_ext, base.sentinel_tokens)
     return ToolWireGrammarDescriptor(
         dialect=base.dialect,
         begin=begin,
         end=end,
         trigger=trigger,
-        sentinel_tokens=base.sentinel_tokens,
+        sentinel_tokens=sentinel_tokens,
         argument_style=base.argument_style,
     )
 
@@ -175,8 +197,10 @@ class ToolGrammarConstraintProcessor:
                     "enforcement": "sampler",
                     "reason": "tokenizer_vocab_unavailable",
                 },
-            )
+        )
         self._id_to_text = vocabulary
+        vocab_size = max(structured._tokenizer_vocab_size(tokenizer), max(vocabulary) + 1)
+        self._mask_vocab_words = math.ceil(vocab_size / 64)
         self._eos_token_ids = structured._tokenizer_eos_token_ids(tokenizer, vocabulary)
         self._descriptor = descriptor
         self._tools = tools
@@ -190,9 +214,28 @@ class ToolGrammarConstraintProcessor:
         self._base_token_count: int | None = None
         self._applied_generated_count = 0
         self._mask_cache: OrderedDict[
-            tuple[_ToolPrefixState | None, int, bool],
-            tuple[Any, tuple[int, ...]],
+            object,
+            structured._MaskTemplate,
         ] = OrderedDict()
+        template_cache = getattr(
+            tokenizer,
+            structured._TOKENIZER_MASK_TEMPLATE_CACHE_ATTR,
+            None,
+        )
+        if not isinstance(template_cache, structured._MaskTemplateCache):
+            template_cache = structured._MaskTemplateCache()
+            try:
+                setattr(
+                    tokenizer,
+                    structured._TOKENIZER_MASK_TEMPLATE_CACHE_ATTR,
+                    template_cache,
+                )
+            except Exception:
+                pass
+        self._mask_template_cache = template_cache
+        self._mask_templates: OrderedDict[object, structured._MaskTemplate] = (
+            template_cache.entries
+        )
         self._packed_allow_token_mask: tuple[int, ...] = ()
 
     @property
@@ -207,20 +250,22 @@ class ToolGrammarConstraintProcessor:
     def acceleration_receipt(self) -> dict[str, object]:
         return {
             "constraint_kind": self.constraint_kind,
-            "mask_vocab_words": math.ceil(len(self._id_to_text) / 64),
+            "mask_vocab_words": self._mask_vocab_words,
             "fast_path_used": False,
             "fallback_reason": "structured_output_acceleration_unsupported",
         }
 
     def __call__(self, tokens: Any, logits: Any) -> Any:
-        token_ids = structured._token_ids(tokens)
         if self._base_token_count is None:
-            self._base_token_count = len(token_ids)
-        generated_ids = token_ids[self._base_token_count :]
-        unapplied_ids = generated_ids[self._applied_generated_count :]
+            self._base_token_count = structured._single_sequence_token_count(tokens)
+        generated_count, unapplied_ids = structured._unapplied_token_ids(
+            tokens,
+            base_token_count=self._base_token_count,
+            applied_generated_count=self._applied_generated_count,
+        )
         if unapplied_ids:
             self._advance_state(unapplied_ids)
-            self._applied_generated_count = len(generated_ids)
+            self._applied_generated_count = generated_count
         return logits + self._mask_for_state(self._state, int(logits.shape[-1]), logits)
 
     def _advance_state(self, token_ids: list[int]) -> None:
@@ -245,29 +290,28 @@ class ToolGrammarConstraintProcessor:
         self._state = state
 
     def _mask_for_state(self, state: _ToolPrefixState | None, vocab_size: int, logits: Any) -> Any:
-        cache_key = (state, vocab_size, len(logits.shape) > 1)
+        cache_key = (
+            self._choice_trie,
+            self._descriptor,
+            self._parallel,
+            state,
+            vocab_size,
+            len(logits.shape) > 1,
+        )
         cached = self._mask_cache.get(cache_key)
         if cached is not None:
             self._mask_cache.move_to_end(cache_key)
-            mask, packed = cached
-            self._packed_allow_token_mask = packed
-            return mask
+            self._packed_allow_token_mask = cached.packed
+            return cached.dense
+
+        template = self._mask_templates.get(cache_key)
+        if template is not None:
+            self._packed_allow_token_mask = template.packed
+            self._remember_request_mask(cache_key, template)
+            return template.dense
 
         allowed = [
-            state is not None
-            and (
-                token_id in self._eos_token_ids
-                and _tool_state_complete(state)
-                or _tool_transition_text(
-                    state,
-                    self._id_to_text.get(token_id, ""),
-                    descriptor=self._descriptor,
-                    tools=self._tools,
-                    choice_trie=self._choice_trie,
-                    parallel=self._parallel,
-                )
-                is not None
-            )
+            state is not None and self._token_allowed(state, token_id)
             for token_id in range(vocab_size)
         ]
         packed = _pack_allowed_tokens(allowed)
@@ -277,10 +321,61 @@ class ToolGrammarConstraintProcessor:
         mask = mx.array([0.0 if item else -math.inf for item in allowed])
         if len(logits.shape) > 1:
             mask = mask.reshape((1, vocab_size))
-        self._mask_cache[cache_key] = (mask, packed)
+        template = structured._MaskTemplate(
+            dense=mask,
+            packed=packed,
+            estimated_bytes=structured._mask_template_estimated_bytes(vocab_size),
+        )
+        self._remember_shared_mask(cache_key, template)
+        self._remember_request_mask(cache_key, template)
+        return mask
+
+    def _token_allowed(self, state: _ToolPrefixState, token_id: int) -> bool:
+        complete = _tool_state_complete(state)
+        if complete and self._eos_token_ids and not self._parallel:
+            return token_id in self._eos_token_ids
+        if token_id in self._eos_token_ids and complete:
+            return True
+        return (
+            _tool_transition_text(
+                state,
+                self._id_to_text.get(token_id, ""),
+                descriptor=self._descriptor,
+                tools=self._tools,
+                choice_trie=self._choice_trie,
+                parallel=self._parallel,
+            )
+            is not None
+        )
+
+    def _remember_shared_mask(
+        self,
+        cache_key: object,
+        template: structured._MaskTemplate,
+    ) -> None:
+        cache = self._mask_template_cache
+        existing = cache.entries.pop(cache_key, None)
+        if existing is not None:
+            cache.estimated_bytes -= existing.estimated_bytes
+        while cache.entries and (
+            len(cache.entries) >= structured._MAX_MASK_TEMPLATE_CACHE_ENTRIES
+            or cache.estimated_bytes + template.estimated_bytes
+            > structured._MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES
+        ):
+            _, evicted = cache.entries.popitem(last=False)
+            cache.estimated_bytes -= evicted.estimated_bytes
+        if template.estimated_bytes <= structured._MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES:
+            cache.entries[cache_key] = template
+            cache.estimated_bytes += template.estimated_bytes
+
+    def _remember_request_mask(
+        self,
+        cache_key: object,
+        template: structured._MaskTemplate,
+    ) -> None:
+        self._mask_cache[cache_key] = template
         if len(self._mask_cache) > structured._MAX_MASK_CACHE_ENTRIES:
             self._mask_cache.popitem(last=False)
-        return mask
 
 
 def _compile_tool_constraint(
@@ -318,22 +413,58 @@ def _compile_tool_constraint(
     descriptor = tool_wire_descriptor(execution_ext)
     if descriptor.argument_style == "xml_parameters":
         for tool in selected:
+            if tool_call_rescue.XML_PARAMETER_FUNCTION_OPEN_RE.fullmatch(
+                f"<function={tool.name}>"
+            ) is None:
+                raise _tool_error(
+                    "XML parameter grammar cannot round-trip the function name through its parser.",
+                    "tool_xml_function_name_invalid",
+                )
             declared = {prop.name for prop in tool.arguments.properties}
             if not tool.arguments.required.issubset(declared):
                 raise _tool_error(
                     "XML parameter grammar cannot represent undeclared required properties.",
                     "tool_schema_unsupported",
                 )
+            for prop in tool.arguments.properties:
+                if len(prop.name.encode("utf-8")) > _MAX_XML_PARAMETER_NAME_BYTES:
+                    raise _tool_complexity_error(
+                        "XML parameter name exceeds the supported byte limit.",
+                        "max_xml_parameter_name_bytes",
+                    )
+                if tool_call_rescue.XML_PARAMETER_OPEN_RE.fullmatch(
+                    f"<parameter={prop.name}>"
+                ) is None:
+                    raise _tool_error(
+                        "XML parameter grammar cannot round-trip a property name through its parser.",
+                        "tool_xml_parameter_name_invalid",
+                    )
     parallel = _ext_get(execution_ext, "melix.tool_config.parallel_policy").strip().lower() == "enabled"
     return selected, selected_name, descriptor, parallel
 
 
-@lru_cache(maxsize=128)
+@structured._weighted_lru_cache(
+    maxsize=_MAX_TOOL_CACHE_ENTRIES,
+    maxbytes=_MAX_TOOL_CACHE_ESTIMATED_BYTES,
+    weight=lambda args, _kwargs, tools: len(args[0].encode("utf-8"))
+    + _compiled_tools_estimated_bytes(tools),
+)
 def _compile_tool_definitions(raw_tools: str) -> tuple[_CompiledTool, ...]:
+    clock = monotonic
+    budget = structured._SchemaCompileBudget(
+        deadline=clock() + _TOOL_COMPILE_DEADLINE_SECONDS,
+        clock=clock,
+        mode="tool_choice",
+    )
     try:
         if len(raw_tools.encode("utf-8")) > structured._MAX_SCHEMA_JSON_BYTES:
             raise _tool_complexity_error("Tool schemas exceed the supported byte limit.", "max_schema_bytes")
-        payload = json.loads(raw_tools, parse_constant=structured._reject_nonfinite_json_number)
+        payload = json.loads(
+            raw_tools,
+            parse_float=Decimal,
+            parse_int=Decimal,
+            parse_constant=structured._reject_nonfinite_json_number,
+        )
     except UnicodeEncodeError as exc:
         raise _tool_error("Tool schemas are not valid UTF-8 text.", "tool_schema_invalid") from exc
     except (json.JSONDecodeError, ValueError, RecursionError) as exc:
@@ -343,31 +474,42 @@ def _compile_tool_definitions(raw_tools: str) -> tuple[_CompiledTool, ...]:
     if len(payload) > _MAX_TOOL_COUNT:
         raise _tool_complexity_error("Tool count exceeds the supported limit.", "max_tool_count")
 
-    deadline = monotonic() + _TOOL_COMPILE_DEADLINE_SECONDS
-    budget = structured._SchemaCompileBudget()
+    structured._check_schema_compile_budget(budget, pointer="")
     compiled: list[_CompiledTool] = []
     names: set[str] = set()
     for index, item in enumerate(payload):
-        if monotonic() > deadline:
-            raise _tool_complexity_error("Tool grammar compilation exceeded its deadline.", "compile_deadline_ms")
+        structured._check_schema_compile_budget(
+            budget,
+            pointer=f"/tools/{index}",
+        )
         function = item.get("function") if isinstance(item, dict) else None
         if not isinstance(function, dict):
             raise _tool_error("Tool definitions must use OpenAI function objects.", "tool_schema_invalid")
-        name = str(function.get("name") or "").strip()
-        if not name or len(name.encode("utf-8")) > _MAX_TOOL_NAME_BYTES or any(
+        raw_name = function.get("name")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        try:
+            name_bytes = len(name.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise _tool_error("Tool name must be valid UTF-8 text.", "tool_name_invalid") from exc
+        if not name or name_bytes > _MAX_TOOL_NAME_BYTES or any(
             char in name for char in "<>{}\""
         ):
             raise _tool_error("Tool name is empty or cannot be represented by the wire grammar.", "tool_name_invalid")
         if name in names:
             raise _tool_error("Tool names must be unique.", "tool_name_duplicate")
         names.add(name)
-        parameters = function.get("parameters", {"type": "object"})
-        node = structured._compile_schema_node(
-            parameters,
-            pointer=f"/tools/{index}/function/parameters",
-            depth=0,
-            budget=budget,
-        )
+        parameters = function.get("parameters") if "parameters" in function else {}
+        if parameters == {}:
+            parameters = {"type": "object", "additionalProperties": False}
+        try:
+            node = structured._compile_schema_node(
+                parameters,
+                pointer=f"/tools/{index}/function/parameters",
+                depth=0,
+                budget=budget,
+            )
+        except structured.StructuredOutputConstraintError as exc:
+            raise _tool_schema_error(exc) from exc
         if node.types != ("object",):
             raise _tool_error("Tool parameter schemas must resolve to an object.", "tool_schema_root_not_object")
         compiled.append(_CompiledTool(name=name, arguments=node))
@@ -399,6 +541,13 @@ def _named_tool_choice(choice: str) -> str:
     return str(payload.get("name") or "").strip()
 
 
+@structured._weighted_lru_cache(
+    maxsize=_MAX_TOOL_TRIE_CACHE_ENTRIES,
+    maxbytes=_MAX_TOOL_TRIE_CACHE_ESTIMATED_BYTES,
+    weight=lambda args, _kwargs, trie: _compiled_tools_estimated_bytes(args[0])
+    + _descriptor_estimated_bytes(args[1])
+    + _choice_trie_estimated_bytes(trie),
+)
 def _tool_prefix_trie(
     tools: tuple[_CompiledTool, ...],
     descriptor: ToolWireGrammarDescriptor,
@@ -408,7 +557,7 @@ def _tool_prefix_trie(
         if descriptor.argument_style == "xml_parameters":
             prefix = f"{descriptor.trigger}<function={tool.name}>"
         else:
-            encoded_name = json.dumps(tool.name, ensure_ascii=False, separators=(",", ":"))
+            encoded_name = json.dumps(tool.name, ensure_ascii=True, separators=(",", ":"))
             prefix = f'{descriptor.trigger}{{"name":{encoded_name},"arguments":'
         entries.append((prefix, tool))
     return _choice_trie(entries)
@@ -436,6 +585,49 @@ def _choice_trie(entries: list[tuple[str, object]]) -> _ChoiceTrie:
         )
 
     return freeze(root)
+
+
+def _compiled_tools_estimated_bytes(tools: tuple[_CompiledTool, ...]) -> int:
+    estimated_bytes = 0
+    seen_schema: set[int] = set()
+    for tool in tools:
+        estimated_bytes += len(tool.name.encode("utf-8")) + 256
+        identity = id(tool.arguments)
+        if identity not in seen_schema:
+            seen_schema.add(identity)
+            estimated_bytes += structured._schema_graph_estimated_bytes(tool.arguments)
+    return estimated_bytes
+
+
+def _descriptor_estimated_bytes(descriptor: ToolWireGrammarDescriptor) -> int:
+    return 256 + sum(
+        structured._utf8_estimated_size(value)
+        for value in (
+            descriptor.dialect,
+            descriptor.begin,
+            descriptor.end,
+            descriptor.trigger,
+            descriptor.argument_style,
+            *descriptor.sentinel_tokens,
+        )
+    )
+
+
+def _choice_trie_estimated_bytes(root: _ChoiceTrie) -> int:
+    estimated_bytes = 0
+    stack = [root]
+    seen: set[int] = set()
+    while stack:
+        trie = stack.pop()
+        identity = id(trie)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        estimated_bytes += 192 + len(trie.children) * 96
+        for char, child in trie.children.items():
+            estimated_bytes += structured._utf8_estimated_size(char)
+            stack.append(child)
+    return estimated_bytes
 
 
 def _tool_transition_text(
@@ -587,6 +779,13 @@ def _consume_suffix_char(
     return _ToolPrefixState(phase="complete")
 
 
+@structured._weighted_lru_cache(
+    maxsize=_MAX_XML_STATE_CACHE_ENTRIES,
+    maxbytes=_MAX_XML_STATE_CACHE_ESTIMATED_BYTES,
+    weight=lambda args, _kwargs, state: _compiled_tools_estimated_bytes((args[0],))
+    + sum(structured._utf8_estimated_size(item) + 64 for item in args[1])
+    + (_choice_trie_estimated_bytes(state.trie) if state.trie is not None else 1),
+)
 def _xml_between_state(tool: _CompiledTool, seen: frozenset[str]) -> _ToolPrefixState:
     entries: list[tuple[str, object]] = []
     for prop in tool.arguments.properties:
@@ -614,13 +813,60 @@ def _pack_allowed_tokens(allowed: list[bool]) -> tuple[int, ...]:
     return tuple(words)
 
 
-def _bounded_wire_marker(execution_ext: object, key: str, fallback: str) -> str:
+def _sentinel_tokens(
+    execution_ext: object,
+    expected: tuple[str, ...],
+) -> tuple[str, ...]:
+    raw_tokens = _ext_get(execution_ext, "melix.tool_wire.sentinel_tokens").strip()
+    if not raw_tokens:
+        return expected
+    try:
+        payload = json.loads(raw_tokens)
+        if (
+            not isinstance(payload, list)
+            or not payload
+            or len(payload) > _MAX_SENTINEL_TOKEN_COUNT
+            or any(not isinstance(token, str) or not token for token in payload)
+            or len(set(payload)) != len(payload)
+            or any(
+                len(token.encode("utf-8")) > _MAX_SENTINEL_TOKEN_BYTES
+                for token in payload
+            )
+        ):
+            raise ValueError("invalid sentinel token list")
+    except (json.JSONDecodeError, UnicodeEncodeError, ValueError) as exc:
+        raise _tool_error(
+            "Tool wire sentinel tokens are malformed.",
+            "tool_wire_descriptor_invalid",
+        ) from exc
+    sentinel_tokens = tuple(payload)
+    if sentinel_tokens != expected:
+        raise _tool_error(
+            "Tool wire sentinel tokens do not match the selected dialect.",
+            "tool_wire_descriptor_mismatch",
+        )
+    return sentinel_tokens
+
+
+def _validated_wire_marker(execution_ext: object, key: str, expected: str) -> str:
     marker = _ext_get(execution_ext, key).strip()
     if not marker:
-        return fallback
-    if len(marker.encode("utf-8")) > 256:
+        return expected
+    try:
+        marker_bytes = len(marker.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise _tool_error(
+            "Tool wire marker must be valid UTF-8 text.",
+            "tool_wire_descriptor_invalid",
+        ) from exc
+    if marker_bytes > 256:
         raise _tool_complexity_error("Tool wire marker exceeds the supported limit.", "max_wire_marker_bytes")
-    return marker
+    if marker != expected:
+        raise _tool_error(
+            "Tool wire marker does not match the selected dialect.",
+            "tool_wire_descriptor_mismatch",
+        )
+    return expected
 
 
 def _ext_get(execution_ext: object, key: str) -> str:
@@ -640,6 +886,28 @@ def _tool_error(message: str, reason: str) -> structured.StructuredOutputConstra
             "enforcement": "sampler",
             "reason": reason,
         },
+    )
+
+
+def _tool_schema_error(
+    error: structured.StructuredOutputConstraintError,
+) -> structured.StructuredOutputConstraintError:
+    reason = error.details.get("reason", "")
+    if reason.startswith("tool_"):
+        return error
+    if reason == "json_schema_too_complex":
+        mapped_reason = "tool_schema_too_complex"
+    elif reason in {"json_schema_unsupported_keyword", "json_schema_unsupported_type"}:
+        mapped_reason = "tool_schema_unsupported"
+    else:
+        mapped_reason = "tool_schema_invalid"
+    details = dict(error.details)
+    details["mode"] = "tool_choice"
+    details["reason"] = mapped_reason
+    return structured.StructuredOutputConstraintError(
+        str(error),
+        code=error.code,
+        details=details,
     )
 
 

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
-from functools import lru_cache
+from functools import lru_cache, update_wrapper
 import json
 import math
+from threading import RLock
 from time import monotonic
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
@@ -51,10 +52,14 @@ _MAX_SCHEMA_PROPERTIES = 256
 _MAX_SCHEMA_REQUIRED = 256
 _MAX_SCHEMA_ENUM_VALUES = 1_024
 _MAX_SCHEMA_ENUM_TEXT_BYTES = 32_768
+_MAX_SCHEMA_ARRAY_ITEMS = 1_024
 _MAX_SCHEMA_NUMBER_CHARS = 128
+_SCHEMA_COMPILE_DEADLINE_SECONDS = 0.050
 _MAX_MASK_CACHE_ENTRIES = 64
 _MAX_MASK_TEMPLATE_CACHE_ENTRIES = 64
 _MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES = 64 * 1024 * 1024
+_MAX_SCHEMA_CACHE_ENTRIES = 32
+_MAX_SCHEMA_CACHE_ESTIMATED_BYTES = 16 * 1024 * 1024
 _MAX_EXPONENT_MAGNITUDE = 1_024
 _MAX_STATE_EXPLORATION_STATES = 4_096
 _MAX_STATE_EXPLORATION_TRANSITIONS = 32_768
@@ -166,6 +171,9 @@ class _SchemaPrefixState:
 @dataclass(slots=True)
 class _SchemaCompileBudget:
     node_count: int = 0
+    deadline: float | None = None
+    clock: Callable[[], float] | None = None
+    mode: str = "json_schema"
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,11 +185,164 @@ class _MaskTemplate:
 
 @dataclass(slots=True)
 class _MaskTemplateCache:
-    entries: OrderedDict[
-        tuple[_JSONPrefixState | _SchemaPrefixState | None, int, bool],
-        _MaskTemplate,
-    ] = field(default_factory=OrderedDict)
+    entries: OrderedDict[object, _MaskTemplate] = field(default_factory=OrderedDict)
     estimated_bytes: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _WeightedCacheInfo:
+    hits: int
+    misses: int
+    maxsize: int
+    currsize: int
+    maxbytes: int
+    currbytes: int
+
+
+class _WeightedLRUCache:
+    def __init__(
+        self,
+        function: Callable[..., Any],
+        *,
+        maxsize: int,
+        maxbytes: int,
+        weight: Callable[[tuple[Any, ...], Mapping[str, Any], Any], int],
+    ) -> None:
+        self._function = function
+        self._maxsize = maxsize
+        self._maxbytes = maxbytes
+        self._weight = weight
+        self._entries: OrderedDict[object, tuple[Any, int]] = OrderedDict()
+        self._estimated_bytes = 0
+        self._hits = 0
+        self._misses = 0
+        self._lock = RLock()
+        update_wrapper(self, function)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        key = self._key(args, kwargs)
+        with self._lock:
+            cached = self._entries.get(key)
+            if cached is not None:
+                self._hits += 1
+                self._entries.move_to_end(key)
+                return cached[0]
+            self._misses += 1
+
+        value = self._function(*args, **kwargs)
+        estimated_bytes = max(1, int(self._weight(args, kwargs, value)))
+        if estimated_bytes > self._maxbytes:
+            return value
+
+        with self._lock:
+            cached = self._entries.get(key)
+            if cached is not None:
+                self._entries.move_to_end(key)
+                return cached[0]
+            self._entries[key] = (value, estimated_bytes)
+            self._estimated_bytes += estimated_bytes
+            while (
+                len(self._entries) > self._maxsize
+                or self._estimated_bytes > self._maxbytes
+            ):
+                _, (_, evicted_bytes) = self._entries.popitem(last=False)
+                self._estimated_bytes -= evicted_bytes
+        return value
+
+    def cache_clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._estimated_bytes = 0
+            self._hits = 0
+            self._misses = 0
+
+    def cache_info(self) -> _WeightedCacheInfo:
+        with self._lock:
+            return _WeightedCacheInfo(
+                hits=self._hits,
+                misses=self._misses,
+                maxsize=self._maxsize,
+                currsize=len(self._entries),
+                maxbytes=self._maxbytes,
+                currbytes=self._estimated_bytes,
+            )
+
+    @staticmethod
+    def _key(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> object:
+        if not kwargs:
+            return args
+        return args, tuple(sorted(kwargs.items()))
+
+
+def _weighted_lru_cache(
+    *,
+    maxsize: int,
+    maxbytes: int,
+    weight: Callable[[tuple[Any, ...], Mapping[str, Any], Any], int],
+) -> Callable[[Callable[..., Any]], _WeightedLRUCache]:
+    def decorate(function: Callable[..., Any]) -> _WeightedLRUCache:
+        return _WeightedLRUCache(
+            function,
+            maxsize=maxsize,
+            maxbytes=maxbytes,
+            weight=weight,
+        )
+
+    return decorate
+
+
+def _schema_graph_estimated_bytes(root: _SchemaNode) -> int:
+    estimated_bytes = 0
+    schema_stack = [root]
+    trie_stack: list[_FixedValueTrie] = []
+    seen_schema: set[int] = set()
+    seen_trie: set[int] = set()
+    while schema_stack:
+        node = schema_stack.pop()
+        identity = id(node)
+        if identity in seen_schema:
+            continue
+        seen_schema.add(identity)
+        estimated_bytes += 512
+        estimated_bytes += sum(_utf8_estimated_size(item) + 32 for item in node.types)
+        estimated_bytes += sum(_utf8_estimated_size(item) + 64 for item in node.required)
+        estimated_bytes += sum(
+            _utf8_estimated_size(item) + 64 for item in node.enum_json_values
+        )
+        for prop in node.properties:
+            estimated_bytes += _utf8_estimated_size(prop.name) + 128
+            schema_stack.append(prop.node)
+        if node.additional is not None:
+            schema_stack.append(node.additional)
+        if node.items is not None:
+            schema_stack.append(node.items)
+        if node.enum_trie is not None:
+            trie_stack.append(node.enum_trie)
+
+    while trie_stack:
+        trie = trie_stack.pop()
+        identity = id(trie)
+        if identity in seen_trie:
+            continue
+        seen_trie.add(identity)
+        estimated_bytes += 192 + len(trie.children) * 96
+        for char, child in trie.children.items():
+            estimated_bytes += _utf8_estimated_size(char)
+            trie_stack.append(child)
+    return estimated_bytes
+
+
+def _utf8_estimated_size(value: str) -> int:
+    return len(value.encode("utf-8", errors="surrogatepass"))
+
+
+def _schema_cache_weight(
+    args: tuple[Any, ...],
+    _kwargs: Mapping[str, Any],
+    root: _SchemaNode,
+) -> int:
+    schema_json = args[0]
+    return _utf8_estimated_size(schema_json) + _schema_graph_estimated_bytes(root)
 
 
 _ANY_SCHEMA_NODE = _SchemaNode()
@@ -203,7 +364,15 @@ def structured_output_requested(execution_ext: object) -> bool:
 
 
 def sampler_constraint_requested(execution_ext: object) -> bool:
-    if structured_output_requested(execution_ext):
+    if execution_ext is None or (isinstance(execution_ext, Mapping) and not execution_ext):
+        return False
+    mode = normalize_structured_output_mode(execution_ext)
+    structured_constraint_requested = (
+        schema_backed_json_schema_requested(execution_ext)
+        if mode == "json_schema"
+        else bool(mode and mode != "text")
+    )
+    if structured_constraint_requested:
         return True
     from worker.runtime.tool_wire_constraints import tool_constraint_requested
 
@@ -290,6 +459,8 @@ class GrammarConstraintProcessor:
                 },
         )
         self._id_to_text = vocabulary
+        vocab_size = max(_tokenizer_vocab_size(tokenizer), max(vocabulary) + 1)
+        self._mask_vocab_words = math.ceil(vocab_size / 64)
         self._eos_token_ids = _tokenizer_eos_token_ids(tokenizer, vocabulary)
         self._constraint_kind = "json_schema" if schema is not None else "json_object"
         self._base_token_count: int | None = None
@@ -311,10 +482,7 @@ class GrammarConstraintProcessor:
             except Exception:
                 pass
         self._mask_template_cache = template_cache
-        self._mask_templates: OrderedDict[
-            tuple[_JSONPrefixState | _SchemaPrefixState | None, int, bool],
-            _MaskTemplate,
-        ] = template_cache.entries
+        self._mask_templates: OrderedDict[object, _MaskTemplate] = template_cache.entries
         self._packed_allow_token_mask: tuple[int, ...] = ()
 
     @property
@@ -329,7 +497,7 @@ class GrammarConstraintProcessor:
     def acceleration_receipt(self) -> dict[str, object]:
         return {
             "constraint_kind": self.constraint_kind,
-            "mask_vocab_words": math.ceil(len(self._id_to_text) / 64),
+            "mask_vocab_words": self._mask_vocab_words,
             "fast_path_used": False,
             "fallback_reason": "structured_output_acceleration_unsupported",
         }
@@ -437,8 +605,8 @@ class GrammarConstraintProcessor:
         state: _JSONPrefixState | _SchemaPrefixState,
         token_id: int,
     ) -> bool:
-        if token_id in self._eos_token_ids and self._is_complete(state):
-            return True
+        if self._is_complete(state) and self._eos_token_ids:
+            return token_id in self._eos_token_ids
         text = self._id_to_text.get(token_id, "")
         return self._transition_text(state, text) is not None
 
@@ -604,8 +772,17 @@ def _tokenizer_vocab_size(tokenizer: Any) -> int:
     return int(size) if size > 0 else 0
 
 
-@lru_cache(maxsize=128)
+@_weighted_lru_cache(
+    maxsize=_MAX_SCHEMA_CACHE_ENTRIES,
+    maxbytes=_MAX_SCHEMA_CACHE_ESTIMATED_BYTES,
+    weight=_schema_cache_weight,
+)
 def _compile_json_schema(schema_json: str) -> _SchemaNode:
+    clock = monotonic
+    budget = _SchemaCompileBudget(
+        deadline=clock() + _SCHEMA_COMPILE_DEADLINE_SECONDS,
+        clock=clock,
+    )
     try:
         schema_size = len(schema_json.encode("utf-8"))
     except UnicodeEncodeError as exc:
@@ -623,10 +800,7 @@ def _compile_json_schema(schema_json: str) -> _SchemaNode:
             limit="max_schema_bytes",
         )
     try:
-        raw_schema = json.loads(
-            schema_json,
-            parse_constant=_reject_nonfinite_json_number,
-        )
+        raw_schema = _schema_json_loads(schema_json)
     except (json.JSONDecodeError, RecursionError, ValueError) as exc:
         raise StructuredOutputConstraintError(
             "response_format json_schema contains malformed JSON.",
@@ -637,12 +811,13 @@ def _compile_json_schema(schema_json: str) -> _SchemaNode:
                 "message": getattr(exc, "msg", str(exc)),
             },
         ) from exc
+    _check_schema_compile_budget(budget, pointer="")
     try:
         node = _compile_schema_node(
             raw_schema,
             pointer="",
             depth=0,
-            budget=_SchemaCompileBudget(),
+            budget=budget,
         )
     except RecursionError as exc:
         raise _schema_complexity_error(
@@ -665,6 +840,15 @@ def _reject_nonfinite_json_number(value: str) -> object:
     raise ValueError(f"non-finite JSON number: {value}")
 
 
+def _schema_json_loads(value: str) -> object:
+    return json.loads(
+        value,
+        parse_float=Decimal,
+        parse_int=Decimal,
+        parse_constant=_reject_nonfinite_json_number,
+    )
+
+
 def _compile_schema_node(
     raw_schema: object,
     *,
@@ -680,6 +864,7 @@ def _compile_schema_node(
         )
     if budget is None:
         budget = _SchemaCompileBudget()
+    _check_schema_compile_budget(budget, pointer=pointer)
     budget.node_count += 1
     if budget.node_count > _MAX_SCHEMA_NODES:
         raise _schema_complexity_error(
@@ -704,6 +889,7 @@ def _compile_schema_node(
         )
 
     for keyword in raw_schema:
+        _check_schema_compile_budget(budget, pointer=pointer)
         if keyword not in _SUPPORTED_SCHEMA_KEYWORDS:
             raise _schema_error(
                 f"response_format json_schema keyword is not supported: {keyword}.",
@@ -712,8 +898,8 @@ def _compile_schema_node(
                 pointer=pointer,
             )
 
-    enum_json_values = _schema_enum_json_values(raw_schema, pointer=pointer)
-    types = _schema_types(raw_schema, enum_json_values, pointer=pointer)
+    enum_json_values = _schema_enum_json_values(raw_schema, pointer=pointer, budget=budget)
+    types = _schema_types(raw_schema, enum_json_values, pointer=pointer, budget=budget)
     minimum = _schema_number_bound(raw_schema, "minimum", pointer=pointer)
     maximum = _schema_number_bound(raw_schema, "maximum", pointer=pointer)
     if minimum is not None and maximum is not None and minimum > maximum:
@@ -727,6 +913,7 @@ def _compile_schema_node(
         enum_json_values,
         types,
         pointer=pointer,
+        budget=budget,
     )
     enum_json_values = _schema_enum_json_values_matching_bounds(
         enum_json_values,
@@ -734,15 +921,15 @@ def _compile_schema_node(
         minimum=minimum,
         maximum=maximum,
         pointer=pointer,
+        budget=budget,
     )
-    enum_trie = _schema_fixed_value_trie(enum_json_values)
     properties = _schema_properties(
         raw_schema,
         pointer=pointer,
         depth=depth,
         budget=budget,
     )
-    required = _schema_required(raw_schema, pointer=pointer)
+    required = _schema_required(raw_schema, pointer=pointer, budget=budget)
     additional = _schema_additional(
         raw_schema,
         pointer=pointer,
@@ -755,9 +942,21 @@ def _compile_schema_node(
         depth=depth,
         budget=budget,
     )
-    min_items = _schema_non_negative_int(raw_schema, "minItems", default=0, pointer=pointer)
+    min_items = _schema_non_negative_int(
+        raw_schema,
+        "minItems",
+        default=0,
+        pointer=pointer,
+        budget=budget,
+    )
     max_items = (
-        _schema_non_negative_int(raw_schema, "maxItems", default=0, pointer=pointer)
+        _schema_non_negative_int(
+            raw_schema,
+            "maxItems",
+            default=0,
+            pointer=pointer,
+            budget=budget,
+        )
         if "maxItems" in raw_schema
         else None
     )
@@ -801,29 +1000,64 @@ def _compile_schema_node(
             pointer=pointer,
         )
 
-    return _SchemaNode(
+    structural_node = _SchemaNode(
         types=types,
         properties=properties,
         required=required,
         additional=additional,
         items=items,
-        enum_json_values=enum_json_values,
-        enum_trie=enum_trie,
         minimum=minimum,
         maximum=maximum,
         min_items=min_items,
         max_items=max_items,
     )
+    enum_json_values = _schema_enum_json_values_matching_node(
+        enum_json_values,
+        structural_node,
+        pointer=pointer,
+        budget=budget,
+    )
+    return _SchemaNode(
+        types=structural_node.types,
+        properties=structural_node.properties,
+        required=structural_node.required,
+        additional=structural_node.additional,
+        items=structural_node.items,
+        enum_json_values=enum_json_values,
+        enum_trie=_schema_fixed_value_trie(
+            enum_json_values,
+            budget=budget,
+            pointer=pointer,
+        ),
+        minimum=structural_node.minimum,
+        maximum=structural_node.maximum,
+        min_items=structural_node.min_items,
+        max_items=structural_node.max_items,
+    )
 
 
-def _schema_enum_json_values(raw_schema: dict[str, object], *, pointer: str) -> frozenset[str]:
+def _schema_enum_json_values(
+    raw_schema: dict[str, object],
+    *,
+    pointer: str,
+    budget: _SchemaCompileBudget | None = None,
+) -> frozenset[str]:
+    if budget is not None:
+        _check_schema_compile_budget(budget, pointer=pointer)
     has_const = "const" in raw_schema
     const_value = raw_schema.get("const")
-    const_json = (
-        json.dumps(const_value, ensure_ascii=False, separators=(",", ":"))
-        if has_const
-        else None
-    )
+    const_json: str | None = None
+    if has_const:
+        try:
+            _validate_json_text_utf8(const_value, budget=budget, pointer=pointer)
+        except UnicodeEncodeError as exc:
+            raise _schema_error(
+                "response_format json_schema const value must be valid UTF-8 text.",
+                reason="json_schema_invalid",
+                keyword="const",
+                pointer=pointer,
+            ) from exc
+        const_json = _schema_json_dumps(const_value, budget=budget, pointer=pointer)
     enum_json_values: frozenset[str] = frozenset()
     raw_enum: list[object] = []
     if "enum" in raw_schema:
@@ -842,10 +1076,34 @@ def _schema_enum_json_values(raw_schema: dict[str, object], *, pointer: str) -> 
                 limit="max_enum_values",
                 pointer=pointer,
             )
-        enum_json_values = frozenset(
-            json.dumps(value, ensure_ascii=False, separators=(",", ":")) for value in raw_enum
-        )
-        enum_text_bytes = sum(len(value.encode("utf-8")) for value in enum_json_values)
+        encoded_values: set[str] = set()
+        for value in raw_enum:
+            if budget is not None:
+                _check_schema_compile_budget(budget, pointer=pointer)
+            try:
+                _validate_json_text_utf8(value, budget=budget, pointer=pointer)
+            except UnicodeEncodeError as exc:
+                raise _schema_error(
+                    "response_format json_schema enum values must be valid UTF-8 text.",
+                    reason="json_schema_invalid",
+                    keyword="enum",
+                    pointer=pointer,
+                ) from exc
+            encoded_values.add(_schema_json_dumps(value, budget=budget, pointer=pointer))
+        enum_json_values = frozenset(encoded_values)
+        try:
+            enum_text_bytes = 0
+            for value in enum_json_values:
+                if budget is not None:
+                    _check_schema_compile_budget(budget, pointer=pointer)
+                enum_text_bytes += len(value.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise _schema_error(
+                "response_format json_schema enum values must be valid UTF-8 text.",
+                reason="json_schema_invalid",
+                keyword="enum",
+                pointer=pointer,
+            ) from exc
         if enum_text_bytes > _MAX_SCHEMA_ENUM_TEXT_BYTES:
             raise _schema_complexity_error(
                 "response_format json_schema enum exceeds the supported text size.",
@@ -853,7 +1111,10 @@ def _schema_enum_json_values(raw_schema: dict[str, object], *, pointer: str) -> 
                 pointer=pointer,
             )
     if has_const and enum_json_values:
-        if not any(_schema_json_values_equal(const_value, value) for value in raw_enum):
+        if not any(
+            _schema_json_values_equal(const_value, value, budget=budget, pointer=pointer)
+            for value in raw_enum
+        ):
             raise _schema_error(
                 "response_format json_schema const must be one of the enum values.",
                 reason="json_schema_unsatisfiable",
@@ -862,10 +1123,65 @@ def _schema_enum_json_values(raw_schema: dict[str, object], *, pointer: str) -> 
             )
         return frozenset((const_json,))
     if const_json is not None:
+        try:
+            const_json.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise _schema_error(
+                "response_format json_schema const value must be valid UTF-8 text.",
+                reason="json_schema_invalid",
+                keyword="const",
+                pointer=pointer,
+            ) from exc
         return frozenset((const_json,))
     if enum_json_values:
         return enum_json_values
     return frozenset()
+
+
+def _schema_json_dumps(
+    value: object,
+    *,
+    budget: _SchemaCompileBudget | None = None,
+    pointer: str = "",
+) -> str:
+    if budget is not None:
+        _check_schema_compile_budget(budget, pointer=pointer)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("schema JSON numbers must be finite")
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ",".join(
+            _schema_json_dumps(item, budget=budget, pointer=pointer) for item in value
+        ) + "]"
+    if isinstance(value, dict):
+        return "{" + ",".join(
+            f"{json.dumps(key, ensure_ascii=True, separators=(',', ':'))}:"
+            f"{_schema_json_dumps(item, budget=budget, pointer=pointer)}"
+            for key, item in value.items()
+        ) + "}"
+    return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+
+
+def _validate_json_text_utf8(
+    value: object,
+    *,
+    budget: _SchemaCompileBudget | None = None,
+    pointer: str = "",
+) -> None:
+    stack = [value]
+    while stack:
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
+        item = stack.pop()
+        if isinstance(item, str):
+            item.encode("utf-8")
+        elif isinstance(item, list):
+            stack.extend(item)
+        elif isinstance(item, dict):
+            for key, child in item.items():
+                key.encode("utf-8")
+                stack.append(child)
 
 
 def _schema_enum_json_values_matching_types(
@@ -873,14 +1189,17 @@ def _schema_enum_json_values_matching_types(
     types: tuple[str, ...],
     *,
     pointer: str,
+    budget: _SchemaCompileBudget | None = None,
 ) -> frozenset[str]:
     if not enum_json_values:
         return frozenset()
-    matching = frozenset(
-        value
-        for value in enum_json_values
-        if any(_schema_json_value_matches_type(value, schema_type) for schema_type in types)
-    )
+    matching_values: set[str] = set()
+    for value in enum_json_values:
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
+        if any(_schema_json_value_matches_type(value, schema_type) for schema_type in types):
+            matching_values.add(value)
+    matching = frozenset(matching_values)
     if not matching:
         raise _schema_error(
             "response_format json_schema enum/const values do not match the declared type.",
@@ -898,16 +1217,24 @@ def _schema_enum_json_values_matching_bounds(
     minimum: Decimal | None,
     maximum: Decimal | None,
     pointer: str,
+    budget: _SchemaCompileBudget | None = None,
 ) -> frozenset[str]:
     if not enum_json_values or (minimum is None and maximum is None):
         return enum_json_values
     numeric_node = _SchemaNode(types=types, minimum=minimum, maximum=maximum)
-    matching = frozenset(
-        value
-        for value in enum_json_values
-        if not any(_schema_json_value_matches_type(value, item) for item in ("integer", "number"))
-        or _schema_number_satisfies_node(numeric_node, value)
-    )
+    matching_values: set[str] = set()
+    for value in enum_json_values:
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
+        if (
+            not any(
+                _schema_json_value_matches_type(value, item)
+                for item in ("integer", "number")
+            )
+            or _schema_number_satisfies_node(numeric_node, value)
+        ):
+            matching_values.add(value)
+    matching = frozenset(matching_values)
     if not matching:
         raise _schema_error(
             "response_format json_schema enum/const values do not satisfy numeric bounds.",
@@ -918,33 +1245,182 @@ def _schema_enum_json_values_matching_bounds(
     return matching
 
 
-def _schema_fixed_value_trie(values: frozenset[str]) -> _FixedValueTrie | None:
+def _schema_enum_json_values_matching_node(
+    enum_json_values: frozenset[str],
+    node: _SchemaNode,
+    *,
+    pointer: str,
+    budget: _SchemaCompileBudget | None = None,
+) -> frozenset[str]:
+    if not enum_json_values:
+        return frozenset()
+    matching_values: set[str] = set()
+    for value in enum_json_values:
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
+        if _schema_json_value_satisfies_node(
+            value,
+            node,
+            budget=budget,
+            pointer=pointer,
+        ):
+            matching_values.add(value)
+    matching = frozenset(matching_values)
+    if not matching:
+        raise _schema_error(
+            "response_format json_schema enum/const values do not satisfy the structural constraints.",
+            reason="json_schema_unsatisfiable",
+            keyword="enum",
+            pointer=pointer,
+        )
+    return matching
+
+
+def _schema_json_value_satisfies_node(
+    value_json: str,
+    node: _SchemaNode,
+    *,
+    budget: _SchemaCompileBudget | None = None,
+    pointer: str = "",
+) -> bool:
+    if budget is not None:
+        _check_schema_compile_budget(budget, pointer=pointer)
+    try:
+        value = _schema_json_loads(value_json)
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        return False
+    return _schema_value_satisfies_node(value, node, budget=budget, pointer=pointer)
+
+
+def _schema_value_satisfies_node(
+    value: object,
+    node: _SchemaNode,
+    *,
+    budget: _SchemaCompileBudget | None = None,
+    pointer: str = "",
+) -> bool:
+    if budget is not None:
+        _check_schema_compile_budget(budget, pointer=pointer)
+    if node is _ANY_SCHEMA_NODE:
+        return True
+    if not any(_schema_value_matches_type(value, schema_type) for schema_type in node.types):
+        return False
+    if node.enum_json_values and not any(
+        _schema_json_values_equal(
+            value,
+            _schema_json_loads(candidate),
+            budget=budget,
+            pointer=pointer,
+        )
+        for candidate in node.enum_json_values
+    ):
+        return False
+    if isinstance(value, Decimal):
+        if node.minimum is not None and value < node.minimum:
+            return False
+        if node.maximum is not None and value > node.maximum:
+            return False
+    if isinstance(value, dict):
+        if not node.required.issubset(value):
+            return False
+        properties = {prop.name: prop.node for prop in node.properties}
+        for key, child_value in value.items():
+            if budget is not None:
+                _check_schema_compile_budget(budget, pointer=pointer)
+            child_node = properties.get(key, node.additional)
+            if child_node is None or not _schema_value_satisfies_node(
+                child_value,
+                child_node,
+                budget=budget,
+                pointer=pointer,
+            ):
+                return False
+    if isinstance(value, list):
+        if len(value) < node.min_items:
+            return False
+        if node.max_items is not None and len(value) > node.max_items:
+            return False
+        item_node = node.items or _ANY_SCHEMA_NODE
+        for item in value:
+            if not _schema_value_satisfies_node(
+                item,
+                item_node,
+                budget=budget,
+                pointer=pointer,
+            ):
+                return False
+    return True
+
+
+def _schema_value_matches_type(value: object, schema_type: str) -> bool:
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "integer":
+        return isinstance(value, Decimal) and value.is_finite() and value == value.to_integral_value()
+    if schema_type == "number":
+        return isinstance(value, Decimal) and value.is_finite()
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    if schema_type == "null":
+        return value is None
+    return False
+
+
+def _schema_fixed_value_trie(
+    values: frozenset[str],
+    *,
+    budget: _SchemaCompileBudget | None = None,
+    pointer: str = "",
+) -> _FixedValueTrie | None:
     if not values:
         return None
     mutable_root: dict[str, object] = {"terminal": False, "children": {}}
     for value in values:
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
         current = mutable_root
         for char in value:
+            if budget is not None:
+                _check_schema_compile_budget(budget, pointer=pointer)
             children = current["children"]
             assert isinstance(children, dict)
             current = children.setdefault(char, {"terminal": False, "children": {}})
             assert isinstance(current, dict)
         current["terminal"] = True
 
-    def freeze(raw: dict[str, object]) -> _FixedValueTrie:
+    frozen_nodes: dict[int, _FixedValueTrie] = {}
+    pending: list[tuple[dict[str, object], bool]] = [(mutable_root, False)]
+    while pending:
+        raw, children_ready = pending.pop()
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
         raw_children = raw["children"]
         assert isinstance(raw_children, dict)
-        children = {
-            str(char): freeze(child)
-            for char, child in raw_children.items()
-            if isinstance(child, dict)
-        }
-        return _FixedValueTrie(
+        if not children_ready:
+            pending.append((raw, True))
+            pending.extend(
+                (child, False)
+                for child in raw_children.values()
+                if isinstance(child, dict)
+            )
+            continue
+        children = MappingProxyType(
+            {
+                str(char): frozen_nodes[id(child)]
+                for char, child in raw_children.items()
+                if isinstance(child, dict)
+            }
+        )
+        frozen_nodes[id(raw)] = _FixedValueTrie(
             terminal=bool(raw["terminal"]),
-            children=MappingProxyType(children),
+            children=children,
         )
 
-    return freeze(mutable_root)
+    return frozen_nodes[id(mutable_root)]
 
 
 def _schema_types(
@@ -952,9 +1428,11 @@ def _schema_types(
     enum_json_values: frozenset[str],
     *,
     pointer: str,
+    budget: _SchemaCompileBudget | None = None,
 ) -> tuple[str, ...]:
-    raw_type = raw_schema.get("type")
-    if raw_type is None:
+    if budget is not None:
+        _check_schema_compile_budget(budget, pointer=pointer)
+    if "type" not in raw_schema:
         if "properties" in raw_schema or "required" in raw_schema or "additionalProperties" in raw_schema:
             return ("object",)
         if "items" in raw_schema or "minItems" in raw_schema or "maxItems" in raw_schema:
@@ -966,6 +1444,7 @@ def _schema_types(
                 if any(_schema_json_value_matches_type(value, item) for value in enum_json_values)
             )
         return _ANY_SCHEMA_TYPES
+    raw_type = raw_schema["type"]
     values = raw_type if isinstance(raw_type, list) else [raw_type]
     if not values:
         raise _schema_error(
@@ -976,6 +1455,8 @@ def _schema_types(
         )
     normalized: list[str] = []
     for value in values:
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
         if not isinstance(value, str) or value not in _SUPPORTED_SCHEMA_TYPES:
             raise _schema_error(
                 "response_format json_schema type is not supported.",
@@ -989,43 +1470,44 @@ def _schema_types(
 
 
 def _schema_json_value_matches_type(value_json: str, schema_type: str) -> bool:
-    value = json.loads(value_json, parse_float=Decimal, parse_int=Decimal)
-    if schema_type == "object":
-        return isinstance(value, dict)
-    if schema_type == "array":
-        return isinstance(value, list)
-    if schema_type == "string":
-        return isinstance(value, str)
-    if schema_type == "integer":
-        return (
-            isinstance(value, Decimal)
-            and value.is_finite()
-            and value == value.to_integral_value()
-        )
-    if schema_type == "number":
-        return isinstance(value, Decimal) and value.is_finite()
-    if schema_type == "boolean":
-        return isinstance(value, bool)
-    if schema_type == "null":
-        return value is None
-    return False
+    return _schema_value_matches_type(_schema_json_loads(value_json), schema_type)
 
 
-def _schema_json_values_equal(left: object, right: object) -> bool:
+def _schema_json_values_equal(
+    left: object,
+    right: object,
+    *,
+    budget: _SchemaCompileBudget | None = None,
+    pointer: str = "",
+) -> bool:
+    if budget is not None:
+        _check_schema_compile_budget(budget, pointer=pointer)
     if isinstance(left, bool) or isinstance(right, bool):
         return isinstance(left, bool) and isinstance(right, bool) and left == right
-    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-        left_number = Decimal(str(left))
-        right_number = Decimal(str(right))
+    numeric_types = (Decimal, int, float)
+    if isinstance(left, numeric_types) and isinstance(right, numeric_types):
+        left_number = left if isinstance(left, Decimal) else Decimal(str(left))
+        right_number = right if isinstance(right, Decimal) else Decimal(str(right))
         return left_number.is_finite() and right_number.is_finite() and left_number == right_number
     if isinstance(left, list) and isinstance(right, list):
         return len(left) == len(right) and all(
-            _schema_json_values_equal(left_item, right_item)
+            _schema_json_values_equal(
+                left_item,
+                right_item,
+                budget=budget,
+                pointer=pointer,
+            )
             for left_item, right_item in zip(left, right, strict=True)
         )
     if isinstance(left, dict) and isinstance(right, dict):
         return left.keys() == right.keys() and all(
-            _schema_json_values_equal(left[key], right[key]) for key in left
+            _schema_json_values_equal(
+                left[key],
+                right[key],
+                budget=budget,
+                pointer=pointer,
+            )
+            for key in left
         )
     return type(left) is type(right) and left == right
 
@@ -1038,8 +1520,6 @@ def _schema_properties(
     budget: _SchemaCompileBudget | None = None,
 ) -> tuple[_SchemaProperty, ...]:
     raw_properties = raw_schema.get("properties", {})
-    if raw_properties is None:
-        raw_properties = {}
     if not isinstance(raw_properties, dict):
         raise _schema_error(
             "response_format json_schema properties must be an object.",
@@ -1054,6 +1534,8 @@ def _schema_properties(
             pointer=pointer,
         )
     for name in raw_properties:
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
         if not isinstance(name, str):
             raise _schema_error(
                 "response_format json_schema property names must be strings.",
@@ -1061,8 +1543,19 @@ def _schema_properties(
                 keyword="properties",
                 pointer=pointer,
             )
+        try:
+            name.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise _schema_error(
+                "response_format json_schema property names must be valid UTF-8 text.",
+                reason="json_schema_invalid",
+                keyword="properties",
+                pointer=pointer,
+            ) from exc
     properties: list[_SchemaProperty] = []
     for name, child_schema in sorted(raw_properties.items()):
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
         properties.append(
             _SchemaProperty(
                 name=name,
@@ -1077,10 +1570,15 @@ def _schema_properties(
     return tuple(properties)
 
 
-def _schema_required(raw_schema: dict[str, object], *, pointer: str) -> frozenset[str]:
+def _schema_required(
+    raw_schema: dict[str, object],
+    *,
+    pointer: str,
+    budget: _SchemaCompileBudget | None = None,
+) -> frozenset[str]:
+    if budget is not None:
+        _check_schema_compile_budget(budget, pointer=pointer)
     raw_required = raw_schema.get("required", [])
-    if raw_required is None:
-        raw_required = []
     if not isinstance(raw_required, list) or any(not isinstance(item, str) for item in raw_required):
         raise _schema_error(
             "response_format json_schema required must be an array of property names.",
@@ -1094,7 +1592,21 @@ def _schema_required(raw_schema: dict[str, object], *, pointer: str) -> frozense
             limit="max_required",
             pointer=pointer,
         )
-    return frozenset(raw_required)
+    required: set[str] = set()
+    for item in raw_required:
+        if budget is not None:
+            _check_schema_compile_budget(budget, pointer=pointer)
+        try:
+            item.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise _schema_error(
+                "response_format json_schema required names must be valid UTF-8 text.",
+                reason="json_schema_invalid",
+                keyword="required",
+                pointer=pointer,
+            ) from exc
+        required.add(item)
+    return frozenset(required)
 
 
 def _schema_additional(
@@ -1158,7 +1670,7 @@ def _schema_number_bound(
     if keyword not in raw_schema:
         return None
     value = raw_schema[keyword]
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
+    if not isinstance(value, (Decimal, int, float)) or isinstance(value, bool):
         raise _schema_error(
             f"response_format json_schema {keyword} must be numeric.",
             reason="json_schema_invalid",
@@ -1180,6 +1692,12 @@ def _schema_number_bound(
             keyword=keyword,
             pointer=pointer,
         )
+    if normalized and abs(normalized.adjusted()) > _MAX_EXPONENT_MAGNITUDE:
+        raise _schema_complexity_error(
+            f"response_format json_schema {keyword} exponent exceeds the supported magnitude.",
+            limit="max_exponent_magnitude",
+            pointer=pointer,
+        )
     return normalized
 
 
@@ -1189,18 +1707,37 @@ def _schema_non_negative_int(
     *,
     default: int,
     pointer: str,
+    budget: _SchemaCompileBudget | None = None,
 ) -> int:
+    if budget is not None:
+        _check_schema_compile_budget(budget, pointer=pointer)
     if keyword not in raw_schema:
         return default
     value = raw_schema[keyword]
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+    if not isinstance(value, (Decimal, int)) or isinstance(value, bool):
         raise _schema_error(
             f"response_format json_schema {keyword} must be a non-negative integer.",
             reason="json_schema_invalid",
             keyword=keyword,
             pointer=pointer,
         )
-    return value
+    normalized = value if isinstance(value, Decimal) else Decimal(value)
+    if normalized < 0 or normalized != normalized.to_integral_value():
+        raise _schema_error(
+            f"response_format json_schema {keyword} must be a non-negative integer.",
+            reason="json_schema_invalid",
+            keyword=keyword,
+            pointer=pointer,
+        )
+    if normalized > _MAX_SCHEMA_ARRAY_ITEMS:
+        raise _schema_complexity_error(
+            f"response_format json_schema {keyword} exceeds the supported item count.",
+            limit="max_array_items",
+            pointer=pointer,
+        )
+    if budget is not None:
+        _check_schema_compile_budget(budget, pointer=pointer)
+    return int(normalized)
 
 
 def _schema_error(
@@ -1220,6 +1757,33 @@ def _schema_error(
     if pointer:
         details["schema_pointer"] = pointer
     return StructuredOutputConstraintError(message, details=details)
+
+
+def _check_schema_compile_budget(
+    budget: _SchemaCompileBudget,
+    *,
+    pointer: str,
+) -> None:
+    if budget.clock is None or budget.deadline is None or budget.clock() <= budget.deadline:
+        return
+    if budget.mode == "tool_choice":
+        details = {
+            "mode": "tool_choice",
+            "enforcement": "sampler",
+            "reason": "tool_schema_too_complex",
+            "limit": "compile_deadline_ms",
+        }
+        if pointer:
+            details["schema_pointer"] = pointer
+        raise StructuredOutputConstraintError(
+            "Tool grammar compilation exceeded its deadline.",
+            details=details,
+        )
+    raise _schema_complexity_error(
+        "response_format json_schema compilation exceeded its deadline.",
+        limit="compile_deadline_ms",
+        pointer=pointer,
+    )
 
 
 def _schema_complexity_error(
@@ -1801,7 +2365,11 @@ def _schema_complete_key_string(state: _SchemaPrefixState) -> _SchemaPrefixState
     if key in frame.seen:
         return None
     property_node = _schema_property_node(frame.node, key)
-    value_node = property_node if property_node is not None else frame.node.additional
+    value_node = (
+        property_node
+        if property_node is not None
+        else _schema_additional_node(frame.node)
+    )
     if value_node is None:
         return None
     return _schema_replace_top(
@@ -1825,7 +2393,7 @@ def _schema_property_node(node: _SchemaNode, key: str) -> _SchemaNode | None:
 
 def _schema_key_prefix_allowed(state: _SchemaPrefixState, prefix: str) -> bool:
     frame = _schema_top_frame(state)
-    if frame.node.additional is not None:
+    if _schema_additional_node(frame.node) is not None:
         return True
     return any(
         prop.name not in frame.seen and prop.name.startswith(prefix)
@@ -1834,9 +2402,13 @@ def _schema_key_prefix_allowed(state: _SchemaPrefixState, prefix: str) -> bool:
 
 
 def _schema_object_available_keys(frame: _SchemaFrame) -> bool:
-    if frame.node.additional is not None:
+    if _schema_additional_node(frame.node) is not None:
         return True
     return any(prop.name not in frame.seen for prop in frame.node.properties)
+
+
+def _schema_additional_node(node: _SchemaNode) -> _SchemaNode | None:
+    return _ANY_SCHEMA_NODE if node is _ANY_SCHEMA_NODE else node.additional
 
 
 def _schema_array_can_accept_value(frame: _SchemaFrame) -> bool:
@@ -1897,7 +2469,7 @@ def _schema_number_prefix_viable(
             and _schema_number_satisfies_node(node, text)
         )
     if number_state == "after_minus":
-        return _schema_range_intersects(node, None, Decimal(-1))
+        return _schema_range_intersects(node, None, Decimal(0))
     if number_state in {"exp_start", "exp_sign", "exp"}:
         return _schema_exponent_prefix_viable(node, text, number_state)
     if number_state == "frac_start":
@@ -2331,7 +2903,7 @@ def _consume_number_char(state: _JSONPrefixState, char: str) -> _JSONPrefixState
             return _replace_mode(state, number_state="exp_start")
         return None
     if number_state == "int":
-        if char.isdigit():
+        if "0" <= char <= "9":
             return state
         if char == ".":
             return _replace_mode(state, number_state="frac_start")
@@ -2339,9 +2911,9 @@ def _consume_number_char(state: _JSONPrefixState, char: str) -> _JSONPrefixState
             return _replace_mode(state, number_state="exp_start")
         return None
     if number_state == "frac_start":
-        return _replace_mode(state, number_state="frac") if char.isdigit() else None
+        return _replace_mode(state, number_state="frac") if "0" <= char <= "9" else None
     if number_state == "frac":
-        if char.isdigit():
+        if "0" <= char <= "9":
             return state
         if char in {"e", "E"}:
             return _replace_mode(state, number_state="exp_start")
@@ -2349,13 +2921,13 @@ def _consume_number_char(state: _JSONPrefixState, char: str) -> _JSONPrefixState
     if number_state == "exp_start":
         if char in {"+", "-"}:
             return _replace_mode(state, number_state="exp_sign")
-        if char.isdigit():
+        if "0" <= char <= "9":
             return _replace_mode(state, number_state="exp")
         return None
     if number_state == "exp_sign":
-        return _replace_mode(state, number_state="exp") if char.isdigit() else None
+        return _replace_mode(state, number_state="exp") if "0" <= char <= "9" else None
     if number_state == "exp":
-        return state if char.isdigit() else None
+        return state if "0" <= char <= "9" else None
     return None
 
 

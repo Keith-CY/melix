@@ -1394,6 +1394,7 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert metrics["schema_build_second_decode_calls_mean"] == 0.0
     assert metrics["schema_cached_mask_elapsed_ms_mean"] >= 0.0
     assert metrics["schema_initial_allowed_count_mean"] >= 1.0
+    assert metrics["schema_compile_p95_ms_mean"] < 50.0
     assert metrics["schema_complexity_refusal_elapsed_ms_mean"] < 50.0
     assert metrics["schema_enum_mask_elapsed_ms_mean"] >= 0.0
     assert 0.0 < metrics["schema_free_text_mask_cache_entries_mean"] <= 64.0
@@ -1411,6 +1412,7 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert fallback_metrics["build_first_decode_calls_mean"] == 64.0
     assert fallback_metrics["build_second_decode_calls_mean"] == 64.0
     assert fallback_metrics["schema_available"] == 0.0
+    assert fallback_metrics["schema_compile_p95_ms_mean"] == 0.0
     assert fallback_metrics["schema_complexity_refusal_elapsed_ms_mean"] == 0.0
     assert fallback_metrics["schema_enum_mask_elapsed_ms_mean"] == 0.0
     assert fallback_metrics["schema_free_text_mask_cache_entries_mean"] == 0.0

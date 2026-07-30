@@ -119,6 +119,7 @@ class TokenRoutedVisibleBackend:
 
 class FinalizerParityBackend:
     runtime_name = "fake-mlx"
+    supports_sampler_constraints = True
 
     def __init__(self, *, raw_text: str, prompt_tokens: int = 11, completion_tokens: int = 3) -> None:
         self.raw_text = raw_text
@@ -326,14 +327,14 @@ def test_structured_tool_calls_finalize_through_shared_text_receipt_state(monkey
                 enabled=True,
                 mode_source="request_enable_thinking",
             ),
-                tool_config=common_pb2.ToolConfig(
+            tool_config=common_pb2.ToolConfig(
                 tools=[
                     common_pb2.ToolDefinition(
                         name="search",
                         json_schema='{"type":"object"}',
                     )
                 ],
-                    tool_choice="",
+                tool_choice="",
             ),
         ),
         messages=[

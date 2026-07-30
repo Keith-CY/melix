@@ -16,6 +16,7 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime import mlx_text_runtime as mlx_text_runtime_module
 from worker.runtime import runtime_utils
+from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.mlx_text_runtime import RuntimeUnavailableError, resolve_text_stop_contract
@@ -1222,6 +1223,53 @@ def test_native_mtp_batch_generator_eligibility_rejects_grammar_processors() -> 
     assert batch_generator._is_mtp_eligible(gen_batch) is False
 
 
+def test_locked_generation_batch_filter_preserves_mixed_sequence_processor_identity() -> None:
+    import mlx.core as mx
+    from mlx_lm.generate import GenerationBatch
+    from worker.runtime.native_mtp import batch_generator
+
+    if not batch_generator.apply():
+        pytest.skip("mlx-lm BatchGenerator patch is unavailable")
+
+    class FilterableCache:
+        def __init__(self) -> None:
+            self.kept: list[list[int]] = []
+
+        def filter(self, keep: list[int]) -> None:
+            self.kept.append(list(keep))
+
+    constrained_a = object()
+    constrained_b = object()
+    cache = FilterableCache()
+    batch = GenerationBatch.__new__(GenerationBatch)
+    batch.uids = [101, 202, 303]
+    batch.prompt_cache = [cache]
+    batch.tokens = [[1], [2], [3]]
+    batch.samplers = [None, None, None]
+    batch.logits_processors = [[constrained_a], [], [constrained_b]]
+    batch.max_tokens = [11, 22, 33]
+    batch.state_machines = [object(), object(), object()]
+    batch._next_tokens = mx.array([10, 20, 30])
+    batch._next_logprobs = ["lp-a", "lp-plain", "lp-b"]
+    batch._token_context = ["ctx-a", "ctx-plain", "ctx-b"]
+    batch._num_tokens = [1, 2, 3]
+    batch._matcher_states = ["match-a", "match-plain", "match-b"]
+
+    batch.filter([1, 2])
+
+    assert batch.uids == [202, 303]
+    assert batch.logits_processors[0] == []
+    assert batch.logits_processors[1][0] is constrained_b
+    assert batch._next_tokens.tolist() == [20, 30]
+
+    batch.filter([1])
+
+    assert batch.uids == [303]
+    assert batch.logits_processors[0][0] is constrained_b
+    assert batch._next_tokens.tolist() == [30]
+    assert cache.kept == [[1, 2], [1]]
+
+
 def test_native_mtp_response_stats_are_terminal_only() -> None:
     from worker.runtime.native_mtp import batch_generator
 
@@ -1331,6 +1379,61 @@ def test_mlx_text_runtime_uses_explicit_trust_support_override() -> None:
 
     assert MLXTextRuntime(backend=BackendWithExplicitSupport()).supports_trust_policy is True
     assert MLXTextRuntime(backend=BackendWithExplicitOptOut()).supports_trust_policy is False
+
+
+@pytest.mark.parametrize(
+    ("execution_ext", "expected_mode"),
+    (
+        ({"melix.structured_output.mode": "json_object"}, "json_object"),
+        (
+            {
+                "melix.structured_output.mode": "json_schema",
+                "melix.structured_output.schema_json": '{"type":"object"}',
+            },
+            "json_schema",
+        ),
+        ({"melix.compat.tool_choice_resolved": "required"}, "tool_choice"),
+        ({"melix.compat.tool_choice_resolved": "lookup"}, "tool_choice"),
+    ),
+    ids=("json_object", "schema_backed_json_schema", "required_tool", "named_tool"),
+)
+def test_runtime_rejects_sampler_constraints_when_backend_has_no_capability(
+    execution_ext: dict[str, str],
+    expected_mode: str,
+) -> None:
+    runtime = MLXTextRuntime(backend=DeterministicTextBackend())
+
+    with pytest.raises(StructuredOutputConstraintError) as error:
+        list(
+            runtime.generate_tokens(
+                {},
+                "hello",
+                common_pb2.SamplingConfig(max_output_tokens=4),
+                Event(),
+                execution_ext=execution_ext,
+            )
+        )
+
+    assert error.value.details == {
+        "mode": expected_mode,
+        "enforcement": "sampler",
+        "reason": "backend_sampler_constraints_unsupported",
+        "backend": "deterministic-text",
+    }
+
+
+def test_runtime_preserves_legacy_schema_parser_context_without_schema_payload() -> None:
+    events = list(
+        MLXTextRuntime(backend=DeterministicTextBackend()).generate_tokens(
+            {},
+            "hello",
+            common_pb2.SamplingConfig(max_output_tokens=4),
+            Event(),
+            execution_ext={"melix.structured_output.mode": "json_schema"},
+        )
+    )
+
+    assert [event.text for event in events] == ["Echo: hello"]
 
 
 def test_auto_backend_reuses_cached_stop_kwarg_signature(monkeypatch: pytest.MonkeyPatch) -> None:

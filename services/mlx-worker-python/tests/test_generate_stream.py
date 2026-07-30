@@ -2610,6 +2610,32 @@ def test_prepare_native_template_tools_preserves_existing_payload_and_skips_inva
     assert '"parameters":{}' in invalid.ext["melix.tool_config.tools_json"]
 
 
+def test_prepare_native_template_tools_keeps_parameterless_constraints_enforceable() -> None:
+    from worker.runtime.tool_wire_constraints import (
+        tool_constraint_preflight_error,
+        tool_wire_accepts_text,
+    )
+
+    for tool_choice in (
+        "required",
+        '{"type":"function","function":{"name":"ping"}}',
+    ):
+        execution = inference_pb2.ExecutionMetadata(
+            tool_config=common_pb2.ToolConfig(
+                tool_choice=tool_choice,
+                tools=[common_pb2.ToolDefinition(name="ping")],
+            )
+        )
+
+        EngineCore._prepare_native_template_tools(execution)
+
+        assert tool_constraint_preflight_error(execution.ext) is None
+        assert tool_wire_accepts_text(
+            execution.ext,
+            '<tool_call>{"name":"ping","arguments":{}}</tool_call>',
+        )
+
+
 def test_generate_rejects_non_object_chat_template_kwargs_payloads() -> None:
     _, inference_service, model_handle = build_services()
 
