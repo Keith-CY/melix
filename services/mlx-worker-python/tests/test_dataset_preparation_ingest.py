@@ -99,28 +99,40 @@ def test_dataset_preparation_import_does_not_eagerly_load_privacy_patterns() -> 
     assert completed.stdout.strip() == "False"
 
 
-def test_dataset_ingest_unbounded_source_reader_uses_path_read_bytes(
+def test_dataset_ingest_unbounded_source_reader_uses_single_direct_binary_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_path = tmp_path / "notes.txt"
     source_path.write_text("hello\nworld\n", encoding="utf-8")
 
-    read_paths: list[Path] = []
-    original_read_bytes = Path.read_bytes
+    class CountingBinaryFile:
+        read_calls = 0
 
-    def counted_read_bytes(path: Path) -> bytes:
-        read_paths.append(path)
-        return original_read_bytes(path)
+        def __enter__(self) -> "CountingBinaryFile":
+            return self
 
-    def fail_open(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("uncapped source reads should use Path.read_bytes()")  # pragma: no cover
+        def __exit__(self, *_args: object) -> None:
+            return None
 
-    monkeypatch.setattr(Path, "read_bytes", counted_read_bytes)
-    monkeypatch.setattr(dataset_preparation_module, "open", fail_open, raising=False)
+        def read(self, size: int = -1) -> bytes:
+            self.read_calls += 1
+            assert size == -1
+            return b"hello\nworld\n"
+
+    counting_file = CountingBinaryFile()
+
+    def counted_open(path: str | os.PathLike[str], mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert os.fspath(path) == os.fspath(source_path)
+        assert mode == "rb"
+        assert args == ()
+        assert kwargs == {}
+        return counting_file
+
+    monkeypatch.setattr(dataset_preparation_module, "open", counted_open, raising=False)
 
     assert _read_source_text(source_path) == "hello\nworld\n"
-    assert read_paths == [source_path]
+    assert counting_file.read_calls == 1
 
 
 def test_dataset_ingest_capped_source_reader_uses_single_bounded_binary_read(
