@@ -22,6 +22,14 @@ instead of first binding `bytes.decode` and passing the bytes object explicitly.
 The capped read path keeps the bound decoder because it decodes the joined chunk
 buffer after cap enforcement.
 
+## 2026-07-30 follow-up slice: direct binary open
+
+The next source-read slice keeps the same one-read UTF-8 behavior while replacing
+`Path.read_bytes()` on the uncapped path with a direct `open(os.fspath(path),
+"rb").read()` call. The capped path already uses the direct binary-open helper;
+sharing that setup avoids the extra `Path.read_bytes()` method dispatch and keeps
+both reader modes on the same low-level file access path.
+
 ## Validation plan
 
 1. Run the registered focused test command locally on Linux.

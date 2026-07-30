@@ -1239,10 +1239,11 @@ def _source_read_cap_bytes(*, upload_cap_bytes: int, source_cap_bytes: int) -> i
 
 
 def _read_source_text(path: Path, *, cap_bytes: int = 0) -> str:
-    if cap_bytes <= 0:
-        return path.read_bytes().decode("utf-8")
     raw_path = os.fspath(path)
     open_file = open
+    if cap_bytes <= 0:
+        with open_file(raw_path, "rb") as handle:
+            return handle.read().decode("utf-8")
     with open_file(raw_path, "rb") as handle:
         payload = handle.read(cap_bytes + 1)
     if len(payload) > cap_bytes:
