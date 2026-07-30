@@ -442,11 +442,11 @@ def chunk_long_samples(
 
     source_sample_count = 0
     chunked: list[dict] = []
+    extend_chunked = chunked.extend
+    chunk_sample = _chunk_sample
     for sample in samples:
         source_sample_count += 1
-        chunked.extend(
-            _chunk_sample(sample, chunk_size=chunk_size, tokenizer=tokenizer)
-        )
+        extend_chunked(chunk_sample(sample, chunk_size=chunk_size, tokenizer=tokenizer))
 
     return chunked, ChunkStats(
         enabled=True,
