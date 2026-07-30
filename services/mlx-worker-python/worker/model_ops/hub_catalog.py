@@ -37,6 +37,8 @@ _NEXT_LINK_REL_MARKER = 'rel="next"'
 _NEXT_LINK_REL_SUFFIX = '>; rel="next"'
 _CURSOR_QUERY_KEY = "cursor="
 _CURSOR_QUERY_KEY_LEN = len(_CURSOR_QUERY_KEY)
+_CURSOR_QUERY_PARAM_KEY = "&cursor="
+_CURSOR_QUERY_PARAM_KEY_LEN = len(_CURSOR_QUERY_PARAM_KEY)
 _URL_HEX_DIGITS = {
     "0": 0,
     "1": 1,
@@ -387,13 +389,13 @@ def _cursor_query_value(url: str, start: int, end: int) -> str:
         query_end = end
 
     value_start = query_start + 1
-    if url.startswith("cursor=", value_start, query_end):
-        value_start += len("cursor=")
+    cursor_start = url.find(_CURSOR_QUERY_PARAM_KEY, value_start, query_end)
+    if cursor_start >= 0:
+        value_start = cursor_start + _CURSOR_QUERY_PARAM_KEY_LEN
+    elif url.startswith(_CURSOR_QUERY_KEY, value_start, query_end):
+        value_start += _CURSOR_QUERY_KEY_LEN
     else:
-        cursor_start = url.find("&cursor=", value_start, query_end)
-        if cursor_start < 0:
-            return ""
-        value_start = cursor_start + len("&cursor=")
+        return ""
 
     value_end = url.find("&", value_start, query_end)
     if value_end < 0:
