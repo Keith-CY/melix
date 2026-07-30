@@ -180,3 +180,14 @@ immutable-type set once before their unrolled scalar guards. Copy isolation,
 canonical payload shape, token alias semantics, and all fallback paths stay
 unchanged. The registered `trajectory-provenance-copy-elision` probe remains the
 local Linux and CI validation gate for this small Python-only slice.
+
+## 2026-07-30 follow-up: quality component list preallocation
+
+This follow-up remains limited to `_copy_quality_components_list(...)` in
+`worker.trajectory_provenance`. The common trajectory quality-metrics component
+list copier now preallocates the output list to the known component count and
+fills by index instead of growing it with repeated `append()` calls. Component
+shape checks, label-list isolation, fallback behavior for non-standard component
+payloads, and canonical copied dict order stay unchanged. The registered
+`trajectory-provenance-copy-elision` probe remains the local Linux and CI
+validation gate for this small Python-only slice.
