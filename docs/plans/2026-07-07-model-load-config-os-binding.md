@@ -38,6 +38,12 @@ This follow-up Python-only slice keeps the same `services/mlx-worker-python/work
 
 Expected metrics are neutral-to-lower `elapsed_ms_mean` in `scripts/model_load_config_json_bytes_probe.py`; rejection counts must remain unchanged.
 
+## 2026-07-30 Executable Filename Suffix Slice Follow-up
+
+This follow-up Python-only slice keeps the same `services/mlx-worker-python/worker/model_load_trust.py` boundary and the registered `model-load-config-json-bytes` probe. The executable-model fallback scan now filters Python filenames with a length guard plus direct `[-3:]` suffix slice before checking executable prefixes, avoiding a bound `str.endswith(...)` call for every directory entry while preserving the same `.py` suffix, prefix, no-symlink file check, and sorted detection-source behavior.
+
+Expected metrics are neutral-to-lower `executable_elapsed_ms_mean` in `scripts/model_load_config_json_bytes_probe.py`; config auto-map metrics and rejection counts must remain unchanged.
+
 ## Verification Plan
 
 Run locally on Linux before PR:

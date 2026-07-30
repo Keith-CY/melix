@@ -391,7 +391,7 @@ def _detect_executable_model_files_for_stat(
 
 def _is_executable_model_file_entry(entry: os.DirEntry[str]) -> bool:
     name = entry.name
-    if not name.endswith(".py"):
+    if len(name) <= 3 or name[-3:] != ".py":
         return False
     if not name.startswith(EXECUTABLE_MODEL_FILE_PREFIXES):
         return False
