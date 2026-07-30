@@ -2612,13 +2612,19 @@ def _match_probe_indexes_uncached(
         return frozenset(matched_probe_indexes)
     unbucketed_matchers = wildcard_matcher_buckets.get("", ())
     for path in changed_paths:
-        path_matchers = wildcard_matcher_buckets.get(_path_bucket_key(path), ())
-        for matchers in (unbucketed_matchers, path_matchers):
-            for prefix, pattern, probe_indexes in matchers:
-                if prefix and not path.startswith(prefix):
-                    continue
-                if pattern.match(path) is not None:
-                    matched_probe_indexes_update(probe_indexes)
+        path_startswith = path.startswith
+        for prefix, pattern, probe_indexes in unbucketed_matchers:
+            if prefix and not path_startswith(prefix):
+                continue
+            if pattern.match(path) is not None:
+                matched_probe_indexes_update(probe_indexes)
+        for prefix, pattern, probe_indexes in wildcard_matcher_buckets.get(
+            _path_bucket_key(path), ()
+        ):
+            if prefix and not path_startswith(prefix):
+                continue
+            if pattern.match(path) is not None:
+                matched_probe_indexes_update(probe_indexes)
     return frozenset(matched_probe_indexes)
 
 

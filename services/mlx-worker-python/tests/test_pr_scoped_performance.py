@@ -3706,6 +3706,38 @@ def test_match_probe_indexes_skips_prefix_misses_before_regex(monkeypatch: pytes
     assert match_calls == []
 
 
+def test_match_probe_indexes_skips_unbucketed_prefix_misses_before_regex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="readme-prefix",
+            name="Readme prefix",
+            runner="ubuntu-latest",
+            watch_globs=("README*.md",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    match_calls: list[str] = []
+
+    class FailingPattern:
+        def match(self, path: str) -> None:  # pragma: no cover - sentinel
+            match_calls.append(path)
+            raise AssertionError("unbucketed prefix misses should not invoke regex matching")
+
+    pr_scoped_performance_module._probe_match_indexes.cache_clear()
+    monkeypatch.setattr(pr_scoped_performance_module, "_compiled_glob_pattern", lambda glob: FailingPattern())
+    try:
+        assert _match_probe_indexes(changed_paths=("docs/README.md",), probes=probes) == set()
+    finally:
+        pr_scoped_performance_module._probe_match_indexes.cache_clear()
+    assert match_calls == []
+
+
 def test_match_probe_indexes_buckets_wildcards_by_top_level_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
