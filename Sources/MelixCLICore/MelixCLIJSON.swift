@@ -10,6 +10,8 @@ func elapsedMilliseconds(since start: DispatchTime) -> Double {
 enum MelixCLIJSONMetricPatch {
     private static let metricLiteralLocale = Locale(identifier: "en_US_POSIX")
     private static let metricNameAlphanumerics = CharacterSet.alphanumerics
+    private static let jsonEncodeMetricName = "melix.cli.json_encode_ms"
+    private static let jsonEncodeMetricTokenPrefix = "__MELIX_METRIC_melix_cli_json_encode_ms_"
 
     private static func asciiMetricNameScalarOrUnderscore(_ scalar: Unicode.Scalar) -> Unicode.Scalar? {
         guard scalar.isASCII else {
@@ -36,6 +38,9 @@ enum MelixCLIJSONMetricPatch {
     }
 
     static func makePlaceholder(metricName: String) -> Placeholder {
+        if metricName == jsonEncodeMetricName {
+            return Placeholder(token: "\(jsonEncodeMetricTokenPrefix)\(UUID().uuidString)__")
+        }
         var safeMetricName = String()
         safeMetricName.reserveCapacity(metricName.count)
         for scalar in metricName.unicodeScalars {
@@ -52,15 +57,11 @@ enum MelixCLIJSONMetricPatch {
 
     static func literal(for value: Double) -> String {
         let finiteValue = value.isFinite ? max(value, 0) : 0
-        var literal = String(
+        return String(
             format: "%.16e",
             locale: metricLiteralLocale,
             finiteValue
         )
-        if let exponentIndex = literal.lastIndex(of: "E") {
-            literal.replaceSubrange(exponentIndex...exponentIndex, with: "e")
-        }
-        return literal
     }
 
     static func replacePlaceholder(in text: String, with value: Double) throws -> String {

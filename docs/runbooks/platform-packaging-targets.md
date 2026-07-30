@@ -74,6 +74,25 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 - packages `Contents/Resources/MelixAppIcon.icns` and advertises it through `CFBundleIconFile`
 - launches the packaged app in `Dock + tray` mode through `MELIX_MENU_BAR_PRESENTATION_MODE=dock-and-tray`
 - keeps the tray surface backed by the menu-bar template icon shipped in the Swift package resources
+- copies SwiftPM resource bundles from both the menu-bar and Swift text-worker release outputs
+- packages an `mlx_metal` library version compatible with the pinned Swift MLX core under
+  `Resources/swift-mlx/mlx.metallib`, exposes it through the relative colocated link
+  `Resources/mlx.metallib`, and records the version in `packaging-target-manifest.json`
+- starts the bundled `melix-control-plane` after both workers are ready and verifies its public
+  `/health` endpoint before opening the workspace, so the packaged app exposes the documented
+  local OpenAI-compatible API at `http://127.0.0.1:12436/v1`
+- treats the packaged host and port as the effective listener authority while retaining the
+  persisted gateway JSON as the canonical requested-listener and served-model configuration
+- reloads the shared gateway-config and serving-defaults documents before reads and writes,
+  serializes each writer's complete read-modify-write transaction with an exclusive stable
+  sibling lock (`gateway-config.json.lock` or `gateway-serving-defaults.json.lock`), and
+  atomically replaces the JSON so App CLI updates reach the resident HTTP sidecar without lost
+  session records or an App restart
+- atomically publishes a mode-`0600` `run/active-runtime.json` descriptor after readiness; a
+  separately launched `melix` CLI may use its validated process and socket paths when explicit
+  worker socket overrides are absent
+- keeps a lightweight watchdog alive across the final launcher `exec` so crash and force-quit
+  exits also remove the descriptor and terminate the bundled control plane and workers
 - starts bundled Python workers and readiness probes with `PYTHONSAFEPATH=1`,
   `PYTHONNOUSERSITE=1`, and `PYTHONDONTWRITEBYTECODE=1` while keeping `PYTHONPATH`
   pinned to bundled site-packages and bundled Melix sources

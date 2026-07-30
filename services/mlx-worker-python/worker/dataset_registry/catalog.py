@@ -46,16 +46,19 @@ _DEFAULT_CONFIG_FIRST_PARTS = frozenset(
 _JSON_LIMITED_PREVIEW_CHUNK_CHARS = 16 * 1024
 
 
-def _is_supported_dataset_file_name(name: str) -> bool:
+def _is_supported_dataset_file_name(
+    name: str,
+    supported_suffixes: Mapping[str, str] = _SUPPORTED_DATASET_SUFFIXES,
+) -> bool:
     dot_index = name.rfind(".")
     if dot_index <= 0 or dot_index == len(name) - 1:
         return False
     suffix = name[dot_index:]
-    if suffix in _SUPPORTED_DATASET_SUFFIXES:
+    if suffix in supported_suffixes:
         return True
     if suffix.islower():
         return False
-    return suffix.lower() in _SUPPORTED_DATASET_SUFFIXES
+    return suffix.lower() in supported_suffixes
 
 
 @dataclass(frozen=True, slots=True)
@@ -551,7 +554,9 @@ def _supported_scan_entry_records(
         name = entry.name
         if name <= after:
             continue
-        if name not in _README_NAMES and _is_supported_dataset_file_name(name):
+        is_readme = name in _README_NAMES
+        is_supported = False if is_readme else _is_supported_dataset_file_name(name)
+        if is_supported:
             try:
                 if entry.is_file(follow_symlinks=False):
                     yield name, entry.path, False, True
@@ -565,7 +570,7 @@ def _supported_scan_entry_records(
                 continue
         except OSError:
             continue
-        if name in _README_NAMES or not _is_supported_dataset_file_name(name):
+        if is_readme or not is_supported:
             continue
 
 
@@ -591,6 +596,9 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
     best_path_raw = ""
     best_is_dir = False
     best_is_file = False
+    readme_names = _README_NAMES
+    is_supported_dataset_file_name = _is_supported_dataset_file_name
+    make_path = Path
     try:
         with os.scandir(os.fspath(directory)) as entries:
             for entry in entries:
@@ -603,7 +611,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                     continue
                 if is_dir:
                     is_file = False
-                elif name in _README_NAMES or not _is_supported_dataset_file_name(name):
+                elif name in readme_names or not is_supported_dataset_file_name(name):
                     continue
                 else:
                     try:
@@ -620,7 +628,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
         return None
     if not best_path_raw:
         return None
-    return best_name, Path(best_path_raw), best_is_dir, best_is_file
+    return best_name, make_path(best_path_raw), best_is_dir, best_is_file
 
 
 def _selected_dataset_files(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:

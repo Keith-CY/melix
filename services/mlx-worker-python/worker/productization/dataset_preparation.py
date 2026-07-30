@@ -52,6 +52,7 @@ _CODE_SOURCE_LANGUAGE_BY_SUFFIX = {
 _SOURCE_KIND_NAME_CACHE_MAX = 4096
 _SOURCE_KIND_BY_NAME: dict[str, str | None] = {}
 _SHA256 = hashlib.sha256
+_MISSING = object()
 
 
 def preflight_workspace(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -1161,13 +1162,14 @@ _DATASET_VERSION_LIST_STRING_SORT_KEY = itemgetter("created_at", "version_id")
 
 
 def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
+    scandir = os.scandir
+    manifest_suffix = "/dataset-version.json"
     try:
-        with os.scandir(versions_root) as entries:
+        with scandir(os.fspath(versions_root)) as entries:
             for entry in entries:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                manifest_path = f"{entry.path}/dataset-version.json"
-                yield manifest_path
+                yield entry.path + manifest_suffix
     except OSError:
         return
 
@@ -1185,10 +1187,17 @@ def _iter_source_records(
         upload_cap_bytes=upload_cap_bytes,
         source_cap_bytes=source_cap_bytes,
     )
+    operator_failures_append = operator_failures.append
+    source_kind_for_path = _source_kind
+    read_source_text = _read_source_text
+    structured_records = _structured_records
+    normalize_line_endings = _normalize_line_endings
+    metadata_for_path = _metadata_for_path
+    record = _record
     for path in paths:
-        source_kind = _source_kind(path)
+        source_kind = source_kind_for_path(path)
         if source_kind is None:
-            operator_failures.append(
+            operator_failures_append(
                 {
                     "id": _failure_id("unsupported-source", path.name),
                     "code": "DATASET_INGEST_UNSUPPORTED_SOURCE",
@@ -1198,9 +1207,9 @@ def _iter_source_records(
                 }
             )
             continue
-        text = _read_source_text(path, cap_bytes=read_cap_bytes)
+        text = read_source_text(path, cap_bytes=read_cap_bytes)
         if not text or text.isspace():
-            operator_failures.append(
+            operator_failures_append(
                 {
                     "id": _failure_id("empty-source", path.name),
                     "code": "DATASET_INGEST_EMPTY_SOURCE",
@@ -1211,14 +1220,14 @@ def _iter_source_records(
             )
             continue
         if source_kind == "structured_data":
-            yield from _structured_records(path, text, operator_failures)
+            yield from structured_records(path, text, operator_failures)
         else:
-            normalized_text = _normalize_line_endings(text)
-            yield _record(
+            normalized_text = normalize_line_endings(text)
+            yield record(
                 path=path,
                 source_kind=source_kind,
                 text=normalized_text,
-                metadata=_metadata_for_path(path, source_kind),
+                metadata=metadata_for_path(path, source_kind),
                 normalized=True,
             )
 
@@ -1230,21 +1239,16 @@ def _source_read_cap_bytes(*, upload_cap_bytes: int, source_cap_bytes: int) -> i
 
 
 def _read_source_text(path: Path, *, cap_bytes: int = 0) -> str:
+    raw_path = os.fspath(path)
+    open_file = open
     if cap_bytes <= 0:
-        with path.open("rb") as handle:
+        with open_file(raw_path, "rb") as handle:
             return handle.read().decode("utf-8")
-    chunks: list[bytes] = []
-    observed = 0
-    with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(64 * 1024)
-            if not chunk:
-                break
-            observed += len(chunk)
-            if cap_bytes > 0 and observed > cap_bytes:
-                raise OSError(f"source exceeded configured read cap of {cap_bytes} bytes")
-            chunks.append(chunk)
-    return b"".join(chunks).decode("utf-8")
+    with open_file(raw_path, "rb") as handle:
+        payload = handle.read(cap_bytes + 1)
+    if len(payload) > cap_bytes:
+        raise OSError(f"source exceeded configured read cap of {cap_bytes} bytes")
+    return payload.decode("utf-8")
 
 
 def _iter_source_file_paths(input_path: Path) -> list[Path]:
@@ -1270,7 +1274,7 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
         except OSError:
             continue
     file_paths.sort()
-    return [path_cls(path) for path in file_paths]
+    return list(map(path_cls, file_paths))
 
 
 def _classify_source_kind_name(name: str) -> str | None:
@@ -1515,14 +1519,14 @@ def _record(
     normalized: bool = False,
 ) -> dict[str, Any]:
     normalized_text = text if normalized else _normalize_line_endings(text)
-    content_sha256, byte_size = _record_content_digest_and_size(normalized_text)
+    content_digest_and_size = _record_content_digest_and_size
+    source_id_for_path = _record_source_id
+    path_text = os.fspath(path)
+    content_sha256, byte_size = content_digest_and_size(normalized_text)
     record_metadata = dict(metadata) if metadata else {}
-    sha256 = _SHA256
-    path_name = path.name
-    path_key = str(path).encode("utf-8")
     return {
-        "source_id": sha256(path_key).hexdigest()[:16],
-        "source_uri": path_name,
+        "source_id": source_id_for_path(path_text),
+        "source_uri": path.name,
         "source_kind": source_kind,
         "content_sha256": content_sha256,
         "byte_size": byte_size,
@@ -1536,6 +1540,11 @@ def _record(
 def _record_content_digest_and_size(normalized_text: str) -> tuple[str, int]:
     normalized_bytes = normalized_text.encode("utf-8")
     return _SHA256(normalized_bytes).hexdigest(), len(normalized_bytes)
+
+
+@lru_cache(maxsize=8192)
+def _record_source_id(path_text: str) -> str:
+    return _SHA256(os.fsencode(path_text)).hexdigest()[:16]
 
 
 def _failure_id(reason: str, name: str) -> str:
@@ -1870,36 +1879,85 @@ def _append_rows_output_lengths(
     append = lengths.append
     len_ = len
     str_ = str
+    dict_ = dict
+    missing = _MISSING
     output_length_total = 0
-    for row in rows:
-        if "completion" not in row:
-            messages = row.get("messages", [])
-            if not isinstance(messages, list):
-                append(0)
-                continue
-            total = 0
-            for item in messages:
-                if type(item) is dict:
-                    content = item.get("content", "")
-                else:
-                    try:
+    try:
+        first_row = rows[0]
+    except IndexError:
+        return 0
+    if first_row.get("completion", missing) is not missing:
+        for row in rows:
+            try:
+                completion = row["completion"]
+            except KeyError:
+                messages = row.get("messages", [])
+                if not isinstance(messages, list):
+                    append(0)
+                    continue
+                if len_(messages) == 2:
+                    message_0, message_1 = messages
+                    if type(message_0) is dict_ and type(message_1) is dict_:
+                        content_0 = message_0.get("content", "")
+                        content_1 = message_1.get("content", "")
+                        if type(content_0) is str_ and type(content_1) is str_:
+                            total = len_(content_0) + len_(content_1)
+                            append(total)
+                            output_length_total += total
+                            continue
+                total = 0
+                for item in messages:
+                    if type(item) is dict_:
                         content = item.get("content", "")
-                    except AttributeError:
-                        continue
-                if type(content) is str:
-                    total += len_(content)
-                else:
-                    total += len_(str_(content))
-            append(total)
-            output_length_total += total
-        else:
-            completion = row["completion"]
-            if type(completion) is str:
-                length = len_(completion)
+                    else:
+                        try:
+                            content = item.get("content", "")
+                        except AttributeError:
+                            continue
+                    if type(content) is str_:
+                        total += len_(content)
+                    else:
+                        total += len_(str_(content))
+                append(total)
+                output_length_total += total
             else:
-                length = len_(str_(completion))
-            append(length)
-            output_length_total += length
+                if type(completion) is str_:
+                    length = len_(completion)
+                else:
+                    length = len_(str_(completion))
+                append(length)
+                output_length_total += length
+        return output_length_total
+    for row in rows:
+        messages = row.get("messages", [])
+        if not isinstance(messages, list):
+            append(0)
+            continue
+        if len_(messages) == 2:
+            message_0, message_1 = messages
+            if type(message_0) is dict_ and type(message_1) is dict_:
+                content_0 = message_0.get("content", "")
+                content_1 = message_1.get("content", "")
+                if type(content_0) is str_ and type(content_1) is str_:
+                    total = len_(content_0) + len_(content_1)
+                    append(total)
+                    output_length_total += total
+                    continue
+        total = 0
+        for item in messages:
+            if type(item) is dict_:
+                content = item.get("content", "")
+            else:
+                try:
+                    content = item.get("content", "")
+                except AttributeError:
+                    continue
+            if type(content) is str_:
+                total += len_(content)
+            else:
+                total += len_(str_(content))
+        append(total)
+        output_length_total += total
     return output_length_total
 
 

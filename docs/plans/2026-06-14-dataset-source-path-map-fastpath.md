@@ -32,3 +32,18 @@ focused ingest tests, PR-scoped performance tests, and
 This slice is Python-only and locally verifiable on Linux. The PR-scoped GitHub
 Actions performance workflow remains the merge gate for the registered probe
 report.
+
+## 2026-07-19 execution note
+
+The slice remains limited to replacing the final Python-level path projection
+comprehension with `list(map(path_cls, file_paths))` after deterministic string
+sorting. Behavior is unchanged: traversal still uses non-following `os.scandir`,
+entry errors remain skipped, and the helper returns a sorted `list[Path]`.
+
+Local Linux probe result for `dataset-source-records-scandir` against
+`origin/main` showed a small primary traversal improvement:
+`elapsed_ms_mean 12.6049 -> 12.5383 ms` and
+`elapsed_ms_p95 15.9867 -> 14.2248 ms`. Secondary read/source-kind metrics also
+improved in that run, while record materialization noise stayed within the
+registered 5 percent warning threshold. CI PR-scoped performance remains the
+merge gate.

@@ -51,6 +51,7 @@ struct GatewayConfigStoreTests {
             fallbackDefaultModelID: "melix-dev-text"
         )
         let listener = try #require(summary.listeners.first)
+        let refreshDiagnostics = await store.refreshDiagnostics()
 
         #expect(binding.host == "0.0.0.0")
         #expect(binding.port == 14_567)
@@ -71,6 +72,10 @@ struct GatewayConfigStoreTests {
         #expect(listener.source == .environmentDefaults)
         #expect(listener.activeBinding)
         #expect(listener.requiresRestart == false)
+        #expect(refreshDiagnostics.totalFailureCount == 0)
+        #expect(refreshDiagnostics.consecutiveFailureCount == 0)
+        #expect(refreshDiagnostics.lastFailureKind == nil)
+        #expect(refreshDiagnostics.servingLastKnownGoodConfig == false)
     }
 
     @Test("apply persists operator overrides and bootstrap binding reloads them")
@@ -218,6 +223,14 @@ struct GatewayConfigStoreTests {
         command.modelIdleTimeoutSeconds = 120
         try await store.apply(command: command)
 
+        var activeCommand = command
+        activeCommand.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        activeCommand.host = "127.0.0.1"
+        activeCommand.port = 11_434
+        activeCommand.defaultModelID = "melix-dev-text"
+        activeCommand.servedModelIds = ["melix-dev-text"]
+        try await store.apply(command: activeCommand)
+
         let summary = await store.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID, "server-session-secondary"],
             runtimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
@@ -238,4 +251,442 @@ struct GatewayConfigStoreTests {
         #expect(secondary.activeBinding == false)
         #expect(secondary.requiresRestart == false)
     }
+
+    @Test("packaged environment listener remains authoritative without discarding the persisted model roster")
+    func packagedEnvironmentListenerRemainsAuthoritativeWithoutDiscardingPersistedModelRoster() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-packaged-binding-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let operatorStore = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "0.0.0.0"
+        command.port = 11_434
+        command.defaultModelID = "mlx-community/persisted-model"
+        command.servedModelIds = ["mlx-community/persisted-model", "mlx-community/secondary-model"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+        try await operatorStore.apply(command: command)
+
+        let packagedStore = GatewayConfigStore(
+            storeURL: storeURL,
+            defaults: [
+                "MELIX_HTTP_HOST": "127.0.0.1",
+                "MELIX_HTTP_PORT": "12436",
+                "MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY": "environment",
+            ]
+        )
+        let binding = await packagedStore.bootstrapBinding()
+        let roster = try #require(
+            await packagedStore.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        let summary = await packagedStore.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            runtimeBinding: binding,
+            fallbackDefaultModelID: "fallback-model"
+        )
+        let listener = try #require(summary.listeners.first)
+
+        #expect(binding.host == "127.0.0.1")
+        #expect(binding.port == 12_436)
+        #expect(roster.defaultModelID == "mlx-community/persisted-model")
+        #expect(roster.servedModelIDs == [
+            "mlx-community/persisted-model",
+            "mlx-community/secondary-model",
+        ])
+        #expect(listener.requestedHost == "0.0.0.0")
+        #expect(listener.requestedPort == 11_434)
+        #expect(listener.effectiveHost == "127.0.0.1")
+        #expect(listener.effectivePort == 12_436)
+        #expect(listener.requiresRestart)
+    }
+
+    @Test("resident stores refresh session records without rebinding a running listener")
+    func residentStoresRefreshSessionRecordsWithoutRebindingARunningListener() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-cross-process-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let residentReader = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let residentWriter = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let externalCLIStore = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+
+        var activeCommand = Melix_Controlplane_V1_ApplyGatewayConfig()
+        activeCommand.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        activeCommand.host = "127.0.0.1"
+        activeCommand.port = 12_436
+        activeCommand.defaultModelID = "mlx-community/new-model"
+        activeCommand.servedModelIds = ["mlx-community/new-model"]
+        activeCommand.rateLimitPerMinute = 240
+        activeCommand.timeoutSeconds = 90
+        activeCommand.modelIdleTimeoutSeconds = 300
+        try await externalCLIStore.apply(command: activeCommand)
+
+        let binding = await residentReader.bootstrapBinding()
+        let roster = await residentReader.activeModelRoster(
+            runtimeBinding: binding,
+            fallbackDefaultModelID: "stale-fallback",
+            fallbackServedModelIDs: ["stale-fallback"]
+        )
+        #expect(roster.defaultModelID == "mlx-community/new-model")
+        #expect(roster.servedModelIDs == ["mlx-community/new-model"])
+        #expect(roster.modelIdleTimeoutSeconds == 300)
+        #expect(roster.explicit)
+
+        var secondaryCommand = activeCommand
+        secondaryCommand.serverSessionID = "server-session-secondary"
+        secondaryCommand.defaultModelID = "mlx-community/secondary-model"
+        secondaryCommand.servedModelIds = ["mlx-community/secondary-model"]
+        try await residentWriter.apply(command: secondaryCommand)
+
+        let boundRoster = try #require(
+            await residentReader.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        #expect(boundRoster.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(boundRoster.defaultModelID == "mlx-community/new-model")
+        #expect(boundRoster.servedModelIDs == ["mlx-community/new-model"])
+
+        let summary = await residentReader.summary(
+            serverSessionIDs: [],
+            runtimeBinding: binding,
+            fallbackDefaultModelID: "stale-fallback"
+        )
+        #expect(summary.listeners.map(\.serverSessionID) == [
+            ServerSessionRuntimeStore.defaultServerSessionID,
+            "server-session-secondary",
+        ])
+        #expect(
+            summary.listeners.first(where: { $0.serverSessionID == "server-session-secondary" })?.activeBinding
+                == false
+        )
+        #expect(
+            summary.listeners.first(where: { $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID })?
+                .activeBinding == true
+        )
+
+        let reloadedBinding = await GatewayConfigStore(storeURL: storeURL, defaults: [:]).bootstrapBinding()
+        #expect(reloadedBinding.activeServerSessionID == "server-session-secondary")
+    }
+
+    @Test("decode failures preserve the last known good config and remain observable until recovery")
+    func decodeFailuresPreserveTheLastKnownGoodConfigAndRemainObservableUntilRecovery() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-refresh-decode-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let store = GatewayConfigStore(
+            storeURL: storeURL,
+            defaults: [:],
+            nowUnixMS: { 1_717_171_717_000 }
+        )
+        let command = makeConcurrentGatewayConfigCommand(index: 7)
+        try await store.apply(command: command)
+        let binding = await store.bootstrapBinding()
+        let validDocument = try Data(contentsOf: storeURL)
+
+        try Data("{ malformed".utf8).write(to: storeURL, options: .atomic)
+
+        let preservedRoster = try #require(
+            await store.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        let failedDiagnostics = await store.refreshDiagnostics()
+
+        #expect(preservedRoster.serverSessionID == command.serverSessionID)
+        #expect(preservedRoster.defaultModelID == command.defaultModelID)
+        #expect(preservedRoster.servedModelIDs == command.servedModelIds)
+        #expect(failedDiagnostics.totalFailureCount == 1)
+        #expect(failedDiagnostics.consecutiveFailureCount == 1)
+        #expect(failedDiagnostics.lastFailureKind == .decodeFailed)
+        #expect(failedDiagnostics.lastFailureAtUnixMS == 1_717_171_717_000)
+        #expect(failedDiagnostics.lastFailureMessage.isEmpty == false)
+        #expect(failedDiagnostics.servingLastKnownGoodConfig)
+
+        try validDocument.write(to: storeURL, options: .atomic)
+        let recoveredRoster = try #require(
+            await store.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        let recoveredDiagnostics = await store.refreshDiagnostics()
+
+        #expect(recoveredRoster.defaultModelID == command.defaultModelID)
+        #expect(recoveredDiagnostics.totalFailureCount == 1)
+        #expect(recoveredDiagnostics.consecutiveFailureCount == 0)
+        #expect(recoveredDiagnostics.lastFailureKind == .decodeFailed)
+        #expect(recoveredDiagnostics.servingLastKnownGoodConfig == false)
+    }
+
+    @Test("read failures preserve the last known good config and report their failure kind")
+    func readFailuresPreserveTheLastKnownGoodConfigAndReportTheirFailureKind() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-refresh-read-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let store = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let command = makeConcurrentGatewayConfigCommand(index: 8)
+        try await store.apply(command: command)
+        let binding = await store.bootstrapBinding()
+
+        try FileManager.default.removeItem(at: storeURL)
+        try FileManager.default.createDirectory(at: storeURL, withIntermediateDirectories: false)
+
+        let preservedRoster = try #require(
+            await store.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        let diagnostics = await store.refreshDiagnostics()
+
+        #expect(preservedRoster.serverSessionID == command.serverSessionID)
+        #expect(preservedRoster.defaultModelID == command.defaultModelID)
+        #expect(diagnostics.totalFailureCount == 1)
+        #expect(diagnostics.consecutiveFailureCount == 1)
+        #expect(diagnostics.lastFailureKind == .readFailed)
+        #expect(diagnostics.lastFailureMessage.isEmpty == false)
+        #expect(diagnostics.servingLastKnownGoodConfig)
+    }
+
+    @Test("a removed store after a valid load preserves the last known good config")
+    func removedStoreAfterAValidLoadPreservesTheLastKnownGoodConfig() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-refresh-removed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let store = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let command = makeConcurrentGatewayConfigCommand(index: 9)
+        try await store.apply(command: command)
+        let binding = await store.bootstrapBinding()
+
+        try FileManager.default.removeItem(at: storeURL)
+
+        let preservedRoster = try #require(
+            await store.activeModelRosterIfConfigured(runtimeBinding: binding)
+        )
+        let diagnostics = await store.refreshDiagnostics()
+
+        #expect(preservedRoster.defaultModelID == command.defaultModelID)
+        #expect(diagnostics.totalFailureCount == 1)
+        #expect(diagnostics.consecutiveFailureCount == 1)
+        #expect(diagnostics.lastFailureKind == .storeRemovedAfterLoad)
+        #expect(diagnostics.servingLastKnownGoodConfig)
+    }
+
+    @Test("apply refuses to replace an unreadable document from an empty fallback")
+    func applyRefusesToReplaceAnUnreadableDocumentFromAnEmptyFallback() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-apply-decode-failure-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let store = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        try await store.apply(command: makeConcurrentGatewayConfigCommand(index: 10))
+        let malformedDocument = Data("{ malformed".utf8)
+        try malformedDocument.write(to: storeURL, options: .atomic)
+
+        do {
+            try await store.apply(command: makeConcurrentGatewayConfigCommand(index: 11))
+            Issue.record("Expected apply to reject an unreadable existing gateway config.")
+        } catch {
+            #expect(error.localizedDescription.isEmpty == false)
+        }
+        let diagnostics = await store.refreshDiagnostics()
+
+        #expect(try Data(contentsOf: storeURL) == malformedDocument)
+        #expect(diagnostics.totalFailureCount == 1)
+        #expect(diagnostics.consecutiveFailureCount == 1)
+        #expect(diagnostics.lastFailureKind == .decodeFailed)
+        #expect(diagnostics.servingLastKnownGoodConfig)
+    }
+
+    @Test("concurrent store applies preserve every listener through the sibling file lock")
+    func concurrentStoreAppliesPreserveEveryListenerThroughTheSiblingFileLock() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-concurrent-writers-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let writerCount = 32
+        let barrier = GatewayConfigStoreTestBarrier(participantCount: writerCount)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<writerCount {
+                let store = GatewayConfigStore(
+                    storeURL: storeURL,
+                    defaults: [:],
+                    nowUnixMS: { Int64(index + 1) }
+                )
+                group.addTask {
+                    let command = makeConcurrentGatewayConfigCommand(index: index)
+                    await barrier.arriveAndWait()
+                    try await store.apply(command: command)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let reloadedStore = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let binding = await reloadedStore.bootstrapBinding()
+        let summary = await reloadedStore.summary(
+            serverSessionIDs: [],
+            runtimeBinding: binding,
+            fallbackDefaultModelID: "fallback-model"
+        )
+        let expectedServerSessionIDs = Set(
+            (0..<writerCount).map { "server-session-concurrent-\($0)" }
+        )
+
+        #expect(Set(summary.listeners.map(\.serverSessionID)) == expectedServerSessionIDs)
+        #expect(expectedServerSessionIDs.contains(binding.activeServerSessionID))
+        #expect(summary.listeners.filter { $0.activeBinding }.count == 1)
+        #expect(
+            summary.listeners.first(where: { $0.activeBinding })?.serverSessionID
+                == binding.activeServerSessionID
+        )
+        #expect(FileManager.default.fileExists(atPath: storeURL.appendingPathExtension("lock").path))
+    }
+
+    @Test("a sibling lock open failure does not publish gateway config")
+    func siblingLockOpenFailureDoesNotPublishGatewayConfig() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-lock-failure-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        try FileManager.default.createDirectory(
+            at: storeURL.appendingPathExtension("lock"),
+            withIntermediateDirectories: false
+        )
+        let store = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+
+        do {
+            try await store.apply(command: makeConcurrentGatewayConfigCommand(index: 0))
+            Issue.record("Expected the sibling lock open to fail.")
+        } catch {
+            #expect((error as NSError).domain == NSPOSIXErrorDomain)
+        }
+        #expect(FileManager.default.fileExists(atPath: storeURL.path) == false)
+    }
+
+    @Test("legacy gateway documents without an active owner retain the runtime binding fallback")
+    func legacyGatewayDocumentsWithoutActiveOwnerRetainRuntimeBindingFallback() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-legacy-owner-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        let legacyDocument = Data(
+            """
+            {
+              "schema_version": 1,
+              "listeners": [
+                {
+                  "server_session_id": "server-session-1",
+                  "host": "127.0.0.1",
+                  "port": 12436,
+                  "default_model_id": "legacy-model",
+                  "served_model_ids": ["legacy-model"],
+                  "rate_limit_per_minute": 120,
+                  "timeout_seconds": 60,
+                  "model_idle_timeout_seconds": 600,
+                  "allowed_hosts": [],
+                  "allowed_origins": [],
+                  "source": 3,
+                  "updated_at_unix_ms": 123
+                }
+              ]
+            }
+            """.utf8
+        )
+        try legacyDocument.write(to: storeURL, options: .atomic)
+
+        let store = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let binding = await store.bootstrapBinding()
+        let roster = try #require(await store.activeModelRosterIfConfigured(runtimeBinding: binding))
+
+        #expect(binding.activeServerSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(roster.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(roster.defaultModelID == "legacy-model")
+    }
+
+    @Test("malformed initial documents fall back while reporting that no last known good config exists")
+    func malformedInitialDocumentsFallBackWhileReportingThatNoLastKnownGoodConfigExists() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-malformed-owner-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-config.json")
+        try Data("{ malformed".utf8).write(to: storeURL, options: .atomic)
+
+        let store = GatewayConfigStore(storeURL: storeURL, defaults: [:])
+        let binding = await store.bootstrapBinding()
+        let roster = await store.activeModelRoster(
+            runtimeBinding: binding,
+            fallbackDefaultModelID: "fallback-model",
+            fallbackServedModelIDs: ["fallback-model"]
+        )
+        let diagnostics = await store.refreshDiagnostics()
+
+        #expect(binding.activeServerSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(roster.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(roster.defaultModelID == "fallback-model")
+        #expect(roster.explicit == false)
+        #expect(diagnostics.totalFailureCount == 3)
+        #expect(diagnostics.consecutiveFailureCount == 3)
+        #expect(diagnostics.lastFailureKind == .decodeFailed)
+        #expect(diagnostics.lastFailureMessage.isEmpty == false)
+        #expect(diagnostics.servingLastKnownGoodConfig == false)
+    }
+}
+
+private actor GatewayConfigStoreTestBarrier {
+    private let participantCount: Int
+    private var arrivedCount = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(participantCount: Int) {
+        self.participantCount = participantCount
+    }
+
+    func arriveAndWait() async {
+        arrivedCount += 1
+        if arrivedCount == participantCount {
+            let waiting = waiters
+            waiters.removeAll()
+            for waiter in waiting {
+                waiter.resume()
+            }
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+}
+
+private func makeConcurrentGatewayConfigCommand(
+    index: Int
+) -> Melix_Controlplane_V1_ApplyGatewayConfig {
+    let modelID = "mlx-community/concurrent-model-\(index)"
+    var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+    command.serverSessionID = "server-session-concurrent-\(index)"
+    command.host = "127.0.0.1"
+    command.port = UInt32(15_000 + index)
+    command.defaultModelID = modelID
+    command.servedModelIds = [modelID]
+    command.rateLimitPerMinute = 120
+    command.timeoutSeconds = 60
+    command.modelIdleTimeoutSeconds = 600
+    return command
 }

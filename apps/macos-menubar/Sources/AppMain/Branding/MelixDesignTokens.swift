@@ -219,10 +219,12 @@ enum MelixDesignTokens {
         static let sm: CGFloat = 6
         /// Buttons, icon button hit areas.
         static let md: CGFloat = 8
-        /// Composer, session rows, input fields.
+        /// Session rows and input fields.
         static let lg: CGFloat = 10
         /// Dashboard cards, chat bubbles.
         static let xl: CGFloat = 12
+        /// Stable Hybrid A Chat Composer shell.
+        static let composer: CGFloat = 16
     }
 
     // MARK: - Spacing (4px base)

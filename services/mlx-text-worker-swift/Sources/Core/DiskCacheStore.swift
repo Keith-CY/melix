@@ -33,6 +33,7 @@ struct DiskCacheTierMetrics: Sendable {
 struct RestoredBoundarySnapshot: Sendable {
     let snapshot: Melix_Worker_V1_SnapshotRef
     let model: Melix_Worker_V1_ModelSpec
+    let execution: Melix_Worker_V1_ExecutionMetadata?
     let messages: [Melix_Worker_V1_ChatMessage]
     let resumeHint: String
     let acceleration: Melix_Worker_V1_AccelerationPolicy
@@ -63,6 +64,7 @@ private struct PersistedSnapshotEnvelope: Codable {
     let snapshotID: String
     let snapshotData: Data
     let modelData: Data
+    let executionData: Data?
     let messagesData: [Data]
     let resumeHint: String
     let accelerationData: Data
@@ -82,6 +84,7 @@ private struct StoredL2PrefixRecord: Sendable {
 private struct StoredBoundarySnapshotRecord: Sendable {
     let snapshot: Melix_Worker_V1_SnapshotRef
     let model: Melix_Worker_V1_ModelSpec
+    let execution: Melix_Worker_V1_ExecutionMetadata?
     let messages: [Melix_Worker_V1_ChatMessage]
     let resumeHint: String
     let acceleration: Melix_Worker_V1_AccelerationPolicy
@@ -174,6 +177,7 @@ actor DiskCacheStore {
     func saveSnapshot(
         snapshot: Melix_Worker_V1_SnapshotRef,
         model: Melix_Worker_V1_ModelSpec,
+        execution: Melix_Worker_V1_ExecutionMetadata? = nil,
         messages: [Melix_Worker_V1_ChatMessage],
         resumeHint: String,
         acceleration: Melix_Worker_V1_AccelerationPolicy,
@@ -199,6 +203,7 @@ actor DiskCacheStore {
         let record = StoredBoundarySnapshotRecord(
             snapshot: snapshot,
             model: model,
+            execution: execution,
             messages: messages,
             resumeHint: resumeHint,
             acceleration: acceleration,
@@ -234,6 +239,7 @@ actor DiskCacheStore {
         return RestoredBoundarySnapshot(
             snapshot: record.snapshot,
             model: record.model,
+            execution: record.execution,
             messages: record.messages,
             resumeHint: record.resumeHint,
             acceleration: record.acceleration,
@@ -440,6 +446,7 @@ actor DiskCacheStore {
             snapshotID: record.snapshot.snapshotID,
             snapshotData: record.snapshot.serializedData(),
             modelData: record.model.serializedData(),
+            executionData: try record.execution?.serializedData(),
             messagesData: try record.messages.map { try $0.serializedData() },
             resumeHint: record.resumeHint,
             accelerationData: record.acceleration.serializedData(),
@@ -525,9 +532,21 @@ actor DiskCacheStore {
                 }
 
                 let messages = envelope.messagesData.compactMap { try? Melix_Worker_V1_ChatMessage(serializedBytes: $0) }
+                let execution: Melix_Worker_V1_ExecutionMetadata?
+                if let executionData = envelope.executionData {
+                    guard let decodedExecution = try? Melix_Worker_V1_ExecutionMetadata(
+                        serializedBytes: executionData
+                    ) else {
+                        continue
+                    }
+                    execution = decodedExecution
+                } else {
+                    execution = nil
+                }
                 snapshots[envelope.snapshotID] = StoredBoundarySnapshotRecord(
                     snapshot: snapshot,
                     model: model,
+                    execution: execution,
                     messages: messages,
                     resumeHint: envelope.resumeHint,
                     acceleration: acceleration,

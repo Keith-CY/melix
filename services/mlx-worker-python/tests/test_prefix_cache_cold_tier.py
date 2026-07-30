@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import worker.runtime.prefix_block_store as prefix_block_store
 from worker.runtime.prefix_block_store import (
     ColdPrefixStore,
     PrefixBlockStore,
@@ -56,12 +57,15 @@ def test_estimate_cache_snapshot_bytes_sums_state_and_key_value_layers() -> None
         SimpleNamespace(state=TensorWithNbytes(30)),
         SimpleNamespace(state=TensorWithSize()),
         SimpleNamespace(keys=TensorWithSize(), values=TensorWithNbytes(40)),
+        SimpleNamespace(state=[SimpleNamespace(itemsize=8), SimpleNamespace(itemsize=8)]),
+        SimpleNamespace(keys=TensorWithNbytes(5)),
+        SimpleNamespace(values=TensorWithNbytes(6)),
         SimpleNamespace(),
     ]
 
     assert (
         estimate_cache_snapshot_bytes(cache_snapshot)
-        == 10 + 56 + 20 + 56 + 30 + 56 + 56 + 40
+        == 10 + 56 + 20 + 56 + 30 + 56 + 56 + 40 + 5 + 6
     )
 
 
@@ -75,6 +79,71 @@ def test_estimate_cache_snapshot_bytes_ignores_tensors_without_byte_shape() -> N
     ]
 
     assert estimate_cache_snapshot_bytes(cache_snapshot) == 0
+
+
+def test_estimate_cache_snapshot_bytes_ignores_pair_second_without_itemsize() -> None:
+    class TensorWithNbytes:
+        nbytes = 10
+
+    class TensorWithoutItemsize:
+        size = 4
+
+    cache_snapshot = [
+        SimpleNamespace(state=[TensorWithNbytes(), TensorWithoutItemsize()]),
+        SimpleNamespace(keys=TensorWithNbytes(), values=TensorWithoutItemsize()),
+    ]
+
+    assert estimate_cache_snapshot_bytes(cache_snapshot) == 20
+
+
+def test_estimate_cache_snapshot_bytes_falls_back_when_nbytes_is_none() -> None:
+    class TensorWithNoneNbytes:
+        nbytes = None
+        size = 9
+        itemsize = 4
+
+    assert estimate_cache_snapshot_bytes([SimpleNamespace(state=TensorWithNoneNbytes())]) == 36
+
+
+def test_estimate_cache_snapshot_bytes_coerces_non_int_totals() -> None:
+    class TensorWithFloatNbytes:
+        nbytes = 12.9
+
+    observed = estimate_cache_snapshot_bytes([SimpleNamespace(state=TensorWithFloatNbytes())])
+
+    assert observed == 12
+    assert type(observed) is int
+
+
+def test_estimate_cache_snapshot_bytes_sums_non_pair_state_sequences() -> None:
+    class TensorWithNbytes:
+        def __init__(self, nbytes: int) -> None:
+            self.nbytes = nbytes
+
+    cache_snapshot = [
+        SimpleNamespace(state=[]),
+        SimpleNamespace(state=(TensorWithNbytes(4),)),
+        SimpleNamespace(state=[TensorWithNbytes(8), TensorWithNbytes(16), TensorWithNbytes(32)]),
+    ]
+
+    assert estimate_cache_snapshot_bytes(cache_snapshot) == 60
+
+
+def test_estimate_cache_snapshot_bytes_sums_pair_tuple_state() -> None:
+    class TensorWithNbytes:
+        def __init__(self, nbytes: int) -> None:
+            self.nbytes = nbytes
+
+    class TensorWithSize:
+        size = 3
+        itemsize = 5
+
+    cache_snapshot = [
+        SimpleNamespace(state=(TensorWithNbytes(11), TensorWithNbytes(13))),
+        SimpleNamespace(state=(TensorWithSize(), TensorWithNbytes(17))),
+    ]
+
+    assert estimate_cache_snapshot_bytes(cache_snapshot) == 24 + 15 + 17
 
 
 def _put(store: PrefixBlockStore, session_id: str, tokens: list[int], **kwargs: Any) -> None:
@@ -432,6 +501,91 @@ def test_cold_store_index_reload_skips_json_decode_for_filename_orphans(
     assert list((tmp_path / "cold").glob("*.meta.json")) == []
 
 
+def test_cold_store_index_reload_skips_json_decode_for_balanced_filename_orphans(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    first = _make_cold(tmp_path)
+    first.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+    cold_root = tmp_path / "cold"
+    snapshot_files = list(cold_root.glob("*.kv.safetensors"))
+    assert len(snapshot_files) == 1
+    snapshot_files[0].unlink()
+    (cold_root / "stray.kv.safetensors").write_bytes(b"snapshot")
+
+    def fail_json_loads(*args, **kwargs):  # pragma: no cover - regression guard
+        raise AssertionError(
+            "filename-orphaned cold-prefix sidecars should be pruned before json.loads"
+        )
+
+    monkeypatch.setattr("worker.runtime.prefix_block_store.json.loads", fail_json_loads)
+
+    second = _make_cold(tmp_path)
+    assert second.entry_count() == 0
+    assert list(cold_root.glob("*.meta.json")) == []
+
+
+def test_cold_store_index_reload_unlinks_filename_orphans_by_path_string(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    first = _make_cold(tmp_path)
+    first.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+    snapshot_files = list((tmp_path / "cold").glob("*.kv.safetensors"))
+    assert len(snapshot_files) == 1
+    snapshot_files[0].unlink()
+    removed_path_strings: list[str] = []
+
+    def counted_string_unlink(path: str) -> None:
+        assert type(path) is str
+        removed_path_strings.append(path)
+        os.unlink(path)
+
+    monkeypatch.setattr(
+        prefix_block_store,
+        "_remove_path_string_quietly",
+        counted_string_unlink,
+    )
+
+    second = _make_cold(tmp_path)
+    assert second.entry_count() == 0
+    assert len(removed_path_strings) == 1
+    assert removed_path_strings[0].endswith(".meta.json")
+    assert list((tmp_path / "cold").glob("*.meta.json")) == []
+
+
+def test_remove_path_string_quietly_tolerates_missing_and_denied_paths(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing.meta.json"
+    prefix_block_store._remove_path_string_quietly(str(missing))
+
+    def raise_os_error(path: str) -> None:
+        raise OSError(f"denied: {path}")
+
+    monkeypatch.setattr(prefix_block_store.os, "unlink", raise_os_error)
+    prefix_block_store._remove_path_string_quietly(str(tmp_path / "denied.meta.json"))
+
+
 def test_cold_store_index_load_uses_scandir_without_path_glob(
     monkeypatch,
     tmp_path: Path,
@@ -542,6 +696,150 @@ def test_cold_store_index_load_reuses_scandir_snapshot_names(
         deserializer=_fake_deserializer,
     )
     assert reloaded.entry_count() == 1
+
+
+def test_cold_store_index_load_reads_metadata_as_json_bytes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+
+    def fail_json_load(*args, **kwargs):  # pragma: no cover - regression guard
+        raise AssertionError("ColdPrefixStore index load should avoid json.load")
+
+    original_loads = json.loads
+    loads_payload_types: list[type] = []
+
+    def counted_json_loads(payload, *args, **kwargs):
+        loads_payload_types.append(type(payload))
+        return original_loads(payload, *args, **kwargs)
+
+    monkeypatch.setattr("worker.runtime.prefix_block_store.json.load", fail_json_load)
+    monkeypatch.setattr("worker.runtime.prefix_block_store.json.loads", counted_json_loads)
+
+    reloaded = ColdPrefixStore(
+        tmp_path / "cold",
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 1
+    assert loads_payload_types == [bytes]
+
+
+def test_cold_store_index_load_preserves_string_token_id_coercion(tmp_path: Path) -> None:
+    cold = _make_cold(tmp_path)
+    assert cold.store(
+        session_id="s1",
+        token_ids=[1, 2, 3, 4],
+        cache_snapshot=_make_snapshot("s1"),
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="m1",
+        model_revision="r1",
+        block_size=4,
+        acceleration_mode="",
+    )
+    meta_path = tmp_path / "cold" / f"{prefix_block_store._session_digest('s1')}.meta.json"
+    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    payload["token_ids"] = ["1", "2", "3", "4"]
+    meta_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    reloaded = ColdPrefixStore(
+        tmp_path / "cold",
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    meta, matched = reloaded.match([1, 2, 3, 4], "m1", "r1", 4)
+
+    assert meta is not None
+    assert meta.token_ids == [1, 2, 3, 4]
+    assert matched == 4
+
+
+def test_cold_store_index_load_removes_post_decode_orphans_by_path_string(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold_root = tmp_path / "cold"
+    cold_root.mkdir()
+    sidecar_digest = prefix_block_store._session_digest("sidecar")
+    missing_digest = prefix_block_store._session_digest("missing-session")
+    meta_path = cold_root / f"{sidecar_digest}.meta.json"
+    meta_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.prefix_cache_cold_entry.v1",
+                "session_id": "missing-session",
+                "token_ids": [1, 2, 3, 4],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (cold_root / f"{sidecar_digest}.kv.safetensors").write_bytes(b"snapshot")
+    removed_path_strings: list[str] = []
+
+    def counted_string_unlink(path: str) -> None:
+        assert type(path) is str
+        removed_path_strings.append(path)
+        os.unlink(path)
+
+    monkeypatch.setattr(
+        prefix_block_store,
+        "_remove_path_string_quietly",
+        counted_string_unlink,
+    )
+
+    reloaded = ColdPrefixStore(
+        cold_root,
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 0
+    assert removed_path_strings == [str(meta_path)]
+    assert not meta_path.exists()
+    assert not (cold_root / f"{missing_digest}.kv.safetensors").exists()
+
+
+def test_cold_store_index_load_removes_bad_json_by_path_string(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cold_root = tmp_path / "cold"
+    cold_root.mkdir()
+    digest = prefix_block_store._session_digest("bad-json")
+    meta_path = cold_root / f"{digest}.meta.json"
+    meta_path.write_text("{bad-json", encoding="utf-8")
+    (cold_root / f"{digest}.kv.safetensors").write_bytes(b"snapshot")
+    removed_path_strings: list[str] = []
+
+    def counted_string_unlink(path: str) -> None:
+        assert type(path) is str
+        removed_path_strings.append(path)
+        os.unlink(path)
+
+    monkeypatch.setattr(
+        prefix_block_store,
+        "_remove_path_string_quietly",
+        counted_string_unlink,
+    )
+
+    reloaded = ColdPrefixStore(
+        cold_root,
+        serializer=_fake_serializer,
+        deserializer=_fake_deserializer,
+    )
+    assert reloaded.entry_count() == 0
+    assert removed_path_strings == [str(meta_path)]
+    assert not meta_path.exists()
 
 
 def test_cold_store_index_load_tolerates_scandir_failure(

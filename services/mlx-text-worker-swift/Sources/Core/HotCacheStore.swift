@@ -341,6 +341,7 @@ actor HotCacheStore {
         await diskStore.saveSnapshot(
             snapshot: snapshot,
             model: model,
+            execution: prefill.execution,
             messages: prefill.messages,
             resumeHint: prefill.resumeHint,
             acceleration: prefill.acceleration,

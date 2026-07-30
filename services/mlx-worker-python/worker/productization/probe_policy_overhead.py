@@ -206,11 +206,12 @@ def _sample_call_ms(call: Callable[[], object], *, iterations: int, samples: int
     measurements: list[float] = []
     append_measurement = measurements.append
     perf_counter = time.perf_counter
-    range_ = range
+    sample_range = range(samples)
+    iteration_range = range(iterations)
     measured_call = call
-    for _ in range_(samples):
+    for _ in sample_range:
         started = perf_counter()
-        for _ in range_(iterations):
+        for _ in iteration_range:
             measured_call()
         append_measurement(((perf_counter() - started) * 1000.0) / iterations)
     return measurements

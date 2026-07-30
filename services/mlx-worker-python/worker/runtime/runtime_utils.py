@@ -14,6 +14,8 @@ from typing import Any
 
 _MODEL_WEIGHT_SUFFIXES = (".safetensors", ".npz", ".bin", ".gguf")
 _MODEL_WEIGHT_SUFFIX_LAST_CHARS = frozenset("sSzZnNfF")
+_MODEL_WEIGHT_PRIMARY_SUFFIX = ".safetensors"
+_MODEL_WEIGHT_SECONDARY_SUFFIXES = (".npz", ".bin", ".gguf")
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,15 +179,20 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
         return 0
     total = 0
     seen: set[str] = set()
+    path_factory = Path
+    model_dir_joinpath = model_dir.joinpath
+    weight_file_size = _weight_file_size
+    path_separator = os.sep
     for raw_shard in weight_map.values():
         shard_name = str(raw_shard or "").strip()
         if not shard_name or shard_name in seen:
             continue
         seen.add(shard_name)
-        shard_path = Path(shard_name)
-        if not shard_path.is_absolute():
-            shard_path = model_dir / shard_path
-        total += _weight_file_size(shard_path)
+        if shard_name[0] == path_separator:
+            shard_path = path_factory(shard_name)
+        else:
+            shard_path = model_dir_joinpath(shard_name)
+        total += weight_file_size(shard_path)
     return total
 
 
@@ -205,8 +212,10 @@ def _top_level_weight_file_bytes(model_dir: Path) -> int:
 def _is_model_weight_filename(name: str) -> bool:
     if not name or name[-1] not in _MODEL_WEIGHT_SUFFIX_LAST_CHARS:
         return False
-    if name.endswith(_MODEL_WEIGHT_SUFFIXES):
-        return name not in _MODEL_WEIGHT_SUFFIXES
+    if name.endswith(_MODEL_WEIGHT_PRIMARY_SUFFIX):
+        return name != _MODEL_WEIGHT_PRIMARY_SUFFIX
+    if name.endswith(_MODEL_WEIGHT_SECONDARY_SUFFIXES):
+        return name not in _MODEL_WEIGHT_SECONDARY_SUFFIXES
     if name.islower():
         return False
     lower_name = name.lower()
@@ -232,8 +241,9 @@ def _weight_file_size(path: Path) -> int:
     if not _is_model_weight_filename(path.name):
         return 0
     try:
-        if not path.is_file():
+        stat_result = path.stat()
+        if not stat.S_ISREG(stat_result.st_mode):
             return 0
-        return path.stat().st_size
+        return stat_result.st_size
     except OSError:
         return 0

@@ -247,6 +247,28 @@ target-relative resolution, file read, and source-line extension behavior, but
 avoids repeated protobuf attribute lookups for rows that enter the diagnostic
 source collection path.
 
+A follow-up 2026-07-15 private-line marker direct-text slice keeps the redaction
+contract unchanged while avoiding `lstrip()` on the common unindented runtime-log
+line path. `_has_private_text_line_marker()` now inspects the first character
+directly when it is already non-whitespace, and only falls back to the existing
+left-strip behavior for indented or blank lines. Prompt/response labels,
+case-insensitive branches, and private-preview redaction semantics stay the same.
+
+A follow-up 2026-07-20 exact-source-text diagnosis slice keeps diagnosis
+semantics and matched pattern ids unchanged while checking a preserved exact
+source-text table before the lowercase exact table. Fixture-like common lines
+that already match the canonical source spelling now skip `str.lower()` entirely;
+case variants and non-exact lines continue through the same lowercase exact,
+marker, phrase, and regex fallbacks.
+
+A follow-up 2026-07-26 target-root path prefix slice keeps redacted excerpt text
+semantics unchanged for clean target-local absolute paths while replacing the
+resolved target-root prefix directly before invoking the generic absolute-path
+regex. Paths with parent-directory segments still use the existing regex and
+normalization fallback, but ordinary runtime log lines such as
+`... /target/artifacts/model.gguf` now emit the same `<target>/artifacts/...`
+label without running the broader absolute-path matcher.
+
 Focused verification:
 
 ```bash

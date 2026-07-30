@@ -31,6 +31,29 @@ public enum ToolParserRequestContextMode: String, Codable, Sendable, Equatable, 
     case plain
 }
 
+public enum ToolWireArgumentStyle: String, Codable, Sendable, Equatable {
+    case jsonObject = "json_object"
+    case xmlParameters = "xml_parameters"
+}
+
+public struct ToolWireGrammarDescriptor: Codable, Sendable, Equatable {
+    public let dialect: String
+    public let begin: String
+    public let end: String
+    public let trigger: String
+    public let sentinelTokens: [String]
+    public let argumentStyle: ToolWireArgumentStyle
+
+    enum CodingKeys: String, CodingKey {
+        case dialect
+        case begin
+        case end
+        case trigger
+        case sentinelTokens = "sentinel_tokens"
+        case argumentStyle = "argument_style"
+    }
+}
+
 public struct ToolParserAuditReceipt: Codable, Sendable, Equatable {
     public let parserID: String
     public let parserKind: ToolParserKind
@@ -280,6 +303,27 @@ public struct ToolParserRegistry: Sendable {
 
     public func supportedModes() -> [ToolParserMode] {
         descriptors.map(\.mode)
+    }
+
+    public func wireGrammarDescriptor(for mode: ToolParserMode) -> ToolWireGrammarDescriptor {
+        if mode == .xml {
+            return ToolWireGrammarDescriptor(
+                dialect: "xml_parameter_blocks",
+                begin: "<tool_call>",
+                end: "</tool_call>",
+                trigger: "<tool_call>",
+                sentinelTokens: ["<tool_call>", "</tool_call>", "</parameter>", "</function>"],
+                argumentStyle: .xmlParameters
+            )
+        }
+        return ToolWireGrammarDescriptor(
+            dialect: "json_object_arguments",
+            begin: "<tool_call>",
+            end: "</tool_call>",
+            trigger: "<tool_call>",
+            sentinelTokens: ["<tool_call>", "</tool_call>"],
+            argumentStyle: .jsonObject
+        )
     }
 
     public func auditReceipts() -> [ToolParserAuditReceipt] {

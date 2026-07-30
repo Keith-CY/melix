@@ -21,6 +21,7 @@ from worker.productization.dataset_preparation import (
     _normalize_line_endings,
     _record,
     _record_content_digest_and_size,
+    _record_source_id,
     _read_source_text,
     _source_size_entries,
     _source_kind,
@@ -98,7 +99,7 @@ def test_dataset_preparation_import_does_not_eagerly_load_privacy_patterns() -> 
     assert completed.stdout.strip() == "False"
 
 
-def test_dataset_ingest_unbounded_source_reader_uses_single_binary_read(
+def test_dataset_ingest_unbounded_source_reader_uses_single_direct_binary_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -121,16 +122,89 @@ def test_dataset_ingest_unbounded_source_reader_uses_single_binary_read(
 
     counting_file = CountingBinaryFile()
 
-    def counted_open(path: Path, mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
-        assert path == source_path
+    def counted_open(path: str | os.PathLike[str], mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert os.fspath(path) == os.fspath(source_path)
         assert mode == "rb"
         assert args == ()
         assert kwargs == {}
         return counting_file
 
-    monkeypatch.setattr(Path, "open", counted_open)
+    monkeypatch.setattr(dataset_preparation_module, "open", counted_open, raising=False)
 
     assert _read_source_text(source_path) == "hello\nworld\n"
+    assert counting_file.read_calls == 1
+
+
+def test_dataset_ingest_capped_source_reader_uses_single_bounded_binary_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "notes.txt"
+    source_path.write_text("hello\nworld\n", encoding="utf-8")
+
+    class CountingBinaryFile:
+        read_calls = 0
+
+        def __enter__(self) -> "CountingBinaryFile":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_calls += 1
+            assert size == 13
+            return b"hello\nworld\n"
+
+    counting_file = CountingBinaryFile()
+
+    def counted_open(path: str | os.PathLike[str], mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert os.fspath(path) == os.fspath(source_path)
+        assert mode == "rb"
+        assert args == ()
+        assert kwargs == {}
+        return counting_file
+
+    monkeypatch.setattr(dataset_preparation_module, "open", counted_open, raising=False)
+
+    assert _read_source_text(source_path, cap_bytes=12) == "hello\nworld\n"
+    assert counting_file.read_calls == 1
+
+
+def test_dataset_ingest_capped_source_reader_rejects_cap_overflow_with_single_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "notes.txt"
+    source_path.write_text("too long", encoding="utf-8")
+
+    class CountingBinaryFile:
+        read_calls = 0
+
+        def __enter__(self) -> "CountingBinaryFile":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_calls += 1
+            assert size == 4
+            return b"too "
+
+    counting_file = CountingBinaryFile()
+
+    def counted_open(path: str | os.PathLike[str], mode: str = "r", *args: object, **kwargs: object) -> CountingBinaryFile:
+        assert os.fspath(path) == os.fspath(source_path)
+        assert mode == "rb"
+        assert args == ()
+        assert kwargs == {}
+        return counting_file
+
+    monkeypatch.setattr(dataset_preparation_module, "open", counted_open, raising=False)
+
+    with pytest.raises(OSError, match="source exceeded configured read cap of 3 bytes"):
+        _read_source_text(source_path, cap_bytes=3)
     assert counting_file.read_calls == 1
 
 
@@ -241,6 +315,28 @@ def test_dataset_ingest_record_reuses_normalized_text_digest_cache() -> None:
     assert first_record["source_id"] == hashlib.sha256(b"first.txt").hexdigest()[:16]
     assert second_record["source_id"] == hashlib.sha256(b"second.txt").hexdigest()[:16]
     assert first_record["source_id"] != second_record["source_id"]
+
+
+def test_dataset_ingest_record_reuses_source_id_cache() -> None:
+    _record_source_id.cache_clear()
+
+    first_record = _record(Path("same.txt"), "text", "first\n", {}, normalized=True)
+    second_record = _record(Path("same.txt"), "text", "second\n", {}, normalized=True)
+
+    cache_info = _record_source_id.cache_info()
+    assert cache_info.hits == 1
+    assert cache_info.misses == 1
+    assert first_record["source_id"] == second_record["source_id"]
+    assert first_record["source_id"] == hashlib.sha256(os.fsencode("same.txt")).hexdigest()[:16]
+    assert first_record["content_sha256"] != second_record["content_sha256"]
+
+
+def test_dataset_ingest_record_source_id_uses_filesystem_encoding_for_surrogates() -> None:
+    _record_source_id.cache_clear()
+
+    path_text = "surrogate-\udcff.txt"
+
+    assert _record_source_id(path_text) == hashlib.sha256(os.fsencode(path_text)).hexdigest()[:16]
 
 
 def test_dataset_ingest_record_accepts_pre_normalized_text(

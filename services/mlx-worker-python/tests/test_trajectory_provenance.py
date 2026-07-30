@@ -44,6 +44,7 @@ from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.trajectory_provenance import (
+    _copy_quality_components_list,
     _copy_trajectory_provenance_value,
     adapter_manifest_trajectory_provenance,
     alignment_metrics_trajectory_provenance,
@@ -414,6 +415,177 @@ def test_load_trajectory_provenance_from_snapshot_manifest_fast_paths_defaulted_
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_short_circuits_common_metric_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+                "trajectory_quality_metrics": {"reward_coverage_count": 2},
+                "agentic_sft_token_metrics": {"source_trace_count": 2},
+            }
+        ).encode("utf-8")
+    )
+
+    def fail_fallback_extract(
+        _manifest: Mapping[str, object],
+        *,
+        snapshot_manifest_path: Path | str | None = None,
+        copy_nested: bool,
+    ) -> dict[str, object]:
+        raise AssertionError(
+            "common metric-only manifest loads should return before optional-field scanning"
+        )
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_trajectory_provenance_from_snapshot_manifest",
+        fail_fallback_extract,
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+        "trajectory_quality_metrics": {"reward_coverage_count": 2},
+        "agentic_sft_token_metrics": {"source_trace_count": 2},
+    }
+
+
+def test_load_trajectory_provenance_from_snapshot_manifest_short_circuits_clean_dict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+            }
+        ).encode("utf-8")
+    )
+
+    def fail_fallback_extract(
+        _manifest: Mapping[str, object],
+        *,
+        snapshot_manifest_path: Path | str | None = None,
+        copy_nested: bool,
+    ) -> dict[str, object]:
+        raise AssertionError(
+            "clean dict manifest loads should return from the direct fast path"
+        )
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_trajectory_provenance_from_snapshot_manifest",
+        fail_fallback_extract,
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
+def test_trajectory_quality_metric_component_list_fast_copy_preserves_isolation() -> None:
+    components = [
+        {
+            "name": "component-a",
+            "score": 0.75,
+            "passed": True,
+            "labels": ["agentic", "trajectory", "accepted"],
+        },
+        {
+            "name": "component-b",
+            "score": 0.25,
+            "passed": False,
+            "labels": ["agentic", "trajectory", "rejected"],
+        },
+    ]
+    copied = _copy_trajectory_provenance_value(
+        {"reward_coverage_count": 2, "components": components}
+    )
+
+    assert copied == {"reward_coverage_count": 2, "components": components}
+    assert copied["components"] is not components
+    assert copied["components"][0] is not components[0]
+    assert copied["components"][0]["labels"] is not components[0]["labels"]
+    components[0]["labels"].append("mutated")
+    assert copied["components"][0]["labels"] == [
+        "agentic",
+        "trajectory",
+        "accepted",
+    ]
+
+    variable_label_components = [
+        {
+            "name": "component-c",
+            "score": 1.0,
+            "passed": True,
+            "labels": ["agentic", "trajectory", "accepted", "verified"],
+        }
+    ]
+    variable_label_copy = _copy_quality_components_list(variable_label_components)
+
+    assert variable_label_copy is not None
+    assert variable_label_copy == variable_label_components
+    assert variable_label_copy is not variable_label_components
+    assert variable_label_copy[0]["labels"] is not variable_label_components[0]["labels"]
+
+
+@pytest.mark.parametrize(
+    "components",
+    [
+        [{"name": "component-a", "score": 0.75, "passed": True}],
+        [{"name": "component-a", "score": 0.75, "passed": True, "extra": "field"}],
+        [
+            {
+                "name": "component-a",
+                "score": 0.75,
+                "passed": True,
+                "labels": {"not": "a-list"},
+            }
+        ],
+        [
+            {
+                "name": "component-a",
+                "score": 0.75,
+                "passed": True,
+                "labels": ["agentic", object(), "accepted"],
+            }
+        ],
+        [
+            {
+                "name": "component-a",
+                "score": 0.75,
+                "passed": True,
+                "labels": ["agentic", "trajectory", "accepted", object()],
+            }
+        ],
+    ],
+)
+def test_trajectory_quality_metric_component_list_fast_copy_declines_non_common_shapes(
+    components: list[object],
+) -> None:
+    assert _copy_quality_components_list(components) is None
+
+
 @pytest.mark.parametrize(
     ("field", "fallback_key", "fallback_value"),
     [
@@ -652,6 +824,54 @@ def test_load_snapshot_manifest_reuses_fresh_json_nested_fields(
     }
 
 
+def test_copy_trajectory_component_with_list_labels_uses_fast_isolated_copy() -> None:
+    component = {
+        "name": "format",
+        "score": 1.0,
+        "passed": True,
+        "labels": ["agentic", "trajectory", "quality"],
+    }
+
+    copied = _copy_trajectory_provenance_value(component)
+
+    assert copied == component
+    assert copied is not component
+    assert copied["labels"] is not component["labels"]
+    component["labels"].append("mutated")
+    assert copied["labels"] == ["agentic", "trajectory", "quality"]
+
+
+def test_copy_trajectory_component_with_variable_list_labels_uses_fast_copy() -> None:
+    component = {
+        "name": "format",
+        "score": 1.0,
+        "passed": True,
+        "labels": ["agentic", "trajectory"],
+    }
+
+    copied = _copy_trajectory_provenance_value(component)
+
+    assert copied == component
+    assert copied is not component
+    assert copied["labels"] is not component["labels"]
+
+
+def test_copy_trajectory_component_with_nested_list_labels_falls_back() -> None:
+    component = {
+        "name": "format",
+        "score": 1.0,
+        "passed": True,
+        "labels": ["agentic", ["nested"]],
+    }
+
+    copied = _copy_trajectory_provenance_value(component)
+
+    assert copied == component
+    assert copied is not component
+    assert copied["labels"] is not component["labels"]
+    assert copied["labels"][1] is not component["labels"][1]
+
+
 def test_normalize_trajectory_provenance_copies_nested_json_containers() -> None:
     source = {
         "trajectory_quality_metrics": {
@@ -864,6 +1084,363 @@ def test_copy_json_dict_copies_flat_scalar_dicts_without_recursive_calls(
     assert copied is not source
 
 
+def test_copy_json_dict_uses_unpack_copy_for_flat_scalar_dicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"trace_tokens": 12, "tool_call_tokens": 3, "passed": True}
+
+    class CopyBlockedDict(dict[str, object]):
+        def copy(self) -> dict[str, object]:  # pragma: no cover - only runs on regression
+            raise AssertionError("scalar-dict fast path should avoid dict.copy()")
+
+    def fail_recursive_copy(value: object) -> object:
+        raise AssertionError(f"unexpected recursive copy for scalar dict value {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = trajectory_provenance_module._copy_json_dict(CopyBlockedDict(source))
+
+    assert copied == source
+    assert copied is not source
+    assert type(copied) is dict
+    assert list(copied) == list(source)
+
+
+def test_copy_json_dict_fast_paths_ordered_agentic_sft_token_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    def fail_recursive_copy(value: object) -> object:  # pragma: no cover - regression guard
+        raise AssertionError(f"unexpected recursive token metrics copy for {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = trajectory_provenance_module._copy_json_dict(source)
+
+    assert copied == source
+    assert copied is not source
+    assert type(copied) is dict
+    assert list(copied) == list(source)
+
+
+def test_copy_json_dict_normalizes_token_metric_order() -> None:
+    source = {
+        "trace_tokens": 2368,
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    copied = trajectory_provenance_module._copy_json_dict(source)
+
+    assert copied == source
+    assert copied is not source
+    assert list(copied) == list(trajectory_provenance_module._AGENTIC_SFT_TOKEN_METRIC_FIELDS)
+
+
+def test_copy_json_dict_falls_back_for_six_key_non_token_metrics() -> None:
+    source = {
+        "trace_tokens": 12,
+        "tool_call_tokens": 3,
+        "observation_tokens": 4,
+        "final_answer_tokens": 5,
+        "passed": True,
+        "score": 0.75,
+    }
+
+    copied = trajectory_provenance_module._copy_json_dict(source)
+
+    assert copied == source
+    assert copied is not source
+    assert list(copied) == list(source)
+
+
+def test_adapter_manifest_trajectory_provenance_emits_ordered_token_metric_aliases() -> None:
+    payload = adapter_manifest_trajectory_provenance(
+        {
+            "trajectory_dataset_id": "agentic-snapshot",
+            "agentic_sft_token_metrics": {
+                "estimator": " fixture-tokenizer ",
+                "source_trace_count": "64",
+                "trace_tokens": 2368,
+                "tool_call_tokens": 704,
+                "observation_tokens": 832,
+                "final_answer_tokens": 320,
+            },
+        }
+    )
+
+    alias_keys = [key for key in payload if key.startswith("training.agentic_sft.")]
+    assert alias_keys == [
+        "training.agentic_sft.token_estimator",
+        "training.agentic_sft.source_trace_count",
+        "training.agentic_sft.trace_tokens",
+        "training.agentic_sft.tool_call_tokens",
+        "training.agentic_sft.observation_tokens",
+        "training.agentic_sft.final_answer_tokens",
+    ]
+    assert payload["training.agentic_sft.token_estimator"] == "fixture-tokenizer"
+    assert payload["training.agentic_sft.source_trace_count"] == 64
+
+
+def test_adapter_manifest_trajectory_provenance_fast_paths_clean_exact_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provenance = {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_trace_digest": "sha256:fixture",
+        "trajectory_quality_metrics": {
+            "reward_coverage_count": 1,
+            "components": [
+                {
+                    "name": "component-0",
+                    "score": 0.75,
+                    "passed": True,
+                    "labels": ["agentic", "trajectory", "0"],
+                }
+            ],
+        },
+        "agentic_sft_token_metrics": {
+            "estimator": "fixture-tokenizer",
+            "source_trace_count": 64,
+            "trace_tokens": 2368,
+            "tool_call_tokens": 704,
+            "observation_tokens": 832,
+            "final_answer_tokens": 320,
+        },
+    }
+
+    def fail_normalize(value: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError(f"unexpected normalize fallback for {value!r}")
+
+    def fail_token_copy(value: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError(f"unexpected token metric copy helper for {value!r}")
+
+    def fail_alias_helper(value: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError(f"unexpected token alias helper for {value!r}")
+
+    monkeypatch.setattr(trajectory_provenance_module, "normalize_trajectory_provenance", fail_normalize)
+    monkeypatch.setattr(trajectory_provenance_module, "_copy_json_dict", fail_token_copy)
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_agentic_sft_token_metric_aliases",
+        fail_alias_helper,
+    )
+
+    payload = adapter_manifest_trajectory_provenance(provenance)
+
+    assert payload["trajectory_provenance_field_count"] == 6
+    assert payload["trajectory_reward_policy_present"] is False
+    assert payload["training.agentic_sft.token_estimator"] == "fixture-tokenizer"
+    assert payload["training.agentic_sft.trace_tokens"] == 2368
+    assert payload["trajectory_quality_metrics"] == provenance["trajectory_quality_metrics"]
+    assert payload["trajectory_quality_metrics"] is not provenance["trajectory_quality_metrics"]
+    assert payload["trajectory_quality_metrics"]["components"] is not provenance["trajectory_quality_metrics"]["components"]
+    assert payload["agentic_sft_token_metrics"] == provenance["agentic_sft_token_metrics"]
+    assert payload["agentic_sft_token_metrics"] is not provenance["agentic_sft_token_metrics"]
+
+
+def test_adapter_manifest_trajectory_provenance_omits_blank_token_estimator() -> None:
+    payload = adapter_manifest_trajectory_provenance(
+        {
+            "trajectory_dataset_id": "agentic-snapshot",
+            "agentic_sft_token_metrics": {"estimator": "", "trace_tokens": 12},
+        }
+    )
+
+    assert "training.agentic_sft.token_estimator" not in payload
+    assert payload["training.agentic_sft.source_trace_count"] == 0
+    assert payload["training.agentic_sft.trace_tokens"] == 12
+    assert payload["training.agentic_sft.tool_call_tokens"] == 0
+
+
+def test_adapter_manifest_trajectory_provenance_falls_back_for_dirty_fast_path_shapes() -> None:
+    exact_shape = {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_trace_digest": "sha256:fixture",
+        "trajectory_quality_metrics": {"reward_coverage_count": 1, "components": []},
+        "agentic_sft_token_metrics": {"estimator": "fixture-tokenizer"},
+    }
+    bad_type_shape = dict(exact_shape)
+    bad_type_shape["agentic_sft_token_metrics"] = {"estimator": "fixture-tokenizer"}.items()
+    short_token_shape = dict(exact_shape)
+    missing_key_shape = dict(exact_shape)
+    missing_key_shape["agentic_sft_token_metrics"] = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "extra": 1,
+    }
+    dirty_counter_shape = dict(exact_shape)
+    dirty_counter_shape["agentic_sft_token_metrics"] = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": "64",
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+    whitespace_shape = dict(exact_shape)
+    whitespace_shape["trajectory_dataset_id"] = " agentic-snapshot "
+
+    bad_type_payload = adapter_manifest_trajectory_provenance(bad_type_shape)
+    short_token_payload = adapter_manifest_trajectory_provenance(short_token_shape)
+    missing_key_payload = adapter_manifest_trajectory_provenance(missing_key_shape)
+    dirty_counter_payload = adapter_manifest_trajectory_provenance(dirty_counter_shape)
+    whitespace_payload = adapter_manifest_trajectory_provenance(whitespace_shape)
+
+    assert bad_type_payload["trajectory_provenance_field_count"] == 6
+    assert bad_type_payload["agentic_sft_token_metrics"] == bad_type_shape[
+        "agentic_sft_token_metrics"
+    ]
+    assert short_token_payload["training.agentic_sft.token_estimator"] == "fixture-tokenizer"
+    assert missing_key_payload["training.agentic_sft.final_answer_tokens"] == 0
+    assert dirty_counter_payload["training.agentic_sft.source_trace_count"] == 64
+    assert whitespace_payload["trajectory_dataset_id"] == " agentic-snapshot "
+    assert whitespace_payload["trajectory_provenance_field_count"] == 6
+
+
+def test_agentic_token_metric_aliases_fast_path_keeps_clean_estimator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    def fail_string_coerce(value: object) -> str:  # pragma: no cover - regression guard
+        raise AssertionError(f"unexpected estimator coercion for {value!r}")
+
+    monkeypatch.setattr(trajectory_provenance_module, "_STR", fail_string_coerce)
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases == {
+        "training.agentic_sft.token_estimator": "fixture-tokenizer",
+        "training.agentic_sft.source_trace_count": 64,
+        "training.agentic_sft.trace_tokens": 2368,
+        "training.agentic_sft.tool_call_tokens": 704,
+        "training.agentic_sft.observation_tokens": 832,
+        "training.agentic_sft.final_answer_tokens": 320,
+    }
+
+
+def test_agentic_token_metric_aliases_fast_path_reuses_exact_ints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    def fail_int_coerce(value: object) -> int:  # pragma: no cover - regression guard
+        raise AssertionError(f"unexpected token metric int coercion for {value!r}")
+
+    monkeypatch.setattr(trajectory_provenance_module, "_INT", fail_int_coerce)
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases == {
+        "training.agentic_sft.token_estimator": "fixture-tokenizer",
+        "training.agentic_sft.source_trace_count": 64,
+        "training.agentic_sft.trace_tokens": 2368,
+        "training.agentic_sft.tool_call_tokens": 704,
+        "training.agentic_sft.observation_tokens": 832,
+        "training.agentic_sft.final_answer_tokens": 320,
+    }
+
+
+def test_agentic_token_metric_aliases_exact_int_fast_path_preserves_bool_coercion() -> None:
+    metrics = {
+        "estimator": "fixture-tokenizer",
+        "source_trace_count": True,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases["training.agentic_sft.source_trace_count"] == 1
+
+
+def test_agentic_token_metric_aliases_fast_path_trims_and_omits_estimators() -> None:
+    metrics = {
+        "estimator": " fixture-tokenizer ",
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases["training.agentic_sft.token_estimator"] == "fixture-tokenizer"
+    metrics["estimator"] = "   "
+    blank_aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+    assert "training.agentic_sft.token_estimator" not in blank_aliases
+    assert blank_aliases["training.agentic_sft.trace_tokens"] == 2368
+
+
+def test_agentic_token_metric_aliases_falls_back_for_partial_exact_dict() -> None:
+    metrics = {
+        "estimator": 123,
+        "source_trace_count": 64,
+        "trace_tokens": 2368,
+        "tool_call_tokens": 704,
+        "observation_tokens": 832,
+        "final_answer_tokens": 320,
+    }
+
+    aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(metrics)
+
+    assert aliases["training.agentic_sft.token_estimator"] == "123"
+    assert aliases["training.agentic_sft.final_answer_tokens"] == 320
+
+    partial_metrics: dict[str, object] = dict(metrics)
+    partial_metrics.pop("final_answer_tokens")
+    partial_metrics["extra"] = "forces-key-error-fallback"
+    fallback_aliases = trajectory_provenance_module._agentic_sft_token_metric_aliases(
+        partial_metrics
+    )
+    assert fallback_aliases["training.agentic_sft.token_estimator"] == "123"
+    assert fallback_aliases["training.agentic_sft.final_answer_tokens"] == 0
+
+
 def test_copy_json_dict_still_copies_nested_mutable_items() -> None:
     source = {"reward_coverage_count": 1, "components": [{"name": "format"}]}
 
@@ -873,6 +1450,106 @@ def test_copy_json_dict_still_copies_nested_mutable_items() -> None:
     assert copied is not source
     assert copied["components"] is not source["components"]
     assert copied["components"][0] is not source["components"][0]
+
+
+def test_copy_trajectory_provenance_value_uses_bound_type_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"reward_coverage_count": 1, "components": [{"name": "format"}]}
+    calls: list[object] = []
+
+    def tracked_type(value: object) -> type[object]:
+        calls.append(value)
+        return type(value)
+
+    monkeypatch.setattr(trajectory_provenance_module, "_TYPE", tracked_type)
+
+    copied = trajectory_provenance_module._copy_trajectory_provenance_value(source)
+
+    assert copied == source
+    assert copied is not source
+    assert copied["components"] is not source["components"]
+    assert calls[0] is source
+
+
+def test_copy_trajectory_provenance_value_fast_paths_quality_metrics_dict() -> None:
+    source = {
+        "reward_coverage_count": 2,
+        "components": [
+            {
+                "name": "format",
+                "score": 0.75,
+                "passed": True,
+                "labels": ["agentic", "trajectory", "quality"],
+            },
+            {
+                "name": "safety",
+                "score": 1.0,
+                "passed": True,
+                "labels": ["agentic", "safe", "ready"],
+            },
+        ],
+    }
+
+    copied = _copy_trajectory_provenance_value(source)
+
+    assert copied == source
+    assert copied is not source
+    assert list(copied) == list(source)
+    assert copied["components"] is not source["components"]
+    assert copied["components"][0] is not source["components"][0]
+    assert copied["components"][0]["labels"] is not source["components"][0]["labels"]
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ("agentic", "trajectory", "1"),
+        ("agentic", "trajectory", "quality", "1"),
+    ],
+)
+def test_copy_trajectory_provenance_value_fast_paths_component_dicts(
+    labels: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {
+        "name": "component-1",
+        "score": 0.75,
+        "passed": True,
+        "labels": labels,
+    }
+
+    def fail_recursive_copy(value: object) -> object:  # pragma: no cover - regression guard
+        raise AssertionError(f"unexpected recursive component copy for {value!r}")
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_recursive_copy,
+    )
+
+    copied = _copy_trajectory_provenance_value(source)
+
+    assert copied == source
+    assert copied is not source
+    assert copied["labels"] is source["labels"]
+    assert list(copied) == list(source)
+
+
+def test_copy_trajectory_provenance_value_component_fast_path_keeps_mutable_labels_isolated() -> None:
+    source = {
+        "name": "component-1",
+        "score": 0.75,
+        "passed": True,
+        "labels": ("agentic", ["mutable"]),
+    }
+
+    copied = _copy_trajectory_provenance_value(source)
+
+    assert copied == source
+    assert copied is not source
+    assert copied["labels"] is not source["labels"]
+    assert copied["labels"][1] is not source["labels"][1]
 
 
 def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> None:

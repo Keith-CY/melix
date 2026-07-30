@@ -421,7 +421,23 @@ def test_auto_backend_passes_json_schema_logits_processor_to_stream_generate() -
     assert len(processors) == 1
 
 
-def test_auto_backend_passes_json_object_logits_processor_to_session_stream_generate() -> None:
+@pytest.mark.parametrize(
+    "structured_ext",
+    [
+        {"melix.structured_output.mode": "json_object"},
+        {
+            "melix.structured_output.mode": "json_schema",
+            "melix.structured_output.schema_json": json.dumps(
+                {"type": "object", "additionalProperties": False},
+                separators=(",", ":"),
+            ),
+        },
+    ],
+    ids=("json_object", "json_schema"),
+)
+def test_auto_backend_passes_structured_logits_processor_to_session_stream_generate(
+    structured_ext: dict[str, str],
+) -> None:
     seen: dict[str, object] = {}
 
     def fake_load(model_source: str, **kwargs):
@@ -464,7 +480,7 @@ def test_auto_backend_passes_json_object_logits_processor_to_session_stream_gene
             common_pb2.SamplingConfig(max_output_tokens=8),
             Event(),
             execution_ext={
-                "melix.structured_output.mode": "json_object",
+                **structured_ext,
                 "_melix.session_id": "session-structured",
                 "_melix.model_id": "model",
                 "_melix.model_revision": "rev",
@@ -808,8 +824,23 @@ def test_auto_backend_uses_batch_generator_for_native_mtp_text_models(monkeypatc
     assert seen["closed"] == 1
 
 
-def test_auto_backend_passes_json_object_logits_processor_to_native_batch_insert(
+@pytest.mark.parametrize(
+    "structured_ext",
+    [
+        {"melix.structured_output.mode": "json_object"},
+        {
+            "melix.structured_output.mode": "json_schema",
+            "melix.structured_output.schema_json": json.dumps(
+                {"type": "object", "additionalProperties": False},
+                separators=(",", ":"),
+            ),
+        },
+    ],
+    ids=("json_object", "json_schema"),
+)
+def test_auto_backend_passes_structured_logits_processor_to_native_batch_insert(
     monkeypatch: pytest.MonkeyPatch,
+    structured_ext: dict[str, str],
 ) -> None:
     fake_core = _install_fake_mlx_core(monkeypatch)
     _install_fake_mlx_lm_cache(monkeypatch, fake_core)
@@ -929,7 +960,7 @@ def test_auto_backend_passes_json_object_logits_processor_to_native_batch_insert
             "prompt",
             common_pb2.SamplingConfig(max_output_tokens=2),
             Event(),
-            execution_ext={"melix.structured_output.mode": "json_object"},
+            execution_ext=structured_ext,
         )
     )
 

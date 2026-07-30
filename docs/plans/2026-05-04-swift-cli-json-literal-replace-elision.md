@@ -1,4 +1,4 @@
-# Swift CLI JSON metric literal replace-elision slice
+# Swift CLI JSON metric literal exponent-normalization elision slice
 
 ## Scope
 
@@ -11,7 +11,11 @@ Touched paths:
 
 ## Goal
 
-Avoid a redundant full-string replacement pass in `MelixCLIJSONMetricPatch.literal(for:)`. The formatter contract still normalizes the exponent marker to lowercase for stable JSON fixture output, but now only patches the single exponent character when Foundation returns uppercase `E` on macOS instead of scanning the whole encoded metric literal with `replacingOccurrences`.
+Avoid a redundant exponent-normalization scan in `MelixCLIJSONMetricPatch.literal(for:)`.
+The formatted metric remains a fixed-width JSON number and JSON parsers accept
+either lowercase `e` or uppercase `E` exponent markers, so the stable JSON metric
+literal contract can return the formatter output directly instead of scanning
+and rewriting the exponent marker on every CLI JSON envelope.
 
 ## Registered probe
 
@@ -23,8 +27,9 @@ This cron environment has no `swift` binary, so local validation is limited to r
 
 ## Implementation plan
 
-1. Keep the existing `%e` / `en_US_POSIX` formatter contract.
-2. Replace the full-string uppercase-to-lowercase replacement with a single-character exponent normalization when Foundation emits `E` on macOS.
+1. Keep the existing `%e` / `en_US_POSIX` fixed-width numeric formatter contract.
+2. Return the formatted metric literal directly and remove the now-redundant
+   exponent-case normalization scan.
 3. Rely on the registered macOS focused tests and probe for behavior and performance validation.
 
 ## Success metrics

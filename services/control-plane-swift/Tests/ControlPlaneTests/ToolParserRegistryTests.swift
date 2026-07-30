@@ -6,6 +6,28 @@ import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 struct ToolParserRegistryTests {
+    @Test("tool wire grammar descriptors keep parser and sampler dialects aligned")
+    func toolWireGrammarDescriptorsKeepParserAndSamplerDialectsAligned() throws {
+        let registry = ToolParserRegistry()
+        let json = registry.wireGrammarDescriptor(for: .qwen)
+        let xml = registry.wireGrammarDescriptor(for: .xml)
+
+        #expect(json.dialect == "json_object_arguments")
+        #expect(json.argumentStyle == .jsonObject)
+        #expect(json.trigger == "<tool_call>")
+        #expect(json.sentinelTokens == ["<tool_call>", "</tool_call>"])
+        #expect(xml.dialect == "xml_parameter_blocks")
+        #expect(xml.argumentStyle == .xmlParameters)
+        #expect(xml.begin == "<tool_call>")
+        #expect(xml.end == "</tool_call>")
+        #expect(xml.sentinelTokens.contains("</parameter>"))
+        #expect(xml.sentinelTokens.contains("</function>"))
+
+        let encoded = try JSONEncoder().encode(xml)
+        let decoded = try JSONDecoder().decode(ToolWireGrammarDescriptor.self, from: encoded)
+        #expect(decoded == xml)
+    }
+
     @Test("registered parsers declare audit receipts for wire formats and selector surfaces")
     func registeredParsersDeclareAuditReceiptsForWireFormatsAndSelectorSurfaces() throws {
         let registry = ToolParserRegistry()
@@ -265,6 +287,16 @@ struct ToolParserRegistryTests {
         #expect(ext["melix.compat.tool_namespaces"] == "tools.search")
         #expect(ext["melix.compat.tool_choice_requested"] == "required")
         #expect(ext["melix.compat.tool_choice_resolved"] == "required")
+        #expect(ext["melix.tool_wire.dialect"] == "json_object_arguments")
+        #expect(ext["melix.tool_wire.begin"] == "<tool_call>")
+        #expect(ext["melix.tool_wire.end"] == "</tool_call>")
+        #expect(ext["melix.tool_wire.trigger"] == "<tool_call>")
+        #expect(ext["melix.tool_wire.argument_style"] == "json_object")
+        let wireSentinels = try JSONDecoder().decode(
+            [String].self,
+            from: Data((ext["melix.tool_wire.sentinel_tokens"] ?? "").utf8)
+        )
+        #expect(wireSentinels == ["<tool_call>", "</tool_call>"])
         #expect(ext["melix.compat.structured_output_mode"] == "json_schema")
         #expect(ext["melix.compat.output_modalities"] == "text")
         #expect(ext["melix.compat.effective_config_hash"]?.isEmpty == false)

@@ -60,6 +60,13 @@ SINGLETON_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_singleton_
 @pytest.fixture(autouse=True)
 def clear_probe_coverage_path_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", raising=False)
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+    setattr(changed_scope_coverage, "_ALLOWLIST_LAST_RAW", "")
+    setattr(
+        changed_scope_coverage,
+        "_ALLOWLIST_LAST_RESULT",
+        changed_scope_coverage._ALLOWLIST_CACHE_MISS,
+    )
 
 
 def test_parse_changed_lines_handles_multiple_files_and_hunks() -> None:
@@ -91,6 +98,35 @@ def test_parse_changed_lines_handles_multiple_files_and_hunks() -> None:
         "bar.py": {6, 7},
     }
     assert changed_scope_coverage._parse_changed_lines(diff_text + "\n") == changed
+
+
+def test_parse_changed_lines_accepts_git_diff_bytes() -> None:
+    diff_text = "\n".join(
+        [
+            "diff --git a/foo.py b/foo.py",
+            "--- a/foo.py",
+            "+++ b/foo.py",
+            "@@ -0,0 +2 @@",
+            "+alpha",
+        ]
+    )
+
+    assert changed_scope_coverage._parse_changed_lines(diff_text.encode()) == {"foo.py": {2}}
+
+
+def test_parse_changed_lines_keeps_lower_d_context_as_ordinary_line() -> None:
+    diff_text = "\n".join(
+        [
+            "diff --git a/foo.py b/foo.py",
+            "--- a/foo.py",
+            "+++ b/foo.py",
+            "@@ -0,0 +2,2 @@",
+            "def context_line():",
+            "+    return 1",
+        ]
+    )
+
+    assert changed_scope_coverage._parse_changed_lines(diff_text.encode()) == {"foo.py": {3}}
 
 
 def test_parse_hunk_new_start_uses_delimiters_for_counted_and_single_line_ranges() -> None:
@@ -132,9 +168,10 @@ def test_changed_lines_by_path_uses_one_batched_git_diff(monkeypatch, tmp_path: 
         ]
     )
 
-    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[bytes]:
         observed_commands.append(command)
-        return subprocess.CompletedProcess(command, 0, stdout=diff_text, stderr="")
+        assert kwargs.get("text") is None
+        return subprocess.CompletedProcess(command, 0, stdout=diff_text.encode(), stderr=b"")
 
     monkeypatch.setattr(changed_scope_coverage.subprocess, "run", fake_run)
 
@@ -307,6 +344,50 @@ def test_coverage_path_allowlist_reuses_cached_raw_payload_parse(monkeypatch) ->
     assert calls == 1
 
 
+def test_coverage_path_allowlist_reuses_last_raw_payload_without_lru_entry(monkeypatch) -> None:
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+    calls = 0
+    original_from_raw = changed_scope_coverage._coverage_path_allowlist_from_raw
+
+    def counted_from_raw(raw_value: str) -> frozenset[str] | None:
+        nonlocal calls
+        calls += 1
+        return original_from_raw(raw_value)
+
+    monkeypatch.setattr(changed_scope_coverage, "_coverage_path_allowlist_from_raw", counted_from_raw)
+    payload = '["direct.py", "context.py"]'
+
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": payload}
+    ) == {"direct.py", "context.py"}
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": payload}
+    ) == {"direct.py", "context.py"}
+    assert calls == 1
+
+
+def test_coverage_path_allowlist_normalizes_whitespace_before_cache_compare(monkeypatch) -> None:
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+    calls = 0
+    original_from_raw = changed_scope_coverage._coverage_path_allowlist_from_raw
+
+    def counted_from_raw(raw_value: str) -> frozenset[str] | None:
+        nonlocal calls
+        calls += 1
+        return original_from_raw(raw_value)
+
+    monkeypatch.setattr(changed_scope_coverage, "_coverage_path_allowlist_from_raw", counted_from_raw)
+    payload = '["direct.py", "context.py"]'
+
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": payload}
+    ) == {"direct.py", "context.py"}
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": f"  {payload}\n"}
+    ) == {"direct.py", "context.py"}
+    assert calls == 1
+
+
 def test_coverage_path_allowlist_escaped_string_uses_json_decoder() -> None:
     assert changed_scope_coverage._coverage_path_allowlist(
         {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": '"pkg/\\u0064irect.py"'}
@@ -455,12 +536,15 @@ def test_is_diff_file_marker_matches_only_real_file_markers() -> None:
 
 def test_measurable_changed_lines_filters_blank_comment_and_unmeasured_lines(tmp_path: Path) -> None:
     source_path = tmp_path / "foo.py"
-    source_path.write_text("first\n# comment\n\ncovered\nmissed\n", encoding="utf-8")
+    source_path.write_text(
+        "first\n# comment\n\n    indented_covered\nmissed\n    # indented comment\n",
+        encoding="utf-8",
+    )
     coverage_payload = {
         "files": {
             "foo.py": {
                 "executed_lines": [1, 4],
-                "missing_lines": [5],
+                "missing_lines": [5, 6],
             }
         }
     }
@@ -469,12 +553,85 @@ def test_measurable_changed_lines_filters_blank_comment_and_unmeasured_lines(tmp
         tmp_path,
         coverage_payload,
         "foo.py",
-        {1, 2, 3, 4, 5},
+        {1, 2, 3, 4, 5, 6},
     )
 
     assert measurable == [1, 4, 5]
     assert covered == [1, 4]
     assert missed == [5]
+
+
+def test_measurable_non_comment_lines_preserves_dense_indented_comment_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "dense.py"
+    source_path.write_text(
+        "\n".join(
+            [
+                "direct_line",
+                "# direct comment",
+                "    indented_line",
+                "    # indented comment",
+                "",
+                "tail_line",
+                "    tail_indented",
+                "# tail comment",
+                "value = 1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("ASCII dense scans should avoid Path.read_text")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    assert changed_scope_coverage._measurable_non_comment_lines(
+        source_path,
+        list(range(1, 10)),
+    ) == [1, 3, 6, 7, 9]
+
+
+def test_measurable_non_comment_lines_singleton_avoids_remaining_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "singleton.py"
+    source_path.write_text("# comment\n    value = 1\n", encoding="utf-8")
+
+    def fail_set(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("singleton sparse source scans should avoid building a set")
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("singleton sparse source scans should stream target lines")
+
+    monkeypatch.setattr(changed_scope_coverage, "set", fail_set, raising=False)
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [0]) == []
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [2]) == [2]
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [3]) == []
+
+
+def test_measurable_non_comment_lines_falls_back_for_unicode_whitespace(tmp_path: Path) -> None:
+    source_path = tmp_path / "dense_unicode.py"
+    source_path.write_text(
+        "\n".join(
+            [
+                "\u00a0value = 1",
+                "\u00a0# unicode-space comment",
+                "plain = 2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert changed_scope_coverage._measurable_non_comment_lines(
+        source_path,
+        [1, 2, 3],
+    ) == [1, 3]
 
 
 def test_line_ranges_may_overlap_rejects_disjoint_changed_bounds() -> None:
@@ -545,6 +702,164 @@ def test_measurable_changed_lines_checks_singletons_before_range_overlap(
     assert measurable == []
     assert covered == []
     assert missed == []
+
+
+def test_measurable_changed_lines_singleton_skips_range_helper_for_measured_lists(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 100, 2)),
+                "missing_lines": list(range(2, 101, 2)),
+            }
+        }
+    }
+
+    def fail_range_overlap(*args: object, **kwargs: object) -> bool:  # pragma: no cover
+        raise AssertionError("singleton changed sets should check measured bounds directly")
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("out-of-range singleton changed line should not read source")
+
+    monkeypatch.setattr(changed_scope_coverage, "_line_ranges_may_overlap", fail_range_overlap)
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {101},
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+
+
+def test_measurable_changed_lines_singleton_classifies_measured_line_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 101)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 100, 2)),
+                "missing_lines": list(range(2, 101, 2)),
+            }
+        }
+    }
+
+    def fail_range_overlap(*args: object, **kwargs: object) -> bool:  # pragma: no cover
+        raise AssertionError("measured singleton changed sets should check measured bounds directly")
+
+    original_contains = changed_scope_coverage._sorted_line_list_contains
+    contains_calls = 0
+
+    def counting_contains(lines: list[int], line_no: int) -> bool:
+        nonlocal contains_calls
+        contains_calls += 1
+        return original_contains(lines, line_no)
+
+    monkeypatch.setattr(changed_scope_coverage, "_line_ranges_may_overlap", fail_range_overlap)
+    monkeypatch.setattr(changed_scope_coverage, "_sorted_line_list_contains", counting_contains)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {77},
+    )
+
+    assert measurable == [77]
+    assert covered == [77]
+    assert missed == []
+    assert contains_calls == 2
+
+
+def test_measurable_changed_lines_singleton_inside_bounds_but_unmeasured_skips_source_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [1, 5],
+                "missing_lines": [2, 6],
+            }
+        }
+    }
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("unmeasured singleton changed line should not read source")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {3},
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+
+
+def test_measurable_changed_lines_singleton_handles_reversed_executed_bounds(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 7)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [5, 3, 1],
+                "missing_lines": [],
+            }
+        }
+    }
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {3},
+    )
+
+    assert measurable == [3]
+    assert covered == [3]
+    assert missed == []
+
+
+def test_measurable_changed_lines_singleton_handles_reversed_missing_bounds(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 7)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [],
+                "missing_lines": [6, 4, 2],
+            }
+        }
+    }
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {4},
+    )
+
+    assert measurable == [4]
+    assert covered == []
+    assert missed == [4]
 
 
 def test_line_ranges_may_overlap_single_changed_line_avoids_changed_minmax(
@@ -752,6 +1067,38 @@ def test_measurable_changed_lines_uses_dense_membership_scan(
     assert missed == list(range(2, 81, 2))
 
 
+def test_measurable_changed_lines_dense_sets_skip_range_bounds_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 81)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 80, 2)),
+                "missing_lines": list(range(2, 81, 2)),
+            }
+        }
+    }
+
+    def fail_range_overlap(*args: object, **kwargs: object) -> bool:  # pragma: no cover
+        raise AssertionError("dense changed sets should intersect measured lines before range bounds scans")
+
+    monkeypatch.setattr(changed_scope_coverage, "_line_ranges_may_overlap", fail_range_overlap)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        set(range(1, 81)),
+    )
+
+    assert measurable == list(range(1, 81))
+    assert covered == list(range(1, 80, 2))
+    assert missed == list(range(2, 81, 2))
+
+
 def test_measurable_changed_lines_keeps_reversed_coverage_fallback(tmp_path: Path) -> None:
     source_path = tmp_path / "foo.py"
     source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 6)), encoding="utf-8")
@@ -801,18 +1148,22 @@ def test_changed_scope_coverage_measured_probe_emits_large_measured_metrics() ->
     assert metrics["allowlist_parse_count"] == 10000.0
     assert metrics["source_read_calls_mean"] == 0.0
     assert metrics["sparse_source_read_calls_mean"] == 0.0
-    assert metrics["dense_source_read_calls_mean"] == 5.0
+    assert metrics["dense_source_read_calls_mean"] == 0.0
 
 
 def test_changed_scope_coverage_singleton_probe_emits_range_metrics() -> None:
     metrics = changed_scope_coverage_singleton_probe.run_probe(
-        Path(__file__).resolve().parents[1], path_count=5, measured_lines_per_path=10, samples=2
+        Path(__file__).resolve().parents[1],
+        path_count=5,
+        measured_lines_per_path=10,
+        samples=2,
     )
 
     assert metrics["path_count"] == 5.0
     assert metrics["measured_lines_per_path"] == 10.0
     assert metrics["sample_count"] == 2.0
     assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["singleton_measured_elapsed_ms_mean"] > 0
     assert metrics["source_read_calls_mean"] == 0.0
 
 

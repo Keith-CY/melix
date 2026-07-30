@@ -28,6 +28,8 @@ def load_capture_module():
 
 
 def install_fake_run_command(module: Any, tmp_path: Path, calls: list[dict[str, Any]]) -> None:
+    module.compatible_mlx_metal_versions_for_swift_mlx = lambda repo_root: ("0.31.1",)
+
     def fake_run_command(
         command: list[str],
         *,
@@ -43,6 +45,16 @@ def install_fake_run_command(module: Any, tmp_path: Path, calls: list[dict[str, 
                 "capture_output": capture_output,
             }
         )
+
+        if command[:3] == ["uv", "pip", "install"]:
+            target_root = Path(command[command.index("--target") + 1])
+            metallib_path = target_root / "mlx" / "lib" / "mlx.metallib"
+            metallib_path.parent.mkdir(parents=True, exist_ok=True)
+            metallib_path.write_bytes(b"matching-swift-mlx-metallib")
+            metadata_path = target_root / "mlx_metal-0.31.1.dist-info" / "METADATA"
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            metadata_path.write_text("Name: mlx-metal\nVersion: 0.31.1\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
         if len(command) >= 2 and command[1] == "scripts/package_macos_menubar_app.py":
             output_path = Path(command[command.index("--output-path") + 1])
@@ -146,14 +158,20 @@ def test_run_capture_builds_packages_and_captures_app_screenshots(tmp_path: Path
     commands = [call["command"] for call in calls]
     assert commands[0][:4] == ["uv", "sync", "--project", "services/mlx-worker-python"]
     assert commands[1][:4] == ["xcrun", "swift", "build", "--product"]
-    assert commands[2][:5] == ["xcrun", "swift", "build", "--package-path", "services/mlx-text-worker-swift"]
-    assert commands[3][:5] == ["xcrun", "swift", "build", "--package-path", "apps/macos-menubar"]
-    assert commands[4][1] == "scripts/package_macos_menubar_app.py"
-    assert commands[5][0].endswith("Melix.app/Contents/Resources/melix-menubar")
+    assert commands[2][:5] == ["xcrun", "swift", "build", "--package-path", "services/control-plane-swift"]
+    assert commands[3][:5] == ["xcrun", "swift", "build", "--package-path", "services/mlx-text-worker-swift"]
+    assert commands[4][:5] == ["xcrun", "swift", "build", "--package-path", "apps/macos-menubar"]
+    assert commands[5][:3] == ["uv", "pip", "install"]
+    assert "mlx-metal==0.31.1" in commands[5]
+    assert commands[6][1] == "scripts/package_macos_menubar_app.py"
+    metallib_path = Path(commands[6][commands[6].index("--swift-mlx-metallib-path") + 1])
+    assert metallib_path == tmp_path / "capture" / ".packaging" / "swift-mlx-metal-0.31.1" / "mlx" / "lib" / "mlx.metallib"
+    assert metallib_path.is_file()
+    assert commands[7][0].endswith("Melix.app/Contents/Resources/melix-menubar")
     assert calls[0]["env"]["UV_PROJECT_ENVIRONMENT"] == str(tmp_path / ".venv")
-    assert calls[5]["env"]["MELIX_APP_SCREENSHOT_CAPTURE"] == "1"
-    assert calls[5]["env"]["MELIX_APP_SCREENSHOT_WIDTH"] == "800"
-    assert calls[5]["env"]["MELIX_APP_SCREENSHOT_HEIGHT"] == "500"
+    assert calls[7]["env"]["MELIX_APP_SCREENSHOT_CAPTURE"] == "1"
+    assert calls[7]["env"]["MELIX_APP_SCREENSHOT_WIDTH"] == "800"
+    assert calls[7]["env"]["MELIX_APP_SCREENSHOT_HEIGHT"] == "500"
     assert payload["ok"] is True
     assert payload["screenshot_count"] == 1
     assert payload["screenshots"][0]["id"] == "workspace-chat"
@@ -175,8 +193,27 @@ def test_run_capture_skip_build_still_packages_and_captures(tmp_path: Path) -> N
     commands = [call["command"] for call in calls]
     assert all(command[:2] != ["uv", "sync"] for command in commands)
     assert all(command[:3] != ["xcrun", "swift", "build"] for command in commands)
-    assert commands[0][1] == "scripts/package_macos_menubar_app.py"
-    assert commands[1][0].endswith("Melix.app/Contents/Resources/melix-menubar")
+    assert commands[0][:3] == ["uv", "pip", "install"]
+    assert commands[1][1] == "scripts/package_macos_menubar_app.py"
+    assert "--swift-mlx-metallib-path" in commands[1]
+    assert commands[2][0].endswith("Melix.app/Contents/Resources/melix-menubar")
+
+
+def test_prepare_swift_mlx_metallib_requires_a_compatible_version(tmp_path: Path) -> None:
+    module = load_capture_module()
+    module.compatible_mlx_metal_versions_for_swift_mlx = lambda repo_root: ()
+
+    with pytest.raises(RuntimeError, match="compatible mlx-metal version"):
+        module.prepare_swift_mlx_metallib(tmp_path, tmp_path / "capture")
+
+
+def test_prepare_swift_mlx_metallib_requires_the_installed_asset(tmp_path: Path) -> None:
+    module = load_capture_module()
+    module.compatible_mlx_metal_versions_for_swift_mlx = lambda repo_root: ("0.31.1",)
+    module.run_command = lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0)
+
+    with pytest.raises(RuntimeError, match="was not installed at the expected path"):
+        module.prepare_swift_mlx_metallib(tmp_path, tmp_path / "capture")
 
 
 def test_validate_capture_manifest_rejects_missing_png(tmp_path: Path) -> None:

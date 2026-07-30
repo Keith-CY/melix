@@ -946,6 +946,65 @@ struct DesktopFoundationViewTests {
         #expect(dismissedTexts.contains("Update available: 0.2.0") == false)
     }
 
+    @Test("chat composer repair state suppresses only its duplicate global banner")
+    @MainActor
+    func chatComposerRepairStateSuppressesOnlyItsDuplicateGlobalBanner() throws {
+        var stoppedSession = DesktopServerSessionState(
+            id: "provider-1",
+            title: "Primary Provider",
+            modelID: "mlx-community/example-model",
+            lifecycle: .stopped,
+            powerState: .stopped
+        )
+        let lifecycleBanner = try #require(stoppedSession.lifecycleBannerState)
+        let missingCacheBanner = DesktopBannerState(
+            id: "model-runtime-cache-missing-mlx-community/example-model",
+            title: "Missing model cache",
+            detail: "Restore the model before sending.",
+            severity: .warning,
+            isRecoverable: true
+        )
+        let unrelatedCriticalBanner = DesktopBannerState(
+            id: "runtime-critical",
+            title: "Operator Attention Required",
+            detail: "The runtime failed.",
+            severity: .critical
+        )
+
+        #expect(DesktopWorkspaceBannerPresentationPolicy.shouldPresent(
+            banner: lifecycleBanner,
+            selectedSurface: .chat,
+            selectedChatServerSession: stoppedSession,
+            selectedChatModelNeedsAttachment: false
+        ) == false)
+        #expect(DesktopWorkspaceBannerPresentationPolicy.shouldPresent(
+            banner: lifecycleBanner,
+            selectedSurface: .server,
+            selectedChatServerSession: stoppedSession,
+            selectedChatModelNeedsAttachment: false
+        ))
+        #expect(DesktopWorkspaceBannerPresentationPolicy.shouldPresent(
+            banner: missingCacheBanner,
+            selectedSurface: .chat,
+            selectedChatServerSession: stoppedSession,
+            selectedChatModelNeedsAttachment: true
+        ) == false)
+        #expect(DesktopWorkspaceBannerPresentationPolicy.shouldPresent(
+            banner: unrelatedCriticalBanner,
+            selectedSurface: .chat,
+            selectedChatServerSession: stoppedSession,
+            selectedChatModelNeedsAttachment: true
+        ))
+
+        stoppedSession.lifecycle = .running
+        #expect(DesktopWorkspaceBannerPresentationPolicy.shouldPresent(
+            banner: lifecycleBanner,
+            selectedSurface: .chat,
+            selectedChatServerSession: stoppedSession,
+            selectedChatModelNeedsAttachment: false
+        ))
+    }
+
     @Test("settings tab renders typed tooling settings rows")
     @MainActor
     func settingsTabRendersTypedToolingSettingsRows() async throws {
@@ -7703,6 +7762,21 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("chat provider picker is disabled while a response is streaming")
+    func chatProviderPickerIsDisabledWhileResponseIsStreaming() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+        let pickerStart = try #require(source.range(of: #"Picker("Provider", selection: selectedServerBinding)"#))
+        let pickerTail = source[pickerStart.lowerBound...]
+        let pickerEnd = try #require(pickerTail.range(of: #".accessibilityLabel("Chat Provider")"#))
+        let pickerImplementation = pickerTail[..<pickerEnd.upperBound]
+
+        #expect(pickerImplementation.contains(".disabled(viewModel.isChatStreaming)"))
+    }
+
     @Test("chat tab renders populated transcript rows and runtime metadata")
     @MainActor
     func chatTabRendersPopulatedTranscriptRowsAndRuntimeMetadata() async throws {
@@ -7723,6 +7797,10 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.chatTranscript.contains(where: { $0.kind == .tool }))
         #expect(viewModel.lastChatRequestID == "chat-request-1")
         #expect(viewModel.lastChatUsageText == "12 prompt • 24 completion")
+        #expect(
+            viewModel.chatTranscript.first(where: { $0.kind == .assistant })?.detail
+                == "12 prompt • 24 completion"
+        )
     }
 
     @Test("chat artifact preview trigger swaps the right rail from inspector to preview")
@@ -7795,7 +7873,6 @@ struct DesktopFoundationViewTests {
                 .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
             encoding: .utf8
         )
-
         #expect(renderedTexts.contains("Artifact Preview"))
         #expect(renderedTexts.contains("/tmp/melix-chat/report.md"))
         #expect(source.contains("DesktopChatTabContentView"))
@@ -7879,7 +7956,13 @@ struct DesktopFoundationViewTests {
             encoding: .utf8
         )
 
-        #expect(renderedTextValues(in: reasoningView).contains("Thought recorded"))
+        #expect(reasoningView.subviews.isEmpty == false)
+        #expect(
+            DesktopChatReasoningPresentationPolicy.summaryText(
+                isStreaming: false,
+                elapsedSeconds: nil
+            ) == "Thought recorded"
+        )
         #expect(renderedTextValues(in: streamingToolView).contains("Calling tool"))
         #expect(source.contains("DesktopChatUserBubbleView"))
         #expect(source.contains("DesktopChatAssistantDocumentView"))
@@ -7919,6 +8002,122 @@ struct DesktopFoundationViewTests {
         #expect(hostView(toolBlock.activityBody).fittingSize.width >= 0)
         #expect(source.contains(".onChange(of: isStreaming)"))
         #expect(source.contains("isExpanded = newValue"))
+    }
+
+    @Test("chat reasoning presentation follows the accepted Atomic streaming contract")
+    @MainActor
+    func chatReasoningPresentationFollowsAcceptedAtomicStreamingContract() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(DesktopChatReasoningPresentationPolicy.maximumStreamingHeight == 128)
+        #expect(DesktopChatReasoningPresentationPolicy.streamingBodyOpacity == 0.72)
+        #expect(DesktopChatReasoningPresentationPolicy.initiallyExpanded(isStreaming: true))
+        #expect(DesktopChatReasoningPresentationPolicy.initiallyExpanded(isStreaming: false) == false)
+        #expect(
+            DesktopChatReasoningPresentationPolicy.summaryText(
+                isStreaming: true,
+                elapsedSeconds: 4
+            ) == "Thinking..."
+        )
+        #expect(
+            DesktopChatReasoningPresentationPolicy.summaryText(
+                isStreaming: false,
+                elapsedSeconds: 4
+            ) == "Thought for 4 seconds"
+        )
+        #expect(
+            DesktopChatReasoningPresentationPolicy.summaryText(
+                isStreaming: false,
+                elapsedSeconds: nil
+            ) == "Thought recorded"
+        )
+        #expect(
+            DesktopChatReasoningPresentationPolicy.accessibilityAnnouncement(isStreaming: true)
+                == "Public reasoning is streaming."
+        )
+        #expect(
+            DesktopChatReasoningPresentationPolicy.accessibilityAnnouncement(isStreaming: false)
+                == "Public reasoning completed."
+        )
+        let compactStreamingText = DesktopChatReasoningPresentationPolicy.compactStreamingAttributedText(
+            from: "Plan\nNext",
+            includesCaret: true,
+            caretVisible: true
+        )
+        #expect(String(compactStreamingText.characters) == "Plan\nNext▏")
+        let compactReducedMotionText = DesktopChatReasoningPresentationPolicy.compactStreamingAttributedText(
+            from: "Plan\nNext",
+            includesCaret: false,
+            caretVisible: false
+        )
+        #expect(String(compactReducedMotionText.characters) == "Plan\nNext")
+        let sanitizedFallbackText = DesktopChatReasoningPresentationPolicy.compactStreamingAttributedText(
+            from: "<script></script>",
+            includesCaret: false,
+            caretVisible: false
+        )
+        #expect(String(sanitizedFallbackText.characters) == "<script></script>")
+        #expect(source.contains("struct DesktopChatReasoningBlockView"))
+        #expect(source.contains("StrokeStyle(lineWidth: 2"))
+        #expect(source.contains("MelixDesignTokens.accent"))
+        #expect(source.contains(".scrollIndicators(.hidden)"))
+        #expect(source.contains("@Environment(\\.accessibilityReduceMotion)"))
+        #expect(source.contains("DesktopChatReasoningBlockView("))
+        #expect(source.contains("DesktopChatThinkingLabel("))
+        #expect(source.contains("TimelineView(.animation"))
+        #expect(source.contains("reasoningElapsedSeconds: entry.reasoningElapsedSeconds"))
+        #expect(source.contains("Thought for \\(elapsedSeconds) seconds"))
+        #expect(source.contains("viewModel.shouldDisplayChatTranscriptEntry(entry)"))
+        #expect(source.contains("animated: accessibilityReduceMotion == false"))
+        #expect(source.contains("viewModel.setChatPresentationReduceMotion(accessibilityReduceMotion)"))
+        #expect(source.contains("revealedGraphemeCount") == false)
+        #expect(source.contains("announcesStreamingStart: true"))
+        #expect(source.contains("DesktopChatCompactStreamingReasoningText("))
+        #expect(source.contains("DesktopChatReasoningTopFade()"))
+        #expect(source.contains("streamingBodyOpacity"))
+        #expect(source.contains("TimelineView(.animation(minimumInterval: 0.36"))
+        #expect(source.contains("NSAccessibility.post("))
+        #expect(source.contains(".announcementRequested"))
+        #expect(source.contains("accessibilityValue(isStreaming ? \"Busy\" : \"Completed\")"))
+    }
+
+    @Test("chat reasoning auto follow only resumes when the user returns to the bottom")
+    func chatReasoningAutoFollowOnlyResumesAtBottom() {
+        #expect(
+            DesktopChatReasoningPresentationPolicy.isAtBottom(
+                contentOffsetY: 92,
+                contentHeight: 220,
+                viewportHeight: 128
+            )
+        )
+        #expect(
+            DesktopChatReasoningPresentationPolicy.isAtBottom(
+                contentOffsetY: 40,
+                contentHeight: 220,
+                viewportHeight: 128
+            ) == false
+        )
+    }
+
+    @Test("chat workspace uses the accepted grouped transcript and two-line composer")
+    func chatWorkspaceUsesAcceptedGroupedTranscriptAndTwoLineComposer() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(DesktopChatLayoutMetrics.transcriptTurnMaxWidth == 780)
+        #expect(DesktopChatLayoutMetrics.composerMinHeight <= 44)
+        #expect(source.contains("struct DesktopChatAssistantTurnEnvelope"))
+        #expect(source.contains("Text(\"MELIX ASSISTANT\")"))
+        #expect(source.contains("@Binding var isThinkingEnabled"))
+        #expect(source.contains("lightbulb.fill"))
+        #expect(source.contains("VStack(spacing: 6) {\n                        primaryActionButton") == false)
     }
 
     @Test("chat composer runtime controls select server recovery actions")
@@ -8041,20 +8240,22 @@ struct DesktopFoundationViewTests {
         #expect(wakeCount == 1)
     }
 
-    @Test("chat composer surface routes primary clear and command submit actions")
+    @Test("chat composer surface routes primary and keyboard submit actions")
     @MainActor
-    func chatComposerSurfaceRoutesPrimaryClearAndCommandSubmitActions() {
+    func chatComposerSurfaceRoutesPrimaryAndKeyboardSubmitActions() {
         var submitCount = 0
-        var clearCount = 0
         var commandDraft = ""
         var text = "Send this"
+        var isThinkingEnabled = true
         let composer = DesktopChatComposerSurface(
             text: Binding(get: { text }, set: { text = $0 }),
+            isThinkingEnabled: Binding(
+                get: { isThinkingEnabled },
+                set: { isThinkingEnabled = $0 }
+            ),
             isSubmitAvailable: true,
             isSendDisabled: false,
             isStreaming: false,
-            statusText: "Ready",
-            usageText: "12 prompt • 24 completion",
             serverSession: DesktopServerSessionState(
                 id: "server-session-compose",
                 title: "Compose Runtime",
@@ -8070,9 +8271,6 @@ struct DesktopFoundationViewTests {
             onSubmit: {
                 submitCount += 1
             },
-            onClear: {
-                clearCount += 1
-            },
             onOpenServer: {},
             onOpenModels: {},
             onRunCapabilitiesTest: {},
@@ -8081,12 +8279,75 @@ struct DesktopFoundationViewTests {
             onWakeServer: {}
         )
 
+        let hostedComposer = hostView(composer)
+        #expect(hostedComposer.subviews.isEmpty == false)
+        composer.toggleThinking()
+        #expect(isThinkingEnabled == false)
         #expect(hostView(composer.primaryActionLabel).fittingSize.width >= 0)
         composer.primaryAction()
-        composer.onClear()
         #expect(submitCount == 1)
-        #expect(clearCount == 1)
         #expect(commandDraft.isEmpty)
+    }
+
+    @Test("chat composer uses one submit gate for empty streaming and repair states")
+    @MainActor
+    func chatComposerUsesOneSubmitGateForEmptyStreamingAndRepairStates() {
+        var submitCount = 0
+        let readySession = DesktopServerSessionState(
+            id: "server-session-compose-gate",
+            title: "Compose Runtime",
+            modelID: "melix-dev-text",
+            lifecycle: .running,
+            powerState: .active
+        )
+
+        func composer(
+            text: String,
+            isSubmitAvailable: Bool = true,
+            isSendDisabled: Bool = false,
+            isStreaming: Bool = false,
+            serverSession: DesktopServerSessionState?
+        ) -> DesktopChatComposerSurface {
+            DesktopChatComposerSurface(
+                text: .constant(text),
+                isThinkingEnabled: .constant(true),
+                isSubmitAvailable: isSubmitAvailable,
+                isSendDisabled: isSendDisabled,
+                isStreaming: isStreaming,
+                serverSession: serverSession,
+                capabilities: [],
+                isModelMissing: false,
+                onCommandSubmit: { _ in submitCount += 1 },
+                onSubmit: { submitCount += 1 },
+                onOpenServer: {},
+                onOpenModels: {},
+                onRunCapabilitiesTest: {},
+                onStartServer: {},
+                onResumeServer: {},
+                onWakeServer: {}
+            )
+        }
+
+        let readyComposer = composer(text: "Send this", serverSession: readySession)
+        let emptyComposer = composer(text: " \n ", serverSession: readySession)
+        let streamingComposer = composer(
+            text: "Keep this draft",
+            isStreaming: true,
+            serverSession: readySession
+        )
+        let repairComposer = composer(text: "Keep this blocked draft", serverSession: nil)
+
+        #expect(readyComposer.canSubmit)
+        #expect(emptyComposer.canSubmit == false)
+        #expect(streamingComposer.canSubmit == false)
+        #expect(repairComposer.canSubmit == false)
+
+        readyComposer.primaryAction()
+        emptyComposer.primaryAction()
+        streamingComposer.primaryAction()
+        repairComposer.primaryAction()
+
+        #expect(submitCount == 1)
     }
 
     @Test("chat composer gate maps blocked provider states to canonical repair actions")
@@ -8173,13 +8434,13 @@ struct DesktopFoundationViewTests {
 
     @Test("chat composer repair panel routes provider model and diagnostics actions")
     @MainActor
-    func chatComposerRepairPanelRoutesProviderModelAndDiagnosticsActions() {
+    func chatComposerRepairPanelRoutesProviderModelAndDiagnosticsActions() throws {
         var openedProviderCount = 0
         var openedModelCount = 0
         var diagnosticsCount = 0
         var primaryCount = 0
 
-        let repairPanel = DesktopChatComposerRepairPanel(
+        let repairPanel = DesktopChatComposerRepairStrip(
             state: DesktopChatComposerRepairState(
                 title: "Provider is missing a model.",
                 detail: "Attach a model before this chat can send requests.",
@@ -8199,7 +8460,29 @@ struct DesktopFoundationViewTests {
         repairPanel.performSecondaryAction(.runCapabilitiesTest)
         repairPanel.onPrimaryAction()
 
-        #expect(hostView(repairPanel).subviews.isEmpty == false)
+        let hostedRepairPanel = hostView(repairPanel)
+        let root = try repositoryRootForDesktopFoundationTests()
+        let source = try String(
+            contentsOf: root.appendingPathComponent(
+                "apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"
+            ),
+            encoding: .utf8
+        )
+        let repairSource = try #require(
+            source.slice(
+                from: "struct DesktopChatComposerRepairStrip",
+                to: "extension DesktopChatComposerRepairSecondaryAction"
+            )
+        )
+
+        #expect(hostedRepairPanel.subviews.isEmpty == false)
+        #expect(repairPanel.state.secondaryActions.map(\.title) == [
+            "Open Providers",
+            "Open Models",
+            "Open Diagnostics",
+        ])
+        #expect(repairSource.contains("ForEach(state.secondaryActions)"))
+        #expect(repairSource.contains("Button(action.title)"))
         #expect(openedProviderCount == 1)
         #expect(openedModelCount == 1)
         #expect(diagnosticsCount == 1)
@@ -8285,13 +8568,16 @@ struct DesktopFoundationViewTests {
     func chatComposerStreamingGuardAndProviderSignalsCoverAlternateStates() {
         var submitCount = 0
         var text = "Streaming draft"
+        var isThinkingEnabled = true
         let streamingComposer = DesktopChatComposerSurface(
             text: Binding(get: { text }, set: { text = $0 }),
+            isThinkingEnabled: Binding(
+                get: { isThinkingEnabled },
+                set: { isThinkingEnabled = $0 }
+            ),
             isSubmitAvailable: false,
             isSendDisabled: true,
             isStreaming: true,
-            statusText: "Streaming",
-            usageText: "",
             serverSession: nil,
             capabilities: [],
             isModelMissing: false,
@@ -8299,7 +8585,6 @@ struct DesktopFoundationViewTests {
             onSubmit: {
                 submitCount += 1
             },
-            onClear: {},
             onOpenServer: {},
             onOpenModels: {},
             onRunCapabilitiesTest: {},
@@ -9327,82 +9612,520 @@ struct DesktopFoundationViewTests {
 
         #expect(source.contains("DesktopChatServerPicker"))
         #expect(source.contains("bindSelectedChatSessionToServer"))
-        #expect(source.contains("DesktopInspectorContractView"))
-        #expect(source.contains("GroupBox(\"Model Capabilities\")"))
-        #expect(source.contains("DesktopChatCapabilityIconGrid"))
+        #expect(source.contains("DesktopChatModelIdentityButton"))
+        #expect(source.contains("DesktopChatPrecisionInspector"))
+        #expect(source.contains("DesktopChatCapabilityGlyphCluster"))
+        #expect(source.contains("GroupBox(\"Model Capabilities\")") == false)
+        #expect(source.contains("DesktopChatCapabilityIconGrid") == false)
         #expect(source.contains("MelixSectionCard(\"Runtime\")") == false)
         #expect(source.contains("Text(\"request \\(") == false)
         #expect(source.contains("MelixSectionCard(\"Analysis Routes\")") == false)
     }
 
-    @Test("chat composer owns compact provider status strip inside the input surface")
-    @MainActor
-    func chatComposerOwnsCompactProviderStatusStripInsideTheInputSurface() throws {
+    @Test("chat model identity variant A hides namespace and keeps quantization stable")
+    func chatModelIdentityVariantAHidesNamespaceAndKeepsQuantizationStable() {
+        let normal = DesktopChatModelIdentityPresentation(
+            modelID: "mlx-community/gemma-4-31b-it-4bit"
+        )
+        let extreme = DesktopChatModelIdentityPresentation(
+            modelID: "mlx-community/gemma-4-31b-vision-instruct-reasoning-aligned-mlx-4bit"
+        )
+        let qwen = DesktopChatModelIdentityPresentation(
+            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        )
+        let unquantizedQwen = DesktopChatModelIdentityPresentation(
+            modelID: "Qwen/Qwen3.5-9B"
+        )
+        let hyphenatedQuantization = DesktopChatModelIdentityPresentation(
+            modelID: "local/gemma-4-31b-it-4-bit"
+        )
+        let redundantQuantization = DesktopChatModelIdentityPresentation(
+            modelID: "mlx-community/super-gemma-4-31b-reasoning-q4-k-m-mlx-4bit"
+        )
+        let compactQQuantization = DesktopChatModelIdentityPresentation(
+            modelID: "local/model-q4"
+        )
+        let integerQuantization = DesktopChatModelIdentityPresentation(
+            modelID: "local/model-int8"
+        )
+        let floatingPointQuantization = DesktopChatModelIdentityPresentation(
+            modelID: "local/model-fp16"
+        )
+        let brainFloatingPointQuantization = DesktopChatModelIdentityPresentation(
+            modelID: "local/model-bf16"
+        )
+        let emptyIdentity = DesktopChatModelIdentityPresentation(modelID: " \n ")
+
+        #expect(normal.canonicalID == "mlx-community/gemma-4-31b-it-4bit")
+        #expect(normal.displayName == "Gemma 4 31B IT")
+        #expect(normal.quantizationLabel == "4-bit")
+        #expect(extreme.displayName == "Gemma 4 31B Vision Instruct Reasoning Aligned")
+        #expect(extreme.quantizationLabel == "4-bit")
+        #expect(qwen.displayName == "Qwen3.5 0.8B OptiQ")
+        #expect(qwen.quantizationLabel == "4-bit")
+        #expect(unquantizedQwen.displayName == "Qwen3.5 9B")
+        #expect(unquantizedQwen.quantizationLabel == nil)
+        #expect(hyphenatedQuantization.displayName == "Gemma 4 31B IT")
+        #expect(hyphenatedQuantization.quantizationLabel == "4-bit")
+        #expect(redundantQuantization.displayName == "Super Gemma 4 31B Reasoning")
+        #expect(redundantQuantization.quantizationLabel == "4-bit")
+        #expect(compactQQuantization.displayName == "Model")
+        #expect(compactQQuantization.quantizationLabel == "Q4")
+        #expect(integerQuantization.displayName == "Model")
+        #expect(integerQuantization.quantizationLabel == "INT8")
+        #expect(floatingPointQuantization.quantizationLabel == "FP16")
+        #expect(brainFloatingPointQuantization.quantizationLabel == "BF16")
+        #expect(emptyIdentity.displayName == "Unknown Model")
+        #expect(emptyIdentity.quantizationLabel == nil)
+    }
+
+    @Test("chat identity capability and Inspector variant A stay compact and accessible")
+    func chatAcceptedVariantAComponentsStayCompactAndAccessible() throws {
         let source = try String(
             contentsOf: repositoryRootForDesktopFoundationTests()
                 .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
             encoding: .utf8
         )
+        let inspectorStart = try #require(source.range(of: "private struct DesktopChatPrecisionInspector"))
+        let inspectorEnd = try #require(
+            source.range(
+                of: "struct DesktopChatArtifactPreviewRail",
+                range: inspectorStart.upperBound..<source.endIndex
+            )
+        )
+        let inspectorSource = String(source[inspectorStart.lowerBound..<inspectorEnd.lowerBound])
+        let modelStart = try #require(source.range(of: "struct DesktopChatModelIdentityButton"))
+        let modelEnd = try #require(
+            source.range(
+                of: "private struct DesktopChatCapabilityGlyphCluster",
+                range: modelStart.upperBound..<source.endIndex
+            )
+        )
+        let modelSource = String(source[modelStart.lowerBound..<modelEnd.lowerBound])
+        let capabilityStart = modelEnd
+        let capabilityEnd = try #require(
+            source.range(
+                of: "private struct DesktopChatSessionRow",
+                range: capabilityStart.upperBound..<source.endIndex
+            )
+        )
+        let capabilitySource = String(source[capabilityStart.lowerBound..<capabilityEnd.lowerBound])
+
+        #expect(DesktopChatCapabilityGlyphMetrics.controlSize == 28)
+        #expect(DesktopChatCapabilityGlyphMetrics.maximumClusterHeight <= 30)
+        #expect(modelSource.contains("identity.displayName"))
+        #expect(modelSource.contains("identity.quantizationLabel"))
+        #expect(modelSource.contains("identity.canonicalID"))
+        #expect(modelSource.contains("Copy Model ID"))
+        #expect(modelSource.contains(".help(identity.canonicalID)"))
+        #expect(modelSource.contains("canonical ID"))
+        #expect(capabilitySource.contains("DesktopChatCapabilityGlyphMetrics.controlSize"))
+        #expect(capabilitySource.contains("DesktopChatCapabilityIconTile") == false)
+        #expect(capabilitySource.contains("capability.shortTitle") == false)
+        #expect(capabilitySource.contains(".accessibilityValue(capability.isReady ? \"Ready\" : \"Unavailable\")"))
+        #expect(inspectorSource.contains("DesktopChatInspectorLedgerRow"))
+        #expect(inspectorSource.contains("GroupBox") == false)
+        #expect(inspectorSource.contains("Text(\"Context\")") == false)
+        #expect(inspectorSource.contains("Text(\"Health\")") == false)
+        #expect(inspectorSource.contains("Text(\"Metrics\")") == false)
+        #expect(inspectorSource.contains("Label(action.title, systemImage:") == false)
+        #expect(inspectorSource.contains(".help(action.title)"))
+        #expect(inspectorSource.contains(".accessibilityLabel(action.title)"))
+    }
+
+    @Test("chat Precision Ledger renders dynamic values without repeated section headings")
+    @MainActor
+    func chatPrecisionLedgerRendersDynamicValuesWithoutRepeatedSectionHeadings() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+
+        let hosted = hostView(
+            DesktopChatSessionInspector(viewModel: viewModel)
+                .frame(width: DesktopChatLayoutMetrics.inspectorIdealWidth, height: 430)
+        )
+        let renderedTexts = renderedTextValues(in: hosted)
+
+        #expect(hosted.fittingSize.width <= DesktopChatLayoutMetrics.inspectorIdealWidth + 1)
+        #expect(renderedTexts.contains("Running"))
+        #expect(renderedTexts.contains("127.0.0.1:12436"))
+        #expect(renderedTexts.contains("Local only"))
+        #expect(renderedTexts.contains("Context") == false)
+        #expect(renderedTexts.contains("Health") == false)
+        #expect(renderedTexts.contains("Metrics") == false)
+        #expect(renderedTexts.contains("Actions") == false)
+        #expect(renderedTexts.contains("Evidence") == false)
+        #expect(renderedTexts.contains("Model Capabilities") == false)
+        #expect(renderedTexts.contains("Open Command Center") == false)
+        #expect(renderedTexts.contains("Open Providers") == false)
+        #expect(renderedTexts.contains("Open Diagnostics") == false)
+    }
+
+    @Test("chat Precision Ledger covers lifecycle trust and recovery variants")
+    @MainActor
+    func chatPrecisionLedgerCoversLifecycleTrustAndRecoveryVariants() async throws {
+        let noProviderViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let noProviderInspector = DesktopChatSessionInspector(viewModel: noProviderViewModel)
+        noProviderInspector.startSelectedProvider()
+        #expect(noProviderViewModel.selectedSurface == .server)
+        noProviderViewModel.selectSurface(.chat)
+        noProviderInspector.resumeSelectedProvider()
+        #expect(noProviderViewModel.selectedSurface == .server)
+
+        let variants: [(
+            lifecycle: Melix_Controlplane_V1_ServerSessionLifecycleState,
+            power: Melix_Controlplane_V1_ServerSessionPowerState,
+            projectedLifecycle: DesktopServerSessionLifecycle,
+            transientText: String,
+            actionLabel: String?,
+            sharedAccessEnabled: Bool,
+            accessKeyCount: UInt32
+        )] = [
+            (.stopped, .stopped, .stopped, "Provider stopped", "Start Provider", false, 1),
+            (.paused, .active, .paused, "Provider paused", "Resume Provider", true, 2),
+            (.loading, .active, .starting, "Provider starting", nil, true, 1),
+            (.error, .stopped, .error, "Provider needs recovery", "Start Provider", false, 0),
+        ]
+
+        for variant in variants {
+            let client = FakeControlPlaneXPCClient()
+            let serverSession = DesktopServerSessionState(
+                id: "server-session-1",
+                title: "Primary Provider",
+                modelID: "mlx-community/gemma-4-31b-it-4bit",
+                lifecycle: .draft
+            )
+            var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+            snapshot.serverState = .serverReady
+            snapshot.models = [
+                makeMenuBarModelSummary(
+                    modelID: "mlx-community/gemma-4-31b-it-4bit",
+                    state: .modelWarm
+                ),
+            ]
+            snapshot.runtimeSessions = [
+                makeDesktopRuntimeSession(
+                    lifecycleState: variant.lifecycle,
+                    powerState: variant.power
+                ),
+            ]
+            snapshot.gatewayAccess = makeDesktopFoundationGatewayAccessSummary(
+                sharedAccessEnabled: variant.sharedAccessEnabled,
+                acceptedAPIKeyCount: variant.accessKeyCount
+            )
+            await client.configureSnapshot(snapshot)
+
+            let viewModel = RuntimeViewModel(
+                client: client,
+                operatorSessionStore: DesktopFoundationStaticOperatorSessionStore(
+                    state: OperatorSessionState(
+                        selectedSurface: .chat,
+                        selectedServerSessionID: serverSession.id,
+                        serverSessions: [serverSession]
+                    )
+                )
+            )
+            await viewModel.start()
+            try bindSelectedChatSessionToPrimaryServer(viewModel)
+
+            let inspector = DesktopChatSessionInspector(viewModel: viewModel)
+            let hosted = hostView(
+                inspector.frame(width: DesktopChatLayoutMetrics.inspectorIdealWidth, height: 430)
+            )
+            let selectedServer = try #require(viewModel.selectedChatServerSession)
+
+            #expect(hosted.subviews.isEmpty == false)
+            #expect(selectedServer.lifecycle == variant.projectedLifecycle)
+            #expect(selectedServer.modelID == "mlx-community/gemma-4-31b-it-4bit")
+            #expect(
+                DesktopChatModelIdentityPresentation(modelID: selectedServer.modelID).displayName
+                    == "Gemma 4 31B IT"
+            )
+            if variant.sharedAccessEnabled {
+                #expect(selectedServer.sharedAccessState == .enabled)
+                #expect(selectedServer.accessKeyCount == Int(variant.accessKeyCount))
+            } else if variant.accessKeyCount > 0 {
+                #expect(selectedServer.sharedAccessState == .configuredDisabled)
+            }
+
+            if let actionLabel = variant.actionLabel {
+                if actionLabel == "Resume Provider" {
+                    inspector.resumeSelectedProvider()
+                } else {
+                    inspector.startSelectedProvider()
+                }
+                let expectedAction = actionLabel == "Resume Provider"
+                    ? "server.resume:server-session-1"
+                    : "server.start:server-session-1"
+                try await waitForRecordedClientAction(expectedAction, client: client)
+            }
+        }
+    }
+
+    @Test("chat inspector and workspace render the active streaming projection")
+    @MainActor
+    func chatInspectorAndWorkspaceRenderTheActiveStreamingProjection() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            FakeControlPlaneXPCClient.ScheduledChatEvent(
+                delay: .milliseconds(300),
+                event: .completed(
+                    finishReason: "stop",
+                    assistantText: "Streaming finished.",
+                    reasoningText: ""
+                )
+            ),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Keep the stream open for inspection"
+
+        let submitTask = Task { await viewModel.submitChatPrompt() }
+        try await waitForDesktopFoundationCondition("expected active chat stream") {
+            viewModel.isChatStreaming
+        }
+
+        let inspector = hostView(
+            DesktopChatSessionInspector(viewModel: viewModel)
+                .frame(width: DesktopChatLayoutMetrics.inspectorIdealWidth, height: 430)
+        )
+        let workspace = hostView(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            )
+        )
+
+        #expect(inspector.subviews.isEmpty == false)
+        #expect(workspace.subviews.isEmpty == false)
+        #expect(viewModel.isChatStreaming)
+        #expect(viewModel.chatTranscript.contains { entry in
+            entry.kind == .assistant && entry.body.isEmpty
+        })
+
+        await submitTask.value
+        #expect(viewModel.isChatStreaming == false)
+    }
+
+    @Test("chat Variant A model and capability controls render compact identities")
+    @MainActor
+    func chatVariantAModelAndCapabilityControlsRenderCompactIdentities() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let serverSession = DesktopServerSessionState(
+            id: "server-session-1",
+            title: "Primary Provider",
+            modelID: modelID,
+            lifecycle: .running,
+            powerState: .active
+        )
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: DesktopFoundationStaticOperatorSessionStore(
+                state: OperatorSessionState(
+                    selectedSurface: .chat,
+                    selectedServerSessionID: serverSession.id,
+                    serverSessions: [serverSession]
+                )
+            )
+        )
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+
+        let hosted = hostViewInWindow(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            ),
+            size: CGSize(width: 940, height: 620)
+        )
+        defer { hosted.window.close() }
+        settleHostedUI()
+
+        let identity = DesktopChatModelIdentityPresentation(modelID: modelID)
+        #expect(hosted.controller.view.subviews.isEmpty == false)
+        #expect(identity.displayName == "Gemma 4 31B IT")
+        #expect(identity.quantizationLabel == "4-bit")
+        #expect(identity.canonicalID == modelID)
+        #expect(viewModel.selectedChatServerSession?.modelID == modelID)
+    }
+
+    @Test("chat Variant A detail surfaces render directly for deterministic coverage")
+    @MainActor
+    func chatVariantADetailSurfacesRenderDirectlyForDeterministicCoverage() {
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let modelButton = DesktopChatModelIdentityButton(
+            serverSession: DesktopServerSessionState(
+                id: "detail-provider",
+                title: "Primary Provider",
+                modelID: modelID,
+                sharedAccessState: .localOnly,
+                lifecycle: .running,
+                powerState: .active
+            )
+        )
+        let modelDetails = hostView(modelButton.modelDetails, size: CGSize(width: 308, height: 180))
+
+        #expect(modelDetails.subviews.isEmpty == false)
+        let pasteboard = RecordingPasteboard()
+        modelButton.copyCanonicalID(to: pasteboard)
+        #expect(pasteboard.clearCount == 1)
+        #expect(pasteboard.string == modelID)
+
+        let readyCapability = DesktopChatCapabilityGlyphButton(
+            capability: DesktopChatCapabilityRow(
+                id: "text",
+                title: "Interactive Text",
+                modelID: modelID,
+                detail: "Ready for local chat",
+                isReady: true
+            )
+        )
+        let unavailableCapability = DesktopChatCapabilityGlyphButton(
+            capability: DesktopChatCapabilityRow(
+                id: "vlm",
+                title: "Vision",
+                modelID: modelID,
+                detail: "Vision metadata unavailable",
+                isReady: false
+            )
+        )
+
+        #expect(hostView(readyCapability.detailView).subviews.isEmpty == false)
+        #expect(hostView(unavailableCapability.detailView).subviews.isEmpty == false)
+    }
+
+    @Test("chat composer uses the accepted Hybrid A layout")
+    @MainActor
+    func chatComposerUsesAcceptedHybridALayout() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+        let composerStart = try #require(source.range(of: "struct DesktopChatComposerSurface"))
+        let composerEnd = try #require(
+            source.range(
+                of: "enum DesktopChatComposerRepairActionKind",
+                range: composerStart.upperBound..<source.endIndex
+            )
+        )
+        let composerSource = String(source[composerStart.lowerBound..<composerEnd.lowerBound])
+        let thinkingSource = try #require(
+            composerSource.slice(
+                from: "var thinkingToggleButton",
+                to: "@ViewBuilder\n    var contextualStatus"
+            )
+        )
+        let primaryActionSource = try #require(
+            composerSource.slice(
+                from: "var primaryActionButton",
+                to: "var primaryActionLabel"
+            )
+        )
+        let contextualStatusSource = try #require(
+            composerSource.slice(
+                from: "var contextualStatus",
+                to: "var expandEditorButton"
+            )
+        )
 
         #expect(source.contains("DesktopChatComposerSurface"))
-        #expect(source.contains("DesktopChatProviderControlStrip"))
-        #expect(source.contains("DesktopChatProviderStatusSignal"))
-        #expect(source.contains("DesktopChatCapabilityStatusSignal"))
-        #expect(source.contains("DesktopChatProviderSignalMetrics.providerSignalWidth"))
-        #expect(source.contains("DesktopChatProviderSignalMetrics.capabilitySignalWidth"))
-        #expect(source.contains("DesktopChatComposerRepairPanel"))
+        #expect(source.contains("DesktopChatComposerRepairStrip"))
+        #expect(source.contains("DesktopChatComposerHeightPolicy"))
+        #expect(source.contains("Text(\"Message Melix…\")"))
+        #expect(MelixDesignTokens.Radius.composer == 16)
+        #expect(composerSource.contains("MelixDesignTokens.Radius.composer"))
+        #expect(composerSource.contains("style: .continuous"))
+        #expect(composerSource.contains("Divider()") == false)
+        #expect(composerSource.contains(".shadow(") == false)
+        #expect(contextualStatusSource.contains("text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty"))
+        #expect(contextualStatusSource.contains("isEditorFocused"))
+        #expect(contextualStatusSource.contains("Text(\"↵ Send · ⌘↵ New line\")"))
+        #expect(contextualStatusSource.contains("Text(\"Generating · draft saved\")"))
+        #expect(composerSource.contains("DesktopChatAccessibilityAnnouncer.post("))
+        #expect(composerSource.contains("isSubmitAvailable: canSubmit"))
+        #expect(composerSource.contains(".disabled(canSubmit == false)"))
+        #expect(source.contains(".accessibilityLabel(\"Thinking\")"))
+        #expect(source.contains("Button(\"Clear Conversation\", role: .destructive"))
+        #expect(source.contains("DesktopChatModelIdentityButton(serverSession: serverSession)"))
+        #expect(source.contains("canonical ID \\(identity.canonicalID)"))
+        #expect(composerSource.contains("statusText") == false)
+        #expect(composerSource.contains("usageText") == false)
+        #expect(composerSource.contains("DesktopChatProviderControlStrip") == false)
+        #expect(composerSource.contains("Clear Chat") == false)
         #expect(source.contains("selectedChatModelNeedsAttachment"))
-        #expect(source.contains("Button(\"Send Anyway\", action: primaryAction)"))
-        #expect(source.contains(".accessibilityLabel(\"Open Providers\")"))
+        #expect(source.contains("Button(\"Send Anyway\", action: primaryAction)") == false)
         #expect(source.contains("primaryActionTitle: \"Attach Model\""))
         #expect(source.contains("primaryActionTitle: \"Run Capabilities Test\""))
-        #expect(source.contains("DesktopChatRuntimeControlStrip") == false)
-        #expect(source.contains("DesktopChatRuntimeServerCapsule") == false)
-        #expect(source.contains("DesktopChatInlineCapabilityCluster") == false)
         #expect(source.contains("Label(\"Send\", systemImage: \"paperplane.fill\")"))
-        #expect(source.contains("Label(\"Stop\", systemImage: \"stop.fill\")"))
+        #expect(thinkingSource.contains(".background(") == false)
+        #expect(thinkingSource.contains("Circle()") == false)
+        #expect(thinkingSource.contains("AccentOpacity.weak") == false)
+        #expect(primaryActionSource.contains("ProgressView") == false)
+        #expect(primaryActionSource.contains("Generating") == false)
+        #expect(composerSource.contains("stop.fill") == false)
+        #expect(composerSource.contains("Label(\"Stop\"") == false)
         #expect(source.contains("DesktopChatComposerTextView("))
         #expect(source.contains("DesktopChatArtifactPreviewRail"))
         #expect(source.contains("DesktopChatArtifactPreviewTrigger"))
     }
 
-    @Test("chat composer keyboard policy submits only command return")
+    @Test("chat composer keyboard policy submits Return and uses Command-Return for a new line")
     @MainActor
-    func chatComposerKeyboardPolicySubmitsOnlyCommandReturn() {
+    func chatComposerKeyboardPolicySubmitsReturnAndUsesCommandReturnForNewLine() {
         #expect(
             DesktopChatComposerKeyPolicy.action(
                 keyCode: DesktopChatComposerKeyPolicy.returnKeyCode,
-                modifiers: [.command]
+                modifiers: []
+            ) == .submit
+        )
+        #expect(
+            DesktopChatComposerKeyPolicy.action(
+                keyCode: DesktopChatComposerKeyPolicy.keypadEnterKeyCode,
+                modifiers: [.numericPad]
             ) == .submit
         )
         #expect(
             DesktopChatComposerKeyPolicy.action(
                 keyCode: DesktopChatComposerKeyPolicy.returnKeyCode,
-                modifiers: [.control]
+                modifiers: [.command]
             ) == .insertNewline
         )
+        for modifiers: NSEvent.ModifierFlags in [[.shift], [.option], [.control], [.control, .option]] {
+            #expect(
+                DesktopChatComposerKeyPolicy.action(
+                    keyCode: DesktopChatComposerKeyPolicy.returnKeyCode,
+                    modifiers: modifiers
+                ) == .passThrough
+            )
+        }
     }
 
-    @Test("chat composer AppKit return commands follow the same submit policy")
+    @Test("chat composer AppKit commands mirror Return send and Command-Return newline")
     @MainActor
-    func chatComposerAppKitReturnCommandsFollowTheSameSubmitPolicy() {
+    func chatComposerAppKitCommandsMirrorAcceptedReturnPolicy() {
         #expect(
             DesktopChatComposerReturnCommandPolicy.action(
                 selector: #selector(NSTextView.insertNewline(_:)),
-                modifiers: [.command]
+                modifiers: []
             ) == .submit
         )
         #expect(
             DesktopChatComposerReturnCommandPolicy.action(
                 selector: #selector(NSTextView.insertLineBreak(_:)),
                 modifiers: [.command]
-            ) == .submit
+            ) == .insertNewline
         )
         #expect(
             DesktopChatComposerReturnCommandPolicy.action(
                 selector: #selector(NSTextView.insertNewlineIgnoringFieldEditor(_:)),
                 modifiers: [.control]
-            ) == .insertNewline
+            ) == .passThrough
         )
         #expect(
             DesktopChatComposerReturnCommandPolicy.action(
@@ -9412,11 +10135,12 @@ struct DesktopFoundationViewTests {
         )
     }
 
-    @Test("chat composer handles command return as a key equivalent")
+    @Test("chat composer inserts a newline for command return key equivalents")
     @MainActor
-    func chatComposerHandlesCommandReturnAsAKeyEquivalent() throws {
+    func chatComposerInsertsNewlineForCommandReturnKeyEquivalent() throws {
         let textView = DesktopChatComposerCommandSubmitTextView()
-        textView.string = "Send this prompt"
+        textView.string = "ab"
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
         var submittedText: String?
         textView.onCommandSubmit = { currentText in
             submittedText = currentText
@@ -9438,14 +10162,16 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(textView.performKeyEquivalent(with: event))
-        #expect(submittedText == "Send this prompt")
+        #expect(textView.string == "a\nb")
+        #expect(textView.selectedRange() == NSRange(location: 2, length: 0))
+        #expect(submittedText == nil)
     }
 
-    @Test("chat composer local key monitor consumes command return")
+    @Test("chat composer submits plain return from the focused text view")
     @MainActor
-    func chatComposerLocalKeyMonitorConsumesCommandReturn() throws {
+    func chatComposerSubmitsPlainReturnFromFocusedTextView() throws {
         let textView = DesktopChatComposerCommandSubmitTextView()
-        textView.string = "Send from local monitor"
+        textView.string = "Send from Return"
         var submittedText: String?
         textView.onCommandSubmit = { currentText in
             submittedText = currentText
@@ -9455,7 +10181,7 @@ struct DesktopFoundationViewTests {
             NSEvent.keyEvent(
                 with: .keyDown,
                 location: .zero,
-                modifierFlags: [.command],
+                modifierFlags: [],
                 timestamp: 0,
                 windowNumber: 0,
                 context: nil,
@@ -9467,15 +10193,17 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(textView.handleLocalKeyDown(event))
-        #expect(submittedText == "Send from local monitor")
+        #expect(submittedText == "Send from Return")
+        #expect(textView.string == "Send from Return")
     }
 
-    @Test("chat composer scroll view handles command return key equivalents")
+    @Test("chat composer scroll view forwards command return as a newline")
     @MainActor
-    func chatComposerScrollViewHandlesCommandReturnKeyEquivalents() throws {
+    func chatComposerScrollViewForwardsCommandReturnAsNewline() throws {
         let scrollView = DesktopChatComposerCommandSubmitScrollView()
         let textView = DesktopChatComposerCommandSubmitTextView()
-        textView.string = "Send from scroll key equivalent"
+        textView.string = "ab"
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
         scrollView.commandSubmitTextView = textView
         scrollView.documentView = textView
         var submittedText: String?
@@ -9499,7 +10227,469 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(scrollView.performKeyEquivalent(with: event))
-        #expect(submittedText == "Send from scroll key equivalent")
+        #expect(textView.string == "a\nb")
+        #expect(submittedText == nil)
+    }
+
+    @Test("chat composer silently consumes unavailable and repeated Return")
+    @MainActor
+    func chatComposerSilentlyConsumesUnavailableAndRepeatedReturn() throws {
+        let textView = DesktopChatComposerCommandSubmitTextView()
+        textView.string = "Blocked draft"
+        var callbackCount = 0
+        textView.onCommandSubmit = { _ in
+            callbackCount += 1
+            return false
+        }
+        let returnEvent = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
+            )
+        )
+        let repeatedReturn = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: true,
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
+            )
+        )
+
+        #expect(textView.handleLocalKeyDown(returnEvent))
+        #expect(textView.handleLocalKeyDown(repeatedReturn))
+        #expect(callbackCount == 1)
+        #expect(textView.string == "Blocked draft")
+    }
+
+    @Test("chat composer leaves marked-text Return to the input method")
+    @MainActor
+    func chatComposerLeavesMarkedTextReturnToInputMethod() throws {
+        let textView = DesktopChatComposerCommandSubmitTextView()
+        var submitCount = 0
+        textView.onCommandSubmit = { _ in
+            submitCount += 1
+            return true
+        }
+        textView.setMarkedText(
+            "候选",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        let event = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
+            )
+        )
+
+        #expect(textView.hasMarkedText())
+        #expect(textView.handleLocalKeyDown(event) == false)
+        #expect(submitCount == 0)
+    }
+
+    @Test("chat composer guards Return for 50 milliseconds after IME unmark")
+    @MainActor
+    func chatComposerGuardsReturnAfterIMEUnmark() throws {
+        #expect(DesktopChatComposerKeyPolicy.postCompositionGuardInterval == 0.05)
+
+        let textView = DesktopChatComposerCommandSubmitTextView()
+        var monotonicTime = 100.0
+        textView.monotonicNow = { monotonicTime }
+        textView.string = "候选"
+        var submitCount = 0
+        textView.onCommandSubmit = { _ in
+            submitCount += 1
+            return true
+        }
+        textView.setMarkedText(
+            "候选",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        textView.unmarkText()
+        let event = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
+            )
+        )
+
+        #expect(textView.hasMarkedText() == false)
+        #expect(textView.handleLocalKeyDown(event))
+        #expect(submitCount == 0)
+
+        monotonicTime += DesktopChatComposerKeyPolicy.postCompositionGuardInterval + 0.001
+
+        #expect(textView.handleLocalKeyDown(event))
+        #expect(submitCount == 1)
+    }
+
+    @Test("chat composer height caps at five lines until expanded")
+    @MainActor
+    func chatComposerHeightCapsAtFiveLinesUntilExpanded() {
+        #expect(DesktopChatComposerHeightPolicy.collapsedMaximumHeight == 99)
+        #expect(DesktopChatComposerHeightPolicy.expandedMaximumHeight == 220)
+        #expect(DesktopChatComposerHeightPolicy.resolvedHeight(contentHeight: 18) == 40)
+        #expect(DesktopChatComposerHeightPolicy.resolvedHeight(contentHeight: 82.2) == 83)
+        #expect(
+            DesktopChatComposerHeightPolicy.resolvedHeight(
+                contentHeight: 180,
+                isExpanded: false
+            ) == 99
+        )
+        #expect(
+            DesktopChatComposerHeightPolicy.resolvedHeight(
+                contentHeight: 180,
+                isExpanded: true
+            ) == 180
+        )
+        #expect(
+            DesktopChatComposerHeightPolicy.resolvedHeight(
+                contentHeight: 320,
+                isExpanded: true
+            ) == 220
+        )
+    }
+
+    @Test("chat Hybrid A composer reacts to repair growth focus and streaming transitions")
+    @MainActor
+    func chatHybridAComposerReactsToRepairGrowthFocusAndStreamingTransitions() throws {
+        let state = DesktopChatComposerCoverageState()
+        let hosted = hostViewInWindow(
+            DesktopChatComposerCoverageHarness(state: state),
+            size: CGSize(width: 520, height: 360)
+        )
+        defer { hosted.window.close() }
+        settleHostedUI()
+
+        #expect(state.serverSession.lifecycle == .stopped)
+        state.serverSession.lifecycle = .running
+        state.serverSession.powerState = .active
+        settleHostedUI()
+        state.isThinkingEnabled = false
+        state.draft = (1...18).map { "Composer coverage line \($0)" }.joined(separator: "\n")
+        settleHostedUI(for: 0.15)
+        #expect(state.isThinkingEnabled == false)
+        #expect(state.draft.contains("Composer coverage line 18"))
+
+        let textView = try #require(
+            firstDescendant(
+                of: DesktopChatComposerCommandSubmitTextView.self,
+                in: hosted.controller.view
+            )
+        )
+        hosted.window.makeFirstResponder(textView)
+        textView.delegate?.textDidBeginEditing?(
+            Notification(name: NSText.didBeginEditingNotification, object: textView)
+        )
+        textView.string = ""
+        textView.delegate?.textDidChange?(
+            Notification(name: NSText.didChangeNotification, object: textView)
+        )
+        settleHostedUI()
+
+        state.isStreaming = true
+        settleHostedUI()
+        #expect(state.isStreaming)
+        #expect(state.draft.isEmpty)
+        #expect(hosted.controller.view.subviews.isEmpty == false)
+    }
+
+    @Test("chat composer repair actions arm all provider recovery paths")
+    @MainActor
+    func chatComposerRepairActionsArmAllProviderRecoveryPaths() {
+        var startCount = 0
+        var resumeCount = 0
+        var wakeCount = 0
+        let composer = DesktopChatComposerSurface(
+            text: .constant("blocked"),
+            isThinkingEnabled: .constant(true),
+            isSubmitAvailable: false,
+            isSendDisabled: true,
+            isStreaming: true,
+            serverSession: nil,
+            capabilities: [],
+            isModelMissing: false,
+            onCommandSubmit: { _ in },
+            onSubmit: {},
+            onOpenServer: {},
+            onOpenModels: {},
+            onRunCapabilitiesTest: {},
+            onStartServer: { startCount += 1 },
+            onResumeServer: { resumeCount += 1 },
+            onWakeServer: { wakeCount += 1 }
+        )
+
+        composer.performRepairAction(.startProvider)
+        composer.performRepairAction(.resumeProvider)
+        composer.performRepairAction(.wakeProvider)
+        composer.requestEditorFocus()
+
+        #expect(startCount == 1)
+        #expect(resumeCount == 1)
+        #expect(wakeCount == 1)
+        #expect(composer.primaryActionHelpText == "Send unavailable while generating; draft saved")
+    }
+
+    @Test("chat composer bridge processes an explicit mounted focus request")
+    @MainActor
+    func chatComposerBridgeHonorsExplicitMountedFocusRequest() throws {
+        let state = DesktopChatComposerTextViewCoverageState()
+        let hosted = hostViewInWindow(
+            DesktopChatComposerTextViewCoverageHarness(state: state),
+            size: CGSize(width: 360, height: 140)
+        )
+        defer { hosted.window.close() }
+        settleHostedUI()
+
+        state.focusRequestID = UUID()
+        settleHostedUI(for: 0.15)
+
+        let textView = try #require(
+            firstDescendant(
+                of: DesktopChatComposerCommandSubmitTextView.self,
+                in: hosted.controller.view
+            )
+        )
+        #expect(state.focusRequestID != nil)
+        #expect(textView.window === hosted.window)
+    }
+
+    @Test("chat composer AppKit bridge updates bindings focus and measured height")
+    @MainActor
+    func chatComposerAppKitBridgeUpdatesBindingsFocusAndMeasuredHeight() throws {
+        var text = "Initial"
+        var isThinkingEnabled = true
+        let composer = DesktopChatComposerSurface(
+            text: Binding(get: { text }, set: { text = $0 }),
+            isThinkingEnabled: Binding(
+                get: { isThinkingEnabled },
+                set: { isThinkingEnabled = $0 }
+            ),
+            isSubmitAvailable: true,
+            isSendDisabled: false,
+            isStreaming: false,
+            serverSession: DesktopServerSessionState(
+                id: "composer-appkit-session",
+                title: "Ready Provider",
+                modelID: "local/model-q4",
+                lifecycle: .running,
+                powerState: .active
+            ),
+            capabilities: [],
+            isModelMissing: false,
+            onCommandSubmit: { _ in },
+            onSubmit: {},
+            onOpenServer: {},
+            onOpenModels: {},
+            onRunCapabilitiesTest: {},
+            onStartServer: {},
+            onResumeServer: {},
+            onWakeServer: {}
+        )
+        let hosted = hostViewInWindow(composer, size: CGSize(width: 360, height: 240))
+        defer { hosted.window.close() }
+        settleHostedUI()
+
+        let scrollView = try #require(
+            firstDescendant(
+                of: DesktopChatComposerCommandSubmitScrollView.self,
+                in: hosted.controller.view
+            )
+        )
+        var textView: DesktopChatComposerCommandSubmitTextView? = try #require(
+            firstDescendant(
+                of: DesktopChatComposerCommandSubmitTextView.self,
+                in: hosted.controller.view
+            )
+        )
+        do {
+            let resolvedTextView = try #require(textView)
+
+            resolvedTextView.delegate?.textDidChange?(
+                Notification(name: NSText.didChangeNotification, object: NSObject())
+            )
+            resolvedTextView.delegate?.textDidBeginEditing?(
+                Notification(name: NSText.didBeginEditingNotification, object: resolvedTextView)
+            )
+            resolvedTextView.delegate?.textDidBeginEditing?(
+                Notification(name: NSText.didBeginEditingNotification, object: resolvedTextView)
+            )
+            resolvedTextView.string = (1...18).map { "measured line \($0)" }.joined(separator: "\n")
+            resolvedTextView.delegate?.textDidChange?(
+                Notification(name: NSText.didChangeNotification, object: resolvedTextView)
+            )
+            settleHostedUI()
+            #expect(text.contains("measured line 18"))
+
+            resolvedTextView.delegate?.textDidEndEditing?(
+                Notification(name: NSText.didEndEditingNotification, object: resolvedTextView)
+            )
+            resolvedTextView.delegate?.textDidEndEditing?(
+                Notification(name: NSText.didEndEditingNotification, object: resolvedTextView)
+            )
+        }
+
+        scrollView.documentView = nil
+        scrollView.commandSubmitTextView = nil
+        textView = nil
+        scrollView.onLayout?()
+    }
+
+    @Test("chat composer native dispatch covers composition and command fallbacks")
+    @MainActor
+    func chatComposerNativeDispatchCoversCompositionAndCommandFallbacks() throws {
+        let returnEvent = try #require(makeComposerKeyEvent())
+        let repeatedReturnEvent = try #require(makeComposerKeyEvent(isARepeat: true))
+        let letterEvent = try #require(
+            makeComposerKeyEvent(
+                characters: "a",
+                keyCode: 0
+            )
+        )
+
+        let plainTextView = DesktopChatComposerCommandSubmitTextView()
+        plainTextView.string = "Submit through performKeyEquivalent"
+        var submitCount = 0
+        plainTextView.onCommandSubmit = { _ in
+            submitCount += 1
+            return true
+        }
+        #expect(plainTextView.performKeyEquivalent(with: returnEvent))
+        #expect(plainTextView.performKeyEquivalent(with: repeatedReturnEvent))
+        _ = plainTextView.performKeyEquivalent(with: letterEvent)
+        #expect(submitCount == 1)
+
+        let composingKeyView = DesktopChatComposerCommandSubmitTextView()
+        composingKeyView.setMarkedText(
+            "候选",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        _ = composingKeyView.performKeyEquivalent(with: returnEvent)
+
+        var monotonicTime = 100.0
+        let guardedView = DesktopChatComposerCommandSubmitTextView()
+        guardedView.monotonicNow = { monotonicTime }
+        guardedView.setMarkedText(
+            "候选",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        guardedView.insertText(
+            "已选",
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        guardedView.unmarkText()
+
+        #expect(guardedView.performKeyEquivalent(with: returnEvent))
+        guardedView.doCommand(by: #selector(NSTextView.insertNewline(_:)))
+        guardedView.insertNewline(nil)
+        guardedView.insertLineBreak(nil)
+        guardedView.insertNewlineIgnoringFieldEditor(nil)
+        #expect(guardedView.handleLocalKeyDown(letterEvent) == false)
+
+        monotonicTime += DesktopChatComposerKeyPolicy.postCompositionGuardInterval + 0.001
+        guardedView.doCommand(by: #selector(NSTextView.deleteBackward(_:)))
+        guardedView.insertNewline(nil)
+        guardedView.insertLineBreak(nil)
+        guardedView.insertNewlineIgnoringFieldEditor(nil)
+
+        let markedCommandView = DesktopChatComposerCommandSubmitTextView()
+        markedCommandView.setMarkedText(
+            "候选",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        markedCommandView.doCommand(by: #selector(NSTextView.insertNewline(_:)))
+
+        for command: (DesktopChatComposerCommandSubmitTextView) -> Void in [
+            { $0.insertNewline(nil) },
+            { $0.insertLineBreak(nil) },
+            { $0.insertNewlineIgnoringFieldEditor(nil) },
+        ] {
+            let markedView = DesktopChatComposerCommandSubmitTextView()
+            markedView.setMarkedText(
+                "候选",
+                selectedRange: NSRange(location: 2, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+            command(markedView)
+        }
+    }
+
+    @Test("chat reasoning view transitions between streaming and completed bodies")
+    @MainActor
+    func chatReasoningViewTransitionsBetweenStreamingAndCompletedBodies() throws {
+        let state = DesktopChatReasoningCoverageState()
+        let hosted = hostViewInWindow(
+            DesktopChatReasoningCoverageHarness(state: state),
+            size: CGSize(width: 520, height: 300)
+        )
+        defer { hosted.window.close() }
+        settleHostedUI()
+
+        #expect(renderedTextValues(in: hosted.controller.view).contains { $0.contains("Inspect runtime state") })
+        state.publicReasoning += "\nVerify response routing"
+        settleHostedUI()
+        state.isStreaming = false
+        settleHostedUI()
+        #expect(state.publicReasoning.contains("Verify response routing"))
+        #expect(state.isStreaming == false)
+        #expect(hosted.controller.view.subviews.isEmpty == false)
+
+        state.isStreaming = true
+        settleHostedUI()
+        #expect(state.isStreaming)
+
+        let streamingView = hostView(
+            DesktopChatReasoningBlockView(
+                publicMessageBody: "Reduced-motion public reasoning",
+                isStreaming: true,
+                announcesStreamingStart: true
+            ),
+            size: CGSize(width: 420, height: 180)
+        )
+        #expect(renderedTextValues(in: streamingView).contains { $0.contains("Reduced-motion public reasoning") })
+
+        let compactWithoutCaret = hostView(
+            DesktopChatCompactStreamingReasoningText(
+                rawText: "Compact reduced-motion reasoning",
+                showsCaret: false
+            )
+        )
+        #expect(compactWithoutCaret.subviews.isEmpty == false)
     }
 
     @Test("chat session workspace renders the server required state when no server is running")
@@ -11419,6 +12609,240 @@ private struct FailingPhase8WindowUIRenderer: Phase8WindowUIRendering {
         _ = size
         throw CocoaError(.fileWriteUnknown)
     }
+}
+
+@MainActor
+private final class DesktopChatComposerTextViewCoverageState: ObservableObject {
+    @Published var text = "Focus this editor"
+    @Published var height = DesktopChatComposerHeightPolicy.minimumHeight
+    @Published var contentHeight = DesktopChatComposerHeightPolicy.minimumHeight
+    @Published var isFocused = false
+    @Published var focusRequestID: UUID?
+}
+
+@MainActor
+private struct DesktopChatComposerTextViewCoverageHarness: View {
+    @ObservedObject var state: DesktopChatComposerTextViewCoverageState
+
+    var body: some View {
+        DesktopChatComposerTextView(
+            text: $state.text,
+            height: $state.height,
+            contentHeight: $state.contentHeight,
+            isFocused: $state.isFocused,
+            isExpanded: false,
+            focusRequestID: state.focusRequestID,
+            isSubmitAvailable: true,
+            onCommandSubmit: { _ in }
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: state.height)
+        .padding(12)
+    }
+}
+
+@MainActor
+private final class DesktopChatComposerCoverageState: ObservableObject {
+    @Published var draft = "Blocked draft"
+    @Published var isThinkingEnabled = true
+    @Published var isStreaming = false
+    @Published var serverSession = DesktopServerSessionState(
+        id: "composer-coverage-session",
+        title: "Coverage Provider",
+        modelID: "local/model-q4",
+        lifecycle: .stopped,
+        powerState: .stopped
+    )
+}
+
+@MainActor
+private struct DesktopChatComposerCoverageHarness: View {
+    @ObservedObject var state: DesktopChatComposerCoverageState
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Button("Make Long Draft") {
+                    state.draft = (1...18).map { "Composer coverage line \($0)" }.joined(separator: "\n")
+                }
+                Button("Begin Streaming") {
+                    state.isStreaming = true
+                }
+            }
+
+            DesktopChatComposerSurface(
+                text: $state.draft,
+                isThinkingEnabled: $state.isThinkingEnabled,
+                isSubmitAvailable: state.serverSession.isInteractiveReady && state.isStreaming == false,
+                isSendDisabled: state.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                isStreaming: state.isStreaming,
+                serverSession: state.serverSession,
+                capabilities: [
+                    DesktopChatCapabilityRow(
+                        id: "text",
+                        title: "Interactive Text",
+                        modelID: state.serverSession.modelID,
+                        detail: "Ready for local chat",
+                        isReady: true
+                    ),
+                ],
+                isModelMissing: false,
+                onCommandSubmit: { _ in },
+                onSubmit: {},
+                onOpenServer: {},
+                onOpenModels: {},
+                onRunCapabilitiesTest: {},
+                onStartServer: {
+                    state.serverSession.lifecycle = .running
+                    state.serverSession.powerState = .active
+                },
+                onResumeServer: {
+                    state.serverSession.lifecycle = .running
+                    state.serverSession.powerState = .active
+                },
+                onWakeServer: {
+                    state.serverSession.lifecycle = .running
+                    state.serverSession.powerState = .active
+                }
+            )
+        }
+        .padding(12)
+    }
+}
+
+@MainActor
+private final class DesktopChatReasoningCoverageState: ObservableObject {
+    @Published var publicReasoning = "Inspect runtime state"
+    @Published var isStreaming = true
+}
+
+@MainActor
+private struct DesktopChatReasoningCoverageHarness: View {
+    @ObservedObject var state: DesktopChatReasoningCoverageState
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Button("Append Reasoning") {
+                    state.publicReasoning += "\nVerify response routing"
+                }
+                Button("Complete Reasoning") {
+                    state.isStreaming = false
+                }
+            }
+            DesktopChatReasoningBlockView(
+                publicMessageBody: state.publicReasoning,
+                isStreaming: state.isStreaming,
+                reasoningElapsedSeconds: 4,
+                announcesStreamingStart: true
+            )
+        }
+        .padding(12)
+    }
+}
+
+private struct DesktopFoundationStaticOperatorSessionStore: OperatorSessionStoring {
+    let state: OperatorSessionState
+
+    func load() throws -> OperatorSessionState? {
+        state
+    }
+
+    func save(_ state: OperatorSessionState) throws {
+        _ = state
+    }
+}
+
+private func makeDesktopFoundationGatewayAccessSummary(
+    sharedAccessEnabled: Bool,
+    acceptedAPIKeyCount: UInt32
+) -> Melix_Controlplane_V1_GatewayAccessSummary {
+    var summary = Melix_Controlplane_V1_GatewayAccessSummary()
+    summary.mode = .apiKeys
+    summary.sharedAccessEnabled = sharedAccessEnabled
+    summary.sharedAccessReady = acceptedAPIKeyCount > 0
+    summary.requiredHeader = .xApiKey
+    summary.acceptedApiKeyCount = acceptedAPIKeyCount
+    summary.keys = (0..<acceptedAPIKeyCount).map { offset in
+        var key = Melix_Controlplane_V1_GatewayAccessKeySummary()
+        key.keyID = "coverage-key-\(offset + 1)"
+        key.label = "Coverage key \(offset + 1)"
+        key.tokenHint = "melix_coverage_\(offset + 1)"
+        return key
+    }
+    return summary
+}
+
+@MainActor
+private func hostViewInWindow<Content: View>(
+    _ rootView: Content,
+    size: CGSize
+) -> (window: NSWindow, controller: NSHostingController<Content>) {
+    _ = NSApplication.shared
+    let controller = NSHostingController(rootView: rootView)
+    let window = NSWindow(
+        contentRect: NSRect(origin: .zero, size: size),
+        styleMask: [.titled],
+        backing: .buffered,
+        defer: false
+    )
+    window.isReleasedWhenClosed = false
+    window.contentViewController = controller
+    controller.view.frame = NSRect(origin: .zero, size: size)
+    window.makeKeyAndOrderFront(nil)
+    controller.view.layoutSubtreeIfNeeded()
+    return (window, controller)
+}
+
+@MainActor
+private func settleHostedUI(for seconds: TimeInterval = 0.06) {
+    RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+}
+
+@MainActor
+private func firstDescendant<ViewType: NSView>(
+    of _: ViewType.Type,
+    in rootView: NSView
+) -> ViewType? {
+    if let matched = rootView as? ViewType {
+        return matched
+    }
+    for subview in rootView.subviews {
+        if let matched = firstDescendant(of: ViewType.self, in: subview) {
+            return matched
+        }
+    }
+    return nil
+}
+
+@MainActor
+private func renderedTextValuesInOpenWindows() -> [String] {
+    NSApp.windows.flatMap { window -> [String] in
+        guard let contentView = window.contentView else {
+            return []
+        }
+        return renderedTextValues(in: contentView)
+    }
+}
+
+private func makeComposerKeyEvent(
+    characters: String = "\r",
+    modifiers: NSEvent.ModifierFlags = [],
+    isARepeat: Bool = false,
+    keyCode: UInt16 = DesktopChatComposerKeyPolicy.returnKeyCode
+) -> NSEvent? {
+    NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: modifiers,
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        characters: characters,
+        charactersIgnoringModifiers: characters,
+        isARepeat: isARepeat,
+        keyCode: keyCode
+    )
 }
 
 @MainActor

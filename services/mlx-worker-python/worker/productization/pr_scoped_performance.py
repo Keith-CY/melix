@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import bisect
 import fnmatch
 import gc
 import os
@@ -21,7 +22,7 @@ from typing import Any
 
 
 def _glob_has_magic(glob: str) -> bool:
-    return any(character in glob for character in "*?[")
+    return "*" in glob or "?" in glob or "[" in glob
 
 
 _COMMENT_MARKER = "<!-- melix-pr-scoped-performance-report -->"
@@ -53,6 +54,7 @@ _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH = {
         }
     ),
 }
+_FORCE_ALL_DIRECT_EXACT_PATHS = frozenset(_FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH)
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
 _COMMAND_HEARTBEAT_SECONDS = 30.0
@@ -70,31 +72,27 @@ _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE: dict[
 ] = {}
 
 
+@lru_cache(maxsize=32)
+def _normalized_changed_paths(changed_files: tuple[str, ...]) -> tuple[str, ...]:
+    changed_path_set = set(changed_files)
+    changed_path_set.discard("")
+    return tuple(sorted(changed_path_set))
+
+
 def _log_progress(message: str) -> None:
     print(f"[pr-scoped-performance] {message}", file=sys.stderr, flush=True)
 
 
 def _summarize_command(command: str, *, max_length: int = 180) -> str:
-    command_length = len(command)
-    start_index = 0
-    while start_index < command_length and command[start_index].isspace():
-        start_index += 1
-    if start_index >= command_length:
+    summary = command.strip()
+    if not summary:
         return "<empty command>"
 
-    end_index = command_length - 1
-    while end_index > start_index and command[end_index].isspace():
-        end_index -= 1
-    end_index += 1
-
-    newline_index = command.find("\n", start_index, end_index)
+    newline_index = summary.find("\n")
     if newline_index < 0:
-        summary = command[start_index:end_index]
+        summary = summary.rstrip()
     else:
-        line_end = newline_index
-        while line_end > start_index and command[line_end - 1].isspace():
-            line_end -= 1
-        summary = command[start_index:line_end] + " ..."
+        summary = summary[:newline_index].rstrip() + " ..."
     if len(summary) > max_length:
         if max_length <= 0:
             return ""
@@ -174,32 +172,37 @@ def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...
     for raw_probe in payload:
         if not isinstance(raw_probe, dict):
             raise ValueError("probe registry entries must be JSON objects")
-        raw_metrics = raw_probe.get("metrics", [])
+        raw_probe_get = raw_probe.get
+        raw_metrics = raw_probe_get("metrics", [])
         if not isinstance(raw_metrics, list) or not raw_metrics:
             raise ValueError("probe registry metrics must be a non-empty list")
-        metrics = tuple(
-            metric_definition(
-                key=str_value(raw_metric["key"]),
-                unit=str_value(raw_metric.get("unit", "value")),
-                direction=str_value(raw_metric["direction"]),
-                warn_pct=float_value(raw_metric.get("warn_pct", 5.0)),
-                warn_abs=float_value(raw_metric.get("warn_abs", 0.0)),
+        parsed_metrics: list[MetricDefinition] = []
+        append_metric = parsed_metrics.append
+        for raw_metric in raw_metrics:
+            if not isinstance(raw_metric, dict):
+                continue
+            raw_metric_get = raw_metric.get
+            append_metric(
+                metric_definition(
+                    key=str_value(raw_metric["key"]),
+                    unit=str_value(raw_metric_get("unit", "value")),
+                    direction=str_value(raw_metric["direction"]),
+                    warn_pct=float_value(raw_metric_get("warn_pct", 5.0)),
+                    warn_abs=float_value(raw_metric_get("warn_abs", 0.0)),
+                )
             )
-            for raw_metric in raw_metrics
-            if isinstance(raw_metric, dict)
-        )
         append_probe(
             probe_definition(
                 probe_id=str_value(raw_probe["id"]),
                 name=str_value(raw_probe["name"]),
-                runner=str_value(raw_probe.get("runner", "ubuntu-latest")),
-                watch_globs=tuple(str_value(glob) for glob in raw_probe.get("watch_globs", [])),
-                test_command=str_value(raw_probe.get("test_command", "")).strip(),
-                coverage_command=str_value(raw_probe.get("coverage_command", "")).strip(),
+                runner=str_value(raw_probe_get("runner", "ubuntu-latest")),
+                watch_globs=tuple(str_value(glob) for glob in raw_probe_get("watch_globs", [])),
+                test_command=str_value(raw_probe_get("test_command", "")).strip(),
+                coverage_command=str_value(raw_probe_get("coverage_command", "")).strip(),
                 probe_impl=str_value(raw_probe["probe_impl"]),
-                probe_command=str_value(raw_probe.get("probe_command", "")).strip(),
-                metrics=metrics,
-                coverage_replays_tests=bool_value(raw_probe.get("coverage_replays_tests", False)),
+                probe_command=str_value(raw_probe_get("probe_command", "")).strip(),
+                metrics=tuple(parsed_metrics),
+                coverage_replays_tests=bool_value(raw_probe_get("coverage_replays_tests", False)),
             )
         )
     return tuple(probes)
@@ -266,8 +269,7 @@ def build_scope_report(
     changed_files: list[str],
 ) -> dict[str, object]:
     probes = load_probe_registry_for_scope(registry_path)
-    changed_path_set = {path for path in changed_files if path}
-    changed_paths = tuple(sorted(changed_path_set))
+    changed_paths = _normalized_changed_paths(tuple(changed_files))
     force_all, matched_probe_ids, selected_probes = _scope_selection(
         probes=probes,
         changed_paths=changed_paths,
@@ -2430,22 +2432,30 @@ def _scope_selection_uncached(
 ) -> tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]]:
     changed_path_set = frozenset(changed_paths)
     force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
-        changed_path_set
+        changed_paths
     )
-    direct_changed_paths = tuple(path for path in changed_paths if path not in _FORCE_ALL_CONTEXT_ONLY_PATHS)
+    if _FORCE_ALL_CONTEXT_ONLY_PATHS.isdisjoint(changed_path_set):
+        direct_changed_paths = changed_paths
+        direct_changed_path_set = changed_path_set
+    else:
+        direct_changed_paths = tuple(
+            path for path in changed_paths if path not in _FORCE_ALL_CONTEXT_ONLY_PATHS
+        )
+        direct_changed_path_set = frozenset(direct_changed_paths)
     matched_probe_indexes = (
         frozenset()
         if not direct_changed_paths
         else _match_probe_indexes_for_normalized_paths(
             changed_path_tuple=direct_changed_paths,
-            changed_path_set=frozenset(direct_changed_paths),
+            changed_path_set=direct_changed_path_set,
             probes=probes,
         )
     )
-    matched_probe_indexes = matched_probe_indexes | _force_all_direct_probe_indexes(
-        changed_paths=changed_path_set,
-        probes=probes,
-    )
+    if not _FORCE_ALL_DIRECT_EXACT_PATHS.isdisjoint(changed_path_set):
+        matched_probe_indexes = matched_probe_indexes | _force_all_direct_probe_indexes(
+            changed_paths=changed_path_set,
+            probes=probes,
+        )
     matched_probe_index_tuple = tuple(sorted(matched_probe_indexes))
     matched_probe_entries = tuple(probes[index] for index in matched_probe_index_tuple)
     if force_all:
@@ -2464,7 +2474,7 @@ def _coverage_paths_by_probe_id(
 ) -> dict[str, tuple[str, ...]]:
     if not changed_paths:
         return {}
-    exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    exact_path_to_probe_indexes, _wildcard_glob_matchers, wildcard_matcher_buckets = _probe_match_indexes(probes)
     selected_probe_indexes: frozenset[int] | None = None
     if selected_probe_ids is not None and len(selected_probe_ids) < len(probes):
         probe_id_to_index = _probe_id_to_index(probes)
@@ -2475,17 +2485,21 @@ def _coverage_paths_by_probe_id(
         )
         if not selected_probe_indexes:
             return {}
-        wildcard_glob_matchers = tuple(
-            (prefix, pattern, filtered_probe_indexes)
-            for prefix, pattern, probe_indexes in wildcard_glob_matchers
-            if (
-                filtered_probe_indexes := tuple(
-                    probe_index
-                    for probe_index in probe_indexes
-                    if probe_index in selected_probe_indexes
+        wildcard_matcher_buckets = {
+            bucket_key: tuple(
+                (prefix, pattern, filtered_probe_indexes)
+                for prefix, pattern, probe_indexes in matchers
+                if (
+                    filtered_probe_indexes := tuple(
+                        probe_index
+                        for probe_index in probe_indexes
+                        if probe_index in selected_probe_indexes
+                    )
                 )
             )
-        )
+            for bucket_key, matchers in wildcard_matcher_buckets.items()
+        }
+    unbucketed_matchers = wildcard_matcher_buckets.get("", ())
     coverage_paths_by_probe_index: dict[int, list[str]] = {}
     for path in changed_paths:
         direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
@@ -2505,12 +2519,14 @@ def _coverage_paths_by_probe_id(
                 ):
                     continue
                 coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
-        for prefix, pattern, probe_indexes in wildcard_glob_matchers:
-            if prefix and not path.startswith(prefix):
-                continue
-            if pattern.match(path) is not None:
-                for probe_index in probe_indexes:
-                    coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+        path_matchers = wildcard_matcher_buckets.get(_path_bucket_key(path), ())
+        for matchers in (unbucketed_matchers, path_matchers):
+            for prefix, pattern, probe_indexes in matchers:
+                if prefix and not path.startswith(prefix):
+                    continue
+                if pattern.match(path) is not None:
+                    for probe_index in probe_indexes:
+                        coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
     return {
         probes[probe_index].probe_id: tuple(coverage_paths)
         for probe_index, coverage_paths in coverage_paths_by_probe_index.items()
@@ -2586,7 +2602,7 @@ def _match_probe_indexes_uncached(
     changed_paths: tuple[str, ...],
     changed_path_set: set[str] | frozenset[str],
 ) -> frozenset[int]:
-    exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    exact_path_to_probe_indexes, wildcard_glob_matchers, wildcard_matcher_buckets = _probe_match_indexes(probes)
     matched_probe_indexes: set[int] = set()
     matched_probe_indexes_update = matched_probe_indexes.update
     exact_path_to_probe_indexes_get = exact_path_to_probe_indexes.get
@@ -2594,9 +2610,18 @@ def _match_probe_indexes_uncached(
         matched_probe_indexes_update(exact_path_to_probe_indexes_get(path, ()))
     if not wildcard_glob_matchers:
         return frozenset(matched_probe_indexes)
+    unbucketed_matchers = wildcard_matcher_buckets.get("", ())
     for path in changed_paths:
-        for prefix, pattern, probe_indexes in wildcard_glob_matchers:
-            if prefix and not path.startswith(prefix):
+        path_startswith = path.startswith
+        for prefix, pattern, probe_indexes in unbucketed_matchers:
+            if prefix and not path_startswith(prefix):
+                continue
+            if pattern.match(path) is not None:
+                matched_probe_indexes_update(probe_indexes)
+        for prefix, pattern, probe_indexes in wildcard_matcher_buckets.get(
+            _path_bucket_key(path), ()
+        ):
+            if prefix and not path_startswith(prefix):
                 continue
             if pattern.match(path) is not None:
                 matched_probe_indexes_update(probe_indexes)
@@ -2669,7 +2694,11 @@ def _probe_watch_glob_matchers(
 @lru_cache(maxsize=None)
 def _probe_match_indexes(
     probes: tuple[ProbeDefinition, ...],
-) -> tuple[dict[str, tuple[int, ...]], tuple[tuple[str, re.Pattern[str], tuple[int, ...]], ...]]:
+) -> tuple[
+    dict[str, tuple[int, ...]],
+    tuple[tuple[str, re.Pattern[str], tuple[int, ...]], ...],
+    dict[str, tuple[tuple[str, re.Pattern[str], tuple[int, ...]], ...]],
+]:
     exact_path_to_probe_indexes: dict[str, list[int]] = {}
     wildcard_glob_to_probe_indexes: dict[str, list[int]] = {}
     for probe_index, probe in enumerate(probes):
@@ -2682,10 +2711,31 @@ def _probe_match_indexes(
         (_glob_literal_prefix(glob), _compiled_glob_pattern(glob), tuple(probe_indexes))
         for glob, probe_indexes in wildcard_glob_to_probe_indexes.items()
     )
+    wildcard_matcher_bucket_lists: dict[str, list[tuple[str, re.Pattern[str], tuple[int, ...]]]] = {}
+    for matcher in wildcard_glob_matchers:
+        wildcard_matcher_bucket_lists.setdefault(_matcher_bucket_key(matcher[0]), []).append(matcher)
     return (
         {path: tuple(probe_indexes) for path, probe_indexes in exact_path_to_probe_indexes.items()},
         wildcard_glob_matchers,
+        {
+            bucket_key: tuple(matchers)
+            for bucket_key, matchers in wildcard_matcher_bucket_lists.items()
+        },
     )
+
+
+def _matcher_bucket_key(prefix: str) -> str:
+    slash_index = prefix.find("/")
+    if slash_index <= 0:
+        return ""
+    return prefix[: slash_index + 1]
+
+
+def _path_bucket_key(path: str) -> str:
+    slash_index = path.find("/")
+    if slash_index == -1:
+        return path
+    return path[: slash_index + 1]
 
 
 @lru_cache(maxsize=None)
@@ -2729,14 +2779,26 @@ def _path_matches_force_all(path: str) -> bool:
     )
 
 
-def _changed_paths_match_force_all_wildcards(changed_paths: set[str]) -> bool:
+def _changed_paths_match_force_all_wildcards(changed_paths: set[str] | tuple[str, ...] | list[str]) -> bool:
     matchers = _force_all_wildcard_matchers()
     if not matchers:
         return False
-    matches_any_compiled_glob = _matches_any_compiled_glob
-    for path in changed_paths:
-        if matches_any_compiled_glob(path, matchers):
-            return True
+    if not isinstance(changed_paths, tuple):
+        changed_paths = tuple(sorted(changed_paths))
+    for prefix, pattern in matchers:
+        if prefix:
+            index = bisect.bisect_left(changed_paths, prefix)
+            while index < len(changed_paths):
+                path = changed_paths[index]
+                if not path.startswith(prefix):
+                    break
+                if pattern.match(path) is not None:
+                    return True
+                index += 1
+            continue
+        for path in changed_paths:
+            if pattern.match(path) is not None:
+                return True
     return False
 
 
@@ -2753,8 +2815,9 @@ def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
 
 
 def _matches_any_compiled_glob(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
+    path_startswith = path.startswith
     for prefix, pattern in matchers:
-        if prefix and not path.startswith(prefix):
+        if prefix and not path_startswith(prefix):
             continue
         if pattern.match(path) is not None:
             return True

@@ -133,6 +133,18 @@ def test_parse_response_json_trims_partial_fenced_json_without_line_list() -> No
     }
 
 
+def test_parse_response_json_zero_offset_json_fence_skips_startswith() -> None:
+    class NoStartswithText(str):
+        def startswith(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("zero-offset JSON fence should use direct marker checks")
+
+    response = NoStartswithText('```json\n{"events": [{"event_type": "delivery"}]}\n```')
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "delivery"}]
+    }
+
+
 def test_parse_response_json_trims_closing_fence_with_trailing_space() -> None:
     response = '```json\n{"events": []}\n```   '
 
@@ -143,6 +155,29 @@ def test_parse_response_json_trims_inline_closing_fence_with_trailing_space() ->
     response = '```json\n{"events": []}```   '
 
     assert event_extraction_module._parse_response_json(response) == {"events": []}
+
+
+def test_parse_response_json_closing_fence_check_avoids_startswith() -> None:
+    class NoStartswithText(str):
+        def startswith(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("closing-fence hot path should use direct character checks")
+
+    assert event_extraction_module._has_only_optional_closing_fence(
+        NoStartswithText('\n```   '), 0, 7
+    )
+    assert event_extraction_module._has_only_optional_closing_fence(
+        NoStartswithText('```   '), 0, 6
+    )
+
+
+def test_parse_response_json_common_closing_fence_tail_skips_whitespace_scan(monkeypatch) -> None:
+    def fail_skip_json_whitespace(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("common closing-fence tail should return without whitespace scan")
+
+    monkeypatch.setattr(event_extraction_module, "_skip_json_whitespace", fail_skip_json_whitespace)
+
+    assert event_extraction_module._has_only_optional_closing_fence('\n```   ', 0, 7)
+    assert event_extraction_module._has_only_optional_closing_fence('```   ', 0, 6)
 
 
 def test_parse_response_json_accepts_leading_whitespace_before_fence() -> None:
@@ -159,6 +194,49 @@ def test_parse_response_json_accepts_generic_fence_after_fast_json_prefix() -> N
     assert event_extraction_module._parse_response_json(response) == {
         "events": [{"event_type": "generic"}]
     }
+
+
+def test_parse_response_json_generic_fence_uses_direct_marker_check() -> None:
+    class StartswithCountingText(str):
+        calls = 0
+
+        def startswith(self, *args, **kwargs):
+            self.calls += 1
+            return super().startswith(*args, **kwargs)
+
+    response = StartswithCountingText('  ```javascript\n{"events": [{"event_type": "generic"}]}\n```')
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "generic"}]
+    }
+    assert response.calls == 1
+
+
+def test_parse_response_json_zero_offset_generic_fence_skips_whitespace_scan(monkeypatch) -> None:
+    def fail_skip_json_whitespace(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("zero-offset generic fence fast path should skip whitespace scan")
+
+    monkeypatch.setattr(event_extraction_module, "_skip_json_whitespace", fail_skip_json_whitespace)
+
+    response = '```javascript\n{"events": [{"event_type": "generic"}]}\n```'
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "generic"}]
+    }
+
+
+def test_parse_response_json_zero_offset_generic_fence_rejects_trailing_text() -> None:
+    response = '```javascript\n{"events": []}\n``` trailing'
+
+    with pytest.raises(json.JSONDecodeError, match="Extra data"):
+        event_extraction_module._parse_response_json(response)
+
+
+def test_parse_response_json_zero_offset_generic_fence_rejects_non_object_payload() -> None:
+    response = "```javascript\n[]\n```"
+
+    with pytest.raises(ValueError, match="JSON object"):
+        event_extraction_module._parse_response_json(response)
 
 
 def test_parse_response_json_accepts_unfenced_json_without_pretrim_copy() -> None:
@@ -231,7 +309,7 @@ def test_parse_response_json_object_fast_paths_skip_json_loads(monkeypatch) -> N
 
     monkeypatch.setattr(event_extraction_module, "_JSON_LOADS", fail_json_loads)
 
-    assert event_extraction_module._parse_response_json('{"events": []}  ') == {"events": []}
+    assert event_extraction_module._parse_response_json('{"events": []}\n  ') == {"events": []}
     assert event_extraction_module._parse_response_json('  {"events": []}  ') == {"events": []}
 
 

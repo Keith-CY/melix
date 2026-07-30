@@ -678,7 +678,7 @@ class EvaluationCore:
         job_parameters.setdefault("sample_size", str(len(sample_records)))
         sample_probe_means = self._sample_probe_means(
             sample_records,
-            tuple(field_name for _, field_name in _SAMPLE_PROBE_MEAN_FIELDS),
+            _SAMPLE_PROBE_MEAN_FIELD_NAMES,
         )
         agentic_tool_metrics = self._agentic_tool_metric_totals(sample_records)
         result_metrics = {
@@ -4112,16 +4112,45 @@ class EvaluationCore:
 
     @staticmethod
     def _answers_match(*, expected: str, predicted: str) -> bool:
-        if not predicted.strip():
-            return False
-        if expected == predicted:
+        if expected == predicted and predicted:
             return True
-        normalized_expected = EvaluationCore._normalized_answer(expected)
-        normalized_predicted = EvaluationCore._normalized_answer(predicted)
+        if not predicted:
+            return False
+        stripped_predicted = predicted.strip()
+        if not stripped_predicted:
+            return False
+        if expected == stripped_predicted:
+            return True
+        if (
+            expected.isascii()
+            and stripped_predicted.isascii()
+            and expected.lower() == stripped_predicted.lower()
+        ):
+            return True
+        normalize_answer = EvaluationCore._normalized_answer
+        normalized_expected = normalize_answer(expected)
+        normalized_predicted = normalize_answer(stripped_predicted)
         return normalized_expected == normalized_predicted
 
     @staticmethod
     def _normalized_answer(value: str) -> str:
+        if len(value) > 1 and value.isascii():
+            first_char = value[0]
+            last_char = value[-1]
+            if (
+                first_char not in "+-0123456789`\"'"
+                and last_char not in "`\"'."
+                and not first_char.isspace()
+                and not last_char.isspace()
+                and "  " not in value
+                and "\t" not in value
+                and "\n" not in value
+                and "\r" not in value
+                and "\f" not in value
+                and "\v" not in value
+            ):
+                return value.lower()
+
         stripped = EvaluationCore._strip_wrapping(value)
         if len(stripped) == 1:
             option = stripped.upper()

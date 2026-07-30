@@ -31,7 +31,7 @@ from worker.runtime.runtime_utils import (
 from worker.runtime.structured_output_constraints import (
     StructuredOutputConstraintError,
     build_structured_output_logits_processors,
-    structured_output_requested,
+    sampler_constraint_requested,
 )
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
@@ -1147,7 +1147,7 @@ class AutoMLXBackend:
                 execution_ext,
                 loaded_model["tokenizer"],
             )
-            if structured_output_requested(execution_ext)
+            if sampler_constraint_requested(execution_ext)
             else []
         )
 
@@ -1164,10 +1164,13 @@ class AutoMLXBackend:
             return
 
         if structured_logits_processors and not self._stream_accepts_logits_processors:
+            constraint_kind = str(
+                getattr(structured_logits_processors[0], "constraint_kind", "json_object")
+            )
             raise StructuredOutputConstraintError(
                 "mlx-lm stream_generate cannot accept structured-output logits processors.",
                 details={
-                    "mode": "json_object",
+                    "mode": "tool_choice" if constraint_kind.startswith("tool_choice") else constraint_kind,
                     "enforcement": "sampler",
                     "reason": "logits_processors_unsupported",
                 },
@@ -1658,10 +1661,17 @@ class AutoMLXBackend:
             insert_kwargs: dict[str, Any] = {}
             if logits_processors:
                 if not _callable_accepts_kwarg(batch_generator.insert, "logits_processors"):
+                    constraint_kind = str(
+                        getattr(logits_processors[0], "constraint_kind", "json_object")
+                    )
                     raise StructuredOutputConstraintError(
                         "mlx-lm BatchGenerator cannot accept structured-output logits processors.",
                         details={
-                            "mode": "json_object",
+                            "mode": (
+                                "tool_choice"
+                                if constraint_kind.startswith("tool_choice")
+                                else constraint_kind
+                            ),
                             "enforcement": "sampler",
                             "reason": "logits_processors_unsupported",
                         },

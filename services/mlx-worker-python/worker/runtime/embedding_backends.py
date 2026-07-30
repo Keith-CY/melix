@@ -71,6 +71,8 @@ class DeterministicEmbeddingBackend:
         _round=_ROUND,
         _sum_squares=_sum_squares_8,
     ) -> list[float]:
+        if dimensions <= 0:
+            return []
         base_values = [
             raw * _DIGEST_UINT32_SCALE - 1.0
             for raw in _UNPACK_DIGEST_UINT32(_sha256(seed_text.encode("utf-8")).digest())

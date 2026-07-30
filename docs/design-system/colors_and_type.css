@@ -74,8 +74,9 @@
   /* ── Corner radii ────────────────────────────────────────────────────────── */
   --radius-sm:        6px;   /* tags, badges, small chips */
   --radius-md:        8px;   /* buttons, toggle pills */
-  --radius-lg:        10px;  /* inputs, session rows, composer */
+  --radius-lg:        10px;  /* inputs, session rows */
   --radius-xl:        12px;  /* cards, chat bubbles, dashboard tiles */
+  --radius-composer:  16px;  /* Chat Composer only; stable two-plane shell */
   --radius-full:      9999px; /* capsule tabs, status pills */
 
   /* ── Spacing scale (4px base) ────────────────────────────────────────────── */

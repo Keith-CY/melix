@@ -46,6 +46,25 @@ struct SessionLifecycleSmokeRunnerTests {
         #expect(await client.loadedModelIDs == ["melix-dev-text"])
     }
 
+    @Test("runner sends the requested server session id with every chat probe")
+    func runnerSendsRequestedServerSessionIDWithEveryChatProbe() async throws {
+        let serverSessionID = "server-session-blue"
+        let client = LifecycleSmokeStubClient(serverSessionID: serverSessionID)
+
+        let report = try await SessionLifecycleSmokeRunner(
+            client: client,
+            sleep: { _ in try await Task.sleep(for: .milliseconds(1)) }
+        ).run(serverSessionID: serverSessionID)
+
+        #expect(report.ok)
+        #expect(report.serverSessionID == serverSessionID)
+        #expect(await client.requestedChatServerSessionIDs == [
+            serverSessionID,
+            serverSessionID,
+            serverSessionID,
+        ])
+    }
+
     @Test("runner waits for delayed exported lifecycle metrics")
     func runnerWaitsForDelayedExportedLifecycleMetrics() async throws {
         let metricsPath = FileManager.default.temporaryDirectory
@@ -343,6 +362,7 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     private var sleepPollCount = 0
     private var awakeGraceSnapshots = 0
     private var loadedModelIDsStorage: [String] = []
+    private var requestedChatServerSessionIDsStorage: [String] = []
     private var remainingStopConflicts: Int
 
     init(
@@ -371,6 +391,10 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
         loadedModelIDsStorage
     }
 
+    var requestedChatServerSessionIDs: [String] {
+        requestedChatServerSessionIDsStorage
+    }
+
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse {
         Melix_Controlplane_V1_HandshakeResponse()
     }
@@ -383,6 +407,7 @@ private actor LifecycleSmokeStubClient: ControlPlaneXPCClient {
     }
 
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
+        requestedChatServerSessionIDsStorage.append(request.serverSessionID)
         let session = snapshot.runtimeSessions[0]
         if session.lifecycleState == .paused {
             if let pausedChatErrorReason {

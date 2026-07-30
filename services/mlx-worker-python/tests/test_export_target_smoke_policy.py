@@ -312,6 +312,51 @@ def test_export_target_smoke_metrics_aggregation_is_single_pass() -> None:
     }
 
 
+def test_export_target_smoke_terminal_status_short_circuits_failed() -> None:
+    yielded_statuses: list[str] = []
+
+    def checks():
+        for status in (
+            export_target_smoke.CHECK_STATUS_PASSED,
+            export_target_smoke.CHECK_STATUS_FAILED,
+            export_target_smoke.CHECK_STATUS_BLOCKED,
+        ):
+            yielded_statuses.append(status)
+            yield _check_result(status)
+
+    assert export_target_smoke._terminal_status(checks()) == "failed"
+    assert yielded_statuses == ["passed", "failed"]
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    [
+        ((export_target_smoke.CHECK_STATUS_PASSED,), "passed"),
+        (
+            (
+                export_target_smoke.CHECK_STATUS_PASSED,
+                export_target_smoke.CHECK_STATUS_WAIVED,
+            ),
+            "waived",
+        ),
+        (
+            (
+                export_target_smoke.CHECK_STATUS_WAIVED,
+                export_target_smoke.CHECK_STATUS_BLOCKED,
+            ),
+            "blocked",
+        ),
+    ],
+)
+def test_export_target_smoke_terminal_status_preserves_precedence(
+    statuses: tuple[str, ...],
+    expected: str,
+) -> None:
+    assert export_target_smoke._terminal_status(
+        _check_result(status) for status in statuses
+    ) == expected
+
+
 def test_export_target_smoke_manifest_file_rows_streams_generated_then_required(
     tmp_path: Path,
 ) -> None:
@@ -525,6 +570,20 @@ def _load_runtime_export_smoke_policy_probe():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _check_result(status: str) -> export_target_smoke._CheckResult:
+    return export_target_smoke._CheckResult(
+        status=status,
+        started_at="1970-01-01T00:00:00Z",
+        ended_at="1970-01-01T00:00:00Z",
+        duration_ms=0.0,
+        timeout_ms=1,
+        failure_code="",
+        failure_message="",
+        evidence_path="",
+        diagnostics_receipt_path="",
+    )
 
 
 def _materialized_manifest(

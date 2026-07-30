@@ -216,6 +216,127 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.effectiveNumDraftTokens == 6)
     }
 
+    @Test("long-lived stores refresh cross-process session defaults before reads and writes")
+    func longLivedStoresRefreshCrossProcessSessionDefaultsBeforeReadsAndWrites() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-cross-process-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-serving-defaults.json")
+        let longLivedReader = GatewayServingDefaultsStore(storeURL: storeURL, defaults: [:])
+        let firstWriter = GatewayServingDefaultsStore(storeURL: storeURL, defaults: [:])
+        let staleSecondWriter = GatewayServingDefaultsStore(storeURL: storeURL, defaults: [:])
+
+        try await firstWriter.apply(command: Self.defaultsCommand(
+            serverSessionID: "server-session-blue",
+            temperature: 0.21,
+            maxTokens: 211
+        ))
+
+        let refreshedBlue = await longLivedReader.requestedDefaults(
+            serverSessionID: "server-session-blue"
+        )
+        #expect(refreshedBlue.temperature == 0.21)
+        #expect(refreshedBlue.maxTokens == 211)
+
+        try await staleSecondWriter.apply(command: Self.defaultsCommand(
+            serverSessionID: "server-session-green",
+            temperature: 0.63,
+            maxTokens: 633
+        ))
+
+        let summary = await longLivedReader.summary(
+            serverSessionIDs: ["server-session-blue", "server-session-green"],
+            defaultModelIDs: [:],
+            modelSettingsByModelID: [:]
+        )
+        let blue = try #require(summary.sessions.first(where: {
+            $0.serverSessionID == "server-session-blue"
+        }))
+        let green = try #require(summary.sessions.first(where: {
+            $0.serverSessionID == "server-session-green"
+        }))
+
+        #expect(blue.requestedTemperature == 0.21)
+        #expect(blue.requestedMaxTokens == 211)
+        #expect(green.requestedTemperature == 0.63)
+        #expect(green.requestedMaxTokens == 633)
+    }
+
+    @Test("concurrent store applies preserve every session through the sibling file lock")
+    func concurrentStoreAppliesPreserveEverySessionThroughTheSiblingFileLock() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-concurrent-writers-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-serving-defaults.json")
+        let writerCount = 32
+        let barrier = GatewayServingDefaultsStoreTestBarrier(participantCount: writerCount)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<writerCount {
+                let store = GatewayServingDefaultsStore(
+                    storeURL: storeURL,
+                    defaults: [:],
+                    nowUnixMS: { Int64(index + 1) }
+                )
+                group.addTask {
+                    let command = Self.defaultsCommand(
+                        serverSessionID: "server-session-concurrent-\(index)",
+                        temperature: 0.1 + (Double(index) / 100),
+                        maxTokens: UInt32(1_000 + index)
+                    )
+                    await barrier.arriveAndWait()
+                    try await store.apply(command: command)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let reloadedStore = GatewayServingDefaultsStore(storeURL: storeURL, defaults: [:])
+        let summary = await reloadedStore.summary(
+            serverSessionIDs: [],
+            defaultModelIDs: [:],
+            modelSettingsByModelID: [:]
+        )
+        let expectedServerSessionIDs = Set(
+            (0..<writerCount).map { "server-session-concurrent-\($0)" }
+        )
+
+        #expect(Set(summary.sessions.map(\.serverSessionID)) == expectedServerSessionIDs)
+        #expect(summary.sessions.count == writerCount)
+        #expect(FileManager.default.fileExists(atPath: storeURL.appendingPathExtension("lock").path))
+    }
+
+    @Test("a serving-defaults sibling lock open failure does not publish config")
+    func servingDefaultsSiblingLockOpenFailureDoesNotPublishConfig() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-lock-failure-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-serving-defaults.json")
+        try FileManager.default.createDirectory(
+            at: storeURL.appendingPathExtension("lock"),
+            withIntermediateDirectories: false
+        )
+        let store = GatewayServingDefaultsStore(storeURL: storeURL, defaults: [:])
+
+        do {
+            try await store.apply(command: Self.defaultsCommand(
+                serverSessionID: "server-session-lock-failure",
+                temperature: 0.4,
+                maxTokens: 512
+            ))
+            Issue.record("Expected the serving-defaults sibling lock open to fail.")
+        } catch {
+            #expect((error as NSError).domain == NSPOSIXErrorDomain)
+        }
+        #expect(FileManager.default.fileExists(atPath: storeURL.path) == false)
+    }
+
     @Test("environment profile defaults resolve before explicit environment overrides")
     func environmentProfileDefaultsResolveBeforeExplicitEnvironmentOverrides() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -848,6 +969,26 @@ struct GatewayServingDefaultsStoreTests {
         return command
     }
 
+    private static func defaultsCommand(
+        serverSessionID: String,
+        temperature: Double,
+        maxTokens: UInt32
+    ) -> Melix_Controlplane_V1_ApplyServingDefaults {
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = serverSessionID
+        command.temperature = temperature
+        command.topP = 0.9
+        command.maxTokens = maxTokens
+        command.streamIntervalTokens = 2
+        command.maxConcurrentRequests = 2
+        command.concurrentProcessingEnabled = true
+        command.prefillBatchSize = 2
+        command.completionBatchSize = 2
+        command.accelerationMode = .baseline
+        command.accelerationProfile = "balanced"
+        return command
+    }
+
     private static func speculativeDefaultsPolicy() -> GatewayServingDefaultsPolicy {
         GatewayServingDefaultsPolicy(
             temperature: nil,
@@ -875,5 +1016,30 @@ struct GatewayServingDefaultsStoreTests {
         model.settings.ext["melix.native_mtp.active"] = "true"
         model.settings.ext["melix.native_mtp.depth"] = "4"
         return model
+    }
+}
+
+private actor GatewayServingDefaultsStoreTestBarrier {
+    private let participantCount: Int
+    private var arrivedCount = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(participantCount: Int) {
+        self.participantCount = participantCount
+    }
+
+    func arriveAndWait() async {
+        arrivedCount += 1
+        if arrivedCount == participantCount {
+            let waiting = waiters
+            waiters.removeAll()
+            for waiter in waiting {
+                waiter.resume()
+            }
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
     }
 }

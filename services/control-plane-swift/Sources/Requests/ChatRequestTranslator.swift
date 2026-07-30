@@ -164,6 +164,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let topP: Double?
     public let maxTokens: UInt32?
     public let maxCompletionTokens: UInt32?
+    public let maxOutputTokens: UInt32?
     public let topK: UInt32?
     public let minP: Double?
     public let repeatPenalty: Double?
@@ -205,6 +206,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         topP: Double?,
         maxTokens: UInt32?,
         maxCompletionTokens: UInt32? = nil,
+        maxOutputTokens: UInt32? = nil,
         topK: UInt32? = nil,
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
@@ -245,6 +247,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.topP = topP
         self.maxTokens = maxTokens
         self.maxCompletionTokens = maxCompletionTokens
+        self.maxOutputTokens = maxOutputTokens
         self.topK = topK
         self.minP = minP
         self.repeatPenalty = repeatPenalty
@@ -319,6 +322,7 @@ public extension NormalizedTextRequest {
             topP: topP,
             maxTokens: maxTokens,
             maxCompletionTokens: maxCompletionTokens,
+            maxOutputTokens: maxOutputTokens,
             topK: topK,
             minP: minP,
             repeatPenalty: repeatPenalty,
@@ -391,6 +395,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let samplingRequestOverrideApplied: Bool
     public let requestedMaxTokens: UInt32?
     public let requestedMaxCompletionTokens: UInt32?
+    public let requestedMaxOutputTokens: UInt32?
     public let outputCapSource: String
     public let topK: UInt32?
     public let minP: Double?
@@ -1521,6 +1526,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     public let topP: Double?
     public let maxTokens: UInt32?
     public let maxCompletionTokens: UInt32?
+    public let maxOutputTokens: UInt32?
     public let topK: UInt32?
     public let minP: Double?
     public let repeatPenalty: Double?
@@ -1553,6 +1559,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         case topP = "top_p"
         case maxTokens = "max_tokens"
         case maxCompletionTokens = "max_completion_tokens"
+        case maxOutputTokens = "max_output_tokens"
         case topK = "top_k"
         case minP = "min_p"
         case repeatPenalty = "repeat_penalty"
@@ -1587,6 +1594,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
         maxCompletionTokens: UInt32? = nil,
+        maxOutputTokens: UInt32? = nil,
         topK: UInt32? = nil,
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
@@ -1618,6 +1626,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.topP = topP
         self.maxTokens = maxTokens
         self.maxCompletionTokens = maxCompletionTokens
+        self.maxOutputTokens = maxOutputTokens
         self.topK = topK
         self.minP = minP
         self.repeatPenalty = repeatPenalty
@@ -1652,6 +1661,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.topP = try container.decodeIfPresent(Double.self, forKey: .topP)
         self.maxTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxTokens)
         self.maxCompletionTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxCompletionTokens)
+        self.maxOutputTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxOutputTokens)
         self.topK = try container.decodeIfPresent(UInt32.self, forKey: .topK)
         self.minP = try container.decodeIfPresent(Double.self, forKey: .minP)
         self.repeatPenalty = try container.decodeIfPresent(Double.self, forKey: .repeatPenalty)
@@ -1686,6 +1696,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         try container.encodeIfPresent(topP, forKey: .topP)
         try container.encodeIfPresent(maxTokens, forKey: .maxTokens)
         try container.encodeIfPresent(maxCompletionTokens, forKey: .maxCompletionTokens)
+        try container.encodeIfPresent(maxOutputTokens, forKey: .maxOutputTokens)
         try container.encodeIfPresent(topK, forKey: .topK)
         try container.encodeIfPresent(minP, forKey: .minP)
         try container.encodeIfPresent(repeatPenalty, forKey: .repeatPenalty)
@@ -2417,6 +2428,7 @@ public struct ChatRequestTranslator: Sendable {
             topP: request.topP,
             maxTokens: request.maxTokens,
             maxCompletionTokens: request.maxCompletionTokens,
+            maxOutputTokens: request.maxOutputTokens,
             topK: request.topK,
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
@@ -2508,6 +2520,7 @@ public struct ChatRequestTranslator: Sendable {
         topP: Double?,
         maxTokens: UInt32?,
         maxCompletionTokens: UInt32? = nil,
+        maxOutputTokens: UInt32? = nil,
         topK: UInt32? = nil,
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
@@ -2553,6 +2566,7 @@ public struct ChatRequestTranslator: Sendable {
             topP: topP,
             maxTokens: maxTokens,
             maxCompletionTokens: maxCompletionTokens,
+            maxOutputTokens: maxOutputTokens,
             topK: topK,
             minP: minP,
             repeatPenalty: repeatPenalty,
@@ -2797,6 +2811,19 @@ public struct ChatRequestTranslator: Sendable {
             )
             generateRequest.execution.ext["melix.tool_config.source"] = "openai_chat_tools"
             generateRequest.execution.ext["melix.tool_config.tool_count"] = String(shapedRequest.tools.count)
+            let wireDescriptor = ToolParserRegistry().wireGrammarDescriptor(
+                for: shapedRequest.toolParser?.mode ?? .xml
+            )
+            generateRequest.execution.ext["melix.tool_wire.dialect"] = wireDescriptor.dialect
+            generateRequest.execution.ext["melix.tool_wire.begin"] = wireDescriptor.begin
+            generateRequest.execution.ext["melix.tool_wire.end"] = wireDescriptor.end
+            generateRequest.execution.ext["melix.tool_wire.trigger"] = wireDescriptor.trigger
+            generateRequest.execution.ext["melix.tool_wire.argument_style"] =
+                wireDescriptor.argumentStyle.rawValue
+            if let sentinelData = try? JSONEncoder().encode(wireDescriptor.sentinelTokens) {
+                generateRequest.execution.ext["melix.tool_wire.sentinel_tokens"] =
+                    String(decoding: sentinelData, as: UTF8.self)
+            }
         }
         if let toolParserSuppressedReason = shapedRequest.toolParserSuppressedReason {
             generateRequest.execution.ext["melix.tool_parser.suppressed_reason"] = toolParserSuppressedReason
@@ -3057,6 +3084,9 @@ public struct ChatRequestTranslator: Sendable {
         request.execution.ext["\(extPrefix)max_completion_tokens_requested"] =
             stringValue(shapedRequest.requestedMaxCompletionTokens)
         request.execution.ext["\(extPrefix)max_completion_tokens_effective"] = String(shapedRequest.maxTokens)
+        request.execution.ext["\(extPrefix)max_output_tokens_requested"] =
+            stringValue(shapedRequest.requestedMaxOutputTokens)
+        request.execution.ext["\(extPrefix)max_output_tokens_effective"] = String(shapedRequest.maxTokens)
         request.execution.ext["\(extPrefix)output_cap_source"] = shapedRequest.outputCapSource
         request.execution.ext["\(extPrefix)bounds_rejection_reason"] = ""
         request.execution.ext["\(extPrefix)stop_requested"] = stopReceiptValue(shapedRequest.requestedStopSequences)

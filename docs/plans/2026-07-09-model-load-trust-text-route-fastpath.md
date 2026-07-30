@@ -22,10 +22,21 @@ back exactly as before.
 
 The follow-up rejection-policy template slice keeps the same registered probe and
 moves repeated custom-loader rejection policy construction behind a cached
-serialized protobuf template keyed by the policy fields. Each rejection still
-receives a fresh mutable `ModelLoadTrustPolicy` parsed from the cached bytes, so
+protobuf template keyed by the policy fields. Each rejection still receives a
+fresh mutable `ModelLoadTrustPolicy` populated from the cached template, so
 callers cannot mutate the cached template while hot repeated rejection paths avoid
 rebuilding identical protobuf fields one by one.
+
+This loader-family follow-up slice keeps the same registered probe and moves the
+common text/default path ahead of request-policy loader-family normalization. An
+explicit request loader family still takes precedence, while default text policy
+resolution now avoids the unused request lookup/coercion branch before returning
+the runtime name.
+
+The 2026-07-27 canonical-loader follow-up keeps the same registered probe and
+adds a direct equality fast path for the common `mlx-lm` text loader before the
+shared loader-membership set checks. Non-canonical text loaders, explicit runtime
+support contracts, VLM loaders, and normalized fallback behavior are unchanged.
 
 ## Validation
 

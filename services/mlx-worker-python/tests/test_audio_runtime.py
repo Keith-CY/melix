@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import os
 from pathlib import Path
 from unittest.mock import Mock
 import wave
@@ -14,7 +15,7 @@ from worker.engine.speech_core import SpeechCore
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.audio_preprocessing import AudioPreprocessError, prepare_audio_input
+from worker.runtime.audio_preprocessing import AudioPreprocessError, _basename_from_path, prepare_audio_input
 from worker.runtime.audio_runtime_protocols import SpeechResult, SpeechStreamFrame
 from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
 from worker.runtime.deterministic_transcription_runtime import DeterministicTranscriptionRuntime
@@ -249,6 +250,25 @@ def test_audio_preprocessing_prepared_input_uses_slots(tmp_path: Path) -> None:
     assert prepared.decoded_text() == "slot optimized audio"
 
 
+def test_audio_preprocessing_file_uri_fast_path_skips_urlparse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"fast path audio")
+    urlparse_spy = Mock(side_effect=AssertionError("file:/// URI should not call urlparse"))
+
+    monkeypatch.setattr("worker.runtime.audio_preprocessing.urlparse", urlparse_spy)
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), format="wav"),
+        read_uri_bytes=False,
+    )
+
+    assert prepared.local_path == str(audio_path)
+    assert prepared.preprocess_input_bytes == len(b"fast path audio")
+    assert urlparse_spy.call_count == 0
+
+
 def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -256,15 +276,15 @@ def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     audio_path.write_bytes(b"zero copy audio")
     stat_calls = 0
     exists_spy = Mock(return_value=True)
-    original_stat = Path.stat
+    original_os_stat = os.stat
 
-    def counted_stat(self: Path):
+    def counted_os_stat(path, *args, **kwargs):
         nonlocal stat_calls
-        if self == audio_path:
+        if path == os.fspath(audio_path):
             stat_calls += 1
-        return original_stat(self)
+        return original_os_stat(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "stat", counted_stat)
+    monkeypatch.setattr(os, "stat", counted_os_stat)
     monkeypatch.setattr(Path, "exists", exists_spy)
 
     prepared = prepare_audio_input(
@@ -278,6 +298,93 @@ def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     assert prepared.chunk_count == 2
     assert exists_spy.call_count == 0
     assert stat_calls == 1
+
+
+def test_audio_preprocessing_local_uri_reads_request_fields_once(tmp_path: Path) -> None:
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"field access audio")
+
+    class CountingRequest:
+        format = "wav"
+        audio = None
+        audio_bytes_calls = 0
+        audio_uri_calls = 0
+
+        @property
+        def audio_bytes(self) -> bytes:
+            self.audio_bytes_calls += 1
+            return b""
+
+        @property
+        def audio_uri(self) -> str:
+            self.audio_uri_calls += 1
+            return audio_path.as_uri()
+
+    request = CountingRequest()
+
+    prepared = prepare_audio_input(request, read_uri_bytes=False)
+
+    assert prepared.local_path == str(audio_path)
+    assert prepared.reference == audio_path.as_uri()
+    assert request.audio_bytes_calls == 1
+    assert request.audio_uri_calls == 1
+
+
+def test_audio_preprocessing_derives_uri_suffix_without_splitext(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "sample.raw"
+    audio_path.write_bytes(b"suffix fast path")
+
+    splitext_spy = Mock(side_effect=AssertionError("format suffix should use rfind fast path"))
+    monkeypatch.setattr(os.path, "splitext", splitext_spy)
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri()),
+        read_uri_bytes=False,
+    )
+
+    assert prepared.format == "raw"
+    assert prepared.filename == "sample.raw"
+    assert prepared.preprocess_input_bytes == len(b"suffix fast path")
+    assert splitext_spy.call_count == 0
+
+    hidden_path = tmp_path / ".hidden"
+    hidden_path.write_bytes(b"hidden audio")
+    hidden_prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=hidden_path.as_uri()),
+        read_uri_bytes=False,
+    )
+    assert hidden_prepared.format == "wav"
+
+    trailing_dot_path = tmp_path / "sample."
+    trailing_dot_path.write_bytes(b"trailing dot audio")
+    trailing_dot_prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=trailing_dot_path.as_uri()),
+        read_uri_bytes=False,
+    )
+    assert trailing_dot_prepared.format == "wav"
+
+
+def test_audio_preprocessing_derives_filename_without_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "nested" / "sample.wav"
+    audio_path.parent.mkdir()
+    audio_path.write_bytes(b"filename fast path")
+
+    basename_spy = Mock(side_effect=AssertionError("filename should use rfind fast path"))
+    monkeypatch.setattr(os.path, "basename", basename_spy)
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), format="wav"),
+        read_uri_bytes=False,
+    )
+
+    assert prepared.filename == "sample.wav"
+    assert prepared.preprocess_input_bytes == len(b"filename fast path")
+    assert basename_spy.call_count == 0
+    assert _basename_from_path("sample.wav") == "sample.wav"
 
 
 def test_audio_preprocessing_rejects_missing_and_unsupported_inputs(tmp_path: Path) -> None:

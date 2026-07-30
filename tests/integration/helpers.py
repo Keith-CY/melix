@@ -553,6 +553,8 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
     flat_depth = 0
     scoped_depth = 1
     build_root_path = os.fspath(build_root)
+    join_path = os.path.join
+    executable_mask = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
     def consider(candidate: str, *, depth: int) -> None:
         nonlocal newest_candidate, newest_key
@@ -560,14 +562,14 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
             candidate_stat = os.stat(candidate)
         except OSError:
             return
-        if not (stat.S_ISREG(candidate_stat.st_mode) and (candidate_stat.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))):
+        if not (stat.S_ISREG(candidate_stat.st_mode) and (candidate_stat.st_mode & executable_mask)):
             return
         candidate_key = (candidate_stat.st_mtime, depth)
         if newest_key is None or candidate_key > newest_key:
             newest_candidate = candidate
             newest_key = candidate_key
 
-    consider(os.path.join(build_root_path, "debug", product_name), depth=flat_depth)
+    consider(join_path(build_root_path, "debug", product_name), depth=flat_depth)
     try:
         entries = os.scandir(build_root_path)
     except FileNotFoundError:
@@ -576,7 +578,7 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
     with entries:
         for entry in entries:
             if entry.name != "debug" and entry.is_dir(follow_symlinks=False):
-                consider(os.path.join(entry.path, "debug", product_name), depth=scoped_depth)
+                consider(join_path(entry.path, "debug", product_name), depth=scoped_depth)
     return Path(newest_candidate) if newest_candidate is not None else None
 
 

@@ -61,7 +61,8 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         images_root: Path,
         cancel_event: Event,
     ) -> DeterministicImageGenerationResult:
-        started = time.monotonic()
+        monotonic = time.monotonic
+        started = monotonic()
         width, height = self._parse_size(request.size or "1024x1024")
         image_count = max(1, int(request.n or 1))
         image_format = self._normalized_format(request.response_format)
@@ -74,27 +75,29 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         artifact_publish_ms = 0.0
         total_output_bytes = 0
         model_id = str(loaded_model.get("model_id", "image-model"))
-        render_payload = self._render_payload
+        payload_prefix = (
+            f"MELIX_IMAGE\n"
+            f"MODEL={model_id}\n"
+            f"PROMPT={request.prompt or '<empty>'}\n"
+            f"SIZE={width}x{height}\n"
+            f"VARIANT="
+        ).encode("utf-8")
+        render_payload_header = b"\x89PNG\r\n\x1a\n" + payload_prefix
         sha256_hex = hashlib.sha256
         append_image = images.append
         append_artifact = artifacts.append
+        sleep_image = sleep_if_configured
 
         for index in range(image_count):
             if cancel_event.is_set():
                 raise ImageGenerationCancelled("Image generation was canceled.")
 
-            sleep_if_configured("image")
-            payload = render_payload(
-                prompt=request.prompt,
-                width=width,
-                height=height,
-                variant=index,
-                model_id=model_id,
-            )
+            sleep_image("image")
+            payload = render_payload_header + str(index).encode("ascii") + b"\n"
             artifact_path = output_dir / f"output-{index}.{image_format}"
-            artifact_started = time.monotonic()
+            artifact_started = monotonic()
             artifact_path.write_bytes(payload)
-            artifact_publish_ms += (time.monotonic() - artifact_started) * 1000.0
+            artifact_publish_ms += (monotonic() - artifact_started) * 1000.0
 
             digest = sha256_hex(payload).hexdigest()
             payload_byte_length = len(payload)
@@ -117,7 +120,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
 
         peak_memory_bytes = max(total_output_bytes, width * height)
         self._last_probe = ImageGenerationProbeSnapshot(
-            job_latency_ms=(time.monotonic() - started) * 1000.0,
+            job_latency_ms=(monotonic() - started) * 1000.0,
             artifact_publish_ms=artifact_publish_ms,
             output_bytes=total_output_bytes,
             peak_memory_bytes=peak_memory_bytes,
@@ -143,7 +146,8 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         images_root: Path,
         cancel_event: Event,
     ) -> DeterministicImageGenerationResult:
-        started = time.monotonic()
+        monotonic = time.monotonic
+        started = monotonic()
         width, height = self._parse_size(request.size or "1024x1024")
         image_count = max(1, int(request.n or 1))
         image_format = self._normalized_format(request.response_format)
@@ -178,7 +182,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         )
 
         source_path = output_dir / f"source.{source_format}"
-        artifact_publish_ms += self._write_bytes(source_path, source_bytes)
+        artifact_publish_ms += self._write_bytes(source_path, source_bytes, monotonic=monotonic)
         artifacts.append(
             self._artifact_metadata(
                 job_id=job_id,
@@ -199,7 +203,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
 
         if mask_bytes is not None:
             mask_path = output_dir / f"mask.{mask_format}"
-            artifact_publish_ms += self._write_bytes(mask_path, mask_bytes)
+            artifact_publish_ms += self._write_bytes(mask_path, mask_bytes, monotonic=monotonic)
             artifacts.append(
                 self._artifact_metadata(
                     job_id=job_id,
@@ -222,28 +226,32 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         total_output_bytes = 0
         model_id = str(loaded_model.get("model_id", "image-model"))
         edit_strength = float(request.strength or 0.0)
-        render_edit_payload = self._render_edit_payload
         write_bytes = self._write_bytes
         artifact_metadata = self._artifact_metadata
         append_image = images.append
         append_artifact = artifacts.append
+        sleep_image = sleep_if_configured
+        prompt_text = request.prompt or "<empty>"
+        render_edit_payload_prefix = b"\x89PNG\r\n\x1a\n" + (
+            f"MELIX_IMAGE_EDIT\n"
+            f"MODEL={model_id}\n"
+            f"PROMPT={prompt_text}\n"
+            f"SIZE={width}x{height}\n"
+            f"VARIANT="
+        ).encode("utf-8")
+        render_edit_payload_suffix = (
+            f"\nSTRENGTH={edit_strength:.2f}\n"
+            f"SOURCE_SHA={source_digest}\n"
+            f"MASK_SHA={mask_digest}\n"
+        ).encode("utf-8")
         for index in range(image_count):
             if cancel_event.is_set():
                 raise ImageGenerationCancelled("Image edit was canceled.")
 
-            sleep_if_configured("image")
-            payload = render_edit_payload(
-                prompt=request.prompt,
-                width=width,
-                height=height,
-                variant=index,
-                model_id=model_id,
-                strength=edit_strength,
-                source_digest=source_digest,
-                mask_digest=mask_digest,
-            )
+            sleep_image("image")
+            payload = render_edit_payload_prefix + str(index).encode("ascii") + render_edit_payload_suffix
             artifact_path = output_dir / f"output-{index}.{image_format}"
-            artifact_publish_ms += write_bytes(artifact_path, payload)
+            artifact_publish_ms += write_bytes(artifact_path, payload, monotonic=monotonic)
             payload_byte_length = len(payload)
             append_image(payload)
             total_output_bytes += payload_byte_length
@@ -267,7 +275,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
 
         peak_memory_bytes = max(total_output_bytes + len(source_bytes), width * height)
         self._last_probe = ImageGenerationProbeSnapshot(
-            job_latency_ms=(time.monotonic() - started) * 1000.0,
+            job_latency_ms=(monotonic() - started) * 1000.0,
             artifact_publish_ms=artifact_publish_ms,
             output_bytes=total_output_bytes,
             peak_memory_bytes=peak_memory_bytes,
@@ -369,10 +377,12 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         )
 
     @staticmethod
-    def _write_bytes(path: Path, payload: bytes) -> float:
-        started = time.monotonic()
+    def _write_bytes(path: Path, payload: bytes, *, monotonic=None) -> float:
+        if monotonic is None:
+            monotonic = time.monotonic
+        started = monotonic()
         path.write_bytes(payload)
-        return (time.monotonic() - started) * 1000.0
+        return (monotonic() - started) * 1000.0
 
     @classmethod
     def _resolve_edit_input(

@@ -32,11 +32,10 @@ def _load_json_payload(path: Path) -> dict[str, Any]:
 
 
 def _is_mtp_weight_key(key: Any) -> bool:
+    prefixes = _MTP_WEIGHT_KEY_PREFIXES
     if type(key) is str:
-        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
-    if isinstance(key, str):
-        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
-    return str(key).startswith(_MTP_WEIGHT_KEY_PREFIXES)
+        return key.startswith(prefixes)
+    return str(key).startswith(prefixes)
 
 
 def _model_safetensor_files(model_path: Path) -> list[str]:
@@ -44,11 +43,15 @@ def _model_safetensor_files(model_path: Path) -> list[str]:
 
     weight_files: list[str] = []
     append_weight_file = weight_files.append
+    startswith = str.startswith
+    endswith = str.endswith
     try:
         with os.scandir(model_path) as entries:
             for entry in entries:
                 name = entry.name
-                if name.startswith("model") and name.endswith(".safetensors"):
+                if name[0] != "m" or not startswith(name, "model"):
+                    continue
+                if endswith(name, ".safetensors"):
                     append_weight_file(entry.path)
     except FileNotFoundError:
         return []
@@ -105,11 +108,13 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
         if seen_contains(file_name_text):
             continue
         if str_startswith(file_name_text, model_prefix):
-            seen_add(file_name_text)
             continue
         separator_index = str_rfind(file_name_text, path_sep)
-        if separator_index >= 0 and str_startswith(file_name_text[separator_index + 1 :], model_prefix):
-            seen_add(file_name_text)
+        if separator_index >= 0 and str_startswith(
+            file_name_text,
+            model_prefix,
+            separator_index + 1,
+        ):
             continue
         seen_add(file_name_text)
         path_text = path_join(model_path_text, file_name_text)

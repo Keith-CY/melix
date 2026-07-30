@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
-from typing import cast
+from typing import SupportsIndex, cast
 
 import pytest
 
@@ -80,6 +81,22 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
     assert code_eval_runner.extract_candidate_code(
         "```python\nprint('complete')\n```\n```"
     ) == ("print('complete')", "parsed_code_block")
+    count_calls: list[tuple[str, tuple[SupportsIndex, ...]]] = []
+
+    class CountingResponse(str):
+        def count(self, sub: str, *args: SupportsIndex) -> int:  # type: ignore[override]
+            count_calls.append((sub, args))
+            return super().count(sub, *args)
+
+    trailing_text = "\n" + ("post-answer whitespace scan guard " * 64)
+    empty_trailing_block = CountingResponse(
+        "```python\nprint('complete')\n```\n```python\n```" + trailing_text
+    )
+    assert code_eval_runner.extract_candidate_code(empty_trailing_block) == (
+        "",
+        "parsed_code_block",
+    )
+    assert count_calls == []
     assert code_eval_runner.extract_candidate_code(
         "```python\nprint('complete')\n```\nfinal commentary after the answer"
     ) == ("print('complete')", "parsed_code_block")
@@ -586,7 +603,23 @@ def test_count_tests_plain_assert_fast_path_defers_mixed_statements() -> None:
 
 
 def test_plain_assert_line_counter_rejects_identifier_prefix() -> None:
+    assert code_eval_runner._count_plain_assert_statement_lines("asser") == 0
     assert code_eval_runner._count_plain_assert_statement_lines("assert_valid_name") == 0
+
+
+def test_plain_assert_line_counter_accepts_common_space_and_tab_boundaries() -> None:
+    assert code_eval_runner._count_plain_assert_statement_lines("assert one\nassert\ttwo") == 2
+
+
+def test_plain_assert_line_counter_accepts_unindented_space_fast_path() -> None:
+    assert code_eval_runner._count_plain_assert_statement_lines("assert one\nassert two\n") == 2
+
+
+def test_plain_assert_line_counter_counts_uniform_unindented_payload_without_line_walk() -> None:
+    def fail_find(*args, **kwargs):  # pragma: no cover - regression-only failure path
+        raise AssertionError("uniform unindented assert payloads should not line-walk")
+
+    assert code_eval_runner._count_plain_assert_statement_lines("assert one\nassert two\nassert three", _find=fail_find) == 3
 
 
 def test_assert_prescan_handles_boundary_and_literal_edges() -> None:
@@ -595,6 +628,16 @@ def test_assert_prescan_handles_boundary_and_literal_edges() -> None:
     assert code_eval_runner._may_contain_assert_statement("text = 'escaped \\\' assert'") is False
     assert code_eval_runner._may_contain_assert_statement('text = "unterminated assert') is False
     assert code_eval_runner._may_contain_assert_statement("if ready: assert value") is True
+
+
+def test_assert_prescan_absent_token_uses_single_find_pass() -> None:
+    class NoContainsString(str):
+        def __contains__(self, value: object) -> bool:  # pragma: no cover - sentinel
+            raise AssertionError("assert prescan should avoid a separate containment scan")
+
+    test_code = NoContainsString("setup()\nrun_case(identity)\n")
+
+    assert code_eval_runner._may_contain_assert_statement(test_code) is False
 
 
 def test_count_tests_syntax_error_fallback_uses_nonblank_line_counter(
@@ -672,6 +715,20 @@ def test_read_limited_stdio_ignores_close_errors(
         raise OSError("close failed")
 
     monkeypatch.setattr(code_eval_runner.os, "close", fake_close)
+
+    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
+
+
+def test_read_limited_stdio_reads_oversized_tail_without_lseek(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "output.txt"
+    output_path.write_text("0123456789abcdef", encoding="utf-8")
+
+    def fail_lseek(*args: object, **kwargs: object) -> int:  # pragma: no cover - sentinel
+        raise AssertionError("oversized stdio tail reads should use positional pread")
+
+    monkeypatch.setattr(code_eval_runner.os, "lseek", fail_lseek)
 
     assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
 
@@ -1040,6 +1097,92 @@ def test_load_payload_file_reads_payload_bytes_without_text_decode() -> None:
         payload_path.read_text()
 
 
+def test_load_payload_file_uses_os_read_for_real_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_bytes(json.dumps({"runtime_status": "ok", "tests_total": 3}).encode("utf-8"))
+
+    def fail_read_bytes(self: Path) -> bytes:  # pragma: no cover
+        raise AssertionError("real payload path should use fd-based byte loading")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+
+    assert code_eval_runner._load_payload_file(payload_path) == {
+        "runtime_status": "ok",
+        "tests_total": 3,
+    }
+
+
+def test_read_payload_file_bytes_handles_fallback_and_fd_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingFallbackPath:
+        def read_bytes(self) -> bytes:
+            raise OSError("fallback read failed")
+
+    assert (
+        code_eval_runner._read_payload_file_bytes(cast(Path, FailingFallbackPath()))
+        is None
+    )
+
+    monkeypatch.setattr(code_eval_runner, "_OS_OPEN", lambda *_args, **_kwargs: 123)
+
+    def fail_fstat(_fd: int) -> object:
+        raise OSError("fstat failed")
+
+    monkeypatch.setattr(code_eval_runner, "_OS_FSTAT", fail_fstat)
+    assert code_eval_runner._read_payload_file_bytes(Path("payload.json")) is None
+
+    def fail_close(_fd: int) -> None:
+        raise OSError("close failed")
+
+    monkeypatch.setattr(code_eval_runner, "_OS_CLOSE", fail_close)
+    assert code_eval_runner._read_payload_file_bytes(Path("payload.json")) is None
+
+
+def test_read_payload_file_bytes_uses_bound_fd_helpers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_bytes(b'{"runtime_status":"ok"}')
+    original_open = code_eval_runner._OS_OPEN
+    original_fstat = code_eval_runner._OS_FSTAT
+    original_read = code_eval_runner._OS_READ
+    original_close = code_eval_runner._OS_CLOSE
+    calls: list[str] = []
+
+    def counted_open(path: os.PathLike[str], flags: int) -> int:
+        calls.append("open")
+        return original_open(path, flags)
+
+    def counted_fstat(fd: int) -> object:
+        calls.append("fstat")
+        return original_fstat(fd)
+
+    def counted_read(fd: int, size: int) -> bytes:
+        calls.append("read")
+        return original_read(fd, size)
+
+    def counted_close(fd: int) -> None:
+        calls.append("close")
+        original_close(fd)
+
+    def fail_os_open(*_args: object) -> int:  # pragma: no cover - regression guard
+        raise AssertionError("payload byte loading should use bound os.open")
+
+    monkeypatch.setattr(code_eval_runner, "_OS_OPEN", counted_open)
+    monkeypatch.setattr(code_eval_runner, "_OS_FSTAT", counted_fstat)
+    monkeypatch.setattr(code_eval_runner, "_OS_READ", counted_read)
+    monkeypatch.setattr(code_eval_runner, "_OS_CLOSE", counted_close)
+    monkeypatch.setattr(code_eval_runner.os, "open", fail_os_open)
+
+    assert code_eval_runner._read_payload_file_bytes(payload_path) == b'{"runtime_status":"ok"}'
+    assert calls == ["open", "fstat", "read", "close"]
+
+
 def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_parse() -> None:
     payload_path = _BytesOnlyPayloadPath(
         json.dumps(
@@ -1136,32 +1279,119 @@ def test_sorted_payload_fast_path_uses_compact_field_offsets(monkeypatch) -> Non
     }
 
 
+def test_sorted_payload_fast_path_reuses_empty_failure_prefix(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "failure_detail": "",
+            "metadata": {f"case_{index}": "ignored" for index in range(16)},
+            "runtime_status": "ok",
+            "test_status": "passed",
+            "tests_passed": 7,
+            "tests_total": 7,
+            "timeout_status": "ok",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert code_eval_runner._CODE_EVAL_SORTED_EMPTY_FAILURE_VALUE_START == payload.find(b'""')
+
+    def fail_forward_compact_scanner(
+        *_args: object, **_kwargs: object
+    ) -> int | None:  # pragma: no cover
+        raise AssertionError("leading empty failure_detail prefix should avoid scanning")
+
+    monkeypatch.setattr(
+        code_eval_runner,
+        "_compact_json_field_value_start_for_token",
+        fail_forward_compact_scanner,
+    )
+
+    assert code_eval_runner._extract_sorted_code_eval_payload_fields(payload) == {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 7,
+        "tests_total": 7,
+        "timeout_status": "ok",
+    }
+
+
+def test_sorted_payload_fast_path_uses_bound_key_tokens(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "failure_detail": "",
+            "metadata": {f"case_{index}": "ignored" for index in range(16)},
+            "runtime_status": "ok",
+            "test_status": "passed",
+            "tests_passed": 7,
+            "tests_total": 7,
+            "timeout_status": "ok",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    class FailingTokenDict(dict):
+        def __getitem__(self, key: str) -> bytes:  # pragma: no cover
+            raise AssertionError(f"sorted fast path should use bound key token for {key}")
+
+    monkeypatch.setattr(code_eval_runner, "_CODE_EVAL_PAYLOAD_KEY_TOKENS", FailingTokenDict())
+
+    assert code_eval_runner._extract_sorted_code_eval_payload_fields(payload) == {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 7,
+        "tests_total": 7,
+        "timeout_status": "ok",
+    }
+
+
+def test_sorted_payload_fast_path_skips_reserved_metadata_keys() -> None:
+    payload_path = _BytesOnlyPayloadPath(
+        json.dumps(
+            {
+                "failure_detail": "",
+                "metadata": {
+                    "runtime_status": "metadata should not be parsed",
+                    "test_status": "metadata should not be parsed",
+                    "tests_passed": "metadata should not be parsed",
+                    "tests_total": "metadata should not be parsed",
+                    "timeout_status": "metadata should not be parsed",
+                },
+                "runtime_status": "ok",
+                "test_status": "passed",
+                "tests_passed": 7,
+                "tests_total": 7,
+                "timeout_status": "ok",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+
+    def fail_json_loads(*_args: object, **_kwargs: object) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("reserved metadata keys should not force full JSON parsing")
+
+    assert code_eval_runner._load_payload_file(cast(Path, payload_path), _loads=fail_json_loads) == {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 7,
+        "tests_total": 7,
+        "timeout_status": "ok",
+    }
+
+
 def test_compact_field_offset_fallback_reuses_known_key_index(monkeypatch) -> None:
     payload = b'{"metadata":{},"runtime_status" : "ok"}'
     key_token = b'"runtime_status"'
     original_start = payload.find(b'{}')
-    expected_key_index = payload.find(key_token, original_start)
-    starts: list[int] = []
-    original_generic_scanner = code_eval_runner._json_field_value_start_for_token
 
-    def tracking_generic_scanner(
-        payload_bytes: bytes,
-        tracked_key_token: bytes,
-        *,
-        start: int = 0,
-    ) -> int | None:
-        starts.append(start)
-        return original_generic_scanner(
-            payload_bytes,
-            tracked_key_token,
-            start=start,
-        )
+    def fail_generic_scanner(*_args: object, **_kwargs: object) -> int | None:  # pragma: no cover
+        raise AssertionError("known compact key index should skip a second find")
 
-    monkeypatch.setattr(
-        code_eval_runner,
-        "_json_field_value_start_for_token",
-        tracking_generic_scanner,
-    )
+    monkeypatch.setattr(code_eval_runner, "_json_field_value_start_for_token", fail_generic_scanner)
 
     assert (
         code_eval_runner._compact_json_field_value_start_for_token(
@@ -1171,7 +1401,23 @@ def test_compact_field_offset_fallback_reuses_known_key_index(monkeypatch) -> No
         )
         == payload.find(b'"ok"')
     )
-    assert starts == [expected_key_index]
+    assert (
+        code_eval_runner._compact_json_field_value_start_for_token_reverse(
+            payload,
+            key_token,
+            start=original_start,
+        )
+        == payload.find(b'"ok"')
+    )
+
+
+def test_json_field_value_start_after_key_index_handles_whitespace_edges() -> None:
+    payload = b'{"runtime_status" : "ok", "tests_total": 2}'
+    cursor = payload.find(b'"runtime_status"') + len(b'"runtime_status"')
+
+    assert code_eval_runner._json_field_value_start_after_key_index(payload, cursor) == payload.find(b'"ok"')
+    assert code_eval_runner._json_field_value_start_after_key_index(b'{"runtime_status" "ok"}', cursor) is None
+    assert code_eval_runner._json_field_value_start_after_key_index(b'{"runtime_status": ', cursor) is None
 
 
 def test_sorted_payload_fast_path_returns_none_for_missing_or_malformed_fields() -> None:

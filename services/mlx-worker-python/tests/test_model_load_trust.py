@@ -31,6 +31,23 @@ class RecordingTextBackend:
         return 4096
 
 
+def test_runtime_name_preserves_missing_falsey_and_non_string_values() -> None:
+    class MissingRuntimeName:
+        pass
+
+    class FalseyRuntimeName:
+        runtime_name = 0
+
+    class NumericRuntimeName:
+        runtime_name = 123
+
+    assert model_load_trust_module._runtime_name(None) == ""
+    assert model_load_trust_module._runtime_name(MissingRuntimeName()) == ""
+    assert model_load_trust_module._runtime_name(FalseyRuntimeName()) == ""
+    assert model_load_trust_module._runtime_name(NumericRuntimeName()) == "123"
+    assert model_load_trust_module._runtime_name(RecordingTextBackend()) == "mlx-lm"
+
+
 def test_trust_policy_non_empty_source_fast_path_preserves_blank_fallback() -> None:
     assert model_load_trust_module._non_empty("request", "fallback") == "request"
     assert model_load_trust_module._non_empty("", "fallback") == "fallback"
@@ -343,6 +360,38 @@ def test_trust_policy_falls_back_to_vlm_loader_family_without_runtime_contract(t
     assert policy.loader_family == "mlx-vlm"
 
 
+def test_loader_family_text_default_bypasses_request_policy_lookup() -> None:
+    model = WorkerModelCatalog.dev_text_model()
+
+    assert (
+        model_load_trust_module._loader_family(
+            model,
+            None,
+            "text",
+            runtime_name="mlx-lm",
+        )
+        == "mlx-lm"
+    )
+    assert (
+        model_load_trust_module._loader_family(
+            model,
+            None,
+            "text",
+            runtime_name="",
+        )
+        == "mlx-lm"
+    )
+    assert (
+        model_load_trust_module._loader_family(
+            model,
+            common_pb2.ModelLoadTrustPolicy(loader_family=" custom-loader "),
+            "text",
+            runtime_name="mlx-lm",
+        )
+        == "custom-loader"
+    )
+
+
 def test_trust_policy_common_loader_fast_path_skips_normalized_membership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -372,6 +421,56 @@ def test_trust_policy_common_loader_fast_path_skips_normalized_membership(
         "mlx-vlm",
         "wrapped-vlm",
         NamedRuntime("wrapped-vlm"),
+    ) is True
+
+
+def test_trust_policy_non_text_vlm_kind_skips_normalized_membership() -> None:
+    class FailingNormalizeString(str):
+        def strip(self, *args, **kwargs):  # pragma: no cover - regression only
+            _ = args, kwargs
+            raise AssertionError("non text/vlm trust check should skip normalization")
+
+    assert model_load_trust_module._is_trust_applicable(
+        "embedding",
+        FailingNormalizeString("mlx-lm"),
+        FailingNormalizeString("mlx-lm"),
+        NamedRuntime("mlx-lm"),
+    ) is False
+
+
+def test_trust_policy_vlm_normalized_membership_preserves_fallbacks() -> None:
+    assert model_load_trust_module._is_trust_applicable(
+        "vlm",
+        "MLX-VLM",
+        "wrapped-vlm",
+        NamedRuntime("wrapped-vlm"),
+    ) is True
+    assert model_load_trust_module._is_trust_applicable(
+        "vlm",
+        "custom-vlm",
+        "Deterministic-VLM",
+        NamedRuntime("Deterministic-VLM"),
+    ) is False
+
+
+def test_trust_policy_canonical_text_loader_fast_path_skips_common_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingCommonLoaders:
+        def __contains__(self, value: object) -> bool:  # pragma: no cover - regression only
+            raise AssertionError(f"canonical text loader should not query common set: {value!r}")
+
+    monkeypatch.setattr(
+        model_load_trust_module,
+        "TRUST_APPLICABLE_TEXT_LOADERS_COMMON",
+        FailingCommonLoaders(),
+    )
+
+    assert model_load_trust_module._is_trust_applicable(
+        "text",
+        "mlx-lm",
+        "mlx-lm",
+        RecordingTextBackend(),
     ) is True
 
 
@@ -782,6 +881,115 @@ def test_trust_policy_treats_missing_config_json_as_absent(tmp_path: Path) -> No
 
     assert exc_info.value.policy.custom_loader_required is True
     assert exc_info.value.policy.custom_loader_detection_source == "model_files:configuration_melix_demo.py"
+
+
+def test_trust_policy_single_executable_model_file_skips_sort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable_model_dir = tmp_path / "single-executable-file-model"
+    executable_model_dir.mkdir()
+    (executable_model_dir / "configuration_melix_demo.py").write_text(
+        "class MelixDemoConfig: pass\n",
+        encoding="utf-8",
+    )
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+
+    def fail_sorted(values):  # pragma: no cover - only runs on regression.
+        raise AssertionError(f"single executable file should not sort {values!r}")
+
+    monkeypatch.setattr(model_load_trust_module, "sorted", fail_sorted, raising=False)
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            executable_model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "model_files:configuration_melix_demo.py"
+
+
+def test_trust_policy_caches_model_file_detection_source() -> None:
+    source_cache = model_load_trust_module._model_files_detection_source
+    source_cache.cache_clear()
+    file_names = ("configuration_melix_demo.py",)
+
+    assert source_cache(file_names) == "model_files:configuration_melix_demo.py"
+    assert source_cache(file_names) == "model_files:configuration_melix_demo.py"
+    assert source_cache.cache_info().hits == 1
+
+
+def test_trust_policy_multiple_executable_model_files_stay_sorted(tmp_path: Path) -> None:
+    executable_model_dir = tmp_path / "multiple-executable-file-model"
+    executable_model_dir.mkdir()
+    (executable_model_dir / "modeling_z_demo.py").write_text(
+        "class ZModel: pass\n",
+        encoding="utf-8",
+    )
+    (executable_model_dir / "configuration_a_demo.py").write_text(
+        "class AConfig: pass\n",
+        encoding="utf-8",
+    )
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+
+    assert model_load_trust_module._detect_executable_model_files(executable_model) == (
+        "configuration_a_demo.py",
+        "modeling_z_demo.py",
+    )
+
+
+def test_trust_policy_caches_executable_model_files_by_directory_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_load_trust_module._detect_executable_model_files_for_stat.cache_clear()
+    executable_model_dir = tmp_path / "cached-executable-file-model"
+    executable_model_dir.mkdir()
+    (executable_model_dir / "modeling_melix_demo.py").write_text(
+        "class MelixDemoModel: pass\n",
+        encoding="utf-8",
+    )
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+    scandir_calls = 0
+    original_scandir = model_load_trust_module._OS_SCANDIR
+
+    def counted_scandir(path: str):
+        nonlocal scandir_calls
+        scandir_calls += 1
+        return original_scandir(path)
+
+    monkeypatch.setattr(model_load_trust_module, "_OS_SCANDIR", counted_scandir)
+
+    assert model_load_trust_module._detect_executable_model_files(executable_model) == (
+        "modeling_melix_demo.py",
+    )
+    assert model_load_trust_module._detect_executable_model_files(executable_model) == (
+        "modeling_melix_demo.py",
+    )
+    assert scandir_calls == 1
+
+    file_model = WorkerModelCatalog.dev_text_model()
+    file_model.model_path = str(executable_model_dir / "modeling_melix_demo.py")
+    assert model_load_trust_module._detect_executable_model_files(file_model) == ()
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tilde_model_dir = tmp_path / "tilde-executable-model"
+    tilde_model_dir.mkdir()
+    (tilde_model_dir / "configuration_melix_demo.py").write_text(
+        "class MelixDemoConfig: pass\n",
+        encoding="utf-8",
+    )
+    tilde_model = WorkerModelCatalog.dev_text_model()
+    tilde_model.model_path = "~/tilde-executable-model"
+    assert model_load_trust_module._detect_executable_model_files(tilde_model) == (
+        "configuration_melix_demo.py",
+    )
 
 
 def test_trust_policy_treats_blank_model_path_as_absent(tmp_path: Path) -> None:

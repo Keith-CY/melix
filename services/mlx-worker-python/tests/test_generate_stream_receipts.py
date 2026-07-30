@@ -326,14 +326,14 @@ def test_structured_tool_calls_finalize_through_shared_text_receipt_state(monkey
                 enabled=True,
                 mode_source="request_enable_thinking",
             ),
-            tool_config=common_pb2.ToolConfig(
+                tool_config=common_pb2.ToolConfig(
                 tools=[
                     common_pb2.ToolDefinition(
                         name="search",
                         json_schema='{"type":"object"}',
                     )
                 ],
-                tool_choice="required",
+                    tool_choice="",
             ),
         ),
         messages=[
@@ -362,7 +362,7 @@ def test_generate_token_route_receipt_uses_compat_policy_context_and_matches_str
     compat_receipt = (
         '{"compat_surface":"openai.chat.completions",'
         '"reasoning_mode":"enabled",'
-        '"tool_choice_resolved":"required",'
+        '"tool_choice_resolved":"auto",'
         '"stream_mode":"stream"}'
     )
 
@@ -387,7 +387,7 @@ def test_generate_token_route_receipt_uses_compat_policy_context_and_matches_str
 
     assert stream_completed.assistant_text == non_stream_completed.assistant_text == "visible"
     assert stream_completed.reasoning_text == non_stream_completed.reasoning_text == "trace"
-    assert stream_receipt["tool_choice_policy"] == "required"
+    assert stream_receipt["tool_choice_policy"] == "auto"
     assert stream_receipt["reasoning_mode"] == "enabled"
     assert stream_receipt["visible_text_tokens"] == non_stream_receipt["visible_text_tokens"] == 1
     assert stream_receipt["hidden_reasoning_tokens"] == non_stream_receipt["hidden_reasoning_tokens"] == 1
@@ -403,7 +403,7 @@ def test_generate_token_route_receipt_records_actual_token_ids_by_channel_span()
         for event in inference_service.Generate(
             _token_route_request(
                 model_handle,
-                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"required"}',
+                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"auto"}',
                 stream=True,
             ),
             context=None,
@@ -433,7 +433,7 @@ def test_generate_token_route_receipt_keeps_multitoken_hidden_and_tool_spans() -
         for event in inference_service.Generate(
             _token_route_request(
                 model_handle,
-                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"required"}',
+                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"auto"}',
                 stream=True,
             ),
             context=None,
@@ -470,7 +470,7 @@ def test_generate_token_route_receipt_marks_raw_text_fallback_without_token_ids(
         for event in inference_service.Generate(
             _token_route_request(
                 model_handle,
-                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"required"}',
+                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"auto"}',
                 stream=True,
             ),
             context=None,
@@ -877,8 +877,8 @@ def test_allowed_tools_receipt_reuses_static_omitted_receipt() -> None:
             "<think>unfinished hidden reasoning",
             {
                 "assistant_text": "",
-                "reasoning_text": "",
-                "reasoning_finalized": "false",
+                "reasoning_text": "unfinished hidden reasoning",
+                "reasoning_finalized": "true",
                 "tool_calls_finalized": "false",
                 "malformed_channel_recovered": "true",
                 "malformed_reasoning_count": "1",
@@ -993,13 +993,43 @@ def test_generate_finalizer_receipt_matches_for_stream_and_non_stream_modes(
         assert stream_receipt[key] == value
 
 
+def test_generate_flushes_eos_recovered_answer_before_usage_and_completed() -> None:
+    events = _generate_finalizer_events(
+        raw_text="<think>hidden trace\nAnswer: 42",
+        stream=True,
+        request_id="req-finalizer-stream-eos-recovery-sequence",
+    )
+
+    payloads = [event.WhichOneof("payload") for event in events]
+    reasoning = [
+        event.reasoning_delta.text
+        for event in events
+        if event.HasField("reasoning_delta")
+    ]
+    content = [
+        event.token_delta.text
+        for event in events
+        if event.HasField("token_delta")
+    ]
+    completed = _finalizer_completed(events)
+
+    assert reasoning == ["hidden trace"]
+    assert content == ["Answer: 42"]
+    assert "".join(content) == completed.assistant_text
+    assert payloads.index("reasoning_delta") < payloads.index("token_delta")
+    assert payloads.index("token_delta") < payloads.index("usage_delta")
+    assert payloads.index("usage_delta") < payloads.index("completed")
+
+
 def _token_route_request(
     model_handle: str,
     *,
     compat_receipt: str,
     stream: bool,
     reasoning_enabled: bool = True,
+    tool_choice: str = "auto",
 ) -> inference_pb2.GenerateRequest:
+    resolved_reasoning_mode = "enabled" if reasoning_enabled else "disabled"
     return inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(
@@ -1008,9 +1038,9 @@ def _token_route_request(
             model_handle=model_handle,
             ext={
                 "melix.compat.policy_receipt_json": compat_receipt,
-                "melix.compat.reasoning_mode": "enabled",
-                "melix.compat.tool_choice_resolved": "required",
-                "melix.reasoning.mode": "enabled",
+                "melix.compat.reasoning_mode": resolved_reasoning_mode,
+                "melix.compat.tool_choice_resolved": tool_choice,
+                "melix.reasoning.mode": resolved_reasoning_mode,
                 "melix.tool_parser.mode": "qwen",
             },
             reasoning=common_pb2.ReasoningConfig(
@@ -1024,7 +1054,7 @@ def _token_route_request(
                         json_schema='{"type":"object"}',
                     )
                 ],
-                tool_choice="required",
+                tool_choice="" if tool_choice == "auto" else tool_choice,
             ),
         ),
         messages=[
@@ -1047,17 +1077,19 @@ def _generate_finalizer_events(
     return_usage: bool = True,
 ):
     inference_service, model_handle = _build_services(FinalizerParityBackend(raw_text=raw_text))
+    reasoning_enabled = tool_choice not in {"required"}
+    reasoning_mode = "enabled" if reasoning_enabled else "disabled"
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id=request_id),
             model_handle=model_handle,
             ext={
-                "melix.reasoning.mode": "enabled",
+                "melix.reasoning.mode": reasoning_mode,
                 "melix.tool_parser.mode": "qwen",
                 "melix.response.created": "1716500000",
             },
             reasoning=common_pb2.ReasoningConfig(
-                enabled=True,
+                enabled=reasoning_enabled,
                 mode_source="request_enable_thinking",
                 effort="medium",
             ),

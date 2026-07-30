@@ -21,6 +21,9 @@ from worker.runtime.untrusted_context import (
 RetrievalContextKind = Literal["retrieved_document", "retrieved_image"]
 
 _MISSING_LOOKUP_RECORDS = object()
+_RETRIEVAL_CONTEXT_KINDS = frozenset({"retrieved_document", "retrieved_image"})
+_PUBLIC_SOURCE_PREFIX = "source:"
+_PUBLIC_SOURCE_PREFIX_LENGTH = len(_PUBLIC_SOURCE_PREFIX)
 
 
 class RetrievalContextAdmissionError(ValueError):
@@ -128,7 +131,6 @@ def project_retrieval_contexts(
     admit_entry = _admit_entry
     duplicate_projection_receipt = _duplicate_projection_receipt
     build_untrusted_context_receipt = untrusted_context_receipt
-    build_public_context_receipt = _public_untrusted_context_receipt
     is_public_source_id = _is_public_source_id
     refusal_receipts_extend = refusal_receipts.extend
     refusal_receipts_append = refusal_receipts.append
@@ -141,9 +143,12 @@ def project_retrieval_contexts(
     dict_type = dict
     bool_type = bool
     strip_text = str.strip
+    type_of = type
+    public_source_prefix = _PUBLIC_SOURCE_PREFIX
+    public_source_prefix_length = _PUBLIC_SOURCE_PREFIX_LENGTH
 
     for entry in entries:
-        if type(entry) is entry_type:
+        if type_of(entry) is entry_type:
             context_kind = entry.context_kind
             source_id = entry.source_id
             payload = entry.payload
@@ -153,7 +158,7 @@ def project_retrieval_contexts(
             reason = entry.reason
             corrective_action = entry.corrective_action
             if (
-                context_kind in ("retrieved_document", "retrieved_image")
+                (context_kind == "retrieved_document" or context_kind == "retrieved_image")
                 and isinstance_of(source_id, str_type)
                 and isinstance_of(payload, dict_type)
                 and isinstance_of(owner_scope_checked, bool_type)
@@ -174,16 +179,31 @@ def project_retrieval_contexts(
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    if is_public_source_id(normalized_source_id):
-                        receipt = build_public_context_receipt(
-                            segment_id=normalized_segment_id,
-                            source_type=context_kind,
-                            source_field=normalized_source_field,
-                            source_id=normalized_source_id,
-                            owner_scope_checked=owner_scope_checked,
-                            reason=normalized_reason,
-                            corrective_action=normalized_corrective_action,
+                    if normalized_source_id[:public_source_prefix_length] == public_source_prefix:
+                        source_suffix = normalized_source_id[public_source_prefix_length:]
+                        source_is_public = (
+                            source_suffix.isdigit() and len(normalized_source_id) <= 96
                         )
+                        if not source_is_public:
+                            source_is_public = is_public_source_id(normalized_source_id)
+                    else:
+                        source_is_public = is_public_source_id(normalized_source_id)
+                    if source_is_public:
+                        receipt = {
+                            "schema_version": UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+                            "segment_id": normalized_segment_id,
+                            "source_type": context_kind,
+                            "source_field": normalized_source_field,
+                            "message_role": "user",
+                            "trust_level": "untrusted",
+                            "policy": "data_only",
+                            "boundary_checked": True,
+                            "included": True,
+                            "owner_scope_checked": owner_scope_checked,
+                            "reason": normalized_reason,
+                            "corrective_action": normalized_corrective_action,
+                            "source_id": normalized_source_id,
+                        }
                     else:
                         receipt = build_untrusted_context_receipt(
                             segment_id=normalized_segment_id,
@@ -287,7 +307,6 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     entry_type = RetrievalContextEntry
     duplicate_projection_receipt = _duplicate_projection_receipt
     build_untrusted_context_receipt = untrusted_context_receipt
-    build_public_context_receipt = _public_untrusted_context_receipt
     is_public_source_id = _is_public_source_id
     projection_refusal_receipts_extend = projection_refusal_receipts.extend
     receipts_append = receipts.append
@@ -298,21 +317,53 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     dict_type = dict
     bool_type = bool
     type_of = type
+    public_source_prefix = _PUBLIC_SOURCE_PREFIX
+    public_source_prefix_length = _PUBLIC_SOURCE_PREFIX_LENGTH
 
+    mapping_type = Mapping
     for record in records:
-        if type_of(record) is not dict_type and not isinstance(record, Mapping):
-            store_refusal_receipts_append(
-                store_record_refusal(
-                    source_field="record",
-                    source_id="unknown-retrieved-document",
-                    context_kind="retrieved_document",
+        record_is_dict = type_of(record) is dict_type
+        if record_is_dict:
+            try:
+                context_kind = record["context_kind"]
+                source_id = record["source_id"]
+                payload = record["payload"]
+                owner_scope_checked = record["owner_scope_checked"]
+                segment_id = record["segment_id"]
+                source_field = record["source_field"]
+                reason = record["reason"]
+                corrective_action = record["corrective_action"]
+            except KeyError:
+                record_get: Any = record.get
+                context_kind = record_get("context_kind")
+                source_id = record_get("source_id")
+                payload = record_get("payload")
+                owner_scope_checked = record_get("owner_scope_checked")
+                segment_id = record_get("segment_id", "")
+                source_field = record_get("source_field", "")
+                reason = record_get("reason", "")
+                corrective_action = record_get("corrective_action", "")
+        else:
+            if not isinstance(record, mapping_type):
+                store_refusal_receipts_append(
+                    store_record_refusal(
+                        source_field="record",
+                        source_id="unknown-retrieved-document",
+                        context_kind="retrieved_document",
+                    )
                 )
-            )
-            continue
+                continue
+            record_get = record.get
+            context_kind = record_get("context_kind")
+            source_id = record_get("source_id")
+            payload = record_get("payload")
+            owner_scope_checked = record_get("owner_scope_checked")
+            segment_id = record_get("segment_id", "")
+            source_field = record_get("source_field", "")
+            reason = record_get("reason", "")
+            corrective_action = record_get("corrective_action", "")
 
-        record_get: Any = record.get
-        context_kind = record_get("context_kind")
-        if context_kind not in ("retrieved_document", "retrieved_image"):
+        if context_kind != "retrieved_document" and context_kind != "retrieved_image":
             source_id = store_record_source_id(record)
             refusal_context_kind = store_record_refusal_context_kind(source_id)
             store_refusal_receipts_append(
@@ -324,23 +375,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
             )
             continue
 
-        if type_of(record) is dict_type:
-            try:
-                source_id = record["source_id"]
-                payload = record["payload"]
-                owner_scope_checked = record["owner_scope_checked"]
-                segment_id = record["segment_id"]
-                source_field = record["source_field"]
-                reason = record["reason"]
-                corrective_action = record["corrective_action"]
-            except KeyError:
-                source_id = record_get("source_id")
-                payload = record_get("payload")
-                owner_scope_checked = record_get("owner_scope_checked")
-                segment_id = record_get("segment_id", "")
-                source_field = record_get("source_field", "")
-                reason = record_get("reason", "")
-                corrective_action = record_get("corrective_action", "")
+        if record_is_dict:
             if (
                 type_of(source_id) is str_type
                 and type_of(payload) is dict_type
@@ -362,16 +397,31 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    if is_public_source_id(normalized_source_id):
-                        receipt = build_public_context_receipt(
-                            segment_id=normalized_segment_id,
-                            source_type=context_kind,
-                            source_field=normalized_source_field,
-                            source_id=normalized_source_id,
-                            owner_scope_checked=owner_scope_checked,
-                            reason=normalized_reason,
-                            corrective_action=normalized_corrective_action,
+                    if normalized_source_id[:public_source_prefix_length] == public_source_prefix:
+                        source_suffix = normalized_source_id[public_source_prefix_length:]
+                        source_is_public = (
+                            source_suffix.isdigit() and len(normalized_source_id) <= 96
                         )
+                        if not source_is_public:
+                            source_is_public = is_public_source_id(normalized_source_id)
+                    else:
+                        source_is_public = is_public_source_id(normalized_source_id)
+                    if source_is_public:
+                        receipt = {
+                            "schema_version": UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+                            "segment_id": normalized_segment_id,
+                            "source_type": context_kind,
+                            "source_field": normalized_source_field,
+                            "message_role": "user",
+                            "trust_level": "untrusted",
+                            "policy": "data_only",
+                            "boundary_checked": True,
+                            "included": True,
+                            "owner_scope_checked": owner_scope_checked,
+                            "reason": normalized_reason,
+                            "corrective_action": normalized_corrective_action,
+                            "source_id": normalized_source_id,
+                        }
                     else:
                         receipt = build_untrusted_context_receipt(
                             segment_id=normalized_segment_id,
@@ -396,6 +446,8 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     receipts_append(receipt)
                     continue
 
+        if record_is_dict:
+            record_get = record.get
         try:
             admission = admit_entry(
                 entry_type(
@@ -609,7 +661,7 @@ def project_retrieval_lookup_result(
         has_lookup_metadata
         and (
             not has_records
-            or not isinstance(lookup_records, list)
+            or records_type is not list
         )
         and len(refusal_receipts) == 1
         and not prompt_user_payload
@@ -657,6 +709,45 @@ def _copy_payload_value(value: Any) -> Any:
         return {key: copy_value(item) for key, item in value.items()}
     if value_type is list:
         value_len = len(value)
+        if value_len == 11:
+            return [
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+                copy_value(value[5]),
+                copy_value(value[6]),
+                copy_value(value[7]),
+                copy_value(value[8]),
+                copy_value(value[9]),
+                copy_value(value[10]),
+            ]
+        if value_len == 10:
+            return [
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+                copy_value(value[5]),
+                copy_value(value[6]),
+                copy_value(value[7]),
+                copy_value(value[8]),
+                copy_value(value[9]),
+            ]
+        if value_len == 9:
+            return [
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+                copy_value(value[5]),
+                copy_value(value[6]),
+                copy_value(value[7]),
+                copy_value(value[8]),
+            ]
         if value_len == 8:
             return [
                 copy_value(value[0]),
@@ -713,6 +804,45 @@ def _copy_payload_value(value: Any) -> Any:
         return [copy_value(item) for item in value]
     if value_type is tuple:
         value_len = len(value)
+        if value_len == 11:
+            return (
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+                copy_value(value[5]),
+                copy_value(value[6]),
+                copy_value(value[7]),
+                copy_value(value[8]),
+                copy_value(value[9]),
+                copy_value(value[10]),
+            )
+        if value_len == 10:
+            return (
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+                copy_value(value[5]),
+                copy_value(value[6]),
+                copy_value(value[7]),
+                copy_value(value[8]),
+                copy_value(value[9]),
+            )
+        if value_len == 9:
+            return (
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+                copy_value(value[5]),
+                copy_value(value[6]),
+                copy_value(value[7]),
+                copy_value(value[8]),
+            )
         if value_len == 8:
             return (
                 copy_value(value[0]),

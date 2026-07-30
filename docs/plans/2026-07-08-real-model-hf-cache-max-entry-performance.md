@@ -20,3 +20,18 @@ The affected path is covered by the registered PR-scoped probe `real-model-suppo
 - `hf_cache_elapsed_ms_mean` should improve on the registered local probe.
 - `hf_cache_peak_bytes_mean` should remain stable or improve.
 - Existing behavior for missing refs, non-directory entries, and no-symlink-follow semantics must be preserved by tests.
+
+## 2026-07-24 builtin max follow-up
+
+This follow-up keeps the same registered PR-scoped probe,
+`real-model-support-hf-cache-latest-snapshot`, and narrows only the snapshot-name
+selection loop when `refs/main` is unavailable. The previous fast path already
+avoided sorting and avoided per-entry `is_dir()` calls, but still performed the
+lexicographic max comparison in an explicit Python loop.
+
+The slice delegates that max-name selection to the built-in `max(...,
+default=None)` over the `os.scandir()` entry names. The behavior remains the
+same for empty snapshot directories, non-directory lexicographic maxima,
+non-symlink-follow directory checks, and precise fallback rescans. The registered
+probe's primary metric for this follow-up is `hf_cache_elapsed_ms_mean`; peak
+bytes and weight-scan metrics remain guardrails.

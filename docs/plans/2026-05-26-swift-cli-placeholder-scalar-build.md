@@ -20,6 +20,8 @@ The registry defines focused `test_command`, `coverage_command`, and `probe_comm
 
 `MelixCLIJSONMetricPatch.makePlaceholder(metricName:)` previously used `String.map` over `Character` values, creating an intermediate array before rebuilding the sanitized metric-name string. This slice builds the sanitized name directly from Unicode scalars into a reserved `String` and reuses a static alphanumeric character set, preserving the same token shape while avoiding the intermediate mapped array.
 
+The 2026-07-14 follow-up keeps the same Swift-only boundary and registered `swift-cli-json-envelope-encoding` probe. The hot CLI envelope metric name is always `melix.cli.json_encode_ms`, so `makePlaceholder(metricName:)` now recognizes that exact metric and builds the already-sanitized token from a cached prefix plus a fresh UUID. Non-default metric names still use the existing scalar sanitizer, preserving Unicode and punctuation behavior.
+
 ## Behavior
 
 The placeholder still:

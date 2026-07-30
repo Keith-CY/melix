@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 import Foundation
 import MelixCLICore
 import Testing
@@ -74,9 +73,9 @@ struct AppMainBootstrapTests {
         #expect(await client.handshakeCount == 1)
     }
 
-    @Test("launcher installs application menu keyboard commands")
+    @Test("launcher leaves Return handling to the focused chat composer")
     @MainActor
-    func launcherInstallsApplicationMenuKeyboardCommands() async throws {
+    func launcherLeavesReturnHandlingToFocusedChatComposer() async throws {
         let app = RecordingApplicationLifecycle()
         let bootstrap = MelixMenuBarBootstrap(
             client: FakeControlPlaneXPCClient(),
@@ -93,62 +92,13 @@ struct AppMainBootstrapTests {
         let mainMenu = try #require(app.mainMenu)
         let appMenuItem = try #require(mainMenu.items.first)
         let appMenu = try #require(appMenuItem.submenu)
-        let sendChatItem = try #require(appMenu.items.first { $0.title == "Send Chat Prompt" })
         let quitItem = try #require(appMenu.items.last)
 
-        #expect(sendChatItem.keyEquivalent == "\r")
-        #expect(sendChatItem.keyEquivalentModifierMask == [.command])
-        #expect(sendChatItem.target === DesktopChatShortcutController.shared)
+        #expect(appMenu.items.contains { $0.title == "Send Chat Prompt" } == false)
+        #expect(appMenu.items.contains { $0.keyEquivalent == "\r" } == false)
         #expect(quitItem.title == "Quit Melix")
         #expect(quitItem.keyEquivalent == "q")
         #expect(quitItem.keyEquivalentModifierMask == [.command])
-    }
-
-    @Test("chat shortcut controller recognizes command return")
-    @MainActor
-    func chatShortcutControllerRecognizesCommandReturn() throws {
-        let commandReturn = try #require(
-            NSEvent.keyEvent(
-                with: .keyDown,
-                location: .zero,
-                modifierFlags: [.command],
-                timestamp: 0,
-                windowNumber: 0,
-                context: nil,
-                characters: "\r",
-                charactersIgnoringModifiers: "\r",
-                isARepeat: false,
-                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
-            )
-        )
-        let plainReturn = try #require(
-            NSEvent.keyEvent(
-                with: .keyDown,
-                location: .zero,
-                modifierFlags: [],
-                timestamp: 0,
-                windowNumber: 0,
-                context: nil,
-                characters: "\r",
-                charactersIgnoringModifiers: "\r",
-                isARepeat: false,
-                keyCode: DesktopChatComposerKeyPolicy.returnKeyCode
-            )
-        )
-
-        #expect(DesktopChatShortcutController.isChatSubmitShortcut(commandReturn))
-        #expect(DesktopChatShortcutController.isChatSubmitShortcut(plainReturn) == false)
-    }
-
-    @Test("chat shortcut controller registers both return key codes")
-    @MainActor
-    func chatShortcutControllerRegistersBothReturnKeyCodes() {
-        let descriptors = DesktopChatShortcutController.hotKeyDescriptors
-
-        #expect(descriptors.map(\.keyCode).contains(UInt32(DesktopChatComposerKeyPolicy.returnKeyCode)))
-        #expect(descriptors.map(\.keyCode).contains(UInt32(DesktopChatComposerKeyPolicy.keypadEnterKeyCode)))
-        #expect(descriptors.allSatisfy { $0.modifiers == UInt32(cmdKey) })
-        #expect(Set(descriptors.map(\.id)).count == descriptors.count)
     }
 
     @Test("live application delegates activation policy and run to its application controller")
@@ -1063,12 +1013,13 @@ struct AppMainBootstrapTests {
     func terminationCoordinatorParsesPackagedWorkerPIDsFromEnvironment() {
         let workerPIDs = MenuBarTerminationCoordinator.bundledWorkerProcessIDs(
             environment: [
+                "MELIX_CONTROL_PLANE_PID": "987",
                 "MELIX_SWIFT_WORKER_PID": "321",
                 "MELIX_PYTHON_WORKER_PID": "654",
             ]
         )
 
-        #expect(workerPIDs == [321, 654])
+        #expect(workerPIDs == [987, 321, 654])
     }
 
     @Test("dev-down launcher spawns the shutdown script with MELIX_RUNTIME_DIR")

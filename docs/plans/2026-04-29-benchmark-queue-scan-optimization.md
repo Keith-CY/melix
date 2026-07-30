@@ -26,6 +26,15 @@ Reduce repeated directory-scan overhead in `BenchmarkQueueStore.list_records()` 
 3. Keep behavior identical for missing directories, non-file entries, sorting, and transitions.
 4. Add a regression test proving non-JSON files and JSON-named directories are ignored.
 
+## Follow-up Slice: Append Binding
+
+The 2026-07-26 follow-up slice keeps the registered benchmark queue cache probe
+and narrows implementation to one hot-loop binding in
+`BenchmarkQueueStore.list_records()`: bind `records.append` once before the
+`os.scandir()` loop and call the local in the per-entry JSON-file path. This
+preserves queue ordering, metadata cache semantics, and public clone behavior
+while shaving repeated attribute lookup overhead from large queue scans.
+
 ## Performance Probe
 
 Use a synthetic queue directory with thousands of JSON queue item files plus noise files. Measure elapsed time for:

@@ -359,49 +359,62 @@ class ColdPrefixStore:
                         continue
         except OSError:
             return
-        precheck_orphan_names = len(snapshot_file_names) < len(meta_paths)
         meta_suffix_length = len(".meta.json")
+        root = self._root
+        index = self._index
+        session_digest = _session_digest
+        normalize_kv_quant_profile = _normalize_kv_quant_profile
+        entry_meta_cls = ColdEntryMeta
+        remove_path_string_quietly = _remove_path_string_quietly
+        open_file = _OPEN
+        json_loads = json.loads
         for meta_path_string, meta_file_name in meta_paths:
-            if precheck_orphan_names:
-                snapshot_name_from_sidecar = f"{meta_file_name[:-meta_suffix_length]}.kv.safetensors"
-                if snapshot_name_from_sidecar not in snapshot_file_names:
-                    # Orphaned sidecar (crash between snapshot write and meta
-                    # write, or manual snapshot deletion) — drop it before parsing
-                    # JSON so orphan-heavy cold dirs do not pay per-sidecar decode
-                    # cost on every restart.
-                    _remove_quietly(Path(meta_path_string))
-                    continue
-            meta_path = Path(meta_path_string)
+            snapshot_name_from_sidecar = f"{meta_file_name[:-meta_suffix_length]}.kv.safetensors"
+            if snapshot_name_from_sidecar not in snapshot_file_names:
+                # Orphaned sidecar (crash between snapshot write and meta
+                # write, or manual snapshot deletion) — drop it before parsing
+                # JSON so orphan-heavy cold dirs do not pay per-sidecar decode
+                # cost on every restart. Always run the filename precheck because
+                # unrelated stray snapshots can otherwise mask balanced orphan
+                # directories when comparing only sidecar counts.
+                remove_path_string_quietly(meta_path_string)
+                continue
             try:
-                with _OPEN(meta_path_string, encoding="utf-8") as meta_file:
-                    payload = json.load(meta_file)
+                with open_file(meta_path_string, "rb") as meta_file:
+                    payload = json_loads(meta_file.read())
+                payload_get = payload.get
                 session_id = str(payload["session_id"])
-                snapshot_name = f"{_session_digest(session_id)}.kv.safetensors"
-                snapshot_path = self._root / snapshot_name
+                snapshot_name = f"{session_digest(session_id)}.kv.safetensors"
                 if snapshot_name not in snapshot_file_names:
                     # Orphaned sidecar (crash between snapshot write and meta
                     # write, or manual snapshot deletion) — drop it so restarts
                     # stop rescanning it.
-                    _remove_quietly(meta_path)
+                    remove_path_string_quietly(meta_path_string)
                     continue
-                self._index[session_id] = ColdEntryMeta(
+                raw_token_ids = payload["token_ids"]
+                if raw_token_ids and type(raw_token_ids[0]) is int:
+                    token_ids = list(raw_token_ids)
+                else:
+                    token_ids = [int(t) for t in raw_token_ids]
+                meta_path = Path(meta_path_string)
+                index[session_id] = entry_meta_cls(
                     session_id=session_id,
-                    token_ids=[int(t) for t in payload["token_ids"]],
-                    cache_mode=str(payload.get("cache_mode", "")),
-                    model_id=str(payload.get("model_id", "")),
-                    model_revision=str(payload.get("model_revision", "")),
-                    block_size=max(1, int(payload.get("block_size", 1))),
-                    total_bytes=int(payload.get("total_bytes", 0)),
-                    acceleration_mode=str(payload.get("acceleration_mode", "")),
-                    kv_quant_profile=_normalize_kv_quant_profile(
-                        str(payload.get("kv_quant_profile", ""))
+                    token_ids=token_ids,
+                    cache_mode=str(payload_get("cache_mode", "")),
+                    model_id=str(payload_get("model_id", "")),
+                    model_revision=str(payload_get("model_revision", "")),
+                    block_size=max(1, int(payload_get("block_size", 1))),
+                    total_bytes=int(payload_get("total_bytes", 0)),
+                    acceleration_mode=str(payload_get("acceleration_mode", "")),
+                    kv_quant_profile=normalize_kv_quant_profile(
+                        str(payload_get("kv_quant_profile", ""))
                     ),
-                    stored_at=float(payload.get("stored_at", 0.0)),
-                    snapshot_path=snapshot_path,
+                    stored_at=float(payload_get("stored_at", 0.0)),
+                    snapshot_path=root / snapshot_name,
                     meta_path=meta_path,
                 )
             except Exception:
-                _remove_quietly(meta_path)
+                remove_path_string_quietly(meta_path_string)
 
     def _evict_over_budget_locked(self, keep_session_id: str) -> None:
         if self._max_bytes <= 0:
@@ -423,17 +436,49 @@ class ColdPrefixStore:
             _remove_quietly(meta.meta_path)
 
 
-def _tensor_nbytes(tensor: Any) -> Any:
-    nbytes = getattr(tensor, "nbytes", None)
-    if nbytes is not None:
-        return nbytes
-    size = getattr(tensor, "size", None)
+def _tensor_nbytes(tensor: Any, get_attr: Any = getattr) -> Any:
+    try:
+        nbytes = tensor.nbytes
+    except AttributeError:
+        pass
+    else:
+        if nbytes is not None:
+            return nbytes
+    size = get_attr(tensor, "size", None)
     if size is None:
         return 0
-    itemsize = getattr(tensor, "itemsize", None)
+    itemsize = get_attr(tensor, "itemsize", None)
     if itemsize is None:
         return 0
-    return int(size) * int(itemsize)
+    return size * itemsize
+
+
+def _tensor_pair_nbytes(first_tensor: Any, second_tensor: Any, get_attr: Any = getattr) -> Any:
+    try:
+        first_nbytes = first_tensor.nbytes
+    except AttributeError:
+        first_size = get_attr(first_tensor, "size", None)
+        if first_size is None:
+            first_nbytes = 0
+        else:
+            first_itemsize = get_attr(first_tensor, "itemsize", None)
+            first_nbytes = 0 if first_itemsize is None else first_size * first_itemsize
+    second_nbytes = get_attr(second_tensor, "nbytes", None)
+    if second_nbytes is None:
+        try:
+            second_size = second_tensor.size
+        except AttributeError:
+            second_nbytes = 0
+        else:
+            try:
+                second_itemsize = second_tensor.itemsize
+            except AttributeError:
+                second_nbytes = 0
+            else:
+                second_nbytes = (
+                    0 if second_itemsize is None else second_size * second_itemsize
+                )
+    return first_nbytes + second_nbytes
 
 
 def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
@@ -446,27 +491,32 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
         return 0
     total = 0
     tensor_nbytes = _tensor_nbytes
-    sequence_types = _CACHE_STATE_SEQUENCE_TYPES
+    tensor_pair_nbytes = _tensor_pair_nbytes
+    get_attr = getattr
+    type_of = type
     for layer_cache in cache_snapshot:
-        state = getattr(layer_cache, "state", None)
-        if state is not None:
-            if isinstance(state, sequence_types):
-                if len(state) == 2:
-                    total += tensor_nbytes(state[0]) + tensor_nbytes(state[1])
-                    continue
-                for tensor in state:
-                    total += tensor_nbytes(tensor)
-                continue
-            total += tensor_nbytes(state)
-            continue
-
-        keys = getattr(layer_cache, "keys", None)
-        if keys is not None:
-            total += tensor_nbytes(keys)
-        values = getattr(layer_cache, "values", None)
-        if values is not None:
-            total += tensor_nbytes(values)
-    return int(total)
+        state = get_attr(layer_cache, "state", None)
+        state_type = type_of(state)
+        if state_type is list or state_type is tuple:
+            try:
+                first_state, second_state = state  # type: ignore[misc]
+            except ValueError:
+                for tensor in state:  # type: ignore[misc]
+                    total += tensor_nbytes(tensor, get_attr)
+            else:
+                total += tensor_pair_nbytes(first_state, second_state, get_attr)
+        elif state is None:
+            keys = get_attr(layer_cache, "keys", None)
+            values = get_attr(layer_cache, "values", None)
+            if keys is not None and values is not None:
+                total += tensor_pair_nbytes(keys, values, get_attr)
+            elif keys is not None:
+                total += tensor_nbytes(keys, get_attr)
+            elif values is not None:
+                total += tensor_nbytes(values, get_attr)
+        else:
+            total += tensor_nbytes(state, get_attr)
+    return total if type_of(total) is int else int(total)
 
 
 def _session_digest(session_id: str) -> str:
@@ -476,6 +526,15 @@ def _session_digest(session_id: str) -> str:
 def _remove_quietly(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _remove_path_string_quietly(path: str) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
     except OSError:
         pass
 

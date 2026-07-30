@@ -21,6 +21,7 @@ try:
     from worker.runtime.quantized_tensor_metadata import (  # noqa: E402
         QuantizedTensorMetadata,
         _native_multimodal_high_precision_module,
+        cross_shard_quantized_metadata_fixup_count,
         quantized_scales_present,
         quantized_tensor_metadata_from_index_payload,
         quantized_tensor_metadata_from_safetensor_headers,
@@ -114,6 +115,26 @@ except ImportError:  # Base refs before the metadata prepass do not have the hel
             if segment in {"lm_head", "output", "output_layer", "score"}:
                 return True
         return False
+
+    def cross_shard_quantized_metadata_fixup_count(
+        metadata: QuantizedTensorMetadata,
+    ) -> int:
+        prefixes: set[str] = set()
+        for tensor_name in metadata.tensor_to_shard:
+            if tensor_name.endswith(".weight"):
+                prefixes.add(tensor_name[: -len(".weight")])
+            elif tensor_name.endswith(".scales"):
+                prefixes.add(tensor_name[: -len(".scales")])
+        count = 0
+        for prefix in prefixes:
+            shards = metadata.quantized_tensor_shards(prefix)
+            if (
+                shards.get("weight")
+                and shards.get("scales")
+                and shards["weight"] != shards["scales"]
+            ):
+                count += 1
+        return count
 
 
 def _build_weight_map(pair_count: int, shard_count: int) -> dict[str, str]:
@@ -224,6 +245,14 @@ def run_probe() -> dict[str, float]:
         samples=samples,
     )
 
+    cross_shard_fixup_ms, cross_shard_fixup_peaks, cross_shard_fixup_count = _measure(
+        lambda: sum(
+            cross_shard_quantized_metadata_fixup_count(metadata)
+            for _ in range(decision_iterations)
+        ),
+        samples=samples,
+    )
+
     metadata_decision_ms, metadata_decision_peaks, metadata_decision_count = _measure(
         lambda: sum(
             int(quantized_scales_present(prefix, metadata=metadata, weights={}))  # type: ignore[arg-type]
@@ -280,6 +309,9 @@ def run_probe() -> dict[str, float]:
         "tensor_names_access_peak_bytes_mean": statistics.fmean(tensor_names_access_peaks),
         "header_tensor_count": float(len(header_metadata.tensor_names)),
         "cross_shard_pair_count": cross_shard_pair_count,
+        "cross_shard_fixup_count": float(cast(int, cross_shard_fixup_count)),
+        "cross_shard_fixup_elapsed_ms_mean": statistics.fmean(cross_shard_fixup_ms),
+        "cross_shard_fixup_peak_bytes_mean": statistics.fmean(cross_shard_fixup_peaks),
         "pair_count": float(pair_count),
         "shard_count": float(shard_count),
         "sample_count": float(samples),

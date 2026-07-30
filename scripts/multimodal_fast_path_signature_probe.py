@@ -57,6 +57,21 @@ def _build_loaded_model() -> dict[str, object]:
     }
 
 
+class _ProcessorMetadataCountingDict(dict[str, object]):
+    processor_key_gets: int
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.processor_key_gets = 0
+
+    def get(self, key: str, default: object = None) -> object:
+        from worker.runtime.multimodal_fast_paths import _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS
+
+        if key in _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS:
+            self.processor_key_gets += 1  # pragma: no cover - exercised by unit guard
+        return super().get(key, default)
+
+
 def main() -> int:
     _prepare_imports()
     from worker.runtime.multimodal_fast_paths import fast_path_probe_signature
@@ -69,6 +84,7 @@ def main() -> int:
     sample_count = int(os.environ.get("MELIX_MULTIMODAL_SIGNATURE_PROBE_SAMPLES", "5"))
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
+
     signature_count = 0
 
     for _ in range(sample_count):
@@ -84,6 +100,25 @@ def main() -> int:
         tracemalloc.stop()
         elapsed_samples.append(elapsed_ms)
         peak_samples.append(float(peak))
+    from worker.runtime.multimodal_fast_paths import _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS
+    from worker.runtime.multimodal_fast_paths import _has_any_loaded_metadata
+
+    counting_loaded_model = _ProcessorMetadataCountingDict(_build_loaded_model())
+    counting_metadata = counting_loaded_model.get("metadata", {})
+    if isinstance(counting_metadata, dict):
+        counting_loaded_model["metadata"] = _ProcessorMetadataCountingDict(counting_metadata)
+    has_processor_metadata = _has_any_loaded_metadata(
+        counting_loaded_model,
+        _FAST_PATH_SIGNATURE_PROCESSOR_METADATA_KEYS,
+    )
+    if has_processor_metadata:  # pragma: no cover - invariant guard
+        raise AssertionError("probe loaded model unexpectedly includes processor metadata")
+    nested_counting_metadata = counting_loaded_model.get("metadata", {})
+    processor_metadata_key_gets = counting_loaded_model.processor_key_gets + (
+        nested_counting_metadata.processor_key_gets
+        if isinstance(nested_counting_metadata, _ProcessorMetadataCountingDict)
+        else 0
+    )
 
     from worker.runtime.multimodal_fast_paths import MultimodalFastPathController
 
@@ -104,6 +139,7 @@ def main() -> int:
                 "sample_count": float(sample_count),
                 "iterations_per_sample": float(iterations),
                 "signature_count": float(signature_count),
+                "processor_metadata_key_gets_mean": float(processor_metadata_key_gets),
                 "top_level_item_count": float(expected_signature[1].count("(")) - 1.0,
                 "image_feature_cache_artifact_count": float(
                     second_cache_decision.image_feature_cache_artifact_count

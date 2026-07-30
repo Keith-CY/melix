@@ -626,10 +626,15 @@ def test_lora_processor_resume_mode_returns_missing_without_resume_assets(
 def test_lora_quantized_kind_detection_uses_ascii_token_boundaries() -> None:
     assert lora_runtime_metadata_module._quantized_kind_from_text("mlx q4 adapter") == "q4"
     assert lora_runtime_metadata_module._quantized_kind_from_text(" \tq8\n") == "q8"
+    assert lora_runtime_metadata_module._quantized_kind_from_text("MLX 4BIT ADAPTER") == "4bit"
+    assert lora_runtime_metadata_module._quantized_kind_from_text("MLX 8BIT ADAPTER") == "8bit"
     assert lora_runtime_metadata_module._quantized_kind_from_text("MLX Q4 ADAPTER") == "q4"
+    assert lora_runtime_metadata_module._quantized_kind_from_text("MLX Q8 ADAPTER") == "q8"
+    assert lora_runtime_metadata_module._quantized_kind_from_text("MLX OPTIQ ADAPTER") == "optiq"
     assert lora_runtime_metadata_module._quantized_kind_from_text("not-a-q4suffix") == "unknown"
     assert lora_runtime_metadata_module._quantized_kind_from_text("q4-mlx") == "q4"
     assert lora_runtime_metadata_module._quantized_kind_from_text("模型q4版本") == "q4"
+    assert lora_runtime_metadata_module._quantized_kind_from_text("badq4 q4") == "q4"
 
 
 def test_lora_quantized_kind_detection_skips_boundary_scan_without_substring(

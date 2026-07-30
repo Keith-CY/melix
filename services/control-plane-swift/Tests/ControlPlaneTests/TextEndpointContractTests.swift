@@ -1646,6 +1646,18 @@ struct TextEndpointContractTests {
         #expect(policy == nil)
     }
 
+    @Test("generic generation config does not opt a text or VLM model into OCR policy")
+    func genericGenerationConfigDoesNotEnableOCRExecutionPolicy() {
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.temperature"] = "0.2"
+        modelSettings.ext["melix.generation_config.top_p"] = "0.95"
+        modelSettings.ext["melix.generation_config.max_tokens"] = "1024"
+
+        let policy = OCRExecutionPolicy(modelSettings: modelSettings)
+
+        #expect(policy == nil)
+    }
+
     @Test("messages request initializers encode block content and skip empty thinking blocks")
     func messagesRequestInitializersEncodeBlockContentAndSkipEmptyThinkingBlocks() throws {
         let encoder = JSONEncoder()
@@ -3093,6 +3105,72 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
         let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
         #expect(sampling["policy_lookup_status"] as? String == "unknown")
+    }
+
+    @Test("chat translation falls back to imported generation-config top-k")
+    func chatTranslationFallsBackToImportedGenerationConfigTopK() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-generation-config-top-k" })
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.top_k"] = "64"
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(modelSettings: modelSettings)
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "mlx-community/gemma-4-31b-it-4bit",
+                messages: [.init(role: "user", content: "Use the model default top-k.")]
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "gemma-4::swift",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+
+        #expect(translated.workerRequest.sampling.topK == 64)
+        #expect(translated.workerRequest.execution.ext["melix.generation.top_k"] == "64")
+        #expect(
+            translated.workerRequest.execution.ext[
+                "melix.effective_policy.sampling.request_override_applied"
+            ] == "false"
+        )
+    }
+
+    @Test("explicit request top-k overrides imported generation-config top-k")
+    func explicitRequestTopKOverridesImportedGenerationConfigTopK() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-request-top-k" })
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.top_k"] = "64"
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(modelSettings: modelSettings)
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "mlx-community/gemma-4-31b-it-4bit",
+                messages: [.init(role: "user", content: "Use my top-k override.")],
+                topK: 12
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "gemma-4::swift",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+
+        #expect(translated.workerRequest.sampling.topK == 12)
+        #expect(translated.workerRequest.execution.ext["melix.generation.top_k"] == "12")
+        #expect(
+            translated.workerRequest.execution.ext[
+                "melix.effective_policy.sampling.policy_lookup_status"
+            ] == "operator_override"
+        )
+        #expect(
+            translated.workerRequest.execution.ext[
+                "melix.effective_policy.sampling.request_override_applied"
+            ] == "true"
+        )
     }
 
     @Test("chat translation emits effective policy receipt for merged sampling template and reasoning policy")

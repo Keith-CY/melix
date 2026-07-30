@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 class QuantizedTensorMetadata:
     tensor_to_shard: Mapping[str, str]
     _tensor_names: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
+    _cross_shard_fixup_count: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         normalized: dict[str, str] = {}
@@ -25,13 +26,18 @@ class QuantizedTensorMetadata:
             MappingProxyType(normalized),
         )
         object.__setattr__(self, "_tensor_names", frozenset(normalized))
+        object.__setattr__(
+            self,
+            "_cross_shard_fixup_count",
+            _count_cross_shard_quantized_metadata_fixups(normalized),
+        )
 
     @property
     def tensor_names(self) -> frozenset[str]:
         return self._tensor_names
 
     def has_tensor(self, tensor_name: str) -> bool:
-        return tensor_name in self.tensor_to_shard
+        return tensor_name in self._tensor_names
 
     def shard_for(self, tensor_name: str) -> str:
         return self.tensor_to_shard.get(tensor_name, "")
@@ -50,7 +56,6 @@ class QuantizedTensorMetadata:
         return self.has_tensor(f"{prefix}.scales")
 
 
-EMPTY_QUANTIZED_TENSOR_METADATA = QuantizedTensorMetadata({})
 MAX_SAFETENSORS_HEADER_BYTES = 100 * 1024 * 1024
 
 
@@ -60,7 +65,34 @@ def _metadata_from_normalized_mapping(tensor_to_shard: dict[str, str]) -> Quanti
     metadata = object.__new__(QuantizedTensorMetadata)
     object.__setattr__(metadata, "tensor_to_shard", MappingProxyType(tensor_to_shard))
     object.__setattr__(metadata, "_tensor_names", frozenset(tensor_to_shard))
+    object.__setattr__(
+        metadata,
+        "_cross_shard_fixup_count",
+        _count_cross_shard_quantized_metadata_fixups(tensor_to_shard),
+    )
     return metadata
+
+
+def _count_cross_shard_quantized_metadata_fixups(
+    tensor_to_shard: Mapping[str, str],
+) -> int:
+    weight_suffix = ".weight"
+    scales_suffix = ".scales"
+    weight_suffix_length = len(weight_suffix)
+    count = 0
+    for tensor_name, shard_name in tensor_to_shard.items():
+        if not tensor_name.endswith(weight_suffix):
+            continue
+        scales_shard = tensor_to_shard.get(
+            f"{tensor_name[:-weight_suffix_length]}{scales_suffix}",
+            "",
+        )
+        if scales_shard and shard_name != scales_shard:
+            count += 1
+    return count
+
+
+EMPTY_QUANTIZED_TENSOR_METADATA = QuantizedTensorMetadata({})
 
 
 _NATIVE_MULTIMODAL_HIGH_PRECISION_PREFIXES = (
@@ -120,9 +152,11 @@ def quantized_tensor_metadata_from_index_payload(
         return EMPTY_QUANTIZED_TENSOR_METADATA
     tensor_to_shard: dict[str, str] = {}
     for raw_tensor_name, raw_shard_name in weight_map.items():
-        tensor_name = str(raw_tensor_name)
+        tensor_name = raw_tensor_name if isinstance(raw_tensor_name, str) else str(raw_tensor_name)
         if tensor_name:
-            tensor_to_shard[tensor_name] = str(raw_shard_name)
+            tensor_to_shard[tensor_name] = (
+                raw_shard_name if isinstance(raw_shard_name, str) else str(raw_shard_name)
+            )
     return _metadata_from_normalized_mapping(tensor_to_shard)
 
 
@@ -131,9 +165,8 @@ def quantized_tensor_metadata_from_safetensor_headers(
 ) -> QuantizedTensorMetadata:
     tensor_to_shard: dict[str, str] = {}
     for raw_path in shard_paths:
-        path = Path(raw_path)
         shard_name = os.fspath(raw_path)
-        for tensor_name in _safetensors_header_tensor_names(path):
+        for tensor_name in _safetensors_header_tensor_names(shard_name):
             tensor_to_shard[tensor_name] = shard_name
     if not tensor_to_shard:
         return EMPTY_QUANTIZED_TENSOR_METADATA
@@ -172,19 +205,7 @@ def quantized_tensor_metadata_from_model_dir(
 def cross_shard_quantized_metadata_fixup_count(
     metadata: QuantizedTensorMetadata,
 ) -> int:
-    prefixes: set[str] = set()
-    for tensor_name in metadata.tensor_to_shard:
-        if tensor_name.endswith(".weight"):
-            prefixes.add(tensor_name[: -len(".weight")])
-        elif tensor_name.endswith(".scales"):
-            prefixes.add(tensor_name[: -len(".scales")])
-
-    count = 0
-    for prefix in prefixes:
-        shards = metadata.quantized_tensor_shards(prefix)
-        if shards.get("weight") and shards.get("scales") and shards["weight"] != shards["scales"]:
-            count += 1
-    return count
+    return metadata._cross_shard_fixup_count
 
 
 def quantized_scales_present(
@@ -194,7 +215,7 @@ def quantized_scales_present(
     weights: Mapping[str, object],
 ) -> bool:
     scales_key = f"{prefix}.scales"
-    if metadata.has_tensor(scales_key):
+    if scales_key in metadata._tensor_names:
         return True
     if not weights:
         return False
@@ -272,9 +293,9 @@ def _native_multimodal_high_precision_module(prefix: str) -> bool:
     return False
 
 
-def _safetensors_header_tensor_names(path: Path) -> tuple[str, ...]:
+def _safetensors_header_tensor_names(path: str | os.PathLike[str]) -> tuple[str, ...]:
     try:
-        with path.open("rb") as handle:
+        with open(path, "rb") as handle:
             header_size_raw = handle.read(8)
             if len(header_size_raw) != 8:
                 return ()
@@ -294,6 +315,10 @@ def _safetensors_header_tensor_names(path: Path) -> tuple[str, ...]:
     append_tensor_name = tensor_names.append
     for key in header:
         if key == "__metadata__":
+            continue
+        if isinstance(key, str):
+            if key:
+                append_tensor_name(key)
             continue
         tensor_name = str(key)
         if tensor_name:

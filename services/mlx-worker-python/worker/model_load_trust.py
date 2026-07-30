@@ -33,6 +33,7 @@ _JSON_LOADS = json.loads
 _OS_STAT = os.stat
 _OS_SCANDIR = os.scandir
 _STAT_ISREG = stat.S_ISREG
+_STAT_ISDIR = stat.S_ISDIR
 EXECUTABLE_MODEL_FILE_PREFIXES = (
     "configuration",
     "feature_extraction",
@@ -50,6 +51,7 @@ VALID_REQUESTED_TRUST_MODES = frozenset(
 )
 TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_TEXT_LOADERS_COMMON = frozenset({"mlx-lm", "mlx_lm", "mlx_lm_unavailable"})
+CANONICAL_MLX_LM_LOADER = "mlx-lm"
 TRUST_APPLICABLE_VLM_LOADERS = frozenset({"mlx_vlm", "python_vlm", "mlx_vlm_unavailable"})
 TRUST_APPLICABLE_VLM_LOADERS_COMMON = frozenset(
     {"mlx-vlm", "mlx_vlm", "python_vlm", "mlx_vlm_unavailable"}
@@ -182,8 +184,9 @@ def _custom_loader_rejection_policy(
     loader_family: str,
     detection_source: str,
 ) -> common_pb2.ModelLoadTrustPolicy:
-    return MODEL_LOAD_TRUST_POLICY.FromString(
-        _custom_loader_rejection_policy_bytes(
+    policy = MODEL_LOAD_TRUST_POLICY()
+    policy.CopyFrom(
+        _custom_loader_rejection_policy_template(
             requested_mode,
             policy_source,
             route_class,
@@ -191,16 +194,17 @@ def _custom_loader_rejection_policy(
             detection_source,
         )
     )
+    return policy
 
 
 @lru_cache(maxsize=128)
-def _custom_loader_rejection_policy_bytes(
+def _custom_loader_rejection_policy_template(
     requested_mode: int,
     policy_source: str,
     route_class: int,
     loader_family: str,
     detection_source: str,
-) -> bytes:
+) -> common_pb2.ModelLoadTrustPolicy:
     return MODEL_LOAD_TRUST_POLICY(
         requested_mode=requested_mode,
         effective_mode=requested_mode,
@@ -210,7 +214,7 @@ def _custom_loader_rejection_policy_bytes(
         block_reason=BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST,
         route_class=route_class,
         loader_family=loader_family,
-    ).SerializeToString()
+    )
 
 
 def _requested_mode(
@@ -249,19 +253,18 @@ def _loader_family(
     *,
     runtime_name: str,
 ) -> str:
-    requested_family = (
-        str(getattr(request_policy, "loader_family", "") or "").strip()
-        if request_policy is not None
-        else ""
-    )
-    if requested_family:
-        return requested_family
+    if request_policy is not None:
+        requested_family = str(
+            getattr(request_policy, "loader_family", "") or ""
+        ).strip()
+        if requested_family:
+            return requested_family
+    if runtime_kind == "text":
+        return runtime_name or "mlx-lm"
     if runtime_kind == "vlm":
         return model_spec.ext.get("melix.vlm.backend_id", "").strip() or str(
             runtime_name or "mlx_vlm"
         )
-    if runtime_kind == "text":
-        return runtime_name or "mlx-lm"
     return runtime_name or runtime_kind
 
 
@@ -278,6 +281,11 @@ def _is_trust_applicable(
         return bool(supports_trust_policy)
     if runtime_kind == "text":
         if (
+            loader_family == CANONICAL_MLX_LM_LOADER
+            or runtime_name == CANONICAL_MLX_LM_LOADER
+        ):
+            return True
+        if (
             loader_family in TRUST_APPLICABLE_TEXT_LOADERS_COMMON
             or runtime_name in TRUST_APPLICABLE_TEXT_LOADERS_COMMON
         ):
@@ -290,21 +298,24 @@ def _is_trust_applicable(
             or runtime_name in TRUST_APPLICABLE_VLM_LOADERS_COMMON
         ):
             return True
+    else:
+        return False
     normalized_runtime_name = runtime_name.strip().lower().replace("-", "_")
     family = loader_family.strip().lower().replace("-", "_")
     if runtime_kind == "text":
         return family in TRUST_APPLICABLE_TEXT_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_TEXT_LOADERS
-    if runtime_kind == "vlm":
-        if normalized_runtime_name.startswith("deterministic"):
-            return False
-        return family in TRUST_APPLICABLE_VLM_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_VLM_LOADERS
-    return False
+    if normalized_runtime_name.startswith("deterministic"):
+        return False
+    return family in TRUST_APPLICABLE_VLM_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_VLM_LOADERS
 
 
 def _runtime_name(runtime: Any) -> str:
     if runtime is None:
         return ""
-    runtime_name = getattr(runtime, "runtime_name", "")
+    try:
+        runtime_name = runtime.runtime_name
+    except AttributeError:
+        return ""
     if type(runtime_name) is str:
         return runtime_name
     if not runtime_name:
@@ -340,19 +351,40 @@ def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[st
     if not model_path:
         return ()
     if model_path[0] == "~":
-        scan_path: str | os.PathLike[str] = Path(model_path).expanduser()
+        scan_path = str(Path(model_path).expanduser())
     else:
         scan_path = model_path
+    try:
+        directory_stat = _OS_STAT(scan_path)
+    except OSError:
+        return ()
+    if not _STAT_ISDIR(directory_stat.st_mode):
+        return ()
+    return _detect_executable_model_files_for_stat(
+        scan_path,
+        directory_stat.st_mtime_ns,
+        directory_stat.st_size,
+    )
+
+
+@lru_cache(maxsize=128)
+def _detect_executable_model_files_for_stat(
+    scan_path: str,
+    mtime_ns: int,
+    size: int,
+) -> tuple[str, ...]:
+    _ = (mtime_ns, size)
     is_executable_model_file_entry = _is_executable_model_file_entry
     try:
         with _OS_SCANDIR(scan_path) as entries:
-            return tuple(
-                sorted(
-                    entry.name
-                    for entry in entries
-                    if is_executable_model_file_entry(entry)
-                )
-            )
+            executable_file_names: list[str] = []
+            append_name = executable_file_names.append
+            for entry in entries:
+                if is_executable_model_file_entry(entry):
+                    append_name(entry.name)
+            if len(executable_file_names) > 1:
+                executable_file_names.sort()
+            return tuple(executable_file_names)
     except OSError:
         return ()
 
@@ -369,6 +401,7 @@ def _is_executable_model_file_entry(entry: os.DirEntry[str]) -> bool:
         return False
 
 
+@lru_cache(maxsize=128)
 def _model_files_detection_source(file_names: tuple[str, ...]) -> str:
     return "model_files:" + ",".join(file_names)
 

@@ -174,9 +174,11 @@ class ProbeTokenizer:
             11: "null",
             12: " ",
             13: "\n",
+            14: '"',
+            15: "a",
             self.eos_token_id: "</s>",
         }
-        for token_id in range(14, self.eos_token_id):
+        for token_id in range(16, self.eos_token_id):
             self._id_to_text[token_id] = f"tok{token_id}"
 
     def get_vocab(self) -> dict[str, int]:
@@ -370,21 +372,24 @@ def _run_sample(
     }
 
 
-def _schema_ext() -> dict[str, str]:
+def _schema_ext_for(schema: object) -> dict[str, str]:
     return {
         "melix.structured_output.mode": "json_schema",
-        "melix.structured_output.schema_json": json.dumps(
-            {
-                "type": "object",
-                "required": ["answer"],
-                "additionalProperties": False,
-                "properties": {
-                    "answer": {"type": "string", "const": "ok"},
-                },
-            },
-            separators=(",", ":"),
-        ),
+        "melix.structured_output.schema_json": json.dumps(schema, separators=(",", ":")),
     }
+
+
+def _schema_ext() -> dict[str, str]:
+    return _schema_ext_for(
+        {
+            "type": "object",
+            "required": ["answer"],
+            "additionalProperties": False,
+            "properties": {
+                "answer": {"type": "string", "const": "ok"},
+            },
+        }
+    )
 
 
 def _schema_unavailable_metrics() -> dict[str, float]:
@@ -398,6 +403,82 @@ def _schema_unavailable_metrics() -> dict[str, float]:
         "schema_peak_bytes": 0.0,
         "schema_initial_allowed_count": 0.0,
         "schema_complete_allowed_count": 0.0,
+        "schema_complexity_refusal_elapsed_ms": 0.0,
+        "schema_enum_mask_elapsed_ms": 0.0,
+        "schema_free_text_mask_cache_entries": 0.0,
+    }
+
+
+def _schema_hardening_metrics(
+    build_processors: Callable[[object, Any], list[Any]],
+    *,
+    tokenizer: ProbeTokenizer,
+    prompt_token_id: int,
+    logits: Any,
+) -> dict[str, float]:
+    oversized_enum_ext = _schema_ext_for(
+        {
+            "type": "object",
+            "properties": {
+                "answer": {"type": "integer", "enum": list(range(1_025))},
+            },
+        }
+    )
+    refusal_started = time.perf_counter()
+    try:
+        build_processors(oversized_enum_ext, tokenizer)
+    except Exception as exc:
+        details = getattr(exc, "details", {})
+        if details.get("reason") != "json_schema_too_complex":
+            raise RuntimeError("oversized schema did not produce a typed complexity refusal") from exc
+    else:
+        raise RuntimeError("oversized schema was not rejected")
+    complexity_refusal_elapsed_ms = (time.perf_counter() - refusal_started) * 1000.0
+
+    enum_ext = _schema_ext_for(
+        {
+            "type": "object",
+            "required": ["answer"],
+            "additionalProperties": False,
+            "properties": {
+                "answer": {
+                    "type": "string",
+                    "enum": [f"enum-{index}" for index in range(512)],
+                },
+            },
+        }
+    )
+    enum_processor = build_processors(enum_ext, tokenizer)[0]
+    enum_processor(_mx().array([prompt_token_id]), logits)
+    enum_processor(_mx().array([prompt_token_id, 0]), logits)
+    enum_processor(_mx().array([prompt_token_id, 0, 2]), logits)
+    enum_mask_started = time.perf_counter()
+    enum_mask = enum_processor(_mx().array([prompt_token_id, 0, 2, 3]), logits)
+    enum_mask_elapsed_ms = (time.perf_counter() - enum_mask_started) * 1000.0
+    if not math.isfinite(float(enum_mask[0, 14])):
+        raise RuntimeError("large-enum schema mask rejected the string-open token")
+
+    free_text_ext = _schema_ext_for(
+        {
+            "type": "object",
+            "required": ["answer"],
+            "additionalProperties": False,
+            "properties": {"answer": {"type": "string"}},
+        }
+    )
+    free_text_processor = build_processors(free_text_ext, tokenizer)[0]
+    generated = [0, 2, 3, 14]
+    free_text_processor(_mx().array([prompt_token_id]), logits)
+    for end in range(1, len(generated) + 1):
+        free_text_processor(_mx().array([prompt_token_id, *generated[:end]]), logits)
+    for _ in range(128):
+        generated.append(15)
+        free_text_processor(_mx().array([prompt_token_id, *generated]), logits)
+
+    return {
+        "schema_complexity_refusal_elapsed_ms": complexity_refusal_elapsed_ms,
+        "schema_enum_mask_elapsed_ms": enum_mask_elapsed_ms,
+        "schema_free_text_mask_cache_entries": float(len(free_text_processor._mask_cache)),
     }
 
 
@@ -461,7 +542,7 @@ def _run_schema_sample(
 
     _, peak_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    return {
+    metrics = {
         "schema_available": 1.0,
         "schema_build_first_elapsed_ms": first_build_elapsed_ms,
         "schema_build_second_elapsed_ms": second_build_elapsed_ms,
@@ -471,6 +552,146 @@ def _run_schema_sample(
         "schema_peak_bytes": float(peak_bytes),
         "schema_initial_allowed_count": float(_finite_count(initial)),
         "schema_complete_allowed_count": float(_finite_count(after_complete_object)),
+    }
+    metrics.update(
+        _schema_hardening_metrics(
+            build_processors,
+            tokenizer=tokenizer,
+            prompt_token_id=prompt_token_id,
+            logits=logits,
+        )
+    )
+    return metrics
+
+
+def _tool_ext(*, parser_mode: str) -> dict[str, str]:
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "description": "Read weather",
+                "parameters": {
+                    "type": "object",
+                    "required": ["count", "unit"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "count": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "note": {"type": "string"},
+                        "unit": {"type": "string", "enum": ["c", "f"]},
+                    },
+                },
+            },
+        }
+    ]
+    return {
+        "melix.compat.tool_choice_resolved": "required",
+        "melix.compat.reasoning_mode": "disabled",
+        "melix.tool_parser.mode": parser_mode,
+        "melix.tool_config.tools_json": json.dumps(tools, separators=(",", ":")),
+    }
+
+
+def _tool_unavailable_metrics() -> dict[str, float]:
+    return {
+        "tool_available": 0.0,
+        "tool_compile_p95_ms": 0.0,
+        "tool_roundtrip_mismatch_count": 0.0,
+        "tool_mask_vocab_words": 0.0,
+        "schema_state_budget_refusal_elapsed_ms": 0.0,
+    }
+
+
+def _tool_metrics(
+    build_processors: Callable[[object, Any], list[Any]],
+    *,
+    implementation_available: bool,
+    vocab_size: int,
+) -> dict[str, float]:
+    if not implementation_available:
+        return _tool_unavailable_metrics()
+    try:
+        from worker.runtime.structured_output_constraints import (
+            StructuredOutputConstraintError,
+            audit_schema_state_space,
+        )
+        from worker.runtime.tool_call_rescue import parse_tool_body
+        from worker.runtime.tool_wire_constraints import (
+            tool_constraint_preflight_error,
+            tool_wire_accepts_text,
+        )
+    except ImportError:
+        return _tool_unavailable_metrics()
+
+    json_ext = _tool_ext(parser_mode="qwen")
+    xml_ext = _tool_ext(parser_mode="xml")
+    compile_samples: list[float] = []
+    for _ in range(20):
+        started = time.perf_counter()
+        error = tool_constraint_preflight_error(json_ext)
+        compile_samples.append((time.perf_counter() - started) * 1_000.0)
+        if error is not None:
+            raise RuntimeError("supported tool grammar failed bounded preflight") from error
+    compile_samples.sort()
+    p95_index = max(0, math.ceil(len(compile_samples) * 0.95) - 1)
+
+    json_wire = '<tool_call>{"name":"weather","arguments":{"count":2,"unit":"c"}}</tool_call>'
+    xml_wire = (
+        "<tool_call><function=weather>"
+        '<parameter=count>2</parameter>'
+        '<parameter=note>"a<z and </parameter> text"</parameter>'
+        '<parameter=unit>"c"</parameter>'
+        "</function></tool_call>"
+    )
+    mismatches = 0
+    for ext, wire in ((json_ext, json_wire), (xml_ext, xml_wire)):
+        if not tool_wire_accepts_text(ext, wire):
+            mismatches += 1
+            continue
+        parsed = parse_tool_body(wire)
+        if not isinstance(parsed, dict) or parsed.get("name") != "weather":
+            mismatches += 1
+
+    tokenizer = ProbeTokenizer(vocab_size)
+    processor = build_processors(json_ext, tokenizer)[0]
+    receipt = getattr(processor, "acceleration_receipt", {})
+    if receipt.get("fallback_reason") != "structured_output_acceleration_unsupported":
+        raise RuntimeError("tool constraint did not expose typed acceleration fallback")
+
+    numeric_schema = json.dumps(
+        {
+            "type": "object",
+            "required": ["n"],
+            "additionalProperties": False,
+            "properties": {
+                "n": {"type": "integer", "minimum": 0, "maximum": 10**30},
+            },
+        },
+        separators=(",", ":"),
+    )
+    budget_started = time.perf_counter()
+    try:
+        audit_schema_state_space(
+            numeric_schema,
+            alphabet='{"n":0123456789}',
+            max_depth=40,
+            max_states=64,
+            max_transitions=512,
+            deadline_seconds=0.050,
+        )
+    except StructuredOutputConstraintError as exc:
+        if exc.details.get("limit") != "state_space_exploration":
+            raise RuntimeError("state audit returned the wrong typed budget receipt") from exc
+    else:
+        raise RuntimeError("numeric state audit did not stop at its hard budget")
+    budget_elapsed_ms = (time.perf_counter() - budget_started) * 1_000.0
+
+    return {
+        "tool_available": 1.0,
+        "tool_compile_p95_ms": compile_samples[p95_index],
+        "tool_roundtrip_mismatch_count": float(mismatches),
+        "tool_mask_vocab_words": float(receipt.get("mask_vocab_words", 0)),
+        "schema_state_budget_refusal_elapsed_ms": budget_elapsed_ms,
     }
 
 
@@ -496,6 +717,11 @@ def main() -> int:
         )
         for _ in range(sample_count)
     ]
+    tool_metrics = _tool_metrics(
+        build_processors,
+        implementation_available=implementation_available,
+        vocab_size=vocab_size,
+    )
 
     def mean(key: str) -> float:
         return statistics.fmean(sample[key] for sample in samples)
@@ -538,9 +764,19 @@ def main() -> int:
                 "schema_complete_allowed_count_mean": schema_mean(
                     "schema_complete_allowed_count"
                 ),
+                "schema_complexity_refusal_elapsed_ms_mean": schema_mean(
+                    "schema_complexity_refusal_elapsed_ms"
+                ),
+                "schema_enum_mask_elapsed_ms_mean": schema_mean(
+                    "schema_enum_mask_elapsed_ms"
+                ),
+                "schema_free_text_mask_cache_entries_mean": schema_mean(
+                    "schema_free_text_mask_cache_entries"
+                ),
                 "vocab_size": float(vocab_size),
                 "mask_iterations": float(mask_iterations),
                 "sample_count": float(sample_count),
+                **tool_metrics,
             },
             sort_keys=True,
         )

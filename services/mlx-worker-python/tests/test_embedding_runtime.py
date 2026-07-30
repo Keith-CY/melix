@@ -1,5 +1,7 @@
+from collections.abc import Sequence
 import hashlib
 import math
+from typing import overload
 
 import pytest
 
@@ -76,6 +78,11 @@ class RecordingEmbeddingRuntime(DeterministicEmbeddingRuntime):
         return super().embed_inputs(loaded_model, inputs)
 
 
+class FailingEmbeddingRuntime(DeterministicEmbeddingRuntime):
+    def embed_inputs(self, loaded_model, inputs):
+        raise RuntimeError("embedding backend unavailable")
+
+
 def build_services(
     model_catalog: WorkerModelCatalog | None = None,
     *,
@@ -126,6 +133,23 @@ def test_project_digest_preserves_legacy_projection_values() -> None:
         actual = backend._project_digest("bert::projection parity", dimensions)
         expected = _legacy_project_digest("bert::projection parity", dimensions)
         assert actual == expected
+
+
+def test_project_digest_zero_dimensions_skips_digest_projection() -> None:
+    backend = BERTEmbeddingBackend()
+    digest_calls = 0
+
+    def counting_sha256(payload: bytes = b""):
+        nonlocal digest_calls
+        digest_calls += 1
+        return hashlib.sha256(payload)
+
+    assert backend._project_digest("bert::zero dimensions", 0, _sha256=counting_sha256) == []
+    assert backend._project_digest("bert::negative dimensions", -1, _sha256=counting_sha256) == []
+    assert digest_calls == 0
+
+    assert len(backend._project_digest("bert::positive dimensions", 1, _sha256=counting_sha256)) == 1
+    assert digest_calls == 1
 
 
 def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
@@ -204,6 +228,25 @@ def test_embed_rejects_missing_and_wrong_model_kinds() -> None:
 
     assert missing.error.code == "not_found"
     assert wrong_kind.error.code == "invalid_argument"
+
+
+def test_embed_returns_runtime_error_when_backend_raises() -> None:
+    _, runtime_service, inference_service = build_services(
+        embedding_runtime=FailingEmbeddingRuntime()
+    )
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
+
+    response = inference_service.Embed(
+        inference_pb2.EmbedRequest(
+            id=common_pb2.RequestIdentity(request_id="embed-runtime-error"),
+            model_handle=model_handle,
+            inputs=["alpha"],
+        ),
+        context=None,
+    )
+
+    assert response.error.code == "runtime_error"
+    assert response.error.message == "embedding backend unavailable"
 
 
 def test_load_model_exposes_embedding_backend_metadata_for_bert_and_xlmr() -> None:
@@ -449,10 +492,38 @@ def test_embed_runtime_replays_single_input_cycles_without_generator_reentry() -
     assert vectors[-1] == [1.0, 1.0]
 
 
+class SliceCountingInputs(Sequence[str]):
+    def __init__(self, values: list[str]) -> None:
+        self._values = values
+        self.slice_count = 0
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[str]: ...
+
+    def __getitem__(self, index: int | slice) -> str | list[str]:
+        if isinstance(index, slice):
+            self.slice_count += 1  # pragma: no cover - regression-only branch
+        return self._values[index]
+
+
 def test_repeated_input_cycle_length_rejects_partial_single_input_cycles() -> None:
     inputs = ["same-document"] * 1024 + ["different-document"]
 
     assert _repeated_input_cycle_length(inputs) == 0
+
+
+def test_repeated_input_cycle_length_validates_multi_input_cycles_without_slices() -> None:
+    cycle = [f"document-{index}" for index in range(512)]
+    inputs = SliceCountingInputs(cycle * 3)
+
+    assert _repeated_input_cycle_length(inputs) == len(cycle)
+    assert inputs.slice_count == 0
 
 
 def test_load_model_rejects_unsupported_embedding_backend() -> None:

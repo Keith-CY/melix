@@ -124,7 +124,12 @@ Each tool descriptor must include:
 The worker-facing default registry must be serializable to a deterministic
 `ToolConfig` receipt. Explicit selections are resolved against the selectable
 catalog, must preserve request order, deduplicate repeated names, and fail
-before execution on unknown names.
+before execution on unknown names. Empty selections are a hot-path selector
+case and must reuse the registry's direct empty-selection cache slot rather
+than performing a dictionary cache lookup on every request. The registered
+PR-scoped performance probe for this path is
+`tool-registry-select-name-index-cache`, which reports selection timings,
+including `empty_selection_elapsed_ms_mean` for the empty-selection fast path.
 
 Every selectable tool schema must also have matching index metadata with the
 same tool ID and retrieval description as the schema description. Non-always

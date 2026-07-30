@@ -29,7 +29,7 @@ def _string_dict(value: object) -> dict[str, str]:
             if type(key) is not str or type(item) is not str:
                 break
         else:
-            return dict(value)
+            return value.copy()
         return {str(key): str(item) for key, item in value.items()}
     return {str(key): str(item) for key, item in dict(value).items()}  # type: ignore[arg-type]
 
@@ -101,6 +101,7 @@ class BenchmarkQueueStore:
             return []
 
         records = []
+        records_append = records.append
         load_record = self._load_record
         metadata_key_from_stat = self._metadata_key_from_stat
         is_regular_file = stat.S_ISREG
@@ -115,7 +116,7 @@ class BenchmarkQueueStore:
                         continue
                     if not is_regular_file(stat_result.st_mode):
                         continue
-                    records.append(
+                    records_append(
                         load_record(
                             entry.path,
                             metadata_key=metadata_key_from_stat(stat_result),
@@ -208,7 +209,7 @@ class BenchmarkQueueStore:
             job_kind=record.job_kind,
             model_id=record.model_id,
             suite_ids=record.suite_ids,
-            parameters=dict(record.parameters),
+            parameters=record.parameters.copy(),
             status=record.status,
             created_at_unix_ms=record.created_at_unix_ms,
             updated_at_unix_ms=record.updated_at_unix_ms,

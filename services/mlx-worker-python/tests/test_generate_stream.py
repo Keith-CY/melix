@@ -108,12 +108,18 @@ def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
 
     assert engine_core_module._non_negative_int("invalid") == 0
     assert engine_core_module._cached_prompt_tokens_from_event(None) == 0
-    assert engine_core_module._media_feature_usage_from_probe(None) == {
-        "media_feature_cache_hits": 0,
-        "media_feature_cache_misses": 0,
-        "media_feature_encoder_calls_saved": 0,
-        "media_feature_work_saved_bytes": 0,
-    }
+    assert engine_core_module._media_feature_usage_from_probe(None) is None
+    assert (
+        engine_core_module._media_feature_usage_from_probe(
+            SimpleNamespace(
+                media_feature_cache_hits=0,
+                media_feature_cache_misses=0,
+                media_feature_encoder_calls_saved=0,
+                media_feature_work_saved_bytes=0,
+            )
+        )
+        is None
+    )
     assert engine_core_module._usage_delta(
         prompt_tokens=8,
         completion_tokens=2,
@@ -720,6 +726,26 @@ def generate_usage_request(model_handle: str, *, return_usage: bool) -> inferenc
         stream=True,
         return_usage=return_usage,
     )
+
+
+def test_generate_plain_token_skips_native_metric_parser(monkeypatch) -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+    native_parser_calls = 0
+    original_parser = engine_core_module._text_native_mtp_parser_metrics
+
+    def counted_native_parser(event):  # pragma: no cover - regression guard should stay unused.
+        nonlocal native_parser_calls
+        native_parser_calls += 1  # pragma: no cover
+        return original_parser(event)  # pragma: no cover
+
+    monkeypatch.setattr(engine_core_module, "_text_native_mtp_parser_metrics", counted_native_parser)
+
+    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+
+    completed = next(event.completed for event in events if event.HasField("completed"))
+    assert completed.finish_reason == "stop"
+    assert native_parser_calls == 0
 
 
 def test_generate_without_usage_skips_prompt_token_count_fallback(monkeypatch) -> None:
@@ -1879,6 +1905,89 @@ def test_generate_allows_supported_schema_backed_json_schema_to_runtime() -> Non
     assert not any(event.HasField("error") for event in events)
 
 
+def test_generate_prepares_required_tool_schema_before_sampler_preflight() -> None:
+    runtime = RuntimeStructuredOutputAcceptingRuntime()
+    registry = WorkerRegistry(runtime=runtime, model_catalog=WorkerModelCatalog())
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    model_handle = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    ).model_handle
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-required-tool-constraint"),
+            model_handle=model_handle,
+            ext={
+                "melix.compat.tool_choice_resolved": "required",
+                "melix.compat.reasoning_mode": "disabled",
+                "melix.tool_parser.mode": "qwen",
+            },
+            tool_config=common_pb2.ToolConfig(
+                tool_choice="required",
+                tools=[
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        json_schema=(
+                            '{"type":"object","required":["q"],'
+                            '"additionalProperties":false,'
+                            '"properties":{"q":{"type":"string"}}}'
+                        ),
+                    )
+                ],
+            ),
+        ),
+        messages=[common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Search")])],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    assert not any(event.HasField("error") for event in events)
+    assert runtime.seen_execution_ext is not None
+    assert runtime.seen_execution_ext["melix.tool_config.tool_choice"] == "required"
+    assert '"name":"search"' in runtime.seen_execution_ext["melix.tool_config.tools_json"]
+
+
+def test_generate_refuses_reasoning_required_tool_constraint_before_runtime() -> None:
+    runtime = RuntimeStructuredOutputAcceptingRuntime()
+    registry = WorkerRegistry(runtime=runtime, model_catalog=WorkerModelCatalog())
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    model_handle = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    ).model_handle
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-reasoning-required-tool-constraint"),
+            model_handle=model_handle,
+            ext={
+                "melix.compat.tool_choice_resolved": "required",
+                "melix.compat.reasoning_mode": "enabled",
+                "melix.tool_parser.mode": "qwen",
+            },
+            tool_config=common_pb2.ToolConfig(
+                tool_choice="required",
+                tools=[
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        json_schema='{"type":"object","properties":{}}',
+                    )
+                ],
+            ),
+        )
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    error = next(event.error.error for event in events if event.HasField("error"))
+
+    assert error.code == "tool_constraint_reasoning_unsupported"
+    assert error.details["reason"] == "tool_constraint_reasoning_unsupported"
+    assert runtime.seen_execution_ext is None
+
+
 def test_generate_reports_runtime_structured_output_constraint_error() -> None:
     registry = WorkerRegistry(
         runtime=RuntimeStructuredOutputFailingRuntime(),
@@ -2488,6 +2597,7 @@ def test_prepare_native_template_tools_preserves_existing_payload_and_skips_inva
 
     invalid = inference_pb2.ExecutionMetadata(
         tool_config=common_pb2.ToolConfig(
+            tool_choice="required",
             tools=[
                 common_pb2.ToolDefinition(name=" ", description="skip blank"),
                 common_pb2.ToolDefinition(name="bad_schema", json_schema="{not-json"),
@@ -2495,6 +2605,7 @@ def test_prepare_native_template_tools_preserves_existing_payload_and_skips_inva
         )
     )
     EngineCore._prepare_native_template_tools(invalid)
+    assert invalid.ext["melix.tool_config.tool_choice"] == "required"
     assert '"name":"bad_schema"' in invalid.ext["melix.tool_config.tools_json"]
     assert '"parameters":{}' in invalid.ext["melix.tool_config.tools_json"]
 

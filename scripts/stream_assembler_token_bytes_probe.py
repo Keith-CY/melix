@@ -13,6 +13,8 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from worker.runtime.stream_assembler import (
+    AssembledToolCall,
+    AssemblyDelta,
     RequestStreamAssembler,
     StreamFragment,
     _whitespace_token_count,
@@ -49,6 +51,74 @@ def _measure_delta_token_count(sample_count: int) -> dict[str, float]:
         "delta_token_count_speedup": old_mean / new_mean if new_mean else 0.0,
         "delta_token_count_text_count": float(len(token_texts)),
         "delta_token_count_checksum": float(checksum),
+    }
+
+
+def _measure_token_count_annotation(sample_count: int) -> dict[str, float]:
+    deltas = [
+        AssemblyDelta(content_text=" ".join(f"visible{index}-{offset}" for offset in range(24)))
+        if index % 3 == 0
+        else AssemblyDelta(reasoning_text=" ".join(f"hidden{index}-{offset}" for offset in range(24)))
+        if index % 3 == 1
+        else AssemblyDelta(
+            tool_call=AssembledToolCall(
+                f"call-{index}",
+                "search",
+                "{}",
+                index,
+                "qwen",
+            )
+        )
+        for index in range(192)
+    ]
+    iterations = int(os.environ.get("MELIX_STREAM_ASSEMBLER_TOKEN_ANNOTATION_ITERATIONS", "5000"))
+    expected_count = 4096
+    elapsed: list[float] = []
+    checksum = 0
+
+    for _ in range(sample_count):
+        assembler = RequestStreamAssembler("token-count-annotation-probe", True, "", "qwen")
+        started = time.perf_counter()
+        for _index in range(iterations):
+            annotated = assembler._annotate_token_counts(deltas, expected_count)
+            checksum += annotated[-1].token_count
+        elapsed.append((time.perf_counter() - started) * 1000.0)
+
+    return {
+        "token_count_annotation_ms_mean": statistics.fmean(elapsed),
+        "token_count_annotation_iterations": float(iterations),
+        "token_count_annotation_delta_count": float(len(deltas)),
+        "token_count_annotation_checksum": float(checksum),
+    }
+
+
+def _measure_token_count_compression(sample_count: int) -> dict[str, float]:
+    weights = [
+        384 if index % 3 == 0 else 128 if index % 3 == 1 else 1
+        for index in range(192)
+    ]
+    target_token_count = 8192
+    iterations = int(
+        os.environ.get("MELIX_STREAM_ASSEMBLER_TOKEN_COMPRESSION_ITERATIONS", "10000")
+    )
+    expected = RequestStreamAssembler._compress_delta_token_counts(weights, target_token_count)
+    if sum(expected) != min(sum(weights), target_token_count):
+        raise SystemExit("compressed token counts diverged from the requested total")
+    elapsed: list[float] = []
+    checksum = 0
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        for _index in range(iterations):
+            compressed = RequestStreamAssembler._compress_delta_token_counts(weights, target_token_count)
+            checksum += compressed[-1]
+        elapsed.append((time.perf_counter() - started) * 1000.0)
+
+    return {
+        "token_count_compression_ms_mean": statistics.fmean(elapsed),
+        "token_count_compression_iterations": float(iterations),
+        "token_count_compression_delta_count": float(len(weights)),
+        "token_count_compression_checksum": float(checksum),
     }
 
 
@@ -100,6 +170,8 @@ def _measure(sample_count: int | None = None, token_event_count: int | None = No
         "sample_count": float(sample_count),
     }
     metrics.update(_measure_delta_token_count(sample_count))
+    metrics.update(_measure_token_count_annotation(sample_count))
+    metrics.update(_measure_token_count_compression(sample_count))
     return metrics
 
 

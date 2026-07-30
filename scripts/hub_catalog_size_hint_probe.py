@@ -35,7 +35,7 @@ def _payload(index: int) -> tuple[dict[str, Any], int]:
 
 
 def _compatibility_payload(index: int) -> tuple[dict[str, Any], bool]:
-    mode = index % 5
+    mode = index % 6
     if mode == 0:
         return {
             "id": "plain/model",
@@ -63,6 +63,12 @@ def _compatibility_payload(index: int) -> tuple[dict[str, Any], bool]:
             "tags": ["Text-Generation", object()],
             "library_name": "transformers",
             "cardData": {"tags": ["MLX", object()]},
+        }, True
+    if mode == 4:
+        return {
+            "id": "plain/model",
+            "tags": ["Text-Generation", object()],
+            "cardData": {"library_name": "mlx", "tags": ["audio", object()]},
         }, True
     return {
         "id": "plain/model",

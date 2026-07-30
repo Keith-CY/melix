@@ -58,3 +58,45 @@ work from local model scan probes.
 Validation remains the focused runtime-utils pytest selection, changed-scope
 coverage for `runtime_utils.py`, `test_runtime_utils.py`, and the registered probe
 script, plus the local and CI `runtime-utils-top-level-weight-streaming` probe.
+
+## 2026-07-20 indexed relative shard join slice
+
+This follow-up Python slice keeps the same runtime resident-byte probe and
+extends it with indexed safetensors metrics. `_indexed_safetensors_shard_bytes(...)`
+now resolves relative shard names with `model_dir.joinpath(shard_name)` instead
+of constructing `Path(shard_name)` and then rejoining it to the model directory.
+Absolute shard names still use `Path(shard_name)`, duplicate shard suppression and
+missing-file handling are unchanged, and flat top-level bundle scanning remains
+covered by the existing metrics.
+
+The registered probe now reports `indexed_elapsed_ms_mean` and
+`indexed_peak_bytes_mean` alongside the flat-bundle metrics. Validation remains
+the focused runtime-utils pytest selection, changed-scope coverage, and the local
+and CI `runtime-utils-top-level-weight-streaming` probe.
+
+## 2026-07-20 weight-file stat-once slice
+
+This follow-up Python slice keeps the same runtime resident-byte probe and
+narrows `_weight_file_size(...)`, the shared helper for single-file model paths
+and indexed safetensors shard accounting. Weight files now use one
+`Path.stat()` result for both regular-file validation and byte size instead of
+calling `Path.is_file()` before `Path.stat()`. Suffix filtering, symlink-following
+semantics, missing-file handling, non-regular file rejection, and flat-bundle
+`os.scandir()` behavior remain unchanged.
+
+Validation remains the focused runtime-utils pytest selection, changed-scope
+coverage, and the local and CI `runtime-utils-top-level-weight-streaming` probe;
+the indexed metrics are the primary performance signal for this slice.
+
+## 2026-07-24 safetensors suffix fast path
+
+This follow-up Python slice keeps the same registered runtime resident-byte
+probe and narrows only `_is_model_weight_filename(...)`, which is called for
+every candidate entry in flat bundles and every indexed shard path. The common
+lowercase `.safetensors` suffix is checked before the secondary model-weight
+suffix tuple, so flat-bundle scans with many safetensors shards avoid the broader
+tuple suffix check while preserving suffix-only rejection and mixed-case fallback
+semantics for `.safetensors`, `.npz`, `.bin`, and `.gguf` names.
+
+Validation remains the focused runtime-utils pytest selection, changed-scope
+coverage, and the local and CI `runtime-utils-top-level-weight-streaming` probe.

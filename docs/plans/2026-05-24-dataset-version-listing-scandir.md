@@ -1,6 +1,6 @@
 # Dataset version listing scandir slice
 
-This Python-only performance track keeps dataset-version listing behavior unchanged while reducing overhead in small, registered slices. The first slice replaced the one-level `Path.glob("*/dataset-version.json")` scan with an explicit `os.scandir()` pass. A follow-up changed shared JSON manifest loading from text decoding to byte loading. The current slice keeps the same registered listing probe and removes per-manifest `Path` construction from the listing hot path by carrying `os.scandir()` string paths into a direct binary JSON load.
+This Python-only performance track keeps dataset-version listing behavior unchanged while reducing overhead in small, registered slices. The first slice replaced the one-level `Path.glob("*/dataset-version.json")` scan with an explicit `os.scandir()` pass. A follow-up changed shared JSON manifest loading from text decoding to byte loading. This slice keeps the same registered listing probe and trims the manifest iterator hot path by binding `os.scandir`, converting the versions root with `os.fspath(...)` once, and appending a local manifest suffix string instead of formatting each yielded path.
 
 ## Scope
 

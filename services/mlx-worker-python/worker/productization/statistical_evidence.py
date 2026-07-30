@@ -82,22 +82,25 @@ def build_category_breakdown(
     rows: tuple[dict[str, object], ...],
 ) -> dict[str, dict[str, object]]:
     category_totals: dict[str, list[int]] = {}
-    category_totals_get = category_totals.get
-    is_instance = isinstance
     string_type = str
+    value_type = type
+    is_instance = isinstance
     for row in rows:
         try:
             raw_category_label = row["category_label"]
         except KeyError:
             continue
-        if is_instance(raw_category_label, string_type):
+        if value_type(raw_category_label) is string_type:
+            category_label = raw_category_label.strip()
+        elif is_instance(raw_category_label, string_type):
             category_label = raw_category_label.strip()
         else:
             category_label = string_type(raw_category_label).strip()
         if not category_label:
             continue
-        totals = category_totals_get(category_label)
-        if totals is None:
+        try:
+            totals = category_totals[category_label]
+        except KeyError:
             totals = [0, 0, 0]
             category_totals[category_label] = totals
         totals[0] += 1
@@ -169,10 +172,12 @@ def _paired_bootstrap_interval(
     sample_size = len(outcomes)
     inverse_sample_size = 1.0 / sample_size
     choices = sampler.choices
-    replicates: list[float] = []
-    append_replicate = replicates.append
-    for _ in range(bootstrap_iterations):
-        append_replicate(sum(choices(outcomes, k=sample_size)) * inverse_sample_size)
+    sum_values = sum
+    iteration_range = range
+    replicates = [
+        sum_values(choices(outcomes, k=sample_size)) * inverse_sample_size
+        for _ in iteration_range(bootstrap_iterations)
+    ]
 
     alpha = (1.0 - confidence_level) / 2.0
     replicates.sort()

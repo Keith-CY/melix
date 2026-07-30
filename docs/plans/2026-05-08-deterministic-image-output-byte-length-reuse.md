@@ -34,3 +34,13 @@ Run locally on Linux:
 The expected behavioral result is unchanged generated artifact metadata and
 probe output bytes. The expected performance result is neutral-to-lower elapsed
 probe time while `output_byte_scan_calls_mean` remains `0.0`.
+
+## 2026-07-29 follow-up slice: edit payload static frame reuse
+
+The deterministic edit loop now builds the static payload prefix/suffix once per
+request and only inserts the ASCII variant index inside the per-image loop. This
+keeps `_render_edit_payload(...)` as the canonical byte-format reference for
+tests and direct callers, while avoiding repeated prompt/size/strength/digest
+formatting for multi-variant deterministic edit jobs. The same registered
+`deterministic-image-output-byte-accounting` probe remains the local Linux and CI
+gate for elapsed time, output byte parity, and zero output-byte rescans.

@@ -110,6 +110,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
             _ = try await client.startChat(
                 ControlPlaneChatRequest(
                     modelID: modelID,
+                    serverSessionID: serverSessionID,
                     messages: [.init(role: "user", content: "confirm the paused server blocks chat")]
                 )
             )
@@ -147,6 +148,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         let wakeExecution = try await client.startChat(
             ControlPlaneChatRequest(
                 modelID: modelID,
+                serverSessionID: serverSessionID,
                 messages: [.init(role: "user", content: "wake the server")]
             )
         )
@@ -174,6 +176,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         let restartExecution = try await client.startChat(
             ControlPlaneChatRequest(
                 modelID: modelID,
+                serverSessionID: serverSessionID,
                 messages: [.init(role: "user", content: "confirm restart recovery")]
             )
         )

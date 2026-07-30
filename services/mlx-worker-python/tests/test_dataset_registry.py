@@ -650,6 +650,14 @@ def test_dataset_catalog_scan_records_skip_file_stat_for_unsupported_names(
     broken = FakeEntry("broken.jsonl", file_error=True)
     non_file = FakeEntry("pipe.jsonl", is_file=False)
     supported = FakeEntry("train.jsonl")
+    support_checks: dict[str, int] = {}
+    original_is_supported = catalog._is_supported_dataset_file_name
+
+    def counting_is_supported(name: str) -> bool:
+        support_checks[name] = support_checks.get(name, 0) + 1
+        return original_is_supported(name)
+
+    monkeypatch.setattr(catalog, "_is_supported_dataset_file_name", counting_is_supported)
 
     records = list(
         catalog._supported_scan_entry_records(
@@ -667,6 +675,13 @@ def test_dataset_catalog_scan_records_skip_file_stat_for_unsupported_names(
     assert broken.is_file_calls == 1
     assert non_file.is_file_calls == 1
     assert supported.is_file_calls == 1
+    assert support_checks == {
+        "notes.txt": 1,
+        "raw-data.txt": 1,
+        "broken.jsonl": 1,
+        "pipe.jsonl": 1,
+        "train.jsonl": 1,
+    }
 
     monkeypatch.setattr(
         catalog.os,

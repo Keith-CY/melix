@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from worker.productization import probe_policy as probe_policy_module
 from worker.productization.probe_policy_overhead import (
     NoOpProbeRecorder,
     measure_no_op_probe_policy_overhead,
@@ -77,6 +78,25 @@ def test_probe_policy_exact_lowercase_strings_keep_source_value() -> None:
     assert non_string_policy.fallback_applied is True
 
 
+def test_probe_policy_exact_common_modes_skip_generic_value_lookup(monkeypatch) -> None:
+    def fail_value_lookup(value: str) -> ProbePolicy | None:  # pragma: no cover - regression guard
+        raise AssertionError(f"exact common modes should skip generic lookup: {value}")
+
+    monkeypatch.setattr(probe_policy_module, "_PROBE_POLICY_BY_VALUE_GET", fail_value_lookup)
+
+    assert ProbePolicy.from_value("debug") is ProbePolicy.debug()
+    invalid_policy = ProbePolicy.from_value("definitely-not-valid")
+    assert invalid_policy.mode is ProbeMode.MINIMAL
+    assert invalid_policy.source_value == "definitely-not-valid"
+    assert invalid_policy.fallback_applied is True
+
+
+def test_probe_policy_from_env_defaults_to_ambient_environment(monkeypatch) -> None:
+    monkeypatch.setenv("MELIX_PROBE_MODE", "debug")
+
+    assert ProbePolicy.from_env() is ProbePolicy.debug()
+
+
 def test_probe_policy_empty_env_uses_production_default() -> None:
     policy = probe_policy_from_env({"MELIX_PROBE_MODE": ""})
 
@@ -96,6 +116,19 @@ def test_probe_policy_reuses_normalized_string_cache_for_invalid_values() -> Non
     assert ProbePolicy.from_value("Definitely-Not-Valid") is invalid_policy
     assert _probe_policy_from_uncached_string.cache_info().hits == 1
     assert ProbePolicy.from_value("   ") is ProbePolicy.from_value("")
+
+
+def test_probe_policy_exact_invalid_minimal_strings_skip_cached_normalization() -> None:
+    _probe_policy_from_uncached_string.cache_clear()
+    invalid_policy = ProbePolicy.from_value("unsupported-mode")
+
+    assert invalid_policy.mode is ProbeMode.MINIMAL
+    assert invalid_policy.source_value == "unsupported-mode"
+    assert invalid_policy.fallback_applied is True
+    assert ProbePolicy.from_value("unsupported-mode") is invalid_policy
+    assert _probe_policy_from_uncached_string.cache_info().hits == 0
+    for index in range(65):
+        assert ProbePolicy.from_value(f"unsupported-mode-{index}").fallback_applied is True
 
 
 def test_probe_policy_empty_values_reuse_default_policy_cache() -> None:

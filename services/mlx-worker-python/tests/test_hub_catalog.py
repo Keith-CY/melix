@@ -152,6 +152,24 @@ def test_mlx_library_exact_detection_skips_atom_helper(monkeypatch: pytest.Monke
     ) is True
     assert calls == 1
 
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation"],
+            "cardData": {"library_name": "mlx"},
+        }
+    ) is True
+    assert calls == 1
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation"],
+            "cardData": {"library_name": "MLX"},
+        }
+    ) is True
+    assert calls == 1
+
 
 def test_mlx_repo_id_detection_preserves_case_insensitive_matches() -> None:
     assert _repo_id_contains_mlx("plain/model") is False
@@ -196,6 +214,52 @@ def test_payload_mlx_tag_detection_fast_paths_exact_membership(monkeypatch: pyte
         {"id": "plain/model", "tags": ["Text-Generation", "mLx", object()]}
     ) is True
     assert calls == 1
+
+
+def test_payload_card_library_detection_skips_tag_scan_when_top_library_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.model_ops import hub_catalog
+
+    def fail_tag_scan(value: object) -> bool:
+        raise AssertionError(  # pragma: no cover - regression guard
+            f"card library exact path should not scan tags: {value!r}"
+        )
+
+    monkeypatch.setattr(hub_catalog, "_tag_payload_contains_mlx", fail_tag_scan)
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation", object()],
+            "cardData": {"library_name": "mlx", "tags": ["audio", object()]},
+        }
+    ) is True
+
+
+def test_payload_card_tags_skip_top_tag_scan_when_card_tag_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.model_ops import hub_catalog
+
+    calls: list[object] = []
+    original = hub_catalog._tag_payload_contains_mlx
+
+    def counted_tag_scan(value: object) -> bool:
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog, "_tag_payload_contains_mlx", counted_tag_scan)
+
+    card_tag_sentinel = object()
+    payload = {
+        "id": "plain/model",
+        "tags": ["Text-Generation", object()],
+        "cardData": {"tags": ["MLX", card_tag_sentinel]},
+    }
+
+    assert hub_catalog._payload_is_mlx_compatible(payload) is True
+    assert calls == [["MLX", card_tag_sentinel]]
 
 
 class FakeHTTPResponse:
@@ -626,7 +690,26 @@ def test_direct_size_hint_fast_paths_cache_repeated_text(monkeypatch: pytest.Mon
             == 12 * MB
         )
 
-    assert direct_calls == ["12 MB", "12 MB"]
+    assert direct_calls == ["12 MB"]
+
+
+def test_direct_size_hint_from_line_parses_common_suffix_without_text_slice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    direct_parser = Mock(side_effect=AssertionError("common suffix should parse from span"))
+    monkeypatch.setattr(hub_catalog_module, "_direct_size_hint_from_text", direct_parser)
+
+    text = "README\nModel size: 1.5 GB\nother metadata"
+
+    assert hub_catalog_module._direct_size_hint_from_line(text, text.index("1.5")) == int(
+        1.5 * GB
+    )
+    separator_text = "prefix Model size: 2 MB\u2028other metadata"
+    assert hub_catalog_module._direct_size_hint_from_line(
+        separator_text, separator_text.index("2")
+    ) == 2 * MB
+    assert hub_catalog_module._direct_size_hint_from_span("bad MB", 0, 6) == 0
+    direct_parser.assert_not_called()
 
 
 def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
@@ -1021,6 +1104,12 @@ def test_next_cursor_from_link_requires_cursor_parameter_boundary() -> None:
     )
 
     assert hub_catalog_module._next_cursor_from_link(link_header) == ""
+
+
+def test_next_cursor_from_link_preserves_compact_rel_spacing_fallback() -> None:
+    link_header = '<https://huggingface.co/api/models?limit=10&cursor=compact%2Fpage>;rel="next"'
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "compact/page"
 
 
 def test_search_models_uses_next_cursor_from_link_header() -> None:
@@ -1669,14 +1758,21 @@ def test_search_models_counts_fp32_parameters_as_four_bytes_for_local_fit() -> N
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
 
 
-def test_tag_payload_contains_exact_mlx_without_atom_helper(
+def test_tag_payload_contains_exact_mlx_uses_atom_helper_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    atom_helper = Mock(side_effect=AssertionError("exact MLX list membership should short-circuit"))
-    monkeypatch.setattr(hub_catalog_module, "_is_mlx_atom", atom_helper)
+    calls = 0
+    original = hub_catalog_module._is_mlx_atom
+
+    def counted_is_mlx_atom(value: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog_module, "_is_mlx_atom", counted_is_mlx_atom)
 
     assert hub_catalog_module._tag_payload_contains_mlx(["Text-Generation", "MLX", object()]) is True
-    atom_helper.assert_not_called()
+    assert calls == 0
 
 
 def test_tag_lowering_fallbacks_preserve_direct_helper_compatibility() -> None:

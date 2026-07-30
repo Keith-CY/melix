@@ -51,6 +51,13 @@ public actor MetricsStore {
         scheduleExportIfNeeded()
     }
 
+    public func set(_ updates: [String: Double]) {
+        for (key, value) in updates {
+            values[key] = value
+        }
+        scheduleExportIfNeeded()
+    }
+
     public func increment(_ key: String, by amount: Double = 1) {
         values[key, default: 0] += amount
         scheduleExportIfNeeded()

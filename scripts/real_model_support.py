@@ -293,12 +293,8 @@ def _huggingface_cache_model_path(
     snapshots_root = repo_cache / "snapshots"
     if not snapshots_root.is_dir():
         return None
-    latest_entry_name: str | None = None
     with os.scandir(snapshots_root) as entries:
-        for entry in entries:
-            entry_name = entry.name
-            if latest_entry_name is None or entry_name > latest_entry_name:
-                latest_entry_name = entry_name
+        latest_entry_name = max((entry.name for entry in entries), default=None)
     if latest_entry_name is None:
         return None
 
@@ -357,24 +353,23 @@ def _is_deterministic_development_model(model_id: str) -> bool:
 
 
 def _has_recognized_model_weight_files(path: Path) -> bool:
-    if not path.is_dir():
-        return False
     path_string = os.fspath(path)
     for filename in _REAL_MODEL_COMMON_WEIGHT_FILENAMES:
         if os.path.isfile(os.path.join(path_string, filename)):
             return True
+    if not os.path.isdir(path_string):
+        return False
     with os.scandir(path) as entries:
         for entry in entries:
-            try:
-                if not entry.is_file():
+            name = entry.name
+            if name not in _REAL_MODEL_WEIGHT_FILENAMES and not name.endswith(
+                _REAL_MODEL_WEIGHT_SUFFIXES
+            ):
+                if name.islower() or not name.lower().endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
                     continue
+            try:
+                if entry.is_file():
+                    return True
             except OSError:
                 continue
-            name = entry.name
-            if name in _REAL_MODEL_WEIGHT_FILENAMES:
-                return True
-            if name.endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
-                return True
-            if not name.islower() and name.lower().endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
-                return True
     return False

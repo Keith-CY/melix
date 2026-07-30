@@ -18,6 +18,7 @@ from worker.runtime.tool_registry import (  # noqa: E402
     ToolRegistryError,
     built_in_tool_config,
     built_in_tool_registry,
+    preflight_agentic_tool_schema_consistency,
     select_agentic_tools_for_turn,
 )
 
@@ -51,6 +52,10 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     no_keyword_fallback_selected_schema_bytes_samples: list[float] = []
     whitespace_turn_planning_elapsed_samples: list[float] = []
     whitespace_turn_selected_schema_bytes_samples: list[float] = []
+    policy_planning_elapsed_samples: list[float] = []
+    policy_selected_schema_bytes_samples: list[float] = []
+    preflight_consistency_elapsed_samples: list[float] = []
+    preflight_referenced_tool_samples: list[float] = []
     checksum = 0
 
     for _ in range(sample_count):
@@ -233,6 +238,60 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         )
         checksum += whitespace_turn_schema_bytes
 
+        policy_schema_bytes = 0
+        policy_started = time.perf_counter()
+        for _index in range(selector_iterations):
+            selection_result = select_agentic_tools_for_turn(
+                ToolSelectionInput(
+                    current_user_turn="Answer briefly without web access.",
+                    recent_user_turns=("Search local evidence from the fixture corpus.",),
+                    vector_selected_tool_ids=("visit", "text_search"),
+                    vector_available=False,
+                    max_selected_tools=4,
+                    allow_web=False,
+                )
+            )
+            policy_schema_bytes += int(selection_result.receipt["selected_schema_bytes"])
+        policy_planning_elapsed_samples.append(
+            (time.perf_counter() - policy_started) * 1000.0
+        )
+        policy_selected_schema_bytes_samples.append(
+            float(policy_schema_bytes / selector_iterations)
+        )
+        checksum += policy_schema_bytes
+
+        preflight_registry = registry.select(("local_compute",))
+        preflight_affordances = (
+            {"tool_name": "visit", "source": "workflow_selected"},
+            {"tool_name": "local_compute", "source": "workflow_selected"},
+            {"tool_name": "text_search", "source": "workflow_selected"},
+            {"tool_name": "bad tool", "source": "workflow_selected"},
+        )
+        preflight_referenced_tools = 0
+        preflight_started = time.perf_counter()
+        for _index in range(selector_iterations):
+            decision = preflight_agentic_tool_schema_consistency(
+                preflight_affordances,
+                registry=preflight_registry,
+                source="workflow_selected",
+            )
+            if decision.referenced_tools != ("text_search", "visit", "local_compute"):
+                raise RuntimeError(  # pragma: no cover
+                    f"unexpected preflight referenced tools: {decision.referenced_tools!r}"
+                )
+            if decision.missing_tools != ("text_search", "visit"):
+                raise RuntimeError(  # pragma: no cover
+                    f"unexpected preflight missing tools: {decision.missing_tools!r}"
+                )
+            preflight_referenced_tools += len(decision.referenced_tools)
+        preflight_consistency_elapsed_samples.append(
+            (time.perf_counter() - preflight_started) * 1000.0
+        )
+        preflight_referenced_tool_samples.append(
+            float(preflight_referenced_tools / selector_iterations)
+        )
+        checksum += preflight_referenced_tools
+
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
         "select_calls_mean": float(iterations),
@@ -282,10 +341,20 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         "whitespace_turn_selected_schema_bytes_mean": statistics.fmean(
             whitespace_turn_selected_schema_bytes_samples
         ),
+        "policy_planning_elapsed_ms_mean": statistics.fmean(policy_planning_elapsed_samples),
+        "policy_selected_schema_bytes_mean": statistics.fmean(
+            policy_selected_schema_bytes_samples
+        ),
+        "preflight_consistency_elapsed_ms_mean": statistics.fmean(
+            preflight_consistency_elapsed_samples
+        ),
+        "preflight_referenced_tools_mean": statistics.fmean(
+            preflight_referenced_tool_samples
+        ),
         "checksum": float(checksum),
         "iterations": float(iterations),
         "sample_count": float(sample_count),
-        "selection_case_count": float(len(_SELECTIONS) + 1),
+        "selection_case_count": float(len(_SELECTIONS) + 2),
     }
 
 

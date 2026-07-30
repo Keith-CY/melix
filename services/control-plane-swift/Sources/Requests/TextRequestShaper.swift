@@ -3,6 +3,16 @@ import MelixControlPlaneProtocol
 
 public struct OCRExecutionPolicy: Sendable, Equatable {
     private static let defaultMaxTokens: UInt32 = 256
+    private static let declarationKeys = [
+        "ocr_prompt_profile_id",
+        "ocr_prompt_template",
+        "ocr_auto_prompt",
+        "ocr_stop_sequences",
+        "ocr_sampling_profile_id",
+        "ocr_default_temperature",
+        "ocr_default_top_p",
+        "ocr_default_max_tokens",
+    ]
 
     public let promptProfileID: String
     public let promptTemplate: String
@@ -16,6 +26,10 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
     public init?(
         modelSettings: Melix_Controlplane_V1_ModelSettings
     ) {
+        guard Self.declaresOCRPolicy(modelSettings) else {
+            return nil
+        }
+
         let promptProfileID = modelSettings.ext["ocr_prompt_profile_id"]?.nilIfEmpty
         let promptTemplate = modelSettings.ext["ocr_prompt_template"]?.nilIfEmpty
         let autoPrompt = modelSettings.ext["ocr_auto_prompt"]?.nilIfEmpty
@@ -28,18 +42,6 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
         let maxTokens = Self.parseUInt32(modelSettings.ext["ocr_default_max_tokens"])
             ?? Self.parseUInt32(modelSettings.ext["melix.generation_config.max_tokens"])
 
-        guard promptProfileID != nil
-            || promptTemplate != nil
-            || autoPrompt != nil
-            || samplingProfileID != nil
-            || !stopSequences.isEmpty
-            || temperature != nil
-            || topP != nil
-            || maxTokens != nil
-        else {
-            return nil
-        }
-
         self.promptProfileID = promptProfileID ?? "ocr-default"
         self.promptTemplate = promptTemplate ?? "{prompt}"
         self.autoPrompt = autoPrompt ?? "Extract the text from the image exactly as written."
@@ -48,6 +50,14 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens ?? Self.defaultMaxTokens
+    }
+
+    private static func declaresOCRPolicy(
+        _ modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) -> Bool {
+        declarationKeys.contains { key in
+            modelSettings.ext[key]?.nilIfEmpty != nil
+        }
     }
 
     private static func parseList(_ rawValue: String?) -> [String] {
@@ -78,6 +88,7 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
 public struct ModelSamplingPolicy: Sendable, Equatable {
     public let temperature: Double?
     public let topP: Double?
+    public let topK: UInt32?
     public let maxTokens: UInt32?
     public let lookupStatus: String
     public let canonicalModelID: String
@@ -101,6 +112,7 @@ public struct ModelSamplingPolicy: Sendable, Equatable {
     ) {
         let temperature = Self.parseDouble(modelSettings.ext["melix.generation_config.temperature"])
         let topP = Self.parseDouble(modelSettings.ext["melix.generation_config.top_p"])
+        let topK = Self.parseUInt32(modelSettings.ext["melix.generation_config.top_k"])
         let maxTokens = Self.parseUInt32(modelSettings.ext["melix.generation_config.max_tokens"])
         let catalogLookup = catalog.lookup(
             identities: Self.identityCandidates(
@@ -110,14 +122,20 @@ public struct ModelSamplingPolicy: Sendable, Equatable {
         )
         let resolvedTemperature = temperature ?? catalogLookup?.sampling.temperature
         let resolvedTopP = topP ?? catalogLookup?.sampling.topP
+        let resolvedTopK = topK
         let resolvedMaxTokens = maxTokens ?? catalogLookup?.sampling.maxTokens
 
-        guard resolvedTemperature != nil || resolvedTopP != nil || resolvedMaxTokens != nil else {
+        guard resolvedTemperature != nil
+            || resolvedTopP != nil
+            || resolvedTopK != nil
+            || resolvedMaxTokens != nil
+        else {
             return nil
         }
 
         self.temperature = resolvedTemperature
         self.topP = resolvedTopP
+        self.topK = resolvedTopK
         self.maxTokens = resolvedMaxTokens
         self.lookupStatus = catalogLookup == nil ? "unknown" : "known"
         self.canonicalModelID = catalogLookup?.canonicalModelID
@@ -363,6 +381,7 @@ public struct TextRequestShaper: Sendable {
             fallback: fallbackTopP,
             defaultValue: 1.0
         )
+        let topK = request.topK ?? modelSamplingPolicy?.topK
         let outputCap = resolvedOutputCap(
             request: request,
             presetMaxTokens: preset?.maxTokens,
@@ -370,8 +389,10 @@ public struct TextRequestShaper: Sendable {
         )
         let samplingRequestOverrideApplied = request.temperature != nil
             || request.topP != nil
+            || request.topK != nil
             || request.maxTokens != nil
             || request.maxCompletionTokens != nil
+            || request.maxOutputTokens != nil
         let recommendedSamplingRequired = request.recommendedSampling?.requiresKnownPolicy == true
         let samplingPolicyLookupStatus = samplingRequestOverrideApplied
             ? "operator_override"
@@ -451,8 +472,9 @@ public struct TextRequestShaper: Sendable {
             samplingRequestOverrideApplied: samplingRequestOverrideApplied,
             requestedMaxTokens: request.maxTokens,
             requestedMaxCompletionTokens: request.maxCompletionTokens,
+            requestedMaxOutputTokens: request.maxOutputTokens,
             outputCapSource: outputCap.source,
-            topK: request.topK,
+            topK: topK,
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
             presencePenalty: request.presencePenalty,
@@ -516,6 +538,13 @@ public struct TextRequestShaper: Sendable {
         presetMaxTokens: UInt32?,
         fallbackMaxTokens: PolicyValue<UInt32>?
     ) -> (value: UInt32, source: String, policySource: String) {
+        if let maxOutputTokens = request.maxOutputTokens {
+            let aliases = [request.maxTokens, request.maxCompletionTokens].compactMap { $0 }
+            let source = aliases.allSatisfy { $0 == maxOutputTokens }
+                ? "request_max_output_tokens"
+                : "request_conflict"
+            return (maxOutputTokens, source, "request")
+        }
         if let maxTokens = request.maxTokens,
            let maxCompletionTokens = request.maxCompletionTokens {
             return (

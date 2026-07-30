@@ -29,9 +29,14 @@ def _repeated_input_cycle_length(inputs: Sequence[str]) -> int:
             if inputs[index] != first_input:
                 return 0
         return 1
-    cycle = inputs[:cycle_length]
-    for index in range(cycle_length, input_count, cycle_length):
-        if inputs[index : index + cycle_length] != cycle:
+    if isinstance(inputs, (list, tuple)):
+        cycle = inputs[:cycle_length]
+        for index in range(cycle_length, input_count, cycle_length):
+            if inputs[index : index + cycle_length] != cycle:
+                return 0
+        return cycle_length
+    for index in range(cycle_length, input_count):
+        if inputs[index] != inputs[index % cycle_length]:
             return 0
     return cycle_length
 
@@ -74,15 +79,17 @@ class DeterministicEmbeddingRuntime:
         if cycle_length:
             if cycle_length == 1:
                 vector = embed_text(backend, inputs[0], dimensions)
+                copy_vector = vector.copy
                 vectors = [vector]
-                vectors.extend(vector.copy() for _ in range(input_count - 1))
+                vectors.extend(copy_vector() for _ in range(input_count - 1))
                 return vectors
-            for text in inputs[:cycle_length]:
-                vector = embed_text(backend, text, dimensions)
+            for index in range(cycle_length):
+                vector = embed_text(backend, inputs[index], dimensions)
                 append_vector(vector)
             cycle_vectors = tuple(vectors)
+            cycle_vector_copies = tuple(vector.copy for vector in cycle_vectors)
             for _ in range(input_count // cycle_length - 1):
-                vectors.extend(vector.copy() for vector in cycle_vectors)
+                vectors.extend(copy_vector() for copy_vector in cycle_vector_copies)
             return vectors
 
         vector_cache: dict[str, list[float]] = {}

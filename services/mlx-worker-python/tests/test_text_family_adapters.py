@@ -10,10 +10,12 @@ from worker.runtime.text_family_adapters import (
     TextFamilyDescriptor,
     TextFamilyDetection,
     _bool_from_any,
+    _bool_value,
     _inferred_attention_profile,
     _inferred_expert_count,
     _inferred_rope_profile,
     _split_csv,
+    _string_value,
     detect_text_family_identity,
     resolve_text_family_config,
 )
@@ -75,6 +77,33 @@ def test_split_csv_short_circuits_empty_values_without_split() -> None:
 
     assert _split_csv(NoSplitEmpty("")) == []
     assert _split_csv(" text, qwen ,, tools ") == ["text", "qwen", "tools"]
+
+
+def test_string_value_short_circuits_missing_values_without_strip() -> None:
+    class NoStripEmpty(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("missing metadata values should not allocate strip results")
+
+    class MissingMetadata(dict[str, str]):
+        def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
+            return NoStripEmpty("")
+
+    assert _string_value(MissingMetadata(), "missing", "fallback") == "fallback"
+
+
+def test_string_value_preserves_exact_values_without_strip() -> None:
+    class NoStripExact(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("exact metadata values should not allocate strip results")
+
+    assert (
+        _string_value({"text_backend_id": NoStripExact("mlx_lm")}, "text_backend_id", "fallback")
+        == "mlx_lm"
+    )
+    assert (
+        _string_value({"text_backend_id": " mlx_lm "}, "text_backend_id", "fallback")
+        == "mlx_lm"
+    )
 
 
 def test_inferred_attention_profile_skips_non_string_hints_and_preserves_use_mla_fallback() -> None:
@@ -337,11 +366,28 @@ def test_resolve_text_family_config_covers_fallback_parsing_and_bool_variants() 
 
 
 def test_bool_from_any_preserves_literal_string_variants() -> None:
+    class NoStripLiteral(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("normalized bool literals should not allocate stripped copies")
+
+    assert _bool_from_any(NoStripLiteral("true")) is True
+    assert _bool_from_any(NoStripLiteral("false")) is False
     assert _bool_from_any("on") is True
     assert _bool_from_any(" YES ") is True
     assert _bool_from_any("off") is False
     assert _bool_from_any(" NO ") is False
     assert _bool_from_any("maybe") is False
+
+
+def test_bool_value_uses_exact_literal_fast_path_and_preserves_blank_default() -> None:
+    class NoStripLiteral(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("exact bool metadata literals should avoid strip allocation")
+
+    assert _bool_value({"flag": NoStripLiteral("true")}, "flag", default=False) is True
+    assert _bool_value({"flag": NoStripLiteral("false")}, "flag", default=True) is False
+    assert _bool_value({"flag": "   "}, "flag", default=True) is True
+    assert _bool_value({"flag": " YES "}, "flag", default=False) is True
 
 
 def test_resolve_text_family_config_marks_family_default_expert_count_source() -> None:
@@ -395,6 +441,39 @@ def test_resolve_text_family_config_prefers_live_config_over_stale_expert_metada
     assert stale.expert_count_source == "metadata"
     assert preserved_default.expert_count == 128
     assert preserved_default.expert_count_source == "family_default"
+
+
+def test_resolve_text_family_config_skips_expert_metadata_strip_for_missing_values() -> None:
+    class MissingExpertMetadata(dict[str, str]):
+        def get(self, key: str, default: object = None) -> object:  # type: ignore[override]
+            return super().get(key, default)
+
+    class NoStripEmpty(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("missing expert metadata should avoid strip allocation")
+
+    metadata = MissingExpertMetadata({"text_family_id": "qwen3moe"})
+    metadata["melix.text.moe.expert_count"] = NoStripEmpty("")
+    metadata["melix.text.moe.expert_count_source"] = NoStripEmpty("")
+
+    resolved = resolve_text_family_config(
+        metadata,
+        model_path="models/qwen3-moe",
+        config_payload={"model_type": "qwen3_moe"},
+        default_route_kind="swift_text",
+    )
+
+    invalid_metadata = resolve_text_family_config(
+        {"text_family_id": "qwen3moe", "melix.text.moe.expert_count": "bogus"},
+        model_path="models/qwen3-moe",
+        config_payload={"model_type": "qwen3_moe"},
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.expert_count == 128
+    assert resolved.expert_count_source == "family_default"
+    assert invalid_metadata.expert_count == 128
+    assert invalid_metadata.expert_count_source == "family_default"
 
 
 def test_inferred_expert_count_preserves_config_before_family_default() -> None:
@@ -457,6 +536,54 @@ def test_resolve_text_family_config_reads_config_mapping_without_copying() -> No
     assert len(config) == 516
     assert dict(config)["model_type"] == "qwen3_moe"
     assert config.copy_attempts == 1
+
+
+def test_resolve_text_family_config_skips_gate_dequant_strip_for_exact_bool_metadata() -> None:
+    class NoStripLiteral(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("exact gate dequant metadata literals should avoid strip allocation")
+
+    resolved = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.gate_dequant": NoStripLiteral("true"),
+        },
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe", "moe_gate_dequant": False},
+        default_route_kind="swift_text",
+    )
+    exact_false = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.gate_dequant": NoStripLiteral("false"),
+        },
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe", "moe_gate_dequant": True},
+        default_route_kind="swift_text",
+    )
+    padded = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.gate_dequant": " false ",
+        },
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe", "moe_gate_dequant": True},
+        default_route_kind="swift_text",
+    )
+    blank = resolve_text_family_config(
+        {
+            "text_family_id": "qwen3moe",
+            "melix.text.moe.gate_dequant": "   ",
+        },
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe", "moe_gate_dequant": True},
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.moe_gate_dequant is True
+    assert exact_false.moe_gate_dequant is False
+    assert padded.moe_gate_dequant is False
+    assert blank.moe_gate_dequant is True
 
 
 def test_resolve_text_family_config_skips_config_hints_when_metadata_overrides() -> None:

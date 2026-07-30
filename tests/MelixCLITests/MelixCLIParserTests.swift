@@ -7,6 +7,11 @@ import MelixControlPlaneCore
 
 @Suite("Melix CLI Parser")
 struct MelixCLIParserTests {
+    @Test("new local server sessions reserve enough output for thinking models")
+    func newLocalServerSessionsReserveEnoughOutputForThinkingModels() {
+        #expect(MelixOperatorServerServingDefaultsState().maxTokens == 1_024)
+    }
+
     @Test("documents eval dataset root in usage text")
     func documentsEvalDatasetRootInUsageText() {
         #expect(MelixCLIParser.usageText.contains("[--dataset-root PATH]"))

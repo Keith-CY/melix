@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -51,6 +52,7 @@ _AUDIO_LOCALE_POLICY_KEY = "melix.audio.locale_policy"
 _GENERATION_CONFIG_SOURCE_KEY = "melix.generation_config.source"
 _GENERATION_CONFIG_TEMPERATURE_KEY = "melix.generation_config.temperature"
 _GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
+_GENERATION_CONFIG_TOP_K_KEY = "melix.generation_config.top_k"
 _GENERATION_CONFIG_MAX_TOKENS_KEY = "melix.generation_config.max_tokens"
 _GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 _REGISTRY_SCAN_PRUNED_DIR_NAMES = frozenset({"blobs", ".git", "__pycache__"})
@@ -81,6 +83,7 @@ _GEMMA4_QAT_AUTOMATIC_SCOPE = "mlx-community-gemma4-q4"
 _GEMMA4_QAT_BASE_MODEL_MARKER = "base_model:"
 _GEMMA4_QAT_BASE_MODEL_MARKER_LEN = len(_GEMMA4_QAT_BASE_MODEL_MARKER)
 _GEMMA4_QAT_BASE_MODEL_STRIP_CHARS = " \t\r\n'\"[]"
+_GEMMA4_QAT_QUOTED_BASE_MODEL_PREFIX_LEN = len("\n  '")
 _GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER = "\n  'base_model:"
 _GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER_LEN = len(_GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER)
 _GEMMA4_QAT_SIZE_NAMES = {
@@ -92,6 +95,7 @@ _GEMMA4_QAT_SIZE_NAMES = {
 _GEMMA4_QAT_DRAFT_COMPANION_RECOVERY_HINT = (
     "Download or select a compatible Gemma 4 QAT draft companion."
 )
+_JSON_LOADS = json.loads
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,7 +390,7 @@ def _load_json_dict_file(
                 return cached_payload
 
     try:
-        payload = json.loads(path.read_bytes())
+        payload = _JSON_LOADS(path.read_bytes())
     except (OSError, json.JSONDecodeError):
         payload = {}
 
@@ -416,6 +420,7 @@ def _merge_generation_config_metadata(
     recognized_values = {
         _GENERATION_CONFIG_TEMPERATURE_KEY: payload.get("temperature"),
         _GENERATION_CONFIG_TOP_P_KEY: payload.get("top_p"),
+        _GENERATION_CONFIG_TOP_K_KEY: payload.get("top_k"),
         _GENERATION_CONFIG_MAX_TOKENS_KEY: payload.get("max_new_tokens"),
         _GENERATION_CONFIG_DO_SAMPLE_KEY: payload.get("do_sample"),
     }
@@ -1573,6 +1578,18 @@ def _vision_capability_metadata(family_id: str) -> dict[str, str]:
             supported_tasks=("vlm", "generate"),
             supported_parsers=("text",),
         )
+    if family_id == "gemma4-v1":
+        return _capability_metadata(
+            adapter_set_hash="vision-family-gemma4-v1",
+            route_kind="python_vlm",
+            capability_class="vlm",
+            supported_modalities=("text", "image", "video"),
+            supported_tasks=("vlm", "generate"),
+            supported_parsers=("text", "gemma"),
+            tool_parser_mode="gemma",
+            tool_parser_namespaces=("tools.vision",),
+            tool_parser_xml_fallback=True,
+        )
     return _capability_metadata(
         adapter_set_hash=f"vision-family-{family_id}",
         route_kind="python_vlm",
@@ -2025,6 +2042,7 @@ def _gemma4_qat_is_draft_companion(value: str, *, model_id_lower: str) -> bool:
     )
 
 
+@lru_cache(maxsize=8)
 def _gemma4_qat_source_model(
     readme_text: str,
     *,
@@ -2035,13 +2053,13 @@ def _gemma4_qat_source_model(
     marker_len = _GEMMA4_QAT_BASE_MODEL_MARKER_LEN
     quoted_marker_index = readme_text.find(_GEMMA4_QAT_QUOTED_BASE_MODEL_MARKER)
     if quoted_marker_index >= 0:
-        quoted_marker_start = quoted_marker_index + len("\n  '")
-        marker_index = readme_text.find(marker, 0, quoted_marker_start)
+        quoted_marker_start = quoted_marker_index + _GEMMA4_QAT_QUOTED_BASE_MODEL_PREFIX_LEN
+        marker_index = readme_text.rfind(marker, 0, quoted_marker_start)
         while marker_index >= 0:
             line_start = readme_text.rfind("\n", 0, marker_index) + 1
             if not readme_text[line_start:marker_index].strip(" \t\r'\""):
                 break
-            marker_index = readme_text.find(marker, marker_index + 1, quoted_marker_start)
+            marker_index = readme_text.rfind(marker, 0, marker_index)
         if marker_index >= 0:
             quoted_marker_index = -1
     if quoted_marker_index >= 0:
@@ -3960,7 +3978,7 @@ class WorkerModelCatalog:
                 continue
             try:
                 with os.scandir(os.fspath(current)) as entries:
-                    child_names: list[str] = []
+                    child_entries: list[tuple[str, str]] = []
                     has_manifest = False
                     has_config = False
                     has_generation_config = False
@@ -3988,12 +4006,13 @@ class WorkerModelCatalog:
                                 has_model_weight_files = True
                                 continue
                             if entry.is_dir():
-                                child_path = current / entry_name
-                                if current == resolved_root and entry_name.startswith("models--"):
+                                entry_path = entry.path
+                                if current is resolved_root and entry_name.startswith("models--"):
+                                    child_path = Path(entry_path)
                                     if _hf_cache_repo_id(child_path) is not None:
                                         hf_cache_repo_dirs.append(child_path)
                                         continue
-                                child_names.append(entry_name)
+                                child_entries.append((entry_name, entry_path))
                         except OSError:
                             continue
             except OSError:
@@ -4011,8 +4030,8 @@ class WorkerModelCatalog:
                     )
                 )
                 continue
-            child_names.sort(reverse=True)
-            stack.extend(current / name for name in child_names)
+            child_entries.sort(reverse=True)
+            stack.extend(Path(entry_path) for _name, entry_path in child_entries)
         return tuple(manifest_paths), tuple(plain_local_model_dirs), tuple(sorted(hf_cache_repo_dirs))
 
     @staticmethod
