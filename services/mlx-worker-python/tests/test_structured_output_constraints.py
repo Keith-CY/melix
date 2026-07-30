@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import builtins
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 import json
 import math
 import sys
+from threading import Barrier, Lock
+from time import sleep
 from time import monotonic
 from types import SimpleNamespace
 
@@ -1474,11 +1478,9 @@ def test_json_schema_processor_bounds_request_owned_mask_cache(mx) -> None:
         processor._mask_for_state(state, len(JSONSchemaConstraintTokenizer._id_to_text), logits)
 
     assert len(processor._mask_cache) == constraints._MAX_MASK_CACHE_ENTRIES
-    assert len(processor._mask_templates) == constraints._MAX_MASK_TEMPLATE_CACHE_ENTRIES
-    assert (
-        processor._mask_template_cache.estimated_bytes
-        <= constraints._MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES
-    )
+    cache_info = processor._mask_template_cache.cache_info()
+    assert cache_info.currsize == constraints._MAX_MASK_TEMPLATE_CACHE_ENTRIES
+    assert cache_info.currbytes <= constraints._MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES
 
 
 def test_json_schema_processor_reuses_immutable_tokenizer_mask_templates(mx) -> None:
@@ -1495,7 +1497,7 @@ def test_json_schema_processor_reuses_immutable_tokenizer_mask_templates(mx) -> 
 
     assert len(second._mask_cache) == 1
     assert first._mask_cache is not second._mask_cache
-    assert first._mask_templates is second._mask_templates
+    assert first._mask_template_cache is second._mask_template_cache
 
 
 def test_json_schema_mask_template_cache_enforces_estimated_byte_cap() -> None:
@@ -1512,8 +1514,94 @@ def test_json_schema_mask_template_cache_enforces_estimated_byte_cap() -> None:
     processor._remember_shared_mask((state, 1, False), first)
     processor._remember_shared_mask((state, 2, False), second)
 
-    assert list(processor._mask_templates) == [(state, 2, False)]
-    assert processor._mask_template_cache.estimated_bytes == per_template_bytes
+    assert processor._mask_template_cache.get((state, 1, False)) is None
+    assert processor._mask_template_cache.get((state, 2, False)) is second
+    assert processor._mask_template_cache.cache_info().currbytes == per_template_bytes
+
+
+def test_mask_template_cache_serializes_concurrent_eviction() -> None:
+    class YieldingOrderedDict(OrderedDict):
+        def popitem(self, last: bool = True):
+            sleep(0.01)
+            return super().popitem(last=last)
+
+    cache = constraints._MaskTemplateCache(_entries=YieldingOrderedDict())
+    per_template_bytes = constraints._MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES // 2 + 1
+    template = constraints._MaskTemplate(object(), (), per_template_bytes)
+    cache.remember("seed", template)
+    barrier = Barrier(8)
+
+    def remember(index: int) -> None:
+        barrier.wait()
+        cache.remember(index, template)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(remember, range(8)))
+
+    cache_info = cache.cache_info()
+    assert cache_info.currsize <= constraints._MAX_MASK_TEMPLATE_CACHE_ENTRIES
+    assert cache_info.currsize == 1
+    assert cache_info.currbytes == per_template_bytes
+    assert cache_info.currbytes <= constraints._MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES
+
+
+def test_mask_template_cache_serializes_concurrent_reads() -> None:
+    activity_lock = Lock()
+    activity = {"active": 0, "maximum": 0}
+
+    class YieldingOrderedDict(OrderedDict):
+        def get(self, key, default=None):
+            with activity_lock:
+                activity["active"] += 1
+                activity["maximum"] = max(activity["maximum"], activity["active"])
+            sleep(0.01)
+            try:
+                return super().get(key, default)
+            finally:
+                with activity_lock:
+                    activity["active"] -= 1
+
+    template = constraints._MaskTemplate(object(), (), 1)
+    cache = constraints._MaskTemplateCache(
+        _entries=YieldingOrderedDict((("shared", template),)),
+        _estimated_bytes=1,
+    )
+    barrier = Barrier(8)
+
+    def read(_index: int) -> constraints._MaskTemplate | None:
+        barrier.wait()
+        return cache.get("shared")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(read, range(8)))
+
+    assert results == [template] * 8
+    assert activity["maximum"] == 1
+
+
+def test_tokenizer_mask_template_cache_initializes_once_across_threads() -> None:
+    class YieldingTokenizer:
+        def __getattribute__(self, name: str):
+            if name == constraints._TOKENIZER_MASK_TEMPLATE_CACHE_ATTR:
+                sleep(0.01)
+            return super().__getattribute__(name)
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if name == constraints._TOKENIZER_MASK_TEMPLATE_CACHE_ATTR:
+                sleep(0.01)
+            super().__setattr__(name, value)
+
+    tokenizer = YieldingTokenizer()
+    barrier = Barrier(8)
+
+    def resolve(_index: int) -> constraints._MaskTemplateCache:
+        barrier.wait()
+        return constraints._tokenizer_mask_template_cache(tokenizer)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        caches = list(executor.map(resolve, range(8)))
+
+    assert len({id(cache) for cache in caches}) == 1
 
 
 def test_json_schema_processor_supports_tokenizers_without_attribute_storage() -> None:
@@ -1533,7 +1621,7 @@ def test_json_schema_processor_supports_tokenizers_without_attribute_storage() -
         SlotTokenizer(),
     )[0]
 
-    assert processor._mask_templates == {}
+    assert processor._mask_template_cache.cache_info().currsize == 0
 
 
 def test_json_schema_token_count_supports_single_sequence_matrix_and_rejects_batch() -> None:
@@ -1903,6 +1991,44 @@ def test_required_and_named_json_tool_choices_are_sampler_enforced_from_token_ze
     )
     assert _tool_accepts_text(named, weather)
     assert not _tool_accepts_text(named, search)
+
+
+@pytest.mark.parametrize(
+    "parser_mode",
+    ("text", "json", "gemma", "minimax", "glm", "mistral"),
+)
+def test_required_tool_choice_fails_closed_without_a_sampler_wire_dialect(
+    parser_mode: str,
+) -> None:
+    execution_ext = _tool_ext(parser_mode=parser_mode)
+    execution_ext.update(
+        {
+            "melix.tool_wire.dialect": "json_object_arguments",
+            "melix.tool_wire.argument_style": "json_object",
+            "melix.tool_wire.begin": "<tool_call>",
+            "melix.tool_wire.end": "</tool_call>",
+            "melix.tool_wire.trigger": "<tool_call>",
+        }
+    )
+    error = tool_constraints.tool_constraint_preflight_error(execution_ext)
+
+    assert error is not None
+    assert error.details == {
+        "mode": "tool_choice",
+        "enforcement": "sampler",
+        "reason": "tool_wire_parser_mode_unsupported",
+        "parser_mode": parser_mode,
+    }
+
+
+@pytest.mark.parametrize("choice", ("auto", "none"))
+def test_unconstrained_tool_choices_do_not_require_a_sampler_wire_dialect(
+    choice: str,
+) -> None:
+    execution_ext = _tool_ext(choice=choice, parser_mode="gemma")
+
+    assert tool_constraints.tool_constraint_preflight_error(execution_ext) is None
+    assert not tool_constraints.tool_constraint_requested(execution_ext)
 
 
 def test_nonparallel_tool_completion_forces_eos_but_parallel_keeps_separator(mx) -> None:

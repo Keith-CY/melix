@@ -9,8 +9,8 @@ struct ToolParserRegistryTests {
     @Test("tool wire grammar descriptors keep parser and sampler dialects aligned")
     func toolWireGrammarDescriptorsKeepParserAndSamplerDialectsAligned() throws {
         let registry = ToolParserRegistry()
-        let json = registry.wireGrammarDescriptor(for: .qwen)
-        let xml = registry.wireGrammarDescriptor(for: .xml)
+        let json = try #require(registry.wireGrammarDescriptor(for: .qwen))
+        let xml = try #require(registry.wireGrammarDescriptor(for: .xml))
 
         #expect(json.dialect == "json_object_arguments")
         #expect(json.argumentStyle == .jsonObject)
@@ -26,6 +26,51 @@ struct ToolParserRegistryTests {
         let encoded = try JSONEncoder().encode(xml)
         let decoded = try JSONDecoder().decode(ToolWireGrammarDescriptor.self, from: encoded)
         #expect(decoded == xml)
+    }
+
+    @Test("tool parser modes without sampler dialects do not inherit Qwen wire markers")
+    func unsupportedSamplerWireModesHaveNoDescriptor() {
+        let registry = ToolParserRegistry()
+
+        for mode in [
+            ToolParserMode.text,
+            .json,
+            .gemma,
+            .minimax,
+            .glm,
+            .mistral,
+        ] {
+            let descriptor: ToolWireGrammarDescriptor? = registry.wireGrammarDescriptor(for: mode)
+            #expect(descriptor == nil)
+        }
+    }
+
+    @Test("translator omits sampler wire metadata for unsupported parser modes")
+    func translatorOmitsUnsupportedSamplerWireMetadata() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-gemma-tool-wire" })
+        let request = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Call the weather tool.")],
+            toolParser: ToolParserRequestConfiguration(mode: .gemma),
+            tools: [
+                OpenAIChatTool(
+                    type: "function",
+                    function: OpenAIChatTool.FunctionDefinition(
+                        name: "weather",
+                        description: "Read weather",
+                        parameters: .object(["type": .string("object")])
+                    )
+                ),
+            ],
+            toolChoice: .mode("required")
+        )
+
+        let ext = try translator.translate(request, modelHandle: "worker-text")
+            .workerRequest.execution.ext
+
+        #expect(ext["melix.tool_parser.mode"] == "gemma")
+        #expect(ext["melix.compat.tool_choice_resolved"] == "required")
+        #expect(ext.keys.allSatisfy { !$0.hasPrefix("melix.tool_wire.") })
     }
 
     @Test("registered parsers declare audit receipts for wire formats and selector surfaces")

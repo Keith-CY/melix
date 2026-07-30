@@ -64,6 +64,7 @@ _MAX_EXPONENT_MAGNITUDE = 1_024
 _MAX_STATE_EXPLORATION_STATES = 4_096
 _MAX_STATE_EXPLORATION_TRANSITIONS = 32_768
 _MAX_STATE_EXPLORATION_SECONDS = 0.050
+_TOKENIZER_MASK_TEMPLATE_CACHE_INIT_LOCK = RLock()
 
 
 class StructuredOutputConstraintError(RuntimeError):
@@ -183,10 +184,72 @@ class _MaskTemplate:
     estimated_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class _MaskTemplateCacheInfo:
+    maxsize: int
+    currsize: int
+    maxbytes: int
+    currbytes: int
+
+
 @dataclass(slots=True)
 class _MaskTemplateCache:
-    entries: OrderedDict[object, _MaskTemplate] = field(default_factory=OrderedDict)
-    estimated_bytes: int = 0
+    _entries: OrderedDict[object, _MaskTemplate] = field(default_factory=OrderedDict)
+    _estimated_bytes: int = 0
+    _lock: RLock = field(default_factory=RLock, repr=False)
+
+    def get(self, cache_key: object) -> _MaskTemplate | None:
+        with self._lock:
+            template = self._entries.get(cache_key)
+            if template is not None:
+                self._entries.move_to_end(cache_key)
+            return template
+
+    def remember(self, cache_key: object, template: _MaskTemplate) -> _MaskTemplate:
+        if template.estimated_bytes > _MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES:
+            return template
+        with self._lock:
+            existing = self._entries.get(cache_key)
+            if existing is not None:
+                self._entries.move_to_end(cache_key)
+                return existing
+            while self._entries and (
+                len(self._entries) >= _MAX_MASK_TEMPLATE_CACHE_ENTRIES
+                or self._estimated_bytes + template.estimated_bytes
+                > _MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES
+            ):
+                _, evicted = self._entries.popitem(last=False)
+                self._estimated_bytes -= evicted.estimated_bytes
+            self._entries[cache_key] = template
+            self._estimated_bytes += template.estimated_bytes
+            return template
+
+    def cache_info(self) -> _MaskTemplateCacheInfo:
+        with self._lock:
+            return _MaskTemplateCacheInfo(
+                maxsize=_MAX_MASK_TEMPLATE_CACHE_ENTRIES,
+                currsize=len(self._entries),
+                maxbytes=_MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES,
+                currbytes=self._estimated_bytes,
+            )
+
+
+def _tokenizer_mask_template_cache(tokenizer: Any) -> _MaskTemplateCache:
+    with _TOKENIZER_MASK_TEMPLATE_CACHE_INIT_LOCK:
+        template_cache = getattr(tokenizer, _TOKENIZER_MASK_TEMPLATE_CACHE_ATTR, None)
+        if isinstance(template_cache, _MaskTemplateCache):
+            return template_cache
+        template_cache = _MaskTemplateCache()
+        try:
+            setattr(tokenizer, _TOKENIZER_MASK_TEMPLATE_CACHE_ATTR, template_cache)
+        except Exception:
+            return template_cache
+        attached_cache = getattr(tokenizer, _TOKENIZER_MASK_TEMPLATE_CACHE_ATTR, None)
+        return (
+            attached_cache
+            if isinstance(attached_cache, _MaskTemplateCache)
+            else template_cache
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,15 +537,8 @@ class GrammarConstraintProcessor:
             tuple[_JSONPrefixState | _SchemaPrefixState | None, int, bool],
             _MaskTemplate,
         ] = OrderedDict()
-        template_cache = getattr(tokenizer, _TOKENIZER_MASK_TEMPLATE_CACHE_ATTR, None)
-        if not isinstance(template_cache, _MaskTemplateCache):
-            template_cache = _MaskTemplateCache()
-            try:
-                setattr(tokenizer, _TOKENIZER_MASK_TEMPLATE_CACHE_ATTR, template_cache)
-            except Exception:
-                pass
+        template_cache = _tokenizer_mask_template_cache(tokenizer)
         self._mask_template_cache = template_cache
-        self._mask_templates: OrderedDict[object, _MaskTemplate] = template_cache.entries
         self._packed_allow_token_mask: tuple[int, ...] = ()
 
     @property
@@ -544,7 +600,7 @@ class GrammarConstraintProcessor:
             self._packed_allow_token_mask = cached.packed
             return cached.dense
 
-        template = self._mask_templates.get(cache_key)
+        template = self._mask_template_cache.get(cache_key)
         if template is not None:
             self._packed_allow_token_mask = template.packed
             self._remember_request_mask(cache_key, template)
@@ -567,29 +623,17 @@ class GrammarConstraintProcessor:
             packed=packed,
             estimated_bytes=_mask_template_estimated_bytes(vocab_size),
         )
-        self._remember_shared_mask(cache_key, template)
+        template = self._remember_shared_mask(cache_key, template)
+        self._packed_allow_token_mask = template.packed
         self._remember_request_mask(cache_key, template)
-        return mask
+        return template.dense
 
     def _remember_shared_mask(
         self,
         cache_key: tuple[_JSONPrefixState | _SchemaPrefixState | None, int, bool],
         template: _MaskTemplate,
-    ) -> None:
-        cache = self._mask_template_cache
-        existing = cache.entries.pop(cache_key, None)
-        if existing is not None:
-            cache.estimated_bytes -= existing.estimated_bytes
-        while cache.entries and (
-            len(cache.entries) >= _MAX_MASK_TEMPLATE_CACHE_ENTRIES
-            or cache.estimated_bytes + template.estimated_bytes
-            > _MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES
-        ):
-            _, evicted = cache.entries.popitem(last=False)
-            cache.estimated_bytes -= evicted.estimated_bytes
-        if template.estimated_bytes <= _MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES:
-            cache.entries[cache_key] = template
-            cache.estimated_bytes += template.estimated_bytes
+    ) -> _MaskTemplate:
+        return self._mask_template_cache.remember(cache_key, template)
 
     def _remember_request_mask(
         self,

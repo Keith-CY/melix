@@ -2811,18 +2811,19 @@ public struct ChatRequestTranslator: Sendable {
             )
             generateRequest.execution.ext["melix.tool_config.source"] = "openai_chat_tools"
             generateRequest.execution.ext["melix.tool_config.tool_count"] = String(shapedRequest.tools.count)
-            let wireDescriptor = ToolParserRegistry().wireGrammarDescriptor(
+            if let wireDescriptor = ToolParserRegistry().wireGrammarDescriptor(
                 for: shapedRequest.toolParser?.mode ?? .xml
-            )
-            generateRequest.execution.ext["melix.tool_wire.dialect"] = wireDescriptor.dialect
-            generateRequest.execution.ext["melix.tool_wire.begin"] = wireDescriptor.begin
-            generateRequest.execution.ext["melix.tool_wire.end"] = wireDescriptor.end
-            generateRequest.execution.ext["melix.tool_wire.trigger"] = wireDescriptor.trigger
-            generateRequest.execution.ext["melix.tool_wire.argument_style"] =
-                wireDescriptor.argumentStyle.rawValue
-            if let sentinelData = try? JSONEncoder().encode(wireDescriptor.sentinelTokens) {
-                generateRequest.execution.ext["melix.tool_wire.sentinel_tokens"] =
-                    String(decoding: sentinelData, as: UTF8.self)
+            ) {
+                generateRequest.execution.ext["melix.tool_wire.dialect"] = wireDescriptor.dialect
+                generateRequest.execution.ext["melix.tool_wire.begin"] = wireDescriptor.begin
+                generateRequest.execution.ext["melix.tool_wire.end"] = wireDescriptor.end
+                generateRequest.execution.ext["melix.tool_wire.trigger"] = wireDescriptor.trigger
+                generateRequest.execution.ext["melix.tool_wire.argument_style"] =
+                    wireDescriptor.argumentStyle.rawValue
+                if let sentinelData = try? JSONEncoder().encode(wireDescriptor.sentinelTokens) {
+                    generateRequest.execution.ext["melix.tool_wire.sentinel_tokens"] =
+                        String(decoding: sentinelData, as: UTF8.self)
+                }
             }
         }
         if let toolParserSuppressedReason = shapedRequest.toolParserSuppressedReason {

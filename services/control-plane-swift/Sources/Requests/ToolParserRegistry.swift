@@ -238,6 +238,23 @@ public struct ToolParserRegistry: Sendable {
         let parserKind: ToolParserKind
         let acceptedWireFormats: [String]
         let requestContextModes: [ToolParserRequestContextMode]
+        let samplerWireGrammar: ToolWireGrammarDescriptor?
+
+        init(
+            mode: ToolParserMode,
+            aliases: Set<String>,
+            parserKind: ToolParserKind,
+            acceptedWireFormats: [String],
+            requestContextModes: [ToolParserRequestContextMode],
+            samplerWireGrammar: ToolWireGrammarDescriptor? = nil
+        ) {
+            self.mode = mode
+            self.aliases = aliases
+            self.parserKind = parserKind
+            self.acceptedWireFormats = acceptedWireFormats
+            self.requestContextModes = requestContextModes
+            self.samplerWireGrammar = samplerWireGrammar
+        }
     }
 
     private let descriptors: [Descriptor] = [
@@ -260,7 +277,15 @@ public struct ToolParserRegistry: Sendable {
             aliases: ["qwen"],
             parserKind: .toolCall,
             acceptedWireFormats: ["qwen_xml_tool_call"],
-            requestContextModes: [.toolParser, .reasoning]
+            requestContextModes: [.toolParser, .reasoning],
+            samplerWireGrammar: ToolWireGrammarDescriptor(
+                dialect: "json_object_arguments",
+                begin: "<tool_call>",
+                end: "</tool_call>",
+                trigger: "<tool_call>",
+                sentinelTokens: ["<tool_call>", "</tool_call>"],
+                argumentStyle: .jsonObject
+            )
         ),
         .init(
             mode: .gemma,
@@ -295,7 +320,15 @@ public struct ToolParserRegistry: Sendable {
             aliases: ["xml"],
             parserKind: .toolCall,
             acceptedWireFormats: ["xml_tool_call"],
-            requestContextModes: [.toolParser]
+            requestContextModes: [.toolParser],
+            samplerWireGrammar: ToolWireGrammarDescriptor(
+                dialect: "xml_parameter_blocks",
+                begin: "<tool_call>",
+                end: "</tool_call>",
+                trigger: "<tool_call>",
+                sentinelTokens: ["<tool_call>", "</tool_call>", "</parameter>", "</function>"],
+                argumentStyle: .xmlParameters
+            )
         ),
     ]
 
@@ -305,25 +338,8 @@ public struct ToolParserRegistry: Sendable {
         descriptors.map(\.mode)
     }
 
-    public func wireGrammarDescriptor(for mode: ToolParserMode) -> ToolWireGrammarDescriptor {
-        if mode == .xml {
-            return ToolWireGrammarDescriptor(
-                dialect: "xml_parameter_blocks",
-                begin: "<tool_call>",
-                end: "</tool_call>",
-                trigger: "<tool_call>",
-                sentinelTokens: ["<tool_call>", "</tool_call>", "</parameter>", "</function>"],
-                argumentStyle: .xmlParameters
-            )
-        }
-        return ToolWireGrammarDescriptor(
-            dialect: "json_object_arguments",
-            begin: "<tool_call>",
-            end: "</tool_call>",
-            trigger: "<tool_call>",
-            sentinelTokens: ["<tool_call>", "</tool_call>"],
-            argumentStyle: .jsonObject
-        )
+    public func wireGrammarDescriptor(for mode: ToolParserMode) -> ToolWireGrammarDescriptor? {
+        descriptors.first { $0.mode == mode }?.samplerWireGrammar
     }
 
     public func auditReceipts() -> [ToolParserAuditReceipt] {

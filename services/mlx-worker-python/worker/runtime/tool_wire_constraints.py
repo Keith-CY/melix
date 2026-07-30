@@ -131,7 +131,16 @@ def tool_wire_descriptor(execution_ext: object) -> ToolWireGrammarDescriptor:
     raw_dialect = _ext_get(execution_ext, "melix.tool_wire.dialect").strip().lower()
     parser_mode = _ext_get(execution_ext, _PARSER_MODE_KEY).strip().lower()
     if parser_mode:
-        base = XML_PARAMETER_TOOL_WIRE if parser_mode == "xml" else JSON_OBJECT_TOOL_WIRE
+        if parser_mode == "qwen":
+            base = JSON_OBJECT_TOOL_WIRE
+        elif parser_mode == "xml":
+            base = XML_PARAMETER_TOOL_WIRE
+        else:
+            raise _tool_error(
+                "The selected tool parser has no sampler-enforced wire dialect.",
+                "tool_wire_parser_mode_unsupported",
+                details={"parser_mode": parser_mode},
+            )
     else:
         base = (
             XML_PARAMETER_TOOL_WIRE
@@ -217,25 +226,8 @@ class ToolGrammarConstraintProcessor:
             object,
             structured._MaskTemplate,
         ] = OrderedDict()
-        template_cache = getattr(
-            tokenizer,
-            structured._TOKENIZER_MASK_TEMPLATE_CACHE_ATTR,
-            None,
-        )
-        if not isinstance(template_cache, structured._MaskTemplateCache):
-            template_cache = structured._MaskTemplateCache()
-            try:
-                setattr(
-                    tokenizer,
-                    structured._TOKENIZER_MASK_TEMPLATE_CACHE_ATTR,
-                    template_cache,
-                )
-            except Exception:
-                pass
+        template_cache = structured._tokenizer_mask_template_cache(tokenizer)
         self._mask_template_cache = template_cache
-        self._mask_templates: OrderedDict[object, structured._MaskTemplate] = (
-            template_cache.entries
-        )
         self._packed_allow_token_mask: tuple[int, ...] = ()
 
     @property
@@ -304,7 +296,7 @@ class ToolGrammarConstraintProcessor:
             self._packed_allow_token_mask = cached.packed
             return cached.dense
 
-        template = self._mask_templates.get(cache_key)
+        template = self._mask_template_cache.get(cache_key)
         if template is not None:
             self._packed_allow_token_mask = template.packed
             self._remember_request_mask(cache_key, template)
@@ -326,9 +318,10 @@ class ToolGrammarConstraintProcessor:
             packed=packed,
             estimated_bytes=structured._mask_template_estimated_bytes(vocab_size),
         )
-        self._remember_shared_mask(cache_key, template)
+        template = self._remember_shared_mask(cache_key, template)
+        self._packed_allow_token_mask = template.packed
         self._remember_request_mask(cache_key, template)
-        return mask
+        return template.dense
 
     def _token_allowed(self, state: _ToolPrefixState, token_id: int) -> bool:
         complete = _tool_state_complete(state)
@@ -352,21 +345,8 @@ class ToolGrammarConstraintProcessor:
         self,
         cache_key: object,
         template: structured._MaskTemplate,
-    ) -> None:
-        cache = self._mask_template_cache
-        existing = cache.entries.pop(cache_key, None)
-        if existing is not None:
-            cache.estimated_bytes -= existing.estimated_bytes
-        while cache.entries and (
-            len(cache.entries) >= structured._MAX_MASK_TEMPLATE_CACHE_ENTRIES
-            or cache.estimated_bytes + template.estimated_bytes
-            > structured._MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES
-        ):
-            _, evicted = cache.entries.popitem(last=False)
-            cache.estimated_bytes -= evicted.estimated_bytes
-        if template.estimated_bytes <= structured._MAX_MASK_TEMPLATE_CACHE_ESTIMATED_BYTES:
-            cache.entries[cache_key] = template
-            cache.estimated_bytes += template.estimated_bytes
+    ) -> structured._MaskTemplate:
+        return self._mask_template_cache.remember(cache_key, template)
 
     def _remember_request_mask(
         self,
@@ -878,14 +858,22 @@ def _ext_get(execution_ext: object, key: str) -> str:
     return str(getter(key, "") or "")
 
 
-def _tool_error(message: str, reason: str) -> structured.StructuredOutputConstraintError:
+def _tool_error(
+    message: str,
+    reason: str,
+    *,
+    details: Mapping[str, str] | None = None,
+) -> structured.StructuredOutputConstraintError:
+    error_details = {
+        "mode": "tool_choice",
+        "enforcement": "sampler",
+        "reason": reason,
+    }
+    if details:
+        error_details.update(details)
     return structured.StructuredOutputConstraintError(
         message,
-        details={
-            "mode": "tool_choice",
-            "enforcement": "sampler",
-            "reason": reason,
-        },
+        details=error_details,
     )
 
 
