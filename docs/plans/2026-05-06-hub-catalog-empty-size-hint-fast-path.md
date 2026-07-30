@@ -106,3 +106,14 @@ existing card library precedence remain unchanged; non-matching card tags still
 fall through to the same top-level and card-library checks, preserving behavior
 while reducing repeated tag scans for card-backed compatibility payloads in the
 registered probe.
+
+## 2026-07-30 cursor query-key constant slice
+
+This follow-up Python-only slice keeps registered probe coverage through
+`hub-catalog-next-cursor-fast-parse` and narrows to `_cursor_query_value(...)`.
+The repeated Hugging Face pagination path places `cursor=` after earlier query
+parameters, so the parser now checks a precomputed `&cursor=` key before the
+first-query-key fallback. Cursor extraction semantics remain unchanged for
+first-query, later-query, fragment-delimited, and missing-cursor links while the
+registered cursor probe measures the repeated Hub pagination workload locally and
+in CI.
