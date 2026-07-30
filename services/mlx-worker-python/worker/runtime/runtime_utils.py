@@ -36,7 +36,6 @@ _EMPTY_KWARG_SIGNATURE = CallableKwargSignature((), frozenset(), False)
 
 def _callable_kwarg_signature_uncached(
     callable_obj: Any,
-    *,
     skip_first_parameter: bool = False,
 ) -> CallableKwargSignature:
     try:
@@ -47,15 +46,16 @@ def _callable_kwarg_signature_uncached(
     keyword_accessible_params: set[str] = set()
     parameter_names: list[str] = []
     accepts_var_keyword = False
+    positional_or_keyword = inspect.Parameter.POSITIONAL_OR_KEYWORD
+    keyword_only = inspect.Parameter.KEYWORD_ONLY
+    var_keyword = inspect.Parameter.VAR_KEYWORD
     for index, (name, parameter) in enumerate(signature.parameters.items()):
         if skip_first_parameter and index == 0:
             continue
-        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+        parameter_kind = parameter.kind
+        if parameter_kind == var_keyword:
             accepts_var_keyword = True
-        elif parameter.kind in (
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        ):
+        elif parameter_kind == positional_or_keyword or parameter_kind == keyword_only:
             keyword_accessible_params.add(name)
             parameter_names.append(name)
     return CallableKwargSignature(
@@ -77,22 +77,15 @@ def _callable_cache_target(callable_obj: Any) -> tuple[Any, bool]:
 @lru_cache(maxsize=512)
 def _callable_kwarg_signature_cached(
     callable_obj: Any,
-    *,
     skip_first_parameter: bool = False,
 ) -> CallableKwargSignature:
-    return _callable_kwarg_signature_uncached(
-        callable_obj,
-        skip_first_parameter=skip_first_parameter,
-    )
+    return _callable_kwarg_signature_uncached(callable_obj, skip_first_parameter)
 
 
 def callable_kwarg_signature(callable_obj: Any) -> CallableKwargSignature:
     cache_callable, skip_first_parameter = _callable_cache_target(callable_obj)
     try:
-        return _callable_kwarg_signature_cached(
-            cache_callable,
-            skip_first_parameter=skip_first_parameter,
-        )
+        return _callable_kwarg_signature_cached(cache_callable, skip_first_parameter)
     except TypeError:
         return _callable_kwarg_signature_uncached(callable_obj)
 
@@ -103,10 +96,7 @@ def callable_declares_kwarg(callable_obj: Any, keyword: str) -> bool:
 
 def callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
     if type(callable_obj) is FunctionType:
-        signature = _callable_kwarg_signature_cached(
-            callable_obj,
-            skip_first_parameter=False,
-        )
+        signature = _callable_kwarg_signature_cached(callable_obj, False)
     else:
         signature = callable_kwarg_signature(callable_obj)
     return keyword in signature.keyword_accessible_params or signature.accepts_var_keyword

@@ -47,8 +47,6 @@ class ProbePolicy:
     ) -> ProbePolicy:
         if env is not None:
             if not env:
-                if default_mode is ProbeMode.MINIMAL:
-                    return _MINIMAL_DEFAULT_PROBE_POLICY
                 return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
             values = env
         else:
@@ -67,8 +65,6 @@ class ProbePolicy:
         default_mode: ProbeMode = ProbeMode.MINIMAL,
     ) -> ProbePolicy:
         if value is None:
-            if default_mode is ProbeMode.MINIMAL:
-                return _MINIMAL_DEFAULT_PROBE_POLICY
             return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
         if type(value) is str:
             if not value:

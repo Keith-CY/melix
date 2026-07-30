@@ -349,6 +349,26 @@ Expected effect:
 - leave non-policy selection, registry selection, OpenAI schema generation,
   protobuf config handling, and tool definitions unchanged.
 
+## Follow-up Slice: Common Preflight Source Fast Path
+
+The 2026-07-30 follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts unchanged, but returns
+the common exact source labels (`workflow_selected`, `retrieved_context`,
+`viewed_procedure`, and `tool_affordance`) before running the generic tool-name
+regex sanitizer. The fallback still strips and validates non-exact or custom
+source labels through the existing regex path.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for repeated common preflight
+  source labels;
+- preserve normalized fallback behavior and redaction of invalid custom source
+  strings;
+- leave referenced-tool ordering, missing-tool receipts, registry selection,
+  OpenAI schema generation, protobuf config handling, and tool definitions
+  unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
