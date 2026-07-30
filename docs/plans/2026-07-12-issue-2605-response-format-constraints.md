@@ -137,4 +137,5 @@ Once a schema-backed or JSON-object grammar reaches a complete JSON value and th
 - Post-integration structured-output, tool-registry, and runtime-utils tests pass together (`315 passed`).
 - The final pre-commit transaction must rerun `make swift-test`, `make py-test`, `make integration-test`, and the current-base PR-scoped performance report before PR handoff.
 - Direct changed-scope coverage must remain at or above 95 percent for the structured-output and adjacent MLX text paths, with zero direct or gated performance regressions.
+- Linux PR-scoped probe verification must skip the native mixed-sequence batch assertion when `mlx.core` cannot load on the runner; the same assertion remains required on hosts with an available MLX runtime. The two affected registered probes pass locally with `96 passed`, 100 percent changed-line coverage, and no performance regression against the recorded `origin/main` baseline.
 - The only deferred implementation remains the Swift text-worker sampler and the fused MLX/Metal packed-mask consumer described above.

@@ -1224,7 +1224,7 @@ def test_native_mtp_batch_generator_eligibility_rejects_grammar_processors() -> 
 
 
 def test_locked_generation_batch_filter_preserves_mixed_sequence_processor_identity() -> None:
-    import mlx.core as mx
+    mx = pytest.importorskip("mlx.core")
     from mlx_lm.generate import GenerationBatch
     from worker.runtime.native_mtp import batch_generator
 
