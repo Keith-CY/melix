@@ -389,6 +389,24 @@ Expected effect:
 - leave custom `Mapping` affordances, registry selection, OpenAI schema
   generation, protobuf config handling, and tool definitions unchanged.
 
+## Follow-up Slice: Default Preflight Order Set Elision
+
+The 2026-07-30 default-order follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` referenced-tool ordering and
+receipts unchanged, but skips the duplicate-tracking `ordered_name_set` allocation
+and set writes when the default catalog already provides the complete ordering
+source and no registry-only ordering pass is required. Custom catalogs or
+registry-only custom tools keep the generic de-duplication path.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for default catalog preflights;
+- preserve referenced-tool ordering, missing-tool receipts, invalid-affordance
+  counting, and custom catalog/registry behavior;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
