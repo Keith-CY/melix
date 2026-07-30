@@ -31,7 +31,8 @@ from worker.runtime.runtime_utils import (
 from worker.runtime.structured_output_constraints import (
     StructuredOutputConstraintError,
     build_structured_output_logits_processors,
-    structured_output_requested,
+    normalize_structured_output_mode,
+    sampler_constraint_requested,
 )
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
@@ -955,6 +956,7 @@ def _prompt_encode_add_special_tokens(tokenizer: Any, prompt: str) -> bool:
 
 class AutoMLXBackend:
     runtime_name = "mlx-unavailable"
+    supports_sampler_constraints = True
 
     def __init__(
         self,
@@ -1147,7 +1149,7 @@ class AutoMLXBackend:
                 execution_ext,
                 loaded_model["tokenizer"],
             )
-            if structured_output_requested(execution_ext)
+            if sampler_constraint_requested(execution_ext)
             else []
         )
 
@@ -1164,10 +1166,13 @@ class AutoMLXBackend:
             return
 
         if structured_logits_processors and not self._stream_accepts_logits_processors:
+            constraint_kind = str(
+                getattr(structured_logits_processors[0], "constraint_kind", "json_object")
+            )
             raise StructuredOutputConstraintError(
                 "mlx-lm stream_generate cannot accept structured-output logits processors.",
                 details={
-                    "mode": "json_object",
+                    "mode": "tool_choice" if constraint_kind.startswith("tool_choice") else constraint_kind,
                     "enforcement": "sampler",
                     "reason": "logits_processors_unsupported",
                 },
@@ -1658,10 +1663,17 @@ class AutoMLXBackend:
             insert_kwargs: dict[str, Any] = {}
             if logits_processors:
                 if not _callable_accepts_kwarg(batch_generator.insert, "logits_processors"):
+                    constraint_kind = str(
+                        getattr(logits_processors[0], "constraint_kind", "json_object")
+                    )
                     raise StructuredOutputConstraintError(
                         "mlx-lm BatchGenerator cannot accept structured-output logits processors.",
                         details={
-                            "mode": "json_object",
+                            "mode": (
+                                "tool_choice"
+                                if constraint_kind.startswith("tool_choice")
+                                else constraint_kind
+                            ),
                             "enforcement": "sampler",
                             "reason": "logits_processors_unsupported",
                         },
@@ -1952,6 +1964,7 @@ class MLXTextRuntime:
         cancel_event,
         execution_ext: dict[str, str] | None = None,
     ):
+        self._ensure_sampler_constraint_capability(execution_ext)
         stop_contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
         if self._executor is None:
             item_iterable = self._backend_generate_tokens(
@@ -1990,6 +2003,31 @@ class MLXTextRuntime:
             close = getattr(item_iterable, "close", None)
             if callable(close):
                 close()
+
+    def _ensure_sampler_constraint_capability(
+        self,
+        execution_ext: dict[str, str] | None,
+    ) -> None:
+        if not sampler_constraint_requested(execution_ext):
+            return
+        if bool(getattr(self._backend, "supports_sampler_constraints", False)):
+            return
+        from worker.runtime.tool_wire_constraints import tool_constraint_requested
+
+        mode = (
+            "tool_choice"
+            if tool_constraint_requested(execution_ext)
+            else normalize_structured_output_mode(execution_ext)
+        )
+        raise StructuredOutputConstraintError(
+            "Text runtime backend cannot enforce the requested sampler constraint.",
+            details={
+                "mode": mode,
+                "enforcement": "sampler",
+                "reason": "backend_sampler_constraints_unsupported",
+                "backend": self.runtime_name,
+            },
+        )
 
     def _backend_generate_tokens(
         self,

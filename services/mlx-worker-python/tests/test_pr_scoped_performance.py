@@ -365,8 +365,11 @@ def test_scope_report_selects_engine_generate_usage_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/engine/engine_core.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert _selected_probe_ids(scope) == ["engine-generate-usage-token-elision"]
+    assert scope["selected_count"] == 2
+    assert _selected_probe_ids(scope) == [
+        "structured-output-json-object-constraint-cache",
+        "engine-generate-usage-token-elision",
+    ]
 
 
 def test_scope_report_selects_report_evidence_gate_probe() -> None:
@@ -1376,6 +1379,7 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_VOCAB_SIZE", "64")
     monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_MASK_ITERATIONS", "4")
     monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_WARM_BUILD_ITERATIONS", "4")
 
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/structured_output_constraint_probe.py"))
     assert probe_script["main"]() == 0
@@ -1384,8 +1388,23 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert metrics["implementation_available"] == 1.0
     assert metrics["build_first_decode_calls_mean"] == 64.0
     assert metrics["build_second_decode_calls_mean"] == 0.0
+    assert metrics["warm_build_iterations"] == 4.0
     assert metrics["cached_mask_elapsed_ms_mean"] >= 0.0
     assert metrics["initial_allowed_count_mean"] >= 1.0
+    assert metrics["schema_available"] == 1.0
+    assert metrics["schema_build_first_decode_calls_mean"] == 64.0
+    assert metrics["schema_build_second_decode_calls_mean"] == 0.0
+    assert metrics["schema_cached_mask_elapsed_ms_mean"] >= 0.0
+    assert metrics["schema_initial_allowed_count_mean"] >= 1.0
+    assert metrics["schema_compile_p95_ms_mean"] < 50.0
+    assert metrics["schema_complexity_refusal_elapsed_ms_mean"] < 50.0
+    assert metrics["schema_enum_mask_elapsed_ms_mean"] >= 0.0
+    assert 0.0 < metrics["schema_free_text_mask_cache_entries_mean"] <= 64.0
+    assert metrics["tool_available"] == 1.0
+    assert metrics["tool_compile_p95_ms"] < 50.0
+    assert metrics["tool_roundtrip_mismatch_count"] == 0.0
+    assert metrics["tool_mask_vocab_words"] == 1.0
+    assert metrics["schema_state_budget_refusal_elapsed_ms"] < 50.0
 
     monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_FORCE_FALLBACK", "1")
     assert probe_script["main"]() == 0
@@ -1394,6 +1413,17 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert fallback_metrics["implementation_available"] == 0.0
     assert fallback_metrics["build_first_decode_calls_mean"] == 64.0
     assert fallback_metrics["build_second_decode_calls_mean"] == 64.0
+    assert fallback_metrics["warm_build_iterations"] == 4.0
+    assert fallback_metrics["schema_available"] == 0.0
+    assert fallback_metrics["schema_compile_p95_ms_mean"] == 0.0
+    assert fallback_metrics["schema_complexity_refusal_elapsed_ms_mean"] == 0.0
+    assert fallback_metrics["schema_enum_mask_elapsed_ms_mean"] == 0.0
+    assert fallback_metrics["schema_free_text_mask_cache_entries_mean"] == 0.0
+    assert fallback_metrics["tool_available"] == 0.0
+    assert fallback_metrics["tool_compile_p95_ms"] == 0.0
+    assert fallback_metrics["tool_roundtrip_mismatch_count"] == 0.0
+    assert fallback_metrics["tool_mask_vocab_words"] == 0.0
+    assert fallback_metrics["schema_state_budget_refusal_elapsed_ms"] == 0.0
 
     probe_tokenizer = probe_script["ProbeTokenizer"](32)
     assert probe_tokenizer.get_vocab()["{"] == 0
@@ -1404,6 +1434,36 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert probe_script["_env_int"]("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", 4, 2) == 2
     monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", "bad")
     assert probe_script["_env_int"]("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", 4, 2) == 4
+
+    from worker.runtime import structured_output_constraints as constraints_module
+
+    monkeypatch.delattr(constraints_module, "audit_schema_state_space")
+    assert probe_script["_tool_metrics"](
+        lambda execution_ext, tokenizer: [],
+        implementation_available=True,
+        vocab_size=32,
+    ) == probe_script["_tool_unavailable_metrics"]()
+
+    hardening_metrics = probe_script["_schema_hardening_metrics"]
+
+    def wrong_refusal(*args, **kwargs):
+        _ = args, kwargs
+        raise ValueError("wrong refusal")
+
+    with pytest.raises(RuntimeError, match="typed complexity refusal"):
+        hardening_metrics(
+            wrong_refusal,
+            tokenizer=probe_tokenizer,
+            prompt_token_id=30,
+            logits=object(),
+        )
+    with pytest.raises(RuntimeError, match="was not rejected"):
+        hardening_metrics(
+            lambda *args, **kwargs: [],
+            tokenizer=probe_tokenizer,
+            prompt_token_id=30,
+            logits=object(),
+        )
 
     class ScalarTokenList:
         def tolist(self) -> int:
@@ -5023,6 +5083,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     worker_registry_probe = None
     evaluation_store_samples_probe = None
     swift_probe = None
+    structured_output_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
@@ -5051,6 +5112,8 @@ def test_registered_probes_expose_focused_commands() -> None:
             evaluation_store_samples_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
             swift_probe = probe
+        if probe.probe_id == "structured-output-json-object-constraint-cache":
+            structured_output_probe = probe
 
     assert evaluation_store_samples_probe is not None
     evaluation_store_samples_metrics = {
@@ -5070,6 +5133,16 @@ def test_registered_probes_expose_focused_commands() -> None:
     }
     assert worker_registry_metrics["elapsed_ms_mean"].warn_abs == 0.001
     assert worker_registry_metrics["request_stats_elapsed_ms_mean"].warn_abs == 0.001
+
+    assert structured_output_probe is not None
+    structured_output_metrics = {
+        metric.key: metric for metric in structured_output_probe.metrics
+    }
+    assert structured_output_metrics["build_second_elapsed_ms_mean"].direction == "lower_is_better"
+    assert structured_output_metrics["build_second_elapsed_ms_mean"].warn_abs == 0.05
+    assert structured_output_metrics["schema_build_second_decode_calls_mean"].direction == "lower_is_better"
+    assert structured_output_metrics["schema_build_second_decode_calls_mean"].warn_abs == 0.0
+    assert structured_output_metrics["schema_build_second_elapsed_ms_mean"].direction == "informational"
 
     assert registry_probe is not None
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.test_command

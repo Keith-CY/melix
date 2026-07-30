@@ -24,8 +24,8 @@ from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_acc
 from worker.runtime.stream_assembler import AssemblyDelta, RequestStreamAssembler, StreamFragment
 from worker.runtime.structured_output_constraints import (
     StructuredOutputConstraintError,
-    json_schema_constraint_error,
-    structured_output_requested,
+    sampler_constraint_preflight_error,
+    sampler_constraint_requested,
 )
 from worker.runtime.token_route_receipt import (
     TokenRouteReceipt,
@@ -308,6 +308,8 @@ class EngineCore:
     def generate(self, request: inference_pb2.GenerateRequest) -> Iterator[inference_pb2.ExecuteEvent]:
         execution = request.execution
         execution_ext = execution.ext
+        if execution.tool_config.tools:
+            self._prepare_native_template_tools(execution)
         acceleration_mode = str(execution.acceleration.mode)
         cache_mode = str(execution.cache_hints.cache_mode)
         if execution_ext:
@@ -362,8 +364,8 @@ class EngineCore:
                 )
                 return
 
-        if structured_output_requested(execution_ext) and (
-            schema_error := json_schema_constraint_error(execution_ext)
+        if sampler_constraint_requested(execution_ext) and (
+            schema_error := sampler_constraint_preflight_error(execution_ext)
         ):
             yield self._error_event(
                 request_id,
@@ -510,8 +512,6 @@ class EngineCore:
 
         try:
             template_kwargs = self._chat_template_kwargs(request) if execution_ext else None
-            if execution.tool_config.tools:
-                self._prepare_native_template_tools(execution)
             prompt = runtime.render_prompt(
                 request.messages,
                 loaded_model=loaded_model.runtime_model,
@@ -679,6 +679,15 @@ class EngineCore:
                 parser_metrics = {}
             if _runtime_token_event_has_native_parser_metrics(last_token_event):
                 parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
+            for receipt_key in (
+                "constraint_kind",
+                "mask_vocab_words",
+                "fast_path_used",
+                "fallback_reason",
+            ):
+                value = _routing_ext.get(f"melix.constraint.{receipt_key}", "")
+                if value:
+                    parser_metrics[receipt_key] = value
             resolved_stop_token_count = str(stop_contract.resolved_stop_token_count)
             if plain_text_fast_path:
                 if execution_ext:
@@ -1432,6 +1441,10 @@ class EngineCore:
 
     @staticmethod
     def _prepare_native_template_tools(execution: inference_pb2.ExecutionMetadata) -> None:
+        if execution.tool_config.tool_choice and not execution.ext.get(
+            "melix.tool_config.tool_choice"
+        ):
+            execution.ext["melix.tool_config.tool_choice"] = execution.tool_config.tool_choice
         if execution.ext.get("melix.tool_config.tools_json") or not execution.tool_config.tools:
             return
         tools: list[dict[str, object]] = []
