@@ -172,9 +172,11 @@ def _paired_bootstrap_interval(
     sample_size = len(outcomes)
     inverse_sample_size = 1.0 / sample_size
     choices = sampler.choices
+    sum_values = sum
+    iteration_range = range
     replicates = [
-        sum(choices(outcomes, k=sample_size)) * inverse_sample_size
-        for _ in range(bootstrap_iterations)
+        sum_values(choices(outcomes, k=sample_size)) * inverse_sample_size
+        for _ in iteration_range(bootstrap_iterations)
     ]
 
     alpha = (1.0 - confidence_level) / 2.0
