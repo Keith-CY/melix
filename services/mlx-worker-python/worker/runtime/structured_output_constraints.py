@@ -235,6 +235,9 @@ class _MaskTemplateCache:
 
 
 def _tokenizer_mask_template_cache(tokenizer: Any) -> _MaskTemplateCache:
+    template_cache = getattr(tokenizer, _TOKENIZER_MASK_TEMPLATE_CACHE_ATTR, None)
+    if isinstance(template_cache, _MaskTemplateCache):
+        return template_cache
     with _TOKENIZER_MASK_TEMPLATE_CACHE_INIT_LOCK:
         template_cache = getattr(tokenizer, _TOKENIZER_MASK_TEMPLATE_CACHE_ATTR, None)
         if isinstance(template_cache, _MaskTemplateCache):

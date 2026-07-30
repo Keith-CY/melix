@@ -12,6 +12,7 @@ from threading import Barrier, Lock
 from time import sleep
 from time import monotonic
 from types import ModuleType, SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -1645,6 +1646,28 @@ def test_tokenizer_mask_template_cache_initializes_once_across_threads() -> None
         caches = list(executor.map(resolve, range(8)))
 
     assert len({id(cache) for cache in caches}) == 1
+
+
+def test_tokenizer_mask_template_cache_hit_skips_initialization_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tokenizer = JSONSchemaConstraintTokenizer()
+    attached_cache = constraints._MaskTemplateCache()
+    setattr(
+        tokenizer,
+        constraints._TOKENIZER_MASK_TEMPLATE_CACHE_ATTR,
+        attached_cache,
+    )
+
+    unexpected_lock = MagicMock()
+    monkeypatch.setattr(
+        constraints,
+        "_TOKENIZER_MASK_TEMPLATE_CACHE_INIT_LOCK",
+        unexpected_lock,
+    )
+
+    assert constraints._tokenizer_mask_template_cache(tokenizer) is attached_cache
+    unexpected_lock.__enter__.assert_not_called()
 
 
 def test_json_schema_processor_supports_tokenizers_without_attribute_storage() -> None:

@@ -1379,6 +1379,7 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_VOCAB_SIZE", "64")
     monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_MASK_ITERATIONS", "4")
     monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_WARM_BUILD_ITERATIONS", "4")
 
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/structured_output_constraint_probe.py"))
     assert probe_script["main"]() == 0
@@ -1387,6 +1388,7 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert metrics["implementation_available"] == 1.0
     assert metrics["build_first_decode_calls_mean"] == 64.0
     assert metrics["build_second_decode_calls_mean"] == 0.0
+    assert metrics["warm_build_iterations"] == 4.0
     assert metrics["cached_mask_elapsed_ms_mean"] >= 0.0
     assert metrics["initial_allowed_count_mean"] >= 1.0
     assert metrics["schema_available"] == 1.0
@@ -1411,6 +1413,7 @@ def test_structured_output_constraint_probe_script_emits_metrics(
     assert fallback_metrics["implementation_available"] == 0.0
     assert fallback_metrics["build_first_decode_calls_mean"] == 64.0
     assert fallback_metrics["build_second_decode_calls_mean"] == 64.0
+    assert fallback_metrics["warm_build_iterations"] == 4.0
     assert fallback_metrics["schema_available"] == 0.0
     assert fallback_metrics["schema_compile_p95_ms_mean"] == 0.0
     assert fallback_metrics["schema_complexity_refusal_elapsed_ms_mean"] == 0.0

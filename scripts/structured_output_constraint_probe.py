@@ -314,11 +314,33 @@ def _finite_count(values: Any) -> int:
     return int(mx.sum(mx.isfinite(values)).item())
 
 
+def _run_warm_builds(
+    build_processors: Callable[[object, Any], list[Any]],
+    execution_ext: object,
+    tokenizer: Any,
+    *,
+    iterations: int,
+) -> tuple[list[Any], float, float]:
+    decode_calls_before = tokenizer.decode_calls
+    processors: list[Any] = []
+    started = time.perf_counter()
+    for _ in range(iterations):
+        processors = build_processors(execution_ext, tokenizer)
+    elapsed_ms_per_build = (
+        (time.perf_counter() - started) * 1000.0 / iterations
+    )
+    decode_calls_per_build = (
+        tokenizer.decode_calls - decode_calls_before
+    ) / iterations
+    return processors, elapsed_ms_per_build, decode_calls_per_build
+
+
 def _run_sample(
     build_processors: Callable[[object, Any], list[Any]],
     *,
     vocab_size: int,
     mask_iterations: int,
+    warm_build_iterations: int,
 ) -> dict[str, float]:
     mx = _mx()
     tokenizer = ProbeTokenizer(vocab_size)
@@ -332,10 +354,14 @@ def _run_sample(
     first_build_elapsed_ms = (time.perf_counter() - first_started) * 1000.0
     first_decode_calls = tokenizer.decode_calls
 
-    second_started = time.perf_counter()
-    second_processors = build_processors(ext, tokenizer)
-    second_build_elapsed_ms = (time.perf_counter() - second_started) * 1000.0
-    second_decode_calls = tokenizer.decode_calls - first_decode_calls
+    second_processors, second_build_elapsed_ms, second_decode_calls = (
+        _run_warm_builds(
+            build_processors,
+            ext,
+            tokenizer,
+            iterations=warm_build_iterations,
+        )
+    )
 
     if len(first_processors) != 1 or len(second_processors) != 1:
         raise RuntimeError("structured output builder did not produce one logits processor")
@@ -511,6 +537,7 @@ def _run_schema_sample(
     *,
     vocab_size: int,
     mask_iterations: int,
+    warm_build_iterations: int,
 ) -> dict[str, float]:
     mx = _mx()
     tokenizer = ProbeTokenizer(vocab_size)
@@ -528,14 +555,18 @@ def _run_schema_sample(
     first_build_elapsed_ms = (time.perf_counter() - first_started) * 1000.0
     first_decode_calls = tokenizer.decode_calls
 
-    second_started = time.perf_counter()
     try:
-        second_processors = build_processors(ext, tokenizer)
+        second_processors, second_build_elapsed_ms, second_decode_calls = (
+            _run_warm_builds(
+                build_processors,
+                ext,
+                tokenizer,
+                iterations=warm_build_iterations,
+            )
+        )
     except Exception:
         tracemalloc.stop()
         return _schema_unavailable_metrics()
-    second_build_elapsed_ms = (time.perf_counter() - second_started) * 1000.0
-    second_decode_calls = tokenizer.decode_calls - first_decode_calls
 
     if len(first_processors) != 1 or len(second_processors) != 1:
         tracemalloc.stop()
@@ -734,6 +765,11 @@ def main() -> int:
     vocab_size = _env_int("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_VOCAB_SIZE", 2048, 32)
     mask_iterations = _env_int("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_MASK_ITERATIONS", 5000, 1)
     sample_count = _env_int("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_SAMPLES", 5, 1)
+    warm_build_iterations = _env_int(
+        "MELIX_STRUCTURED_OUTPUT_CONSTRAINT_WARM_BUILD_ITERATIONS",
+        1000,
+        1,
+    )
     build_processors, implementation_available = _builder()
 
     samples = [
@@ -741,6 +777,7 @@ def main() -> int:
             build_processors,
             vocab_size=vocab_size,
             mask_iterations=mask_iterations,
+            warm_build_iterations=warm_build_iterations,
         )
         for _ in range(sample_count)
     ]
@@ -749,6 +786,7 @@ def main() -> int:
             build_processors,
             vocab_size=vocab_size,
             mask_iterations=mask_iterations,
+            warm_build_iterations=warm_build_iterations,
         )
         for _ in range(sample_count)
     ]
@@ -812,6 +850,7 @@ def main() -> int:
                 "vocab_size": float(vocab_size),
                 "mask_iterations": float(mask_iterations),
                 "sample_count": float(sample_count),
+                "warm_build_iterations": float(warm_build_iterations),
                 **tool_metrics,
             },
             sort_keys=True,
