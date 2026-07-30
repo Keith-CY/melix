@@ -990,6 +990,10 @@ def _direct_size_hint_from_span(text: str, value_start: int, value_end: int) -> 
 
 @lru_cache(maxsize=4096)
 def _direct_card_size_hint_from_text(text: str) -> int:
+    if text.startswith("MODEL SIZE:") or text.startswith("MODEL SIZE|"):
+        return _direct_size_hint_from_text(text[11:])
+    if text.startswith("Model size: "):
+        return _direct_size_hint_from_text(text[12:])
     stripped_text = _strip_model_size_label(text)
     if stripped_text:
         return _direct_size_hint_from_text(stripped_text)
