@@ -130,3 +130,11 @@ Once a schema-backed or JSON-object grammar reaches a complete JSON value and th
 
 - Swift text worker grammar-constrained sampler support.
 - A fused MLX/Metal packed-mask consumer. Until that runtime path exists, constrained requests remain correct on the logits-processor path and emit the typed acceleration fallback receipt.
+
+## Completion Verification
+
+- The completed Python-worker implementation is integrated with `origin/main` at `0f555b919ffe7e8cdc77b52f28fa2451f7da196d`.
+- Post-integration structured-output, tool-registry, and runtime-utils tests pass together (`315 passed`).
+- The final pre-commit transaction must rerun `make swift-test`, `make py-test`, `make integration-test`, and the current-base PR-scoped performance report before PR handoff.
+- Direct changed-scope coverage must remain at or above 95 percent for the structured-output and adjacent MLX text paths, with zero direct or gated performance regressions.
+- The only deferred implementation remains the Swift text-worker sampler and the fused MLX/Metal packed-mask consumer described above.
