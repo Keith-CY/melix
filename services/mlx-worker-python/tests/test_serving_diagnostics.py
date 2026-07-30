@@ -1066,6 +1066,7 @@ def test_serving_diagnostics_bounded_queue_drops_oldest_without_blocking(
     ) is False
     snapshot = queue.snapshot()
     assert snapshot.dropped_count == 1
+    assert queue._retained_count == 2
     assert [event.event_index for event in snapshot.events] == [1, 2]
 
     summary = ServingDiagnosticsRequestSummary(
@@ -1130,6 +1131,14 @@ def test_serving_diagnostics_queue_append_uses_retained_count_without_len() -> N
 
     assert queue.append(event) is True
     assert buffer.events == [event]
+
+
+def test_serving_diagnostics_queue_caches_lock_methods_for_hot_append_path() -> None:
+    queue = BoundedServingDiagnosticsEventQueue(max_events=1)
+
+    assert hasattr(queue, "__dict__") is False
+    assert queue._lock_acquire == queue._lock.acquire
+    assert queue._lock_release == queue._lock.release
 
 
 def test_serving_diagnostics_event_instances_use_slots_for_debug_queue() -> None:

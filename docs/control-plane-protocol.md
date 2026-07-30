@@ -772,6 +772,14 @@ These fields describe the compatibility route request and effective dispatch
 values only; model-recommended sampling or template policy remains a separate
 policy receipt.
 
+The control plane also records the request-local effective policy receipt under
+`execution.ext` with schema `melix.text_effective_policy_receipt.v1`. The
+receipt groups the final sampling values and their sources, chat-template
+kwargs source and override flags, forced template keys, reasoning mode/source,
+and a stable effective-config hash. It complements the legacy
+`melix.generation.*` and `melix.chat_template_kwargs.*` fields rather than
+replacing them.
+
 ## Minimal UI Interaction Flows
 
 ### Startup

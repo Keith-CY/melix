@@ -25,6 +25,16 @@ and speedup.
 4. Run the registered local test, changed-scope coverage, and probe on Linux;
    GitHub PR-scoped performance remains the merge gate.
 
+## 2026-07-18 quoted-marker backwards precheck
+
+This follow-up slice keeps the same parser behavior and registered probe while
+using `str.rfind` for the pre-quoted-marker validation scan. The common quoted
+Gemma 4 QAT README path only needs to know whether a valid earlier line-start
+`base_model:` marker exists before the quote-wrapped marker, so scanning
+backwards starts nearest to the quoted marker and avoids a forward pass over the
+whole model card when there is no earlier marker. Line-start, quoted, and
+fallback-source semantics remain unchanged.
+
 ## Verification commands
 
 ```bash

@@ -2176,35 +2176,48 @@ def _evaluate_section_metrics_with_counts(
     missing = _MISSING
     values_get = values.get
     metric_value = _metric_value
+    is_instance = isinstance
+    float_ = float
+    prefix_root = ""
+    prefix_root_present = False
+    if prefix:
+        prefix_first_dot = prefix.find(".")
+        if prefix_first_dot != -1:
+            prefix_root = prefix[:prefix_first_dot]
+            prefix_root_present = prefix_root in values
     for name, rule in rules.items():
         if type(name) is str:
             value = values_get(name, missing)
             if value is missing:
-                first_dot = name.find(".")
-                if first_dot != -1 and name[:first_dot] in values:
-                    value = metric_value(values, name)
+                if prefix_root and name.startswith(prefix):
+                    if prefix_root_present:
+                        value = metric_value(values, name)
+                else:
+                    first_dot = name.find(".")
+                    if first_dot != -1 and name[:first_dot] in values:
+                        value = metric_value(values, name)
         else:
             value = metric_value(values, str(name))
         if value is missing:
             failures_append(f"{prefix}{name} is missing")
             missing_count += 1
             continue
-        if not isinstance(value, numeric_types):
+        if not is_instance(value, numeric_types):
             failures_append(f"{prefix}{name} must be numeric")
             failed_threshold_count += 1
             continue
-        numeric = float(value)
+        numeric = float_(value)
         minimum = rule.get("min")
         maximum = rule.get("max")
         if minimum is not None:
-            minimum_float = float(minimum)
+            minimum_float = float_(minimum)
             if numeric < minimum_float:
                 failures_append(
                     f"{prefix}{name}={numeric:.2f} fell below minimum {minimum_float:.2f}"
                 )
                 failed_threshold_count += 1
         if maximum is not None:
-            maximum_float = float(maximum)
+            maximum_float = float_(maximum)
             if numeric > maximum_float:
                 failures_append(
                     f"{prefix}{name}={numeric:.2f} exceeded maximum {maximum_float:.2f}"

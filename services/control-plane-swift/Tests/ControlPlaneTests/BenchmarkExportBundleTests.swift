@@ -410,6 +410,14 @@ struct BenchmarkExportBundleTests {
         #expect(request.observationBytes == 48)
         #expect(request.fatalRate == 1.0)
         #expect(request.turnCount == 2)
+        #expect(request.effectivePolicySchema == "melix.text_effective_policy_receipt.v1")
+        #expect(request.effectiveConfigHash == "matrix-policy-hash")
+        #expect(request.samplingTemperature == 0.7)
+        #expect(request.samplingPolicyLookupStatus == "known")
+        #expect(request.samplingPolicySourceURL == "https://example.invalid/matrix-card")
+        #expect(request.recommendedSamplingRequired)
+        #expect(request.chatTemplateEffectiveKwargsHash == "matrix-template-hash")
+        #expect(request.policyReasoningMode == "enabled")
         #expect(sample.sampleRenderMS == 10.1)
         #expect(sample.inferenceMS == 20.2)
         #expect(sample.extractionMS == 30.3)
@@ -418,11 +426,21 @@ struct BenchmarkExportBundleTests {
         #expect(sample.rawResponseChars == 11)
         #expect(sample.extractedResultChars == 3)
         #expect(sample.failureStage == "scoring")
+        #expect(sample.effectivePolicySchema == "melix.text_effective_policy_receipt.v1")
+        #expect(sample.effectiveConfigHash == "eval-probe-policy-hash")
+        #expect(sample.samplingTopP == 0.85)
+        #expect(sample.samplingPolicyCanonicalModel == "melix-eval-policy")
+        #expect(sample.recommendedSamplingRequired)
+        #expect(sample.chatTemplateSource == "model+request")
+        #expect(sample.policyReasoningSource == "request")
         #expect(bundle.benchmarkMatrixSummaryCSV().contains("456.7,3,1,21.0,29.0,80.0,91.0,2,12.5,96,0.5,4"))
         #expect(bundle.benchmarkMatrixRequestsCSV().contains("1.1,2.2,3.3,4.4,5.5,128,32,7,true,swift-text,decode,0.8,0.2,24,6,1,4,true,8.8,9.9,true,16,2,12,6,1,2.0,8192,4096,disk_streaming_speculative_fanout_cap,1,6.25,48,1.0,2"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("matrix-policy-hash,0.7,catalog,0.9,catalog,128,request,known"))
         #expect(bundle.evaluationSamplesCSV().contains("10.1,20.2,30.3,40.4,50.5,11,3,scoring"))
+        #expect(bundle.evaluationSamplesCSV().contains("eval-probe-policy-hash,0.3,catalog,0.85,catalog,64,request,known"))
         let sampleJSONL = try bundle.evaluationSamplesJSONL()
         #expect(sampleJSONL.contains(#""failure_stage":"scoring""#))
+        #expect(sampleJSONL.contains(#""effective_config_hash":"eval-probe-policy-hash""#))
     }
 }
 
@@ -1785,6 +1803,28 @@ private let benchmarkEvaluationProbeBundleJSON = """
       "observation_bytes": 48,
       "fatal_rate": 1.0,
       "turn_count": 2,
+      "effective_policy_schema": "melix.text_effective_policy_receipt.v1",
+      "effective_config_hash": "matrix-policy-hash",
+      "sampling_temperature": 0.7,
+      "sampling_temperature_source": "catalog",
+      "sampling_top_p": 0.9,
+      "sampling_top_p_source": "catalog",
+      "sampling_max_tokens": 128,
+      "sampling_max_tokens_source": "request",
+      "sampling_policy_lookup_status": "known",
+      "sampling_policy_canonical_model": "melix-dev-policy",
+      "sampling_policy_matched_alias": "melix-dev-policy-q4",
+      "sampling_policy_source_url": "https://example.invalid/matrix-card",
+      "sampling_request_override_applied": true,
+      "recommended_sampling_required": true,
+      "sampling_seed": 99,
+      "sampling_seed_source": "request",
+      "chat_template_source": "model",
+      "chat_template_effective_kwargs_hash": "matrix-template-hash",
+      "chat_template_request_override_applied": false,
+      "chat_template_forced_override_applied": true,
+      "policy_reasoning_mode": "enabled",
+      "policy_reasoning_source": "template",
       "created_at_unix_ms": 1712600000000
     }
   ],
@@ -1811,7 +1851,29 @@ private let benchmarkEvaluationProbeBundleJSON = """
       "scoring_ms": 50.5,
       "raw_response_chars": 11,
       "extracted_result_chars": 3,
-      "failure_stage": "scoring"
+      "failure_stage": "scoring",
+      "effective_policy_schema": "melix.text_effective_policy_receipt.v1",
+      "effective_config_hash": "eval-probe-policy-hash",
+      "sampling_temperature": 0.3,
+      "sampling_temperature_source": "catalog",
+      "sampling_top_p": 0.85,
+      "sampling_top_p_source": "catalog",
+      "sampling_max_tokens": 64,
+      "sampling_max_tokens_source": "request",
+      "sampling_policy_lookup_status": "known",
+      "sampling_policy_canonical_model": "melix-eval-policy",
+      "sampling_policy_matched_alias": "melix-eval-policy-q4",
+      "sampling_policy_source_url": "https://example.invalid/eval-probe-card",
+      "sampling_request_override_applied": false,
+      "recommended_sampling_required": true,
+      "sampling_seed": 7,
+      "sampling_seed_source": "request",
+      "chat_template_source": "model+request",
+      "chat_template_effective_kwargs_hash": "eval-probe-template-hash",
+      "chat_template_request_override_applied": true,
+      "chat_template_forced_override_applied": false,
+      "policy_reasoning_mode": "disabled",
+      "policy_reasoning_source": "request"
     }
   ]
 }

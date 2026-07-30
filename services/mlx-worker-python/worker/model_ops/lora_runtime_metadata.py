@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 from typing import Any, Mapping
 
 from packages.protocol.python.worker.v1 import common_pb2
@@ -33,6 +32,7 @@ _AUXILIARY_MODULE_PATTERNS = (
 _AUXILIARY_MODULE_PREFIXES = tuple(
     pattern.removesuffix("*.py") for pattern in _AUXILIARY_MODULE_PATTERNS
 )
+_AUXILIARY_MODULE_PREFIX_CHARS = "mctp"
 _PROCESSOR_RESUME_FILENAMES = (
     ("processor_config.json", "processor_config"),
     ("preprocessor_config.json", "preprocessor_config"),
@@ -40,10 +40,6 @@ _PROCESSOR_RESUME_FILENAMES = (
 )
 
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
-_QUANTIZED_KIND_PATTERNS = tuple(
-    (kind, re.compile(rf"(?<![a-z0-9]){re.escape(kind)}(?![a-z0-9])"))
-    for kind in _QUANTIZED_KIND_ORDER
-)
 
 
 ADAPTER_RUNTIME_EXT_KEY_MAP: tuple[tuple[str, str], ...] = (
@@ -329,27 +325,26 @@ def _processor_resume_mode(base_model_dir: Path) -> str:
     base_model_path = os.fspath(base_model_dir)
     join = os.path.join
     isfile = os.path.isfile
-    for filename, resume_mode in _PROCESSOR_RESUME_FILENAMES:
-        if isfile(join(base_model_path, filename)):
-            return resume_mode
+    if isfile(join(base_model_path, "processor_config.json")):
+        return "processor_config"
+    if isfile(join(base_model_path, "preprocessor_config.json")):
+        return "preprocessor_config"
+    if isfile(join(base_model_path, "tokenizer_config.json")):
+        return "tokenizer_only"
     return "missing"
 
 
 def _aux_modules_restored(base_model_dir: Path) -> bool:
     auxiliary_prefixes = _AUXILIARY_MODULE_PREFIXES
+    auxiliary_prefix_chars = _AUXILIARY_MODULE_PREFIX_CHARS
     scandir = os.scandir
     try:
         with scandir(base_model_dir) as entries:
             for entry in entries:
                 name = entry.name
-                first_char = name[0]
                 if (
-                    (
-                        first_char == "m"
-                        or first_char == "c"
-                        or first_char == "t"
-                        or first_char == "p"
-                    )
+                    name[0] in auxiliary_prefix_chars
+                    and name[-1] == "y"
                     and name.endswith(".py")
                     and name.startswith(auxiliary_prefixes)
                 ):
@@ -422,20 +417,56 @@ def _str_value(raw_value: Any) -> str:
 
 
 def _quantized_kind_from_text(raw_value: str) -> str:
-    # The boundary regex already treats leading/trailing whitespace as a
-    # non-alphanumeric delimiter, so avoid an extra full-string strip in this
-    # hot parser loop. Check already-lowercase tokens before allocating a lower
-    # copy; model/profile identifiers in this path are commonly lowercase.
-    for kind, pattern in _QUANTIZED_KIND_PATTERNS:
-        if kind in raw_value and pattern.search(raw_value):
-            return kind
+    # The token boundary only needs ASCII [a-z0-9] checks; avoid regex dispatch
+    # in this hot parser loop while preserving the same delimiter semantics.
+    contains_kind_token = _contains_quantized_kind_token
+    if "4bit" in raw_value and contains_kind_token(raw_value, "4bit"):
+        return "4bit"
+    if "8bit" in raw_value and contains_kind_token(raw_value, "8bit"):
+        return "8bit"
+    if "q4" in raw_value and contains_kind_token(raw_value, "q4"):
+        return "q4"
+    if "q8" in raw_value and contains_kind_token(raw_value, "q8"):
+        return "q8"
+    if "optiq" in raw_value and contains_kind_token(raw_value, "optiq"):
+        return "optiq"
     normalized = raw_value.lower()
     if normalized == raw_value:
         return "unknown"
-    for kind, pattern in _QUANTIZED_KIND_PATTERNS:
-        if kind in normalized and pattern.search(normalized):
-            return kind
+    if "4bit" in normalized and contains_kind_token(normalized, "4bit"):
+        return "4bit"
+    if "8bit" in normalized and contains_kind_token(normalized, "8bit"):
+        return "8bit"
+    if "q4" in normalized and contains_kind_token(normalized, "q4"):
+        return "q4"
+    if "q8" in normalized and contains_kind_token(normalized, "q8"):
+        return "q8"
+    if "optiq" in normalized and contains_kind_token(normalized, "optiq"):
+        return "optiq"
     return "unknown"
+
+
+def _contains_quantized_kind_token(value: str, kind: str) -> bool:
+    start = 0
+    kind_length = len(kind)
+    value_length = len(value)
+    while True:
+        index = value.find(kind, start)
+        if index < 0:
+            return False
+        end = index + kind_length
+        if index == 0:
+            left_boundary = True
+        else:
+            char = value[index - 1]
+            left_boundary = not ("a" <= char <= "z" or "0" <= char <= "9")
+        if left_boundary:
+            if end == value_length:
+                return True
+            char = value[end]
+            if not ("a" <= char <= "z" or "0" <= char <= "9"):
+                return True
+        start = index + 1
 
 
 def _quantized_target_module_guard_status(

@@ -635,6 +635,44 @@ public actor ModelCatalog {
         routeDispatchHandles[DispatchHandleKey(modelID: id, routeKind: routeKind)]
     }
 
+    @discardableResult
+    public func invalidateDispatchHandle(
+        for id: String,
+        expectedDispatchHandle: String,
+        reason: String = "worker_handle_missing"
+    ) -> Bool {
+        let hasMatchingLegacyHandle = dispatchHandles[id] == expectedDispatchHandle
+        let matchingRouteKeys = routeDispatchHandles.compactMap { key, handle in
+            key.modelID == id && handle == expectedDispatchHandle ? key : nil
+        }
+        guard hasMatchingLegacyHandle || !matchingRouteKeys.isEmpty else {
+            return false
+        }
+
+        if hasMatchingLegacyHandle {
+            dispatchHandles.removeValue(forKey: id)
+        }
+        for key in matchingRouteKeys {
+            routeDispatchHandles.removeValue(forKey: key)
+        }
+
+        guard models[id] != nil else {
+            return true
+        }
+        touchModel(id: id, transitionReason: reason, clearMemoryBudgetEvidence: true)
+        guard var model = models[id] else {
+            return true
+        }
+        let hasRemainingHandle = dispatchHandles[id] != nil
+            || routeDispatchHandles.keys.contains(where: { $0.modelID == id })
+        if !hasRemainingHandle {
+            model.state = .modelUnloaded
+            model.pinned = false
+        }
+        models[id] = synchronized(model)
+        return true
+    }
+
     private struct CapabilityAdapterMetadata: Sendable {
         let adapterSetHash: String
         let routeKind: WorkerRouteKind

@@ -267,6 +267,65 @@ def test_estimate_model_weight_resident_bytes_uses_indexed_unique_shards(tmp_pat
     assert runtime_utils.estimate_model_weight_resident_bytes(str(bundle)) == 18
 
 
+def test_indexed_safetensors_shard_bytes_joins_relative_names_without_path_round_trip(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = bundle / "model-00001-of-00001.safetensors"
+    shard.write_bytes(b"weights")
+    (bundle / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"layers.0.weight": shard.name}}),
+        encoding="utf-8",
+    )
+    original_path = runtime_utils.Path
+
+    def fail_relative_path_constructor(value: str | os.PathLike[str]) -> Path:
+        if value == shard.name:  # pragma: no cover - regression guard must stay uncalled
+            raise AssertionError("relative index shard names should join without Path() round trip")
+        return original_path(value)
+
+    monkeypatch.setattr(runtime_utils, "Path", fail_relative_path_constructor)
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"weights")
+
+
+def test_indexed_safetensors_shard_bytes_preserves_absolute_shard_paths(tmp_path) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = tmp_path / "external-model-00001-of-00001.safetensors"
+    shard.write_bytes(b"absolute-weights")
+    (bundle / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"layers.0.weight": str(shard)}}),
+        encoding="utf-8",
+    )
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"absolute-weights")
+
+
+def test_indexed_safetensors_shard_bytes_strips_legacy_shard_whitespace(tmp_path) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = bundle / "model-00001-of-00001.safetensors"
+    shard.write_bytes(b"legacy-whitespace")
+    (bundle / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "layers.0.weight": f"  {shard.name}\t",
+                    "layers.blank.weight": "   ",
+                    "layers.none.weight": None,
+                    "layers.zero.weight": 0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"legacy-whitespace")
+
+
 def test_estimate_model_weight_resident_bytes_skips_expanduser_for_plain_paths(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -388,12 +447,31 @@ def test_top_level_weight_file_bytes_handles_direntry_non_files_and_errors() -> 
 
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("README.md")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("notes.txt")) == 0
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry(".safetensors")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry(".bin")) == 0
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry(".NPZ")) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("nested.safetensors", is_file=False)) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("missing.safetensors", stat_raises=True)) == 0
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("model.safetensors")) == 13
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("adapter.SAFEtensors")) == 13
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("MODEL.BIN")) == 13
+
+
+def test_weight_file_size_uses_single_stat_for_file_type_and_size(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weight_file = tmp_path / "model.safetensors"
+    weight_file.write_bytes(b"weights")
+
+    def fail_is_file(self: Path):  # pragma: no cover - regression guard must stay uncalled
+        _ = self
+        raise AssertionError("weight file size should use Path.stat once")
+
+    monkeypatch.setattr(runtime_utils.Path, "is_file", fail_is_file)
+
+    assert runtime_utils._weight_file_size(weight_file) == len(b"weights")
+    assert runtime_utils._weight_file_size(tmp_path) == 0
 
 
 def test_estimate_model_weight_resident_bytes_ignores_malformed_index_and_unreadable_directory(

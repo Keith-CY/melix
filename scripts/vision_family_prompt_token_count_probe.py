@@ -5,6 +5,7 @@ import statistics
 import sys
 import time
 import tracemalloc
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 REPO_ROOT = Path(globals().get("__file__", Path.cwd())).resolve()
@@ -30,6 +31,28 @@ class SplitTrackingPrompt(str):
     def split(self, *args: object, **kwargs: object) -> list[str]:
         type(self).split_calls += 1
         return super().split(*args, **kwargs)
+
+
+class IterationTrackingMetadata(Mapping[str, str]):
+    def __init__(self) -> None:
+        self._values = {
+            "vision_family_id": "paligemma-v1",
+            "vision_prompt_profile_id": "paligemma-caption-v1",
+            "vision_tokenization_mode": "prefix",
+            "vision_max_images_per_prompt": "1",
+            "vision_supports_tool_calls": "false",
+        }
+        self.iteration_calls = 0
+
+    def __iter__(self) -> Iterator[str]:  # pragma: no cover - baseline/regression path only
+        self.iteration_calls += 1
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, key: str) -> str:
+        return self._values[key]
 
 
 def _build_request(prompt_text: str) -> PreparedVisionRequest:
@@ -91,6 +114,23 @@ def _config_object_footprint_bytes(family_config: object) -> float:
     )
 
 
+def _measure_config_resolution() -> tuple[float, float]:
+    elapsed_samples = []
+    iteration_samples = []
+    for _ in range(7):
+        metadata = IterationTrackingMetadata()
+        started = time.perf_counter()
+        for _inner in range(2000):
+            family_config = resolve_vision_family_config(metadata)
+            if family_config.family_id != "paligemma-v1":
+                raise SystemExit(  # pragma: no cover - defensive probe invariant
+                    f"unexpected family id: {family_config.family_id}"
+                )
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        iteration_samples.append(float(metadata.iteration_calls))
+    return statistics.fmean(elapsed_samples), statistics.fmean(iteration_samples)
+
+
 def main() -> None:
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
     prompt = SplitTrackingPrompt(("alpha beta gamma delta\n" * 128).strip())
@@ -102,6 +142,7 @@ def main() -> None:
     split_call_samples = []
     peak_samples = []
     token_count = 0
+    config_resolve_elapsed_ms, metadata_iteration_calls = _measure_config_resolution()
 
     for _ in range(7):
         SplitTrackingPrompt.split_calls = 0
@@ -125,6 +166,8 @@ def main() -> None:
                 "split_calls_mean": statistics.fmean(split_call_samples),
                 "peak_bytes_mean": statistics.fmean(peak_samples),
                 "config_object_footprint_bytes": _config_object_footprint_bytes(family_config),
+                "config_resolve_elapsed_ms_mean": config_resolve_elapsed_ms,
+                "metadata_iteration_calls_mean": metadata_iteration_calls,
                 "token_count": float(token_count),
             },
             sort_keys=True,

@@ -698,7 +698,8 @@ def test_sample_probe_means_aggregate_multiple_fields_in_one_pass() -> None:
         )
     )
 
-    aggregated = EvaluationCore._sample_probe_means(samples, field_names)
+    assert field_names == evaluation_core_module._SAMPLE_PROBE_MEAN_FIELD_NAMES
+    aggregated = EvaluationCore._sample_probe_means(samples, evaluation_core_module._SAMPLE_PROBE_MEAN_FIELD_NAMES)
     expected = {
         field_name: round(
             sum(float(getattr(sample, field_name, 0.0) or 0.0) for sample in samples._values)
@@ -3496,6 +3497,44 @@ def test_answers_match_exact_nonempty_short_circuit_skips_normalization(
     assert EvaluationCore._answers_match(expected="", predicted="") is False
 
 
+def test_answers_match_empty_prediction_skips_strip_and_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EmptyPrediction(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - must not be called
+            raise AssertionError("empty prediction should return before strip")
+
+    def fail_normalize(value: str) -> str:  # pragma: no cover - must not be called
+        raise AssertionError(f"empty prediction should skip normalization: {value!r}")
+
+    monkeypatch.setattr(EvaluationCore, "_normalized_answer", staticmethod(fail_normalize))
+
+    assert EvaluationCore._answers_match(expected="Paris", predicted=EmptyPrediction("")) is False
+    assert EvaluationCore._answers_match(expected="Paris", predicted="   ") is False
+
+
+def test_answers_match_stripped_exact_prediction_skips_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    normalize_calls = 0
+    normalized_values: list[str] = []
+    original_normalize = EvaluationCore._normalized_answer
+
+    def counting_normalize(value: str) -> str:
+        nonlocal normalize_calls
+        normalize_calls += 1
+        normalized_values.append(value)
+        return original_normalize(value)
+
+    monkeypatch.setattr(EvaluationCore, "_normalized_answer", staticmethod(counting_normalize))
+
+    assert EvaluationCore._answers_match(expected="Paris", predicted=" Paris ") is True
+    assert normalize_calls == 0
+    assert EvaluationCore._answers_match(expected="Paris", predicted=" paris ") is True
+    assert normalize_calls == 0
+    assert normalized_values == []
+
+
 def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.MonkeyPatch) -> None:
     numeric_calls = 0
     option_calls = 0
@@ -3532,6 +3571,25 @@ def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.Mo
 
     assert numeric_calls == 0
     assert option_calls == 0
+
+
+def test_normalized_answer_plain_ascii_fast_path_skips_strip_wrapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    strip_calls = 0
+    original_strip = EvaluationCore._strip_wrapping
+
+    def counting_strip(value: str) -> str:
+        nonlocal strip_calls
+        strip_calls += 1
+        return original_strip(value)
+
+    monkeypatch.setattr(EvaluationCore, "_strip_wrapping", staticmethod(counting_strip))
+
+    assert EvaluationCore._normalized_answer("Final Answer: Paris") == "final answer: paris"
+    assert strip_calls == 0
+    assert EvaluationCore._normalized_answer("  Final Answer: Paris. ") == "final answer: paris"
+    assert strip_calls == 1
 
 
 def test_evaluation_helpers_cover_timeout_fallback_and_digit_choice_resolution() -> None:

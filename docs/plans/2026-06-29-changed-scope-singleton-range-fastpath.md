@@ -28,8 +28,26 @@ files with one changed line just outside large measured coverage ranges and
 reports:
 
 - `elapsed_ms_mean` (lower is better);
+- `singleton_measured_elapsed_ms_mean` (lower is better for the follow-up
+  singleton line that is inside measured coverage lists);
 - `source_read_calls_mean` (must remain `0.0`);
 - `path_count` and `measured_lines_per_path` as informational context.
+
+## 2026-07-28 singleton measured membership slice
+
+This follow-up Python-only slice keeps the same registered
+`changed-scope-coverage-singleton-range-fastpath` probe and narrows to the
+`_measurable_changed_lines(...)` branch where the changed set has exactly one
+line and that line is inside measured coverage ranges. After the existing bounds
+check proves the singleton can overlap, the helper now checks membership in the
+executed/missing lists once, stores the singleton classification, and skips the
+later generic measured-line membership pass. Behavior remains unchanged for
+out-of-range singleton changes, reversed measured lists, duplicate executed/missing
+coverage entries, and non-singleton changed sets.
+
+The registered probe now also reports `singleton_measured_elapsed_ms_mean` so CI
+can validate the measured-singleton branch in addition to the existing outside-
+range singleton metric.
 
 ## Verification
 

@@ -2,15 +2,86 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import platform
 from pathlib import Path
+import subprocess
 from typing import Any, Mapping
 
 
 NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
+NATIVE_MTP_DEVICE_POLICY_EXT_KEY = "melix.native_mtp.device_policy"
 NATIVE_MTP_RECEIPT_SCHEMA = "melix.native_mtp.capability.v1"
 NATIVE_MTP_RECEIPT_JSON_KEY = "melix.native_mtp.receipt_json"
-_QWEN_NATIVE_MTP_MODEL_TYPES = frozenset(("qwen3_5", "qwen3_5_text"))
-_MTP_WEIGHT_PREFIXES = ("language_model.mtp.", "mtp.")
+_SYSCTL_TIMEOUT_SECONDS = 5
+
+
+@dataclass(frozen=True, slots=True)
+class NativeMTPHardwareProfile:
+    system: str = ""
+    machine: str = ""
+    chip_family: str = ""
+    model_identifier: str = ""
+
+
+_CACHED_HARDWARE_PROFILE: NativeMTPHardwareProfile | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _NativeMTPHardwareDecision:
+    gate: str
+    policy: str
+    reason: str
+    source: str
+    operator_override: str = ""
+
+    @property
+    def admitted(self) -> bool:
+        return self.gate == "admitted"
+
+
+@dataclass(frozen=True, slots=True)
+class _NativeMTPCapabilitySpec:
+    family: str
+    model_types: frozenset[str]
+    layer_count_keys: tuple[str, ...]
+    text_layer_count_keys: tuple[str, ...]
+    weight_prefixes: tuple[str, ...]
+    weight_substrings: tuple[str, ...]
+    cache_shape: str
+    patchable: bool
+    batch_shape: str = "singleton_only"
+    batch_state_policy: str = "singleton_timeline_safe"
+    batch_filter_policy: str = "preserve_when_singleton_uid_matches"
+    batch_extend_policy: str = "reconcile_then_drop"
+    batch_multi_row_policy: str = "multi_row_decode_unsupported"
+    source: str = "native_head"
+    runtime_scope: str = "text_only_singleton"
+
+
+_QWEN_NATIVE_MTP_SPEC = _NativeMTPCapabilitySpec(
+    family="qwen3_5",
+    model_types=frozenset(("qwen3_5", "qwen3_5_text")),
+    layer_count_keys=("mtp_num_hidden_layers",),
+    text_layer_count_keys=("mtp_num_hidden_layers",),
+    weight_prefixes=("language_model.mtp.", "mtp."),
+    weight_substrings=(),
+    cache_shape="qwen3_5_native_mtp",
+    patchable=True,
+)
+_DEEPSEEK_V3_NEXTN_MTP_SPEC = _NativeMTPCapabilitySpec(
+    family="deepseek_v3_nextn",
+    model_types=frozenset(("deepseek_v3", "deepseek-v3", "deepseek_v3_text")),
+    layer_count_keys=("num_nextn_predict_layers",),
+    text_layer_count_keys=("num_nextn_predict_layers",),
+    weight_prefixes=(),
+    weight_substrings=(".shared_head.", ".eh_proj."),
+    cache_shape="deepseek_v3_nextn_native_mtp",
+    patchable=False,
+)
+_NATIVE_MTP_CAPABILITY_SPECS = (
+    _QWEN_NATIVE_MTP_SPEC,
+    _DEEPSEEK_V3_NEXTN_MTP_SPEC,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +102,14 @@ class NativeMTPCapabilityReceipt:
     cache_shape: str
     batch_shape: str
     batch_state_policy: str
+    batch_filter_policy: str
+    batch_extend_policy: str
+    batch_multi_row_policy: str
     hardware_gate: str
+    hardware_policy: str
+    hardware_policy_reason: str
+    hardware_policy_source: str
+    operator_override: str
     request_gate: str
     runtime_scope: str
     patch_applied: bool
@@ -57,7 +135,14 @@ class NativeMTPCapabilityReceipt:
             "cache_shape": self.cache_shape,
             "batch_shape": self.batch_shape,
             "batch_state_policy": self.batch_state_policy,
+            "batch_filter_policy": self.batch_filter_policy,
+            "batch_extend_policy": self.batch_extend_policy,
+            "batch_multi_row_policy": self.batch_multi_row_policy,
             "hardware_gate": self.hardware_gate,
+            "hardware_policy": self.hardware_policy,
+            "hardware_policy_reason": self.hardware_policy_reason,
+            "hardware_policy_source": self.hardware_policy_source,
+            "operator_override": self.operator_override,
             "request_gate": self.request_gate,
             "runtime_scope": self.runtime_scope,
             "patch_applied": self.patch_applied,
@@ -83,7 +168,15 @@ class NativeMTPCapabilityReceipt:
             "melix.native_mtp.receipt.effective_depth": str(self.effective_depth),
             "melix.native_mtp.receipt.depth_source": self.depth_source,
             "melix.native_mtp.receipt.batch_shape": self.batch_shape,
+            "melix.native_mtp.receipt.batch_state_policy": self.batch_state_policy,
+            "melix.native_mtp.receipt.batch_filter_policy": self.batch_filter_policy,
+            "melix.native_mtp.receipt.batch_extend_policy": self.batch_extend_policy,
+            "melix.native_mtp.receipt.batch_multi_row_policy": self.batch_multi_row_policy,
             "melix.native_mtp.receipt.hardware_gate": self.hardware_gate,
+            "melix.native_mtp.receipt.hardware_policy": self.hardware_policy,
+            "melix.native_mtp.receipt.hardware_policy_reason": self.hardware_policy_reason,
+            "melix.native_mtp.receipt.hardware_policy_source": self.hardware_policy_source,
+            "melix.native_mtp.receipt.operator_override": self.operator_override,
             "melix.native_mtp.receipt.request_gate": self.request_gate,
             "melix.native_mtp.receipt.runtime_scope": self.runtime_scope,
             "melix.native_mtp.receipt.draft_loaded": _bool_string(self.draft_loaded),
@@ -107,6 +200,16 @@ class NativeMTPCapabilityDecision:
     hardware_gate: str
     resolution: str
     refusal_reason: str
+    cache_shape: str = "none"
+    batch_state_policy: str = "none"
+    batch_filter_policy: str = "none"
+    batch_extend_policy: str = "none"
+    batch_multi_row_policy: str = "none"
+    hardware_policy: str = "auto"
+    hardware_policy_reason: str = "unclassified_device"
+    hardware_policy_source: str = "auto"
+    operator_override: str = ""
+    runtime_scope: str = "text_only_singleton"
 
     def to_metadata(
         self,
@@ -133,7 +236,15 @@ class NativeMTPCapabilityDecision:
             "melix.native_mtp.source": self.source,
             "melix.native_mtp.head_count": str(self.head_count),
             "melix.native_mtp.batch_shape": self.batch_shape,
+            "melix.native_mtp.batch_state_policy": self.batch_state_policy,
+            "melix.native_mtp.batch_filter_policy": self.batch_filter_policy,
+            "melix.native_mtp.batch_extend_policy": self.batch_extend_policy,
+            "melix.native_mtp.batch_multi_row_policy": self.batch_multi_row_policy,
             "melix.native_mtp.hardware_gate": self.hardware_gate,
+            "melix.native_mtp.hardware_policy": self.hardware_policy,
+            "melix.native_mtp.hardware_policy_reason": self.hardware_policy_reason,
+            "melix.native_mtp.hardware_policy_source": self.hardware_policy_source,
+            "melix.native_mtp.operator_override": self.operator_override,
             "melix.native_mtp.resolution": self._resolution(active=active, reason=final_reason),
             "melix.native_mtp.refusal_reason": "" if active else final_reason,
             "melix.native_mtp.receipt.enabled": _bool_string(self.enabled),
@@ -164,12 +275,19 @@ class NativeMTPCapabilityDecision:
             draft_supported=bool(self.compatible and self.source == "native_head" and active),
             effective_depth=self.head_count if active else 0,
             depth_source=self.source if active else "none",
-            cache_shape=self._cache_shape(active=active),
+            cache_shape=self._cache_shape(),
             batch_shape=self.batch_shape,
-            batch_state_policy=self._batch_state_policy(active=active),
+            batch_state_policy=self._batch_state_policy(),
+            batch_filter_policy=self._batch_filter_policy(),
+            batch_extend_policy=self._batch_extend_policy(),
+            batch_multi_row_policy=self._batch_multi_row_policy(),
             hardware_gate=self.hardware_gate,
+            hardware_policy=self.hardware_policy,
+            hardware_policy_reason=self.hardware_policy_reason,
+            hardware_policy_source=self.hardware_policy_source,
+            operator_override=self.operator_override,
             request_gate=self._request_gate(active=active, reason=final_reason),
-            runtime_scope="text_only_singleton" if active else "none",
+            runtime_scope=self.runtime_scope if active else "none",
             patch_applied=bool(patch_applied),
             draft_loaded=bool(active),
             target_decode_started=False,
@@ -181,9 +299,11 @@ class NativeMTPCapabilityDecision:
             return str(override or "")
         if active:
             return ""
+        if self.refusal_reason:
+            return self.refusal_reason
         if self.patchable and not patch_applied:
             return "patch_failed"
-        return self.refusal_reason
+        return ""
 
     def _resolution(self, *, active: bool, reason: str) -> str:
         if active:
@@ -212,18 +332,37 @@ class NativeMTPCapabilityDecision:
             return "assistant_sidecar_refused"
         if reason == "missing_mtp_weights":
             return "missing_native_head_weights"
+        if reason == "device_policy_disabled":
+            return "device_policy_disabled"
+        if reason == "patch_unsupported":
+            return "patch_unsupported"
         if reason in {"unsupported_model", "patch_failed", "patch_error"}:
             return reason
         return "not_admitted"
 
-    def _cache_shape(self, *, active: bool) -> str:
-        if active and self.source == "native_head" and self.family == "qwen3_5":
-            return "qwen3_5_native_mtp"
+    def _cache_shape(self) -> str:
+        if self.source == "native_head" and self.compatible:
+            return self.cache_shape
         return "none"
 
-    def _batch_state_policy(self, *, active: bool) -> str:
-        if active and self.batch_shape == "singleton_only":
-            return "drop_on_extend_or_filter"
+    def _batch_state_policy(self) -> str:
+        if self.compatible and self.batch_shape == "singleton_only":
+            return self.batch_state_policy
+        return "none"
+
+    def _batch_filter_policy(self) -> str:
+        if self.compatible and self.batch_shape == "singleton_only":
+            return self.batch_filter_policy
+        return "none"
+
+    def _batch_extend_policy(self) -> str:
+        if self.compatible and self.batch_shape == "singleton_only":
+            return self.batch_extend_policy
+        return "none"
+
+    def _batch_multi_row_policy(self) -> str:
+        if self.compatible and self.batch_shape == "singleton_only":
+            return self.batch_multi_row_policy
         return "none"
 
 
@@ -231,13 +370,22 @@ def resolve_native_mtp_capability(
     model_path: str | Path,
     *,
     metadata: Mapping[str, str],
+    hardware_profile: Any | None = None,
 ) -> NativeMTPCapabilityDecision:
     model_dir = Path(model_path)
     config_payload = _load_json_payload(model_dir / "config.json")
     model_type = _native_mtp_model_type(config_payload)
-    head_count = _native_mtp_layer_count(config_payload)
-    weights_present, weight_count = _native_mtp_weight_presence(model_dir)
+    weight_map = _native_mtp_weight_map(model_dir)
+    spec, head_count = _resolve_native_mtp_spec(
+        model_type=model_type,
+        config_payload=config_payload,
+    )
+    weights_present, weight_count = _native_mtp_weight_presence(weight_map, spec=spec)
     enabled = _truthy_string(metadata.get(NATIVE_MTP_ENABLED_EXT_KEY, ""))
+    hardware = _resolve_native_mtp_hardware_policy(
+        metadata=metadata,
+        hardware_profile=hardware_profile,
+    )
 
     if _is_assistant_sidecar(metadata=metadata, config_payload=config_payload, model_type=model_type):
         return NativeMTPCapabilityDecision(
@@ -250,29 +398,54 @@ def resolve_native_mtp_capability(
             source="assistant_sidecar",
             head_count=head_count,
             batch_shape="unsupported",
-            hardware_gate="not_evaluated",
+            hardware_gate=hardware.gate,
             resolution="refused",
             refusal_reason="assistant_sidecar" if enabled else "disabled",
+            hardware_policy=hardware.policy,
+            hardware_policy_reason=hardware.reason,
+            hardware_policy_source=hardware.source,
+            operator_override=hardware.operator_override,
+            runtime_scope="none",
         )
 
-    compatible = model_type in _QWEN_NATIVE_MTP_MODEL_TYPES and head_count > 0
-    if compatible:
-        refusal_reason = _native_head_refusal_reason(enabled=enabled, weights_present=weights_present)
+    if spec is not None:
+        refusal_reason = _native_head_refusal_reason(
+            enabled=enabled,
+            weights_present=weights_present,
+            patchable=spec.patchable,
+            hardware_admitted=hardware.admitted,
+        )
+        resolution = (
+            "accepted"
+            if enabled and weights_present and spec.patchable and hardware.admitted
+            else "legacy_only" if not enabled else "refused"
+        )
         return NativeMTPCapabilityDecision(
             enabled=enabled,
             compatible=True,
-            patchable=True,
+            patchable=spec.patchable,
             weights_present=weights_present,
             weight_count=weight_count,
-            family="qwen3_5",
-            source="native_head",
+            family=spec.family,
+            source=spec.source,
             head_count=head_count,
-            batch_shape="singleton_only",
-            hardware_gate="not_evaluated",
-            resolution="accepted" if enabled and weights_present else "legacy_only" if not enabled else "refused",
+            batch_shape=spec.batch_shape,
+            hardware_gate=hardware.gate,
+            resolution=resolution,
             refusal_reason=refusal_reason,
+            cache_shape=spec.cache_shape,
+            batch_state_policy=spec.batch_state_policy,
+            batch_filter_policy=spec.batch_filter_policy,
+            batch_extend_policy=spec.batch_extend_policy,
+            batch_multi_row_policy=spec.batch_multi_row_policy,
+            hardware_policy=hardware.policy,
+            hardware_policy_reason=hardware.reason,
+            hardware_policy_source=hardware.source,
+            operator_override=hardware.operator_override,
+            runtime_scope=spec.runtime_scope,
         )
 
+    head_count = _native_mtp_layer_count(config_payload)
     return NativeMTPCapabilityDecision(
         enabled=enabled,
         compatible=False,
@@ -283,9 +456,14 @@ def resolve_native_mtp_capability(
         source="none",
         head_count=head_count,
         batch_shape="unsupported",
-        hardware_gate="not_evaluated",
+        hardware_gate=hardware.gate,
         resolution="refused" if enabled else "legacy_only",
         refusal_reason="unsupported_model" if enabled else "disabled",
+        hardware_policy=hardware.policy,
+        hardware_policy_reason=hardware.reason,
+        hardware_policy_source=hardware.source,
+        operator_override=hardware.operator_override,
+        runtime_scope="none",
     )
 
 
@@ -306,12 +484,44 @@ def _native_mtp_model_type(config_payload: Mapping[str, Any]) -> str:
     return str(value or "").strip().lower()
 
 
-def _native_mtp_layer_count(config_payload: Mapping[str, Any]) -> int:
+def _resolve_native_mtp_spec(
+    *,
+    model_type: str,
+    config_payload: Mapping[str, Any],
+) -> tuple[_NativeMTPCapabilitySpec | None, int]:
+    for spec in _NATIVE_MTP_CAPABILITY_SPECS:
+        if model_type not in spec.model_types:
+            continue
+        layer_count = _native_mtp_layer_count(config_payload, spec=spec)
+        if layer_count > 0:
+            return spec, layer_count
+    return None, _native_mtp_layer_count(config_payload)
+
+
+def _native_mtp_layer_count(
+    config_payload: Mapping[str, Any],
+    *,
+    spec: _NativeMTPCapabilitySpec | None = None,
+) -> int:
     candidates: list[Any] = []
+    root_keys: tuple[str, ...]
+    text_keys: tuple[str, ...]
+    if spec is None:
+        root_keys = tuple(
+            dict.fromkeys(key for item in _NATIVE_MTP_CAPABILITY_SPECS for key in item.layer_count_keys)
+        )
+        text_keys = tuple(
+            dict.fromkeys(
+                key for item in _NATIVE_MTP_CAPABILITY_SPECS for key in item.text_layer_count_keys
+            )
+        )
+    else:
+        root_keys = spec.layer_count_keys
+        text_keys = spec.text_layer_count_keys
     text_config = config_payload.get("text_config")
     if isinstance(text_config, Mapping):
-        candidates.append(text_config.get("mtp_num_hidden_layers"))
-    candidates.append(config_payload.get("mtp_num_hidden_layers"))
+        candidates.extend(text_config.get(key) for key in text_keys)
+    candidates.extend(config_payload.get(key) for key in root_keys)
     for value in candidates:
         try:
             return max(0, int(value or 0))
@@ -320,13 +530,35 @@ def _native_mtp_layer_count(config_payload: Mapping[str, Any]) -> int:
     return 0
 
 
-def _native_mtp_weight_presence(model_dir: Path) -> tuple[bool, int]:
+def _native_mtp_weight_map(model_dir: Path) -> Mapping[Any, Any]:
     index_payload = _load_json_payload(model_dir / "model.safetensors.index.json")
     weight_map = index_payload.get("weight_map")
     if not isinstance(weight_map, Mapping):
-        return False, 0
-    count = sum(1 for key in weight_map if str(key).startswith(_MTP_WEIGHT_PREFIXES))
+        return {}
+    return weight_map
+
+
+def _native_mtp_weight_presence(
+    weight_map: Mapping[Any, Any],
+    *,
+    spec: _NativeMTPCapabilitySpec | None,
+) -> tuple[bool, int]:
+    count = sum(1 for key in weight_map if _is_native_mtp_weight_key(key, spec=spec))
     return count > 0, count
+
+
+def _is_native_mtp_weight_key(key: object, *, spec: _NativeMTPCapabilitySpec | None) -> bool:
+    key_str = str(key)
+    if spec is not None:
+        if spec.weight_prefixes and key_str.startswith(spec.weight_prefixes):
+            return True
+        return bool(spec.weight_substrings and any(part in key_str for part in spec.weight_substrings))
+    for candidate in _NATIVE_MTP_CAPABILITY_SPECS:
+        if candidate.weight_prefixes and key_str.startswith(candidate.weight_prefixes):
+            return True
+        if candidate.weight_substrings and any(part in key_str for part in candidate.weight_substrings):
+            return True
+    return False
 
 
 def _truthy_string(value: str | None) -> bool:
@@ -363,12 +595,157 @@ def _sidecar_family(*, metadata: Mapping[str, str], model_type: str) -> str:
     target_family = str(metadata.get("melix.speculative.target_family", "") or "").strip().lower()
     return target_family or model_type
 
+def _resolve_native_mtp_hardware_policy(
+    *,
+    metadata: Mapping[str, str],
+    hardware_profile: Any | None,
+) -> _NativeMTPHardwareDecision:
+    policy = _native_mtp_device_policy(metadata)
+    if policy == "force_on":
+        return _NativeMTPHardwareDecision(
+            gate="admitted",
+            policy="force_on",
+            reason="operator_force_on",
+            source="operator",
+            operator_override="force_on",
+        )
+    if policy == "force_off":
+        return _NativeMTPHardwareDecision(
+            gate="disabled",
+            policy="force_off",
+            reason="operator_force_off",
+            source="operator",
+            operator_override="force_off",
+        )
 
-def _native_head_refusal_reason(*, enabled: bool, weights_present: bool) -> str:
+    profile = _coerce_hardware_profile(hardware_profile) or _detect_native_mtp_hardware_profile()
+    if _is_lower_end_m1_m2(profile):
+        return _NativeMTPHardwareDecision(
+            gate="disabled",
+            policy="auto",
+            reason="m1_m2_compute_bound",
+            source="auto",
+        )
+    if _is_high_end_apple_silicon(profile):
+        return _NativeMTPHardwareDecision(
+            gate="admitted",
+            policy="auto",
+            reason="supported_apple_silicon",
+            source="auto",
+        )
+    if _is_unclassified_apple_silicon(profile):
+        return _NativeMTPHardwareDecision(
+            gate="disabled",
+            policy="auto",
+            reason="unclassified_apple_silicon",
+            source="auto",
+        )
+    return _NativeMTPHardwareDecision(
+        gate="admitted",
+        policy="auto",
+        reason="unclassified_device",
+        source="auto",
+    )
+
+
+def _native_mtp_device_policy(metadata: Mapping[str, str]) -> str:
+    value = str(
+        metadata.get(NATIVE_MTP_DEVICE_POLICY_EXT_KEY)
+        or metadata.get("melix.native_mtp.hardware_policy")
+        or "auto"
+    ).strip().lower()
+    if value in {"force_on", "on", "enabled", "always"}:
+        return "force_on"
+    if value in {"force_off", "off", "disabled", "never"}:
+        return "force_off"
+    return "auto"
+
+
+def _coerce_hardware_profile(profile: Any | None) -> NativeMTPHardwareProfile | None:
+    if profile is None:
+        return None
+    return NativeMTPHardwareProfile(
+        system=str(getattr(profile, "system", "") or ""),
+        machine=str(getattr(profile, "machine", "") or ""),
+        chip_family=str(getattr(profile, "chip_family", "") or ""),
+        model_identifier=str(getattr(profile, "model_identifier", "") or ""),
+    )
+
+
+def _detect_native_mtp_hardware_profile() -> NativeMTPHardwareProfile:
+    global _CACHED_HARDWARE_PROFILE
+    if _CACHED_HARDWARE_PROFILE is not None:
+        return _CACHED_HARDWARE_PROFILE
+
+    system = platform.system()
+    machine = platform.machine()
+    if system != "Darwin" or machine not in {"arm64", "aarch64"}:
+        _CACHED_HARDWARE_PROFILE = NativeMTPHardwareProfile(system=system, machine=machine)
+        return _CACHED_HARDWARE_PROFILE
+    _CACHED_HARDWARE_PROFILE = NativeMTPHardwareProfile(
+        system=system,
+        machine=machine,
+        chip_family=_sysctl_string("machdep.cpu.brand_string"),
+        model_identifier=_sysctl_string("hw.model"),
+    )
+    return _CACHED_HARDWARE_PROFILE
+
+
+def _sysctl_string(name: str) -> str:
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", name],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_SYSCTL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _is_lower_end_m1_m2(profile: NativeMTPHardwareProfile) -> bool:
+    chip = profile.chip_family.lower()
+    if not chip:
+        return False
+    if "m1" not in chip and "m2" not in chip:
+        return False
+    return "max" not in chip and "ultra" not in chip
+
+
+def _is_high_end_apple_silicon(profile: NativeMTPHardwareProfile) -> bool:
+    chip = profile.chip_family.lower()
+    if not chip:
+        return False
+    if "m3" in chip or "m4" in chip:
+        return True
+    return ("m1" in chip or "m2" in chip) and ("max" in chip or "ultra" in chip)
+
+
+def _is_unclassified_apple_silicon(profile: NativeMTPHardwareProfile) -> bool:
+    if profile.system != "Darwin":
+        return False
+    return profile.machine in {"arm64", "aarch64"} and not profile.chip_family
+
+
+def _native_head_refusal_reason(
+    *,
+    enabled: bool,
+    weights_present: bool,
+    patchable: bool,
+    hardware_admitted: bool,
+) -> str:
     if not enabled:
         return "disabled"
     if not weights_present:
         return "missing_mtp_weights"
+    if not patchable:
+        return "patch_unsupported"
+    if not hardware_admitted:
+        return "device_policy_disabled"
     return ""
 
 

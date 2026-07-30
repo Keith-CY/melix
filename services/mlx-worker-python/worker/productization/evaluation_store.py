@@ -10,6 +10,11 @@ from worker.productization.apple_silicon_telemetry import (
     NoOpAppleSiliconTelemetryCollector,
 )
 from worker.productization.evaluation_reports import build_evaluation_compare_report_markdown
+from worker.productization.effective_policy_evidence import (
+    EFFECTIVE_POLICY_EVIDENCE_FIELDS,
+    effective_policy_csv_value,
+    empty_effective_policy_evidence,
+)
 from worker.productization.evaluation_schemas import (
     EvaluationCompareJob,
     EvaluationCompareSample,
@@ -32,6 +37,15 @@ from worker.productization.run_records import (
     object_payload,
     write_run_record,
 )
+
+
+_EMPTY_EFFECTIVE_POLICY_EVIDENCE = empty_effective_policy_evidence()
+_EMPTY_EFFECTIVE_POLICY_CSV_FIELDS = tuple(
+    effective_policy_csv_value(_EMPTY_EFFECTIVE_POLICY_EVIDENCE[field_name])
+    for field_name in EFFECTIVE_POLICY_EVIDENCE_FIELDS
+)
+_EMPTY_EFFECTIVE_POLICY_CSV_SUFFIX = "," + ",".join(_EMPTY_EFFECTIVE_POLICY_CSV_FIELDS)
+_COMPACT_JSON_ENCODER = json.JSONEncoder(separators=(",", ":")).encode
 
 
 class EvaluationStore:
@@ -105,7 +119,7 @@ class EvaluationStore:
             persisted.update(extra_artifact_paths)
         if samples:
             jsonl_path = run_root / "evaluation-samples.jsonl"
-            self._write_jsonl(jsonl_path, (sample.to_dict() for sample in samples))
+            self._write_samples_jsonl(jsonl_path, samples)
             csv_path = run_root / "evaluation-samples.csv"
             self._write_samples_csv(csv_path, samples)
             persisted["samples_jsonl"] = jsonl_path
@@ -225,6 +239,120 @@ class EvaluationStore:
             dumps = json.dumps
             for row in rows:
                 write(dumps(row) + "\n")
+
+    @staticmethod
+    def _write_samples_jsonl(path: Path, samples: tuple[EvaluationSample, ...]) -> None:
+        with path.open("w", encoding="utf-8") as handle:
+            write = handle.write
+            encode_json = _COMPACT_JSON_ENCODER
+            reusable_payload = EvaluationStore._empty_sample_json_payload()
+            for sample in samples:
+                if EvaluationStore._sample_jsonl_needs_full_payload(sample):
+                    write(encode_json(sample.to_dict()) + "\n")
+                    continue
+                EvaluationStore._populate_sample_json_payload(reusable_payload, sample)
+                write(encode_json(reusable_payload) + "\n")
+
+    @staticmethod
+    def _empty_sample_json_payload() -> dict[str, object]:
+        payload: dict[str, object] = {
+            "schema_version": "",
+            "job_id": "",
+            "suite_id": "",
+            "dataset_id": "",
+            "sample_id": "",
+            "system": "",
+            "input_text": "",
+            "target": "",
+            "raw_response": "",
+            "extracted_result": "",
+            "typed_score": 0.0,
+            "time_s": 0.0,
+            "extraction_status": "",
+            "validation_status": "",
+            "failure_reason": "",
+            "task_kind": "",
+            "input_modalities": (),
+            "media_references": (),
+            "code_language": "",
+            "code_entry_point": "",
+            "code_compile_status": "",
+            "code_runtime_status": "",
+            "code_timeout_status": "",
+            "code_test_status": "",
+            "code_tests_passed": 0,
+            "code_tests_total": 0,
+            "code_failure_detail": "",
+            "sample_render_ms": 0.0,
+            "inference_ms": 0.0,
+            "extraction_ms": 0.0,
+            "validation_ms": 0.0,
+            "scoring_ms": 0.0,
+            "raw_response_chars": 0,
+            "extracted_result_chars": 0,
+            "failure_stage": "",
+            "final_answer": "",
+            "parse_status": "",
+        }
+        payload.update(_EMPTY_EFFECTIVE_POLICY_EVIDENCE)
+        return payload
+
+    @staticmethod
+    def _sample_jsonl_needs_full_payload(sample: EvaluationSample) -> bool:
+        return bool(
+            sample.effective_policy_evidence
+            or sample.tool_calls
+            or sample.agentic_tool_registry
+            or sample.agentic_tool_calls
+            or sample.agentic_tool_observations
+            or sample.agentic_tool_metrics
+            or sample.trajectory_provenance
+            or sample.category_label
+            or sample.subject_label
+        )
+
+    @staticmethod
+    def _populate_sample_json_payload(
+        payload: dict[str, object],
+        sample: EvaluationSample,
+    ) -> None:
+        payload["schema_version"] = sample.schema_version
+        payload["job_id"] = sample.job_id
+        payload["suite_id"] = sample.suite_id
+        payload["dataset_id"] = sample.dataset_id
+        payload["sample_id"] = sample.sample_id
+        payload["system"] = sample.system
+        payload["input_text"] = sample.input_text
+        payload["target"] = sample.target
+        payload["raw_response"] = sample.raw_response
+        payload["extracted_result"] = sample.extracted_result
+        payload["typed_score"] = sample.typed_score
+        payload["time_s"] = sample.time_s
+        payload["extraction_status"] = sample.extraction_status
+        payload["validation_status"] = sample.validation_status
+        payload["failure_reason"] = sample.failure_reason
+        payload["task_kind"] = sample.task_kind
+        payload["input_modalities"] = sample.input_modalities
+        payload["media_references"] = sample.media_references
+        payload["code_language"] = sample.code_language
+        payload["code_entry_point"] = sample.code_entry_point
+        payload["code_compile_status"] = sample.code_compile_status
+        payload["code_runtime_status"] = sample.code_runtime_status
+        payload["code_timeout_status"] = sample.code_timeout_status
+        payload["code_test_status"] = sample.code_test_status
+        payload["code_tests_passed"] = sample.code_tests_passed
+        payload["code_tests_total"] = sample.code_tests_total
+        payload["code_failure_detail"] = sample.code_failure_detail
+        payload["sample_render_ms"] = sample.sample_render_ms
+        payload["inference_ms"] = sample.inference_ms
+        payload["extraction_ms"] = sample.extraction_ms
+        payload["validation_ms"] = sample.validation_ms
+        payload["scoring_ms"] = sample.scoring_ms
+        payload["raw_response_chars"] = sample.raw_response_chars
+        payload["extracted_result_chars"] = sample.extracted_result_chars
+        payload["failure_stage"] = sample.failure_stage
+        payload["final_answer"] = sample.final_answer
+        payload["parse_status"] = sample.parse_status
 
     @staticmethod
     def _write_samples_csv(path: Path, samples: tuple[EvaluationSample, ...]) -> None:
@@ -474,12 +602,13 @@ class EvaluationStore:
             "failure_stage",
             "final_answer",
             "parse_status",
+            *EFFECTIVE_POLICY_EVIDENCE_FIELDS,
         ]
 
     @staticmethod
     def _sample_csv_row(sample: EvaluationSample) -> str:
         csv_field = EvaluationStore._csv_field
-        return ",".join(
+        row = ",".join(
             [
                 csv_field(sample.sample_id),
                 csv_field(sample.task_kind),
@@ -517,6 +646,21 @@ class EvaluationStore:
                 csv_field(sample.parse_status),
             ]
         )
+        evidence = sample.effective_policy_evidence
+        if not evidence:
+            return row + _EMPTY_EFFECTIVE_POLICY_CSV_SUFFIX
+        evidence_csv_fields = tuple(
+            csv_field(
+                effective_policy_csv_value(
+                    evidence.get(
+                        field_name,
+                        _EMPTY_EFFECTIVE_POLICY_EVIDENCE[field_name],
+                    )
+                )
+            )
+            for field_name in EFFECTIVE_POLICY_EVIDENCE_FIELDS
+        )
+        return row + "," + ",".join(evidence_csv_fields)
 
     @staticmethod
     def _csv_field(value: str) -> str:

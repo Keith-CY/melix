@@ -54,6 +54,12 @@ body { background: #f0f0f0; font-family: system-ui, -apple-system, Arial, sans-s
 .card-sm { background: rgba(0,0,0,0.04); border-radius: 9px; padding: 7px 9px; }
 .section-label { font-size: 8px; font-weight: 600; color: #9A9A9A; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 7px; }
 .bubble { border-radius: 11px; padding: 8px 10px; margin-bottom: 6px; }
+.composer-shell { overflow: hidden; background: rgba(255,255,255,0.96); border: 1px solid rgba(0,0,0,0.10); border-radius: 16px; }
+.composer-editor { min-height: 42px; padding: 10px 12px 3px; color: #9A9A9A; font-size: 10px; }
+.composer-toolbar { min-height: 35px; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 7px; padding: 3px 7px 6px; }
+.composer-thinking { padding: 4px 6px; color: #0F766E; font-size: 9px; font-weight: 600; }
+.composer-status { overflow: hidden; color: #6B6B6B; font-size: 8px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.composer-send { width: 28px; height: 26px; display: grid; place-items: center; border-radius: 9px; color: #9A9A9A; background: #E8E8E8; font-size: 14px; }
 .btn-primary { background: #0A0A0A; color: #FDFDFD; border: none; border-radius: 7px; padding: 4px 11px; font-size: 10px; font-weight: 600; font-family: inherit; cursor: default; display: inline-block; }
 .btn-bordered { background: transparent; color: #3A3A3A; border: 1px solid #D4D4D4; border-radius: 7px; padding: 4px 11px; font-size: 10px; font-weight: 500; font-family: inherit; cursor: default; display: inline-block; }
 .btn-accent { background: #0F766E; color: #fff; border: none; border-radius: 7px; padding: 4px 11px; font-size: 10px; font-weight: 600; font-family: inherit; cursor: default; display: inline-block; }
@@ -96,12 +102,12 @@ body { background: #f0f0f0; font-family: system-ui, -apple-system, Arial, sans-s
       </div>
       <div class="session-row" style="background:rgba(15,118,110,0.12)">
         <div style="display:flex;justify-content:space-between">
-          <span class="t-head" style="font-size:10px">Llama 3.2 3B eval</span>
+          <span class="t-head" style="font-size:10px">Chat 1</span>
           <span class="t-mono" style="font-size:8px">2m ago</span>
         </div>
         <div style="margin-top:3px;display:flex;gap:4px">
-          <span class="pill">main</span>
-          <span class="t-cap" style="font-size:8px">Compare base vs LoRA outputs</span>
+          <span class="pill">gemma-4</span>
+          <span class="t-cap" style="font-size:8px">Review Thinking and Composer</span>
         </div>
       </div>
       <div class="session-row" style="background:rgba(0,0,0,0.03)">
@@ -127,11 +133,11 @@ body { background: #f0f0f0; font-family: system-ui, -apple-system, Arial, sans-s
     </div>
     <!-- Workspace -->
     <div class="workspace">
-      <div style="margin-bottom:10px;flex-shrink:0">
-        <div class="t-title">Llama 3.2 3B eval</div>
-        <div style="margin-top:4px;display:flex;gap:5px">
-          <span class="pill">main</span>
-          <span class="pill">session-1 · running</span>
+      <div style="margin-bottom:10px;flex-shrink:0;display:flex;align-items:center;gap:6px">
+        <div class="t-title">Chat 1</div>
+        <div style="margin-left:auto;display:flex;gap:5px;min-width:0">
+          <span class="pill">Primary⌄</span>
+          <span class="pill" title="mlx-community/gemma-4-31b-it-4bit" style="min-width:0;max-width:128px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">◇ Gemma 4 31B IT <b style="color:#0F766E;font-size:7px">4-bit</b></span>
         </div>
       </div>
       <div style="flex:1;overflow:hidden;display:flex;flex-direction:column;gap:5px">
@@ -158,33 +164,31 @@ body { background: #f0f0f0; font-family: system-ui, -apple-system, Arial, sans-s
       </div>
       <!-- Composer -->
       <div style="margin-top:8px;flex-shrink:0">
-        <div style="background:rgba(0,0,0,0.03);border-radius:9px;padding:6px 9px;border:1px solid rgba(0,0,0,0.07);height:38px;margin-bottom:5px">
-          <span class="t-mono" style="color:#9A9A9A">Enter a prompt…</span>
-        </div>
-        <div style="display:flex;justify-content:flex-end;gap:6px">
-          <span class="btn-bordered">Clear</span>
-          <span class="btn-primary">Send ⌘↵</span>
+        <div class="composer-shell">
+          <div class="composer-editor">Message Melix…</div>
+          <div class="composer-toolbar">
+            <span class="composer-thinking">Thinking</span>
+            <span class="composer-status">↵ Send · ⌘↵ New line</span>
+            <span class="composer-send" aria-label="Send unavailable, empty message">↑</span>
+          </div>
         </div>
       </div>
     </div>
     <!-- Inspector -->
-    <div class="inspector">
-      <div class="card">
-        <div class="section-label">Session</div>
-        <div class="t-head" style="margin-bottom:3px">running</div>
-        <div class="t-mono">http://localhost:12436</div>
+    <div class="inspector" style="padding:10px">
+      <div style="display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:6px;align-items:start;padding-bottom:9px;border-bottom:1px solid rgba(0,0,0,.08)">
+        <span style="width:6px;height:6px;margin-top:3px;border-radius:50%;background:#14A05A"></span>
+        <div style="min-width:0"><div class="t-head" style="font-size:9px">Primary Provider</div><div class="t-cap" style="font-size:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Gemma 4 31B IT · 4-bit</div></div>
+        <div style="display:flex;gap:3px"><span class="pill" title="Text ready">▤</span><span class="pill" title="Vision unavailable">◉̸</span></div>
       </div>
-      <div class="card">
-        <div class="section-label">Analysis Routes</div>
-        <div style="display:flex;gap:6px;margin-bottom:5px;align-items:flex-start"><span style="color:#14A05A;font-size:10px">●</span><span class="t-body" style="font-size:10px">Chat Completion</span></div>
-        <div style="display:flex;gap:6px;margin-bottom:5px;align-items:flex-start"><span style="color:#14A05A;font-size:10px">●</span><span class="t-body" style="font-size:10px">LoRA Training</span></div>
-        <div style="display:flex;gap:6px;margin-bottom:5px;align-items:flex-start"><span style="color:#14A05A;font-size:10px">●</span><span class="t-body" style="font-size:10px">Bench Matrix</span></div>
-        <div style="display:flex;gap:6px;margin-bottom:5px;align-items:flex-start"><span style="color:#9A9A9A;font-size:10px">○</span><span class="t-body" style="font-size:10px">Vision</span></div>
+      <div style="padding-top:5px">
+        <div style="min-height:25px;display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center"><span style="color:#0F766E">⌁</span><b style="font-size:8px">Running</b><small>Active</small></div>
+        <div style="min-height:25px;display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center"><span style="color:#0F766E">⌘</span><b style="font-size:8px">127.0.0.1:12436</b><small>/v1</small></div>
+        <div style="min-height:25px;display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center"><span style="color:#0F766E">#</span><b style="font-size:8px">12 in · 24 out</b><small>tokens</small></div>
+        <div style="min-height:25px;display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center"><span style="color:#0F766E">◇</span><b style="font-size:8px">Local only</b><small>trust</small></div>
+        <div style="min-height:25px;display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center"><span style="color:#0F766E">◷</span><b style="font-size:8px">Idle</b><small>timer</small></div>
       </div>
-      <div class="card">
-        <div class="section-label">Runtime</div>
-        <div class="t-mono">req_8f2a9c · 1024 tokens · 42ms p50</div>
-      </div>
+      <div style="display:flex;gap:4px;padding-top:7px;border-top:1px solid rgba(0,0,0,.08)"><span class="pill" title="Command Center">⌘</span><span class="pill" title="Providers">▥</span><span class="pill" title="Diagnostics">⌁</span></div>
     </div>
   </div>
   <div class="page-label">Chat Tab · 1 / 3</div>

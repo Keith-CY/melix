@@ -1548,16 +1548,21 @@ class DownloadPipeline:
     @staticmethod
     def _sha256_directory_snapshot(path: Path) -> str:
         digest = hashlib.sha256()
-        for relative_path, file_path, file_size in DownloadPipeline._directory_snapshot_files(path):
-            digest.update(b"file\0")
-            digest.update(relative_path.encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(str(file_size).encode("ascii"))
-            digest.update(b"\0")
-            with open(file_path, "rb") as file:
-                for chunk in iter(lambda: file.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            digest.update(b"\0")
+        update_digest = digest.update
+        directory_snapshot_files = DownloadPipeline._directory_snapshot_files
+        open_file = open
+        chunk_size = 1024 * 1024
+        for relative_path, file_path, file_size in directory_snapshot_files(path):
+            update_digest(b"file\0")
+            update_digest(relative_path.encode("utf-8"))
+            update_digest(b"\0")
+            update_digest(b"%d" % file_size)
+            update_digest(b"\0")
+            with open_file(file_path, "rb") as file:
+                read_chunk = file.read
+                while chunk := read_chunk(chunk_size):
+                    update_digest(chunk)
+            update_digest(b"\0")
         return digest.hexdigest()
 
     @staticmethod

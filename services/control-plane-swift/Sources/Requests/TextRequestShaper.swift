@@ -3,6 +3,16 @@ import MelixControlPlaneProtocol
 
 public struct OCRExecutionPolicy: Sendable, Equatable {
     private static let defaultMaxTokens: UInt32 = 256
+    private static let declarationKeys = [
+        "ocr_prompt_profile_id",
+        "ocr_prompt_template",
+        "ocr_auto_prompt",
+        "ocr_stop_sequences",
+        "ocr_sampling_profile_id",
+        "ocr_default_temperature",
+        "ocr_default_top_p",
+        "ocr_default_max_tokens",
+    ]
 
     public let promptProfileID: String
     public let promptTemplate: String
@@ -16,6 +26,10 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
     public init?(
         modelSettings: Melix_Controlplane_V1_ModelSettings
     ) {
+        guard Self.declaresOCRPolicy(modelSettings) else {
+            return nil
+        }
+
         let promptProfileID = modelSettings.ext["ocr_prompt_profile_id"]?.nilIfEmpty
         let promptTemplate = modelSettings.ext["ocr_prompt_template"]?.nilIfEmpty
         let autoPrompt = modelSettings.ext["ocr_auto_prompt"]?.nilIfEmpty
@@ -28,18 +42,6 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
         let maxTokens = Self.parseUInt32(modelSettings.ext["ocr_default_max_tokens"])
             ?? Self.parseUInt32(modelSettings.ext["melix.generation_config.max_tokens"])
 
-        guard promptProfileID != nil
-            || promptTemplate != nil
-            || autoPrompt != nil
-            || samplingProfileID != nil
-            || !stopSequences.isEmpty
-            || temperature != nil
-            || topP != nil
-            || maxTokens != nil
-        else {
-            return nil
-        }
-
         self.promptProfileID = promptProfileID ?? "ocr-default"
         self.promptTemplate = promptTemplate ?? "{prompt}"
         self.autoPrompt = autoPrompt ?? "Extract the text from the image exactly as written."
@@ -48,6 +50,14 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens ?? Self.defaultMaxTokens
+    }
+
+    private static func declaresOCRPolicy(
+        _ modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) -> Bool {
+        declarationKeys.contains { key in
+            modelSettings.ext[key]?.nilIfEmpty != nil
+        }
     }
 
     private static func parseList(_ rawValue: String?) -> [String] {
@@ -78,22 +88,73 @@ public struct OCRExecutionPolicy: Sendable, Equatable {
 public struct ModelSamplingPolicy: Sendable, Equatable {
     public let temperature: Double?
     public let topP: Double?
+    public let topK: UInt32?
     public let maxTokens: UInt32?
+    public let lookupStatus: String
+    public let canonicalModelID: String
+    public let matchedAlias: String
+    public let sourceURL: String
 
     public init?(
         modelSettings: Melix_Controlplane_V1_ModelSettings
     ) {
+        self.init(
+            modelID: "",
+            modelSettings: modelSettings,
+            catalog: .empty
+        )
+    }
+
+    public init?(
+        modelID: String,
+        modelSettings: Melix_Controlplane_V1_ModelSettings,
+        catalog: TextModelPolicyCatalog = .default
+    ) {
         let temperature = Self.parseDouble(modelSettings.ext["melix.generation_config.temperature"])
         let topP = Self.parseDouble(modelSettings.ext["melix.generation_config.top_p"])
+        let topK = Self.parseUInt32(modelSettings.ext["melix.generation_config.top_k"])
         let maxTokens = Self.parseUInt32(modelSettings.ext["melix.generation_config.max_tokens"])
+        let catalogLookup = catalog.lookup(
+            identities: Self.identityCandidates(
+                modelID: modelID,
+                modelSettings: modelSettings
+            )
+        )
+        let resolvedTemperature = temperature ?? catalogLookup?.sampling.temperature
+        let resolvedTopP = topP ?? catalogLookup?.sampling.topP
+        let resolvedTopK = topK
+        let resolvedMaxTokens = maxTokens ?? catalogLookup?.sampling.maxTokens
 
-        guard temperature != nil || topP != nil || maxTokens != nil else {
+        guard resolvedTemperature != nil
+            || resolvedTopP != nil
+            || resolvedTopK != nil
+            || resolvedMaxTokens != nil
+        else {
             return nil
         }
 
-        self.temperature = temperature
-        self.topP = topP
-        self.maxTokens = maxTokens
+        self.temperature = resolvedTemperature
+        self.topP = resolvedTopP
+        self.topK = resolvedTopK
+        self.maxTokens = resolvedMaxTokens
+        self.lookupStatus = catalogLookup == nil ? "unknown" : "known"
+        self.canonicalModelID = catalogLookup?.canonicalModelID
+            ?? Self.firstNonEmpty([
+                modelID,
+                modelSettings.ext["melix.hf_repo_id"],
+                modelSettings.ext["melix.source_repo"],
+                modelSettings.alias,
+            ])
+        self.matchedAlias = catalogLookup?.matchedAlias
+            ?? Self.firstNonEmpty([
+                modelID,
+                modelSettings.alias,
+                modelSettings.ext["melix.model_path"],
+                modelSettings.ext["melix.hf_repo_id"],
+                modelSettings.ext["melix.source_repo"],
+            ])
+        self.sourceURL = catalogLookup?.sourceURL
+            ?? Self.modelSettingsSourceURL(modelSettings)
     }
 
     private static func parseDouble(_ rawValue: String?) -> Double? {
@@ -108,6 +169,38 @@ public struct ModelSamplingPolicy: Sendable, Equatable {
             return nil
         }
         return UInt32(rawValue)
+    }
+
+    private static func identityCandidates(
+        modelID: String,
+        modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) -> [String] {
+        [
+            modelID,
+            modelSettings.alias,
+            modelSettings.ext["melix.model_path"],
+            modelSettings.ext["melix.hf_repo_id"],
+            modelSettings.ext["melix.source_repo"],
+            modelSettings.ext["melix.source_model_id"],
+        ].compactMap { $0?.nilIfEmpty }
+    }
+
+    private static func firstNonEmpty(_ values: [String?]) -> String {
+        values.compactMap { $0?.nilIfEmpty }.first ?? ""
+    }
+
+    private static func modelSettingsSourceURL(
+        _ modelSettings: Melix_Controlplane_V1_ModelSettings
+    ) -> String {
+        if let source = modelSettings.ext["melix.generation_config.source"]?.nilIfEmpty {
+            return source
+        }
+        if let repoID = modelSettings.ext["melix.hf_repo_id"]?.nilIfEmpty
+            ?? modelSettings.ext["melix.source_repo"]?.nilIfEmpty,
+           repoID.contains("/") {
+            return "https://huggingface.co/\(repoID)"
+        }
+        return ""
     }
 }
 
@@ -145,6 +238,11 @@ public struct TextRequestShaper: Sendable {
         let admissionPolicy: String
         let cachePolicy: String?
         let saveBoundarySnapshot: Bool?
+    }
+
+    private struct PolicyValue<Value: Sendable>: Sendable {
+        let value: Value
+        let source: String
     }
 
     private let presets: [String: PresetDefaults]
@@ -256,22 +354,49 @@ public struct TextRequestShaper: Sendable {
             modelPolicy: modelOCRPolicy
         )
 
-        let fallbackTemperature = modelOCRPolicy?.temperature
-            ?? modelSamplingPolicy?.temperature
-            ?? gatewayServingDefaults?.temperature
-        let fallbackTopP = modelOCRPolicy?.topP
-            ?? modelSamplingPolicy?.topP
-            ?? gatewayServingDefaults?.topP
-        let fallbackMaxTokens = modelOCRPolicy?.maxTokens
-            ?? modelSamplingPolicy?.maxTokens
-            ?? gatewayServingDefaults?.maxTokens
-        let temperature = request.temperature ?? preset?.temperature ?? fallbackTemperature ?? 0.7
-        let topP = request.topP ?? preset?.topP ?? fallbackTopP ?? 1.0
+        let fallbackTemperature = policyFallback(
+            ocrValue: modelOCRPolicy?.temperature,
+            modelValue: modelSamplingPolicy?.temperature,
+            gatewayValue: gatewayServingDefaults?.temperature
+        )
+        let fallbackTopP = policyFallback(
+            ocrValue: modelOCRPolicy?.topP,
+            modelValue: modelSamplingPolicy?.topP,
+            gatewayValue: gatewayServingDefaults?.topP
+        )
+        let fallbackMaxTokens = policyFallback(
+            ocrValue: modelOCRPolicy?.maxTokens,
+            modelValue: modelSamplingPolicy?.maxTokens,
+            gatewayValue: gatewayServingDefaults?.maxTokens
+        )
+        let temperature = resolvedSamplingValue(
+            requestValue: request.temperature,
+            presetValue: preset?.temperature,
+            fallback: fallbackTemperature,
+            defaultValue: 0.7
+        )
+        let topP = resolvedSamplingValue(
+            requestValue: request.topP,
+            presetValue: preset?.topP,
+            fallback: fallbackTopP,
+            defaultValue: 1.0
+        )
+        let topK = request.topK ?? modelSamplingPolicy?.topK
         let outputCap = resolvedOutputCap(
             request: request,
             presetMaxTokens: preset?.maxTokens,
             fallbackMaxTokens: fallbackMaxTokens
         )
+        let samplingRequestOverrideApplied = request.temperature != nil
+            || request.topP != nil
+            || request.topK != nil
+            || request.maxTokens != nil
+            || request.maxCompletionTokens != nil
+            || request.maxOutputTokens != nil
+        let recommendedSamplingRequired = request.recommendedSampling?.requiresKnownPolicy == true
+        let samplingPolicyLookupStatus = samplingRequestOverrideApplied
+            ? "operator_override"
+            : (modelSamplingPolicy?.lookupStatus ?? "unknown")
         let maxTokens = outputCap.value
         let streamIntervalTokens = gatewayServingDefaults?.streamIntervalTokens ?? 1
         let maxConcurrentRequests = gatewayServingDefaults?.maxConcurrentRequests ?? 4
@@ -334,13 +459,22 @@ public struct TextRequestShaper: Sendable {
             messages: sanitizedHistory.messages,
             stream: request.stream,
             includeUsage: request.includeUsage,
-            temperature: temperature,
-            topP: topP,
+            temperature: temperature.value,
+            temperatureSource: temperature.source,
+            topP: topP.value,
+            topPSource: topP.source,
             maxTokens: maxTokens,
+            maxTokensSource: outputCap.policySource,
+            samplingPolicyLookupStatus: samplingPolicyLookupStatus,
+            samplingPolicyCanonicalModel: modelSamplingPolicy?.canonicalModelID ?? "",
+            samplingPolicyMatchedAlias: modelSamplingPolicy?.matchedAlias ?? "",
+            samplingPolicySourceURL: modelSamplingPolicy?.sourceURL ?? "",
+            samplingRequestOverrideApplied: samplingRequestOverrideApplied,
             requestedMaxTokens: request.maxTokens,
             requestedMaxCompletionTokens: request.maxCompletionTokens,
+            requestedMaxOutputTokens: request.maxOutputTokens,
             outputCapSource: outputCap.source,
-            topK: request.topK,
+            topK: topK,
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
             presencePenalty: request.presencePenalty,
@@ -394,6 +528,7 @@ public struct TextRequestShaper: Sendable {
             mediaPartsSummary: request.mediaPartsSummary,
             orderedMessagePartsRequired: request.orderedMessagePartsRequired,
             legacyImageFallbackInjected: request.legacyImageFallbackInjected,
+            recommendedSamplingRequired: recommendedSamplingRequired,
             openAICompatibilityReceipts: request.openAICompatibilityReceipts
         )
     }
@@ -401,28 +536,71 @@ public struct TextRequestShaper: Sendable {
     private func resolvedOutputCap(
         request: NormalizedTextRequest,
         presetMaxTokens: UInt32?,
-        fallbackMaxTokens: UInt32?
-    ) -> (value: UInt32, source: String) {
+        fallbackMaxTokens: PolicyValue<UInt32>?
+    ) -> (value: UInt32, source: String, policySource: String) {
+        if let maxOutputTokens = request.maxOutputTokens {
+            let aliases = [request.maxTokens, request.maxCompletionTokens].compactMap { $0 }
+            let source = aliases.allSatisfy { $0 == maxOutputTokens }
+                ? "request_max_output_tokens"
+                : "request_conflict"
+            return (maxOutputTokens, source, "request")
+        }
         if let maxTokens = request.maxTokens,
            let maxCompletionTokens = request.maxCompletionTokens {
             return (
                 maxTokens,
-                maxTokens == maxCompletionTokens ? "request_both_equal" : "request_conflict"
+                maxTokens == maxCompletionTokens ? "request_both_equal" : "request_conflict",
+                "request"
             )
         }
         if let maxCompletionTokens = request.maxCompletionTokens {
-            return (maxCompletionTokens, "request_max_completion_tokens")
+            return (maxCompletionTokens, "request_max_completion_tokens", "request")
         }
         if let maxTokens = request.maxTokens {
-            return (maxTokens, "request_max_tokens")
+            return (maxTokens, "request_max_tokens", "request")
         }
         if let presetMaxTokens {
-            return (presetMaxTokens, "preset")
+            return (presetMaxTokens, "preset", "preset")
         }
         if let fallbackMaxTokens {
-            return (fallbackMaxTokens, "policy")
+            return (fallbackMaxTokens.value, "policy", fallbackMaxTokens.source)
         }
-        return (GatewayServingDefaultsStore.defaultMaxTokens, "gateway_default")
+        return (GatewayServingDefaultsStore.defaultMaxTokens, "gateway_default", "gateway_default")
+    }
+
+    private func resolvedSamplingValue<Value: Sendable>(
+        requestValue: Value?,
+        presetValue: Value?,
+        fallback: PolicyValue<Value>?,
+        defaultValue: Value
+    ) -> PolicyValue<Value> {
+        if let requestValue {
+            return PolicyValue(value: requestValue, source: "request")
+        }
+        if let presetValue {
+            return PolicyValue(value: presetValue, source: "preset")
+        }
+        if let fallback {
+            return fallback
+        }
+        return PolicyValue(value: defaultValue, source: "gateway_default")
+    }
+
+    private func policyFallback<Value: Sendable>(
+        ocrValue: Value?,
+        modelValue: Value?,
+        gatewayValue: Value?
+    ) -> PolicyValue<Value>? {
+        if let ocrValue {
+            return PolicyValue(value: ocrValue, source: "model_ocr")
+        }
+        if let modelValue {
+            return PolicyValue(value: modelValue, source: "model")
+        }
+        if let gatewayValue {
+            return PolicyValue(value: gatewayValue, source: "gateway")
+        }
+        return nil
     }
 
     private func resolveOCRPolicy(

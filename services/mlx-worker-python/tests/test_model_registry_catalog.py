@@ -16,6 +16,7 @@ from worker.model_registry.catalog import (
     _config_positive_int,
     _default_embedding_family_for_backend,
     _gemma4_mtp_assistant_metadata,
+    _gemma4_qat_source_model,
     _gemma4_index_has_vision_weights,
     _has_mlx_signal,
     _has_model_weight_files,
@@ -214,15 +215,22 @@ def test_load_json_dict_file_reads_json_bytes_without_text_decode(
     target.write_bytes(b'{"model_type":"qwen3","library_name":"mlx"}\n')
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
     read_bytes_calls: list[Path] = []
+    loads_calls: list[bytes] = []
     original_read_bytes = Path.read_bytes
+    original_loads = catalog_module._JSON_LOADS
 
     def tracking_read_bytes(self: Path) -> bytes:
         if self == target:
             read_bytes_calls.append(self)
         return original_read_bytes(self)
 
+    def tracking_loads(payload: bytes):
+        loads_calls.append(payload)
+        return original_loads(payload)
+
     monkeypatch.setattr(Path, "read_text", pytest.fail)
     monkeypatch.setattr(Path, "read_bytes", tracking_read_bytes)
+    monkeypatch.setattr(catalog_module, "_JSON_LOADS", tracking_loads)
 
     assert _load_json_dict_file(target, json_cache=json_cache) == {
         "model_type": "qwen3",
@@ -233,6 +241,7 @@ def test_load_json_dict_file_reads_json_bytes_without_text_decode(
         "library_name": "mlx",
     }
     assert read_bytes_calls == [target]
+    assert loads_calls == [b'{"model_type":"qwen3","library_name":"mlx"}\n']
 
 
 
@@ -1128,6 +1137,73 @@ def test_registry_root_tree_skips_hf_prune_relative_probe_for_plain_dirs(
 
 
 
+def test_registry_root_tree_defers_plain_child_path_construction_until_stack_push(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    expected_dirs = []
+    for index in range(3):
+        config_dir = root / f"plain-model-{index}"
+        expected_dirs.append(config_dir.resolve())
+        _write_model_config(config_dir, {"model_type": "qwen3"})
+        _write_weights(config_dir)
+
+    resolved_root = root.resolve()
+    original_truediv = Path.__truediv__
+    plain_root_child_joins = 0
+
+    def tracking_truediv(self: Path, key: str) -> Path:
+        nonlocal plain_root_child_joins
+        if self == resolved_root and key.startswith("plain-model-"):
+            plain_root_child_joins += 1
+        return original_truediv(self, key)
+
+    monkeypatch.setattr(Path, "__truediv__", tracking_truediv)
+
+    manifest_paths, plain_scans, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
+
+    assert manifest_paths == ()
+    assert hf_cache_repo_dirs == ()
+    assert [scan.model_dir for scan in plain_scans] == expected_dirs
+    assert plain_root_child_joins == 0
+
+
+def test_registry_root_tree_uses_root_identity_check_for_hf_cache_detection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    for index in range(3):
+        config_dir = root / f"plain-model-{index}"
+        _write_model_config(config_dir, {"model_type": "qwen3"})
+        _write_weights(config_dir)
+
+    resolved_root = root.resolve()
+    original_eq = Path.__eq__
+    root_value_comparisons = 0
+
+    def tracking_eq(self: Path, other: object) -> bool:  # pragma: no cover - must remain unused by the scanner
+        nonlocal root_value_comparisons
+        if self is resolved_root or other is resolved_root:
+            root_value_comparisons += 1
+        return original_eq(self, other)
+
+    monkeypatch.setattr(Path, "__eq__", tracking_eq)
+
+    manifest_paths, plain_scans, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
+
+    assert manifest_paths == ()
+    assert hf_cache_repo_dirs == ()
+    assert [scan.model_dir for scan in plain_scans] == [
+        (root / "plain-model-0").resolve(),
+        (root / "plain-model-1").resolve(),
+        (root / "plain-model-2").resolve(),
+    ]
+    assert root_value_comparisons == 0
+
+
+
 def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1876,6 +1952,25 @@ def test_gemma4_qat_source_model_rejects_non_marker_prefix_without_prefix_strip(
     )
 
 
+def test_gemma4_qat_source_model_caches_repeated_readme_lookup() -> None:
+    _gemma4_qat_source_model.cache_clear()
+    readme_text = (
+        "---\n"
+        "library_name: mlx\n"
+        "tags:\n"
+        + "\n".join(f"- metadata-line-{index:04d}" for index in range(256))
+        + "\n  'base_model: [google/gemma-4-E4B-it-qat-q4_0-unquantized]'\n"
+        "---\n"
+    )
+
+    first = _gemma4_qat_source_model(readme_text, model_size="e4b", companion=False)
+    second = _gemma4_qat_source_model(readme_text, model_size="e4b", companion=False)
+
+    assert first == "google/gemma-4-E4B-it-qat-q4_0-unquantized"
+    assert second == first
+    assert _gemma4_qat_source_model.cache_info().hits == 1
+
+
 def test_registry_snapshot_does_not_stat_plain_local_manifest_after_tree_scan(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1982,7 +2077,7 @@ def test_registry_snapshot_imports_plain_local_generation_config_when_seen_durin
     )
     _write_weights(model_dir)
     (model_dir / "generation_config.json").write_text(
-        json.dumps({"temperature": 0.2, "top_p": 0.9, "max_new_tokens": 128}) + "\n",
+        json.dumps({"temperature": 0.2, "top_p": 0.9, "top_k": 40, "max_new_tokens": 128}) + "\n",
         encoding="utf-8",
     )
 
@@ -1993,6 +2088,7 @@ def test_registry_snapshot_imports_plain_local_generation_config_when_seen_durin
     model = snapshot.models[0]
     assert model.ext["melix.generation_config.temperature"] == "0.2"
     assert model.ext["melix.generation_config.top_p"] == "0.9"
+    assert model.ext["melix.generation_config.top_k"] == "40"
     assert model.ext["melix.generation_config.max_tokens"] == "128"
     assert model.ext["melix.generation_config.source"].endswith("generation_config.json")
 
@@ -3574,6 +3670,35 @@ def test_registry_snapshot_applies_image_family_adapter_metadata_from_path_and_m
     assert kontext.ext["melix.capability.supported_tasks"] == "image_generate,image_edit"
 
 
+@pytest.mark.parametrize(
+    (
+        "family_id",
+        "expected_supported_parsers",
+        "expected_tool_parser_mode",
+        "expected_tool_parser_namespaces",
+        "expected_xml_fallback",
+    ),
+    (
+        ("gemma4-v1", "text,gemma", "gemma", "tools.vision", "true"),
+        ("paligemma-v1", "text", "", "", ""),
+        ("llava-v1", "text,qwen", "qwen", "tools.vision", "true"),
+    ),
+)
+def test_vision_capability_parser_metadata_is_family_specific(
+    family_id: str,
+    expected_supported_parsers: str,
+    expected_tool_parser_mode: str,
+    expected_tool_parser_namespaces: str,
+    expected_xml_fallback: str,
+) -> None:
+    metadata = catalog_module._vision_capability_metadata(family_id)
+
+    assert metadata["melix.capability.supported_parsers"] == expected_supported_parsers
+    assert metadata.get("tool_parser_mode", "") == expected_tool_parser_mode
+    assert metadata.get("tool_parser_namespaces", "") == expected_tool_parser_namespaces
+    assert metadata.get("tool_parser_xml_fallback", "") == expected_xml_fallback
+
+
 def test_registry_snapshot_promotes_gemma4_text_manifest_to_vlm_text_backed(tmp_path: Path) -> None:
     root = tmp_path / "root"
     variant_dir = root / "unsloth" / "gemma-4-E4B-it-MLX-8bit" / "snapshot"
@@ -3605,6 +3730,10 @@ def test_registry_snapshot_promotes_gemma4_text_manifest_to_vlm_text_backed(tmp_
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
     assert gemma4.ext["vision_prompt_profile_id"] == "gemma4-chatml-v1"
     assert gemma4.ext["melix.capability.route_kind"] == "python_vlm"
+    assert gemma4.ext["melix.capability.supported_parsers"] == "text,gemma"
+    assert gemma4.ext["tool_parser_mode"] == "gemma"
+    assert gemma4.ext["tool_parser_namespaces"] == "tools.vision"
+    assert gemma4.ext["tool_parser_xml_fallback"] == "true"
     assert gemma4.ext["melix.model.components"] == "text_backbone"
     assert gemma4.ext["melix.model.component_contract"] == "component_scoped_v1"
     assert gemma4.ext["melix.component.text_backbone.model_type"] == "gemma4_text"
@@ -3659,6 +3788,10 @@ def test_registry_snapshot_keeps_multimodal_gemma4_manifest_in_multimodal_mode(t
     assert gemma4.ext["melix.vlm.backend_id"] == "mlx_vlm"
     assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
+    assert gemma4.ext["melix.capability.supported_parsers"] == "text,gemma"
+    assert gemma4.ext["tool_parser_mode"] == "gemma"
+    assert gemma4.ext["tool_parser_namespaces"] == "tools.vision"
+    assert gemma4.ext["tool_parser_xml_fallback"] == "true"
     assert gemma4.ext["melix.model.components"] == "text_backbone,vision_encoder,multimodal_projector"
     assert gemma4.ext["melix.component.text_backbone.model_type"] == "gemma4_text"
     assert gemma4.ext["melix.component.text_backbone.family_id"] == "gemma"

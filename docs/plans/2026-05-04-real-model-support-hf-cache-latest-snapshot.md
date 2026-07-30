@@ -37,6 +37,16 @@ second time. The registered script now reports the HF-cache fallback metrics as
 weight-file scan metric, so the PR-scoped report gates this fallback path
 directly.
 
+2026-07-29 follow-up slice: the runtime preflight weight-file helper keeps the
+same common exact filename short-circuit but derives the filesystem string once
+and probes common exact filenames before falling back to the directory-wide
+suffix scan. This removes the separate directory stat from the common
+`model.safetensors` hot path while preserving the existing non-directory false
+case and suffix fallback scan for non-common or uppercase weight filenames. The
+registered `real-model-support-hf-cache-latest-snapshot` probe already reports
+`weight_scan_elapsed_ms_mean`, so this slice remains Linux-verifiable under the
+same focused command, coverage command, and PR-scoped performance workflow.
+
 ## Success metrics
 
 - Focused pytest for the real-model support fallback and PR-scoped probe registration passes.

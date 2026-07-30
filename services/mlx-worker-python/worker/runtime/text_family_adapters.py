@@ -178,8 +178,7 @@ def detect_text_family_identity(
             source="explicit_override",
         )
 
-    architecture = _detected_architecture(config_payload)
-    model_type = _model_type(config_payload)
+    architecture, model_type = _detected_architecture_and_model_type(config_payload)
     normalized_source = " ".join(
         value
         for value in (
@@ -275,12 +274,18 @@ def resolve_text_family_config(
             config_payload,
             default=descriptor.rope_profile,
         )
-    moe_gate_dequant_metadata = metadata.get("melix.text.moe.gate_dequant", "").strip()
-    moe_gate_dequant = (
-        _bool_from_any(moe_gate_dequant_metadata)
-        if moe_gate_dequant_metadata
-        else _inferred_moe_gate_dequant(config_payload, default=descriptor.moe_gate_dequant)
-    )
+    moe_gate_dequant_metadata = metadata.get("melix.text.moe.gate_dequant", "")
+    if moe_gate_dequant_metadata in _TRUE_BOOL_LITERALS:
+        moe_gate_dequant = True
+    elif moe_gate_dequant_metadata in _FALSE_BOOL_LITERALS:
+        moe_gate_dequant = False
+    else:
+        moe_gate_dequant_metadata = moe_gate_dequant_metadata.strip()
+        moe_gate_dequant = (
+            _bool_from_any(moe_gate_dequant_metadata)
+            if moe_gate_dequant_metadata
+            else _inferred_moe_gate_dequant(config_payload, default=descriptor.moe_gate_dequant)
+        )
     return ResolvedTextFamilyConfig(
         family_id=detection.family_id,
         architecture=_string_value(metadata, "model_architecture", detection.architecture or descriptor.default_architecture),
@@ -322,6 +327,25 @@ def _detected_architecture(config_payload: Mapping[str, Any] | None) -> str:
         if nested_model_type:
             return _lowercase_model_name(nested_model_type)
     return ""
+
+
+def _detected_architecture_and_model_type(config_payload: Mapping[str, Any] | None) -> tuple[str, str]:
+    config_payload = _config_mapping(config_payload)
+    model_type = _string(config_payload.get("model_type"))
+    if model_type:
+        model_type = _lowercase_model_name(model_type)
+        return model_type, model_type
+    architectures = config_payload.get("architectures")
+    if isinstance(architectures, list):
+        for item in architectures:
+            if isinstance(item, str) and item.strip():
+                return _lowercase_model_name(item.strip()), ""
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, Mapping):
+        nested_model_type = _string(text_config.get("model_type"))
+        if nested_model_type:
+            return _lowercase_model_name(nested_model_type), ""
+    return "", ""
 
 
 def _model_type(config_payload: Mapping[str, Any] | None) -> str:
@@ -387,15 +411,19 @@ def _resolved_expert_count(
     if inferred is not None:
         return inferred, "config"
 
-    raw_metadata = metadata.get("melix.text.moe.expert_count", "").strip()
+    raw_metadata = metadata.get("melix.text.moe.expert_count", "")
     if raw_metadata:
-        try:
-            metadata_source = metadata.get("melix.text.moe.expert_count_source", "").strip().lower()
-            if metadata_source == "family_default":
-                return max(0, int(raw_metadata)), "family_default"
-            return max(0, int(raw_metadata)), "metadata"
-        except ValueError:
-            pass
+        raw_metadata = raw_metadata.strip()
+        if raw_metadata:
+            try:
+                metadata_source = metadata.get("melix.text.moe.expert_count_source", "")
+                if metadata_source:
+                    metadata_source = metadata_source.strip().lower()
+                if metadata_source == "family_default":
+                    return max(0, int(raw_metadata)), "family_default"
+                return max(0, int(raw_metadata)), "metadata"
+            except ValueError:
+                pass
 
     if default > 0:
         return max(0, default), "family_default"
@@ -451,7 +479,12 @@ def _config_mapping(config_payload: Mapping[str, Any] | None) -> Mapping[str, An
 
 
 def _string_value(metadata: Mapping[str, str], key: str, default: str) -> str:
-    value = metadata.get(key, "").strip()
+    value = metadata.get(key)
+    if not value:
+        return default
+    if not value[0].isspace() and not value[-1].isspace():
+        return value
+    value = value.strip()
     return value or default
 
 
@@ -473,7 +506,14 @@ def _int_value(metadata: Mapping[str, str], key: str, *, default: int) -> int:
 
 
 def _bool_value(metadata: Mapping[str, str], key: str, *, default: bool) -> bool:
-    raw_value = metadata.get(key, "").strip()
+    raw_value = metadata.get(key, "")
+    if not raw_value:
+        return default
+    if raw_value in _TRUE_BOOL_LITERALS:
+        return True
+    if raw_value in _FALSE_BOOL_LITERALS:
+        return False
+    raw_value = raw_value.strip()
     if not raw_value:
         return default
     return _bool_from_any(raw_value)
@@ -485,6 +525,10 @@ def _bool_from_any(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     if isinstance(value, str):
+        if value in _TRUE_BOOL_LITERALS:
+            return True
+        if value in _FALSE_BOOL_LITERALS:
+            return False
         normalized = value.strip().lower()
         if normalized in _TRUE_BOOL_LITERALS:
             return True

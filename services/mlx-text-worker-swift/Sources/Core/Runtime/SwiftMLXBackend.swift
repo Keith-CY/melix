@@ -7,6 +7,9 @@ import MelixWorkerProtocol
 #if canImport(MLXLMCommon)
 @preconcurrency import MLXLMCommon
 #endif
+#if canImport(Tokenizers)
+@preconcurrency import Tokenizers
+#endif
 #if canImport(MLXLLM)
 @preconcurrency import MLXLLM
 #endif
@@ -53,6 +56,286 @@ enum RawTextGenerationEvent: Sendable {
     case summary(TextGenerationSummary)
 }
 
+func normalizeGemma4ChatTemplateTokenIDs(
+    _ tokenIDs: [Int],
+    modelFamilyID: String,
+    startOfTurnTokenID: Int,
+    endOfTurnTokenID: Int,
+    thinkTokenID: Int,
+    newlineTokenIDs: [Int],
+    doubleNewlineTokenIDs: [Int]
+) -> [Int] {
+    guard isGemma4TextFamilyID(modelFamilyID),
+          tokenIDs.contains(thinkTokenID),
+          !newlineTokenIDs.isEmpty,
+          !doubleNewlineTokenIDs.isEmpty,
+          newlineTokenIDs != doubleNewlineTokenIDs
+    else {
+        return tokenIDs
+    }
+
+    let nonCanonicalBoundary = [endOfTurnTokenID]
+        + doubleNewlineTokenIDs
+        + [startOfTurnTokenID]
+    let canonicalBoundary = [endOfTurnTokenID]
+        + newlineTokenIDs
+        + [startOfTurnTokenID]
+    guard nonCanonicalBoundary.count <= tokenIDs.count else {
+        return tokenIDs
+    }
+
+    var normalized: [Int] = []
+    normalized.reserveCapacity(tokenIDs.count)
+    var index = 0
+    while index < tokenIDs.count {
+        let remainingCount = tokenIDs.count - index
+        if remainingCount >= nonCanonicalBoundary.count,
+           Array(tokenIDs[index ..< index + nonCanonicalBoundary.count]) == nonCanonicalBoundary {
+            normalized.append(contentsOf: canonicalBoundary)
+            index += nonCanonicalBoundary.count
+        } else {
+            normalized.append(tokenIDs[index])
+            index += 1
+        }
+    }
+    return normalized
+}
+
+func isGemma4TextFamilyID(_ rawValue: String) -> Bool {
+    let normalized = rawValue
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .replacingOccurrences(of: "_", with: "-")
+    return normalized == "gemma4"
+        || normalized == "gemma-4"
+        || normalized == "gemma4-v1"
+        || normalized == "gemma-4-v1"
+        || normalized == "gemma4-text"
+        || normalized == "gemma-4-text"
+}
+
+#if canImport(MLXLMCommon)
+private func normalizingGemma4ChatTemplateWhitespace(
+    in input: LMInput,
+    tokenizer: Tokenizer,
+    modelFamilyID: String
+) -> LMInput {
+    guard input.text.tokens.ndim == 1,
+          input.text.mask == nil,
+          let startOfTurnTokenID = tokenizer.convertTokenToId("<|turn>"),
+          let endOfTurnTokenID = tokenizer.convertTokenToId("<turn|>"),
+          let thinkTokenID = tokenizer.convertTokenToId("<|think|>")
+    else {
+        return input
+    }
+
+    let tokenIDs = input.text.tokens.asArray(Int.self)
+    let normalizedTokenIDs = normalizeGemma4ChatTemplateTokenIDs(
+        tokenIDs,
+        modelFamilyID: modelFamilyID,
+        startOfTurnTokenID: startOfTurnTokenID,
+        endOfTurnTokenID: endOfTurnTokenID,
+        thinkTokenID: thinkTokenID,
+        newlineTokenIDs: tokenizer.encode(text: "\n", addSpecialTokens: false),
+        doubleNewlineTokenIDs: tokenizer.encode(text: "\n\n", addSpecialTokens: false)
+    )
+    guard normalizedTokenIDs != tokenIDs else {
+        return input
+    }
+    return LMInput(
+        text: LMInput.Text(tokens: MLXArray(normalizedTokenIDs)),
+        image: input.image,
+        video: input.video
+    )
+}
+#endif
+
+private func tokenizerConfigEndOfTurnToken(in directoryURL: URL) -> String? {
+    let configurationURL = directoryURL.appendingPathComponent("tokenizer_config.json")
+    guard let data = try? Data(contentsOf: configurationURL),
+          let object = try? JSONSerialization.jsonObject(with: data),
+          let configuration = object as? [String: Any]
+    else {
+        return nil
+    }
+
+    func tokenString(from value: Any?) -> String? {
+        if let token = value as? String, !token.isEmpty {
+            return token
+        }
+        if let token = (value as? [String: Any])?["content"] as? String, !token.isEmpty {
+            return token
+        }
+        return nil
+    }
+
+    if let token = tokenString(from: configuration["eot_token"]) {
+        return token
+    }
+    let modelSpecificTokens = configuration["model_specific_special_tokens"] as? [String: Any]
+    return tokenString(from: modelSpecificTokens?["eot_token"])
+}
+
+private func mergingTokenizerConfigEndOfTurnToken(
+    into loadedModel: LoadedTextModel,
+    preferredDirectoryURL: URL?,
+    textFamilyID: String
+) async -> LoadedTextModel {
+    let identifiedModel = LoadedTextModel(
+        storage: loadedModel.storage,
+        residentBytesHint: loadedModel.residentBytesHint,
+        textFamilyID: textFamilyID
+    )
+    #if canImport(MLXLMCommon)
+    guard let container = identifiedModel.storage as? ModelContainer else {
+        return identifiedModel
+    }
+
+    let configuration = await container.configuration
+    let directoryURL = preferredDirectoryURL ?? configuration.modelDirectory(hub: defaultHubApi)
+    guard let token = tokenizerConfigEndOfTurnToken(in: directoryURL) else {
+        return identifiedModel
+    }
+
+    await container.update { context in
+        context.configuration.extraEOSTokens.insert(token)
+    }
+    #endif
+    return identifiedModel
+}
+
+func swiftTextModelFamilyID(from spec: Melix_Worker_V1_ModelSpec) -> String {
+    let candidates = [
+        spec.ext["text_family_id"],
+        spec.ext["melix.text.family_id"],
+        spec.ext["detected_family_id"],
+        spec.ext["model_architecture"],
+        spec.ext["detected_architecture"],
+        spec.settings.ext["text_family_id"],
+        spec.settings.ext["melix.text.family_id"],
+        spec.settings.ext["detected_family_id"],
+        spec.settings.ext["model_architecture"],
+        spec.settings.ext["detected_architecture"],
+        spec.modelID,
+    ]
+    for candidate in candidates.compactMap({ $0 }) {
+        let normalized = candidate
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.contains("gemma4") || normalized.contains("gemma-4") {
+            return "gemma4-v1"
+        }
+    }
+    return ""
+}
+
+func makeSwiftMLXPromptTemplateAdditionalContext(
+    from execution: Melix_Worker_V1_ExecutionMetadata
+) throws -> [String: any Sendable]? {
+    var context: [String: any Sendable] = [:]
+
+    if let rawJSON = execution.ext["melix.chat_template_kwargs.effective_json"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+       !rawJSON.isEmpty {
+        guard let data = rawJSON.data(using: .utf8) else {
+            throw RuntimeUnavailableError(
+                message: "Effective chat-template kwargs are not valid UTF-8 JSON."
+            )
+        }
+
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw RuntimeUnavailableError(
+                message: "Effective chat-template kwargs must contain valid JSON."
+            )
+        }
+        guard let values = object as? [String: Any] else {
+            throw RuntimeUnavailableError(
+                message: "Effective chat-template kwargs must be a JSON object."
+            )
+        }
+        for (key, value) in values {
+            context[key] = try swiftMLXPromptTemplateSendableJSONValue(value)
+        }
+    }
+
+    if let enableThinking = resolvedSwiftMLXEnableThinking(from: execution) {
+        context["enable_thinking"] = enableThinking
+    }
+
+    let reasoningMode = execution.reasoning.mode
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if !reasoningMode.isEmpty {
+        context["reasoning_mode"] = reasoningMode
+    }
+
+    let reasoningEffort = execution.reasoning.effort
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if !reasoningEffort.isEmpty {
+        context["reasoning_effort"] = reasoningEffort
+    }
+
+    return context.isEmpty ? nil : context
+}
+
+private func resolvedSwiftMLXEnableThinking(
+    from execution: Melix_Worker_V1_ExecutionMetadata
+) -> Bool? {
+    if execution.reasoning.enabled {
+        return true
+    }
+
+    let messagesThinkingType = execution.ext["melix.messages.thinking.type"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased() ?? ""
+    if !messagesThinkingType.isEmpty {
+        return !["disabled", "none", "off"].contains(messagesThinkingType)
+    }
+
+    let reasoningMode = execution.reasoning.mode
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    if !reasoningMode.isEmpty {
+        return !["disabled", "none", "off"].contains(reasoningMode)
+    }
+
+    return nil
+}
+
+private func swiftMLXPromptTemplateSendableJSONValue(
+    _ value: Any
+) throws -> any Sendable {
+    switch value {
+    case let value as String:
+        return value
+    case let value as NSNumber:
+        if CFGetTypeID(value) == CFBooleanGetTypeID() {
+            return value.boolValue
+        }
+        if CFNumberIsFloatType(value) == false,
+           let integer = Int(value.stringValue) {
+            return integer
+        }
+        return value.doubleValue
+    case let value as Bool:
+        return value
+    case let value as [Any]:
+        return try value.map(swiftMLXPromptTemplateSendableJSONValue)
+    case let value as [String: Any]:
+        return try value.mapValues(swiftMLXPromptTemplateSendableJSONValue)
+    case _ as NSNull:
+        throw RuntimeUnavailableError(
+            message: "Effective chat-template kwargs cannot contain null values."
+        )
+    default:
+        throw RuntimeUnavailableError(
+            message: "Effective chat-template kwargs contain an unsupported JSON value."
+        )
+    }
+}
+
 struct AutoSwiftMLXBackend: TextRuntimeBackend {
     let runtimeName: String
     let turboQuantCandidateProbeEnabled: Bool
@@ -71,7 +354,8 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
     private let preparedGenerationFactory: @Sendable (
         LoadedTextModel,
         [Melix_Worker_V1_ChatMessage],
-        Melix_Worker_V1_SamplingConfig
+        Melix_Worker_V1_SamplingConfig,
+        [String: any Sendable]?
     ) async throws -> PreparedTextGeneration
 
     init(
@@ -83,7 +367,8 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         preparedGenerationFactory: (@Sendable (
             LoadedTextModel,
             [Melix_Worker_V1_ChatMessage],
-            Melix_Worker_V1_SamplingConfig
+            Melix_Worker_V1_SamplingConfig,
+            [String: any Sendable]?
         ) async throws -> PreparedTextGeneration)? = nil
     ) {
         if let loader {
@@ -133,11 +418,12 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
             #endif
         }
 
-        self.preparedGenerationFactory = preparedGenerationFactory ?? { model, messages, sampling in
+        self.preparedGenerationFactory = preparedGenerationFactory ?? { model, messages, sampling, additionalContext in
             try await makePreparedTextGeneration(
                 model: model,
                 messages: messages,
-                sampling: sampling
+                sampling: sampling,
+                additionalContext: additionalContext
             )
         }
         self.turboQuantCandidateProbeEnabled = turboQuantCandidateProbeEnabled
@@ -155,10 +441,19 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
         let modelSource = spec.modelPath.isEmpty ? spec.modelID : spec.modelPath
+        let textFamilyID = swiftTextModelFamilyID(from: spec)
         let isDFlashSpec = DFlashDraftSupport.isDFlashDraftModelSpec(spec)
 
         if let directLoader, !isDFlashSpec {
-            return try await directLoader(modelSource)
+            let loadedModel = try await directLoader(modelSource)
+            let directoryURL = FileManager.default.fileExists(atPath: modelSource)
+                ? URL(fileURLWithPath: modelSource, isDirectory: true)
+                : nil
+            return await mergingTokenizerConfigEndOfTurnToken(
+                into: loadedModel,
+                preferredDirectoryURL: directoryURL,
+                textFamilyID: textFamilyID
+            )
         }
 
         if FileManager.default.fileExists(atPath: modelSource) {
@@ -169,13 +464,19 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                     storage: try SwiftDFlashDraftRuntime.load(
                         directoryURL: directoryURL,
                         modelID: spec.modelID
-                    )
+                    ),
+                    textFamilyID: textFamilyID
                 )
                 #else
                 throw RuntimeUnavailableError(message: DFlashDraftSupport.unsupportedMessage)
                 #endif
             }
-            return try await directoryLoader(directoryURL)
+            let loadedModel = try await directoryLoader(directoryURL)
+            return await mergingTokenizerConfigEndOfTurnToken(
+                into: loadedModel,
+                preferredDirectoryURL: directoryURL,
+                textFamilyID: textFamilyID
+            )
         }
 
         let revision = spec.revision.isEmpty ? "main" : spec.revision
@@ -185,22 +486,44 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                 storage: try await SwiftDFlashDraftRuntime.downloadAndLoad(
                     modelSource: modelSource,
                     revision: revision
-                )
+                ),
+                textFamilyID: textFamilyID
             )
             #else
             throw RuntimeUnavailableError(message: DFlashDraftSupport.unsupportedMessage)
             #endif
         }
 
-        if let directLoader {
-            return try await directLoader(modelSource)
-        }
-
-        return try await identifierLoader(modelSource, revision)
+        let loadedModel = try await identifierLoader(modelSource, revision)
+        return await mergingTokenizerConfigEndOfTurnToken(
+            into: loadedModel,
+            preferredDirectoryURL: nil,
+            textFamilyID: textFamilyID
+        )
     }
 
     func prefill(
         model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        try await prefill(
+            model: model,
+            execution: Melix_Worker_V1_ExecutionMetadata(),
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
         messages: [Melix_Worker_V1_ChatMessage],
         prefillStepSize: UInt32,
         resumeHint: String,
@@ -212,6 +535,7 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         let prepared = try await makePreparedPromptContext(
             model: model,
             messages: messages,
+            additionalContext: try makeSwiftMLXPromptTemplateAdditionalContext(from: execution),
             prefillStepSize: prefillStepSize,
             acceleration: appliedAcceleration,
             shouldAbort: shouldAbort
@@ -239,13 +563,35 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         sampling: Melix_Worker_V1_SamplingConfig,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
-        let prepared = try await preparedGenerationFactory(model, messages, sampling)
+        try await generateEvents(
+            model: model,
+            execution: Melix_Worker_V1_ExecutionMetadata(),
+            messages: messages,
+            sampling: sampling,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func generateEvents(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        let prepared = try await preparedGenerationFactory(
+            model,
+            messages,
+            sampling,
+            makeSwiftMLXPromptTemplateAdditionalContext(from: execution)
+        )
 
         return AsyncThrowingStream { continuation in
             continuation.yield(.prefillStarted(promptTokens: prepared.promptTokens))
 
-            Task {
+            let task = Task {
                 var emittedTokenCount = 0
+                var sawSummary = false
                 var summary = TextGenerationSummary(
                     promptTokens: prepared.promptTokens,
                     completionTokens: 0,
@@ -267,14 +613,16 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                             continuation.yield(.token(text))
                         case .summary(let runtimeSummary):
                             summary = runtimeSummary
+                            sawSummary = true
                         }
                     }
 
-                    if summary.completionTokens == 0 {
+                    if !sawSummary {
                         summary = TextGenerationSummary(
                             promptTokens: prepared.promptTokens,
                             completionTokens: emittedTokenCount,
-                            tokensPerSecond: nil
+                            tokensPerSecond: nil,
+                            finishReason: shouldAbort() ? "cancelled" : "stop"
                         )
                     }
 
@@ -283,6 +631,10 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
             }
         }
     }
@@ -315,8 +667,9 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         )
 
         return AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 var emittedTokenCount = 0
+                var sawSummary = false
                 var summary = TextGenerationSummary(
                     promptTokens: prepared.promptTokens,
                     completionTokens: 0,
@@ -338,14 +691,16 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                         case .summary(let runtimeSummary):
                             summary = runtimeSummary
                             emittedTokenCount = runtimeSummary.completionTokens
+                            sawSummary = true
                         }
                     }
 
-                    if summary.completionTokens == 0 {
+                    if !sawSummary {
                         summary = TextGenerationSummary(
                             promptTokens: prepared.promptTokens,
                             completionTokens: emittedTokenCount,
-                            tokensPerSecond: nil
+                            tokensPerSecond: nil,
+                            finishReason: shouldAbort() ? "cancelled" : "stop"
                         )
                     }
 
@@ -354,6 +709,10 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
             }
         }
     }
@@ -444,6 +803,7 @@ func makeGenerateParameters(
         maxTokens: sampling.maxOutputTokens > 0 ? Int(sampling.maxOutputTokens) : 256,
         temperature: sampling.temperature,
         topP: sampling.topP > 0 ? sampling.topP : 1.0,
+        topK: Int(sampling.topK),
         repetitionPenalty: repetitionPenalty > 0 ? repetitionPenalty : nil
     )
 }
@@ -451,7 +811,8 @@ func makeGenerateParameters(
 private func makePreparedTextGeneration(
     model: LoadedTextModel,
     messages: [Melix_Worker_V1_ChatMessage],
-    sampling: Melix_Worker_V1_SamplingConfig
+    sampling: Melix_Worker_V1_SamplingConfig,
+    additionalContext: [String: any Sendable]?
 ) async throws -> PreparedTextGeneration {
     #if canImport(MLXLMCommon)
     guard let container = model.storage as? ModelContainer else {
@@ -461,8 +822,13 @@ private func makePreparedTextGeneration(
     }
 
     let chat = try convertChatMessages(messages)
-    let userInput = UserInput(chat: chat)
-    let input = try await container.prepare(input: userInput)
+    let userInput = UserInput(chat: chat, additionalContext: additionalContext)
+    let preparedInput = try await container.prepare(input: userInput)
+    let input = normalizingGemma4ChatTemplateWhitespace(
+        in: preparedInput,
+        tokenizer: await container.tokenizer,
+        modelFamilyID: model.textFamilyID
+    )
     let promptTokens = input.text.tokens.size
     let parameters = makeGenerateParameters(from: sampling)
     let runtimeStream = try await container.generate(input: input, parameters: parameters)
@@ -478,7 +844,8 @@ private func makePreparedTextGeneration(
                         TextGenerationSummary(
                             promptTokens: info.promptTokenCount,
                             completionTokens: info.generationTokenCount,
-                            tokensPerSecond: info.tokensPerSecond
+                            tokensPerSecond: info.tokensPerSecond,
+                            finishReason: info.finishReason.rawValue
                         )
                     ))
                 case .toolCall:
@@ -503,6 +870,7 @@ private func makePreparedTextGeneration(
 private func makePreparedPromptContext(
     model: LoadedTextModel,
     messages: [Melix_Worker_V1_ChatMessage],
+    additionalContext: [String: any Sendable]?,
     prefillStepSize: UInt32,
     acceleration: Melix_Worker_V1_AccelerationPolicy,
     shouldAbort: @escaping @Sendable () -> Bool
@@ -516,7 +884,7 @@ private func makePreparedPromptContext(
 
     try throwIfTextRuntimeCancellationRequested(shouldAbort)
     let chat = try convertChatMessages(messages)
-    let userInput = UserInput(chat: chat)
+    let userInput = UserInput(chat: chat, additionalContext: additionalContext)
     let effectiveWindowSize = acceleratedPrefillWindowSize(
         baseWindowSize: Int(clamping: max(prefillStepSize, 1)),
         policy: acceleration,
@@ -524,7 +892,12 @@ private func makePreparedPromptContext(
     )
     let preparedState = try await container.perform { context in
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
-        let input = try await context.processor.prepare(input: userInput)
+        let preparedInput = try await context.processor.prepare(input: userInput)
+        let input = normalizingGemma4ChatTemplateWhitespace(
+            in: preparedInput,
+            tokenizer: context.tokenizer,
+            modelFamilyID: model.textFamilyID
+        )
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
         var cache = context.model.newCache(parameters: nil)
         let startedAt = Date.timeIntervalSinceReferenceDate
@@ -669,6 +1042,20 @@ private func makeDecodeParameters(
     return parameters
 }
 
+private func resolvedTextGenerationFinishReason(
+    completionTokens: Int,
+    maxTokens: Int?,
+    wasCancelled: Bool
+) -> String {
+    if wasCancelled {
+        return "cancelled"
+    }
+    if let maxTokens, completionTokens >= maxTokens {
+        return "length"
+    }
+    return "stop"
+}
+
 private func applyActiveKVQuantizationProfile(
     to parameters: inout GenerateParameters,
     profile: String
@@ -783,6 +1170,7 @@ private struct BatchDecodeRequestState: @unchecked Sendable {
     var pendingBatchedTokenRow: MLXArray?
     var generatedTokenCount: Int
     var isFinished: Bool
+    var finishReason: String?
 }
 
 private struct SwiftMLXBatchDecodeInput: @unchecked Sendable {
@@ -1154,6 +1542,11 @@ private func makePreparedSpeculativeDecodeEvents(
                     promptTokens: promptTokenIDs.count,
                     completionTokens: generatedTokenCount,
                     tokensPerSecond: Double(generatedTokenCount) / elapsed,
+                    finishReason: resolvedTextGenerationFinishReason(
+                        completionTokens: generatedTokenCount,
+                        maxTokens: parameters.maxTokens,
+                        wasCancelled: Task.isCancelled
+                    ),
                     speculativeAcceptedTokens: acceptedTokenCount,
                     speculativeRejectedTokens: rejectedTokenCount,
                     speculativeFallbackCount: runtimeFallbackCount,
@@ -1452,7 +1845,8 @@ private func makePreparedBatchDecodeEvents(
                     pendingTokenID: nil,
                     pendingBatchedTokenRow: nil,
                     generatedTokenCount: 0,
-                    isFinished: false
+                    isFinished: false,
+                    finishReason: nil
                 )
             }
 
@@ -1487,10 +1881,14 @@ private func makePreparedBatchDecodeEvents(
             let supportsBatchDecodeLookahead = shouldUseBatchDecodeLookahead(for: batchInput.states)
 
             for index in states.indices {
-                guard states[index].maxTokens.map({ $0 > 0 }) ?? true,
-                      !states[index].request.shouldAbort()
-                else {
+                if states[index].request.shouldAbort() {
                     states[index].isFinished = true
+                    states[index].finishReason = "cancelled"
+                    continue
+                }
+                if states[index].maxTokens.map({ $0 <= 0 }) ?? false {
+                    states[index].isFinished = true
+                    states[index].finishReason = "length"
                     continue
                 }
                 let sampleStartedAt = Date.timeIntervalSinceReferenceDate
@@ -1580,6 +1978,7 @@ private func makePreparedBatchDecodeEvents(
                         || additionalEOSTokenIds.contains(tokenID)
                     {
                         states[requestIndex].isFinished = true
+                        states[requestIndex].finishReason = "stop"
                         clearPendingBatchDecodeToken(&states[requestIndex])
                         continue
                     }
@@ -1599,6 +1998,7 @@ private func makePreparedBatchDecodeEvents(
 
                     if states[requestIndex].maxTokens.map({ states[requestIndex].generatedTokenCount >= $0 }) ?? false {
                         states[requestIndex].isFinished = true
+                        states[requestIndex].finishReason = "length"
                         clearPendingBatchDecodeToken(&states[requestIndex])
                         continue
                     }
@@ -1631,6 +2031,7 @@ private func makePreparedBatchDecodeEvents(
 
                     if states[index].request.shouldAbort() {
                         states[index].isFinished = true
+                        states[index].finishReason = "cancelled"
                         states[index].pendingToken = nil
                         states[index].pendingTokenID = nil
                         states[index].pendingBatchedTokenRow = nil
@@ -1655,6 +2056,7 @@ private func makePreparedBatchDecodeEvents(
                         || additionalEOSTokenIds.contains(tokenID)
                     {
                         states[index].isFinished = true
+                        states[index].finishReason = "stop"
                         states[index].pendingToken = nil
                         states[index].pendingTokenID = nil
                         states[index].pendingBatchedTokenRow = nil
@@ -1676,6 +2078,7 @@ private func makePreparedBatchDecodeEvents(
 
                     if states[index].maxTokens.map({ states[index].generatedTokenCount >= $0 }) ?? false {
                         states[index].isFinished = true
+                        states[index].finishReason = "length"
                         states[index].pendingToken = nil
                         states[index].pendingTokenID = nil
                         states[index].pendingBatchedTokenRow = nil
@@ -1831,12 +2234,18 @@ private func makePreparedBatchDecodeEvents(
             )
 
             for (requestIndex, state) in states.enumerated() {
+                let finishReason = state.finishReason ?? resolvedTextGenerationFinishReason(
+                    completionTokens: state.generatedTokenCount,
+                    maxTokens: state.maxTokens,
+                    wasCancelled: state.request.shouldAbort() || (Task.isCancelled && !state.isFinished)
+                )
                 continuation.yield(.summary(
                     requestIndex: requestIndex,
                     TextGenerationSummary(
                         promptTokens: batchInput.states[requestIndex].input.text.tokens.size,
                         completionTokens: state.generatedTokenCount,
                         tokensPerSecond: Double(state.generatedTokenCount) / elapsed,
+                        finishReason: finishReason,
                         decodeBatchSize: maxModelEvalBatchSize,
                         modelEvalBatchSize: maxModelEvalBatchSize,
                         decodeLoopIterations: decodeLoopIterations,
@@ -2681,6 +3090,11 @@ private func makePreparedDFlashSpeculativeDecodeEvents(
 
             let decodeLoopTotalMicros = elapsedMicros(since: startedAt)
             let elapsed = max(Double(decodeLoopTotalMicros) / 1_000_000, 0.000_001)
+            let finishReason = resolvedTextGenerationFinishReason(
+                completionTokens: generatedTokenCount,
+                maxTokens: maxTokens,
+                wasCancelled: Task.isCancelled
+            )
             dflashProbe?.record(
                 stage: "summary",
                 fields: [
@@ -2695,6 +3109,7 @@ private func makePreparedDFlashSpeculativeDecodeEvents(
                     "target_final_rebuild_skipped_count": targetFinalRebuildSkippedCount,
                     "target_bonus_advance_skipped_count": targetBonusAdvanceSkippedCount,
                     "decode_loop_total_us": decodeLoopTotalMicros,
+                    "finish_reason": finishReason,
                     "acceptance_rate": proposedTokenCount == 0
                         ? 0
                         : Double(acceptedTokenCount) / Double(proposedTokenCount),
@@ -2705,6 +3120,7 @@ private func makePreparedDFlashSpeculativeDecodeEvents(
                     promptTokens: promptTokenIDs.count,
                     completionTokens: generatedTokenCount,
                     tokensPerSecond: Double(generatedTokenCount) / elapsed,
+                    finishReason: finishReason,
                     speculativeAcceptedTokens: acceptedTokenCount,
                     speculativeRejectedTokens: rejectedTokenCount,
                     speculativeFallbackCount: 0,
@@ -3286,6 +3702,11 @@ private func makePreparedDecodeEvents(
                     promptTokens: decodeState.input.text.tokens.size,
                     completionTokens: generatedTokenCount,
                     tokensPerSecond: Double(generatedTokenCount) / elapsed,
+                    finishReason: resolvedTextGenerationFinishReason(
+                        completionTokens: generatedTokenCount,
+                        maxTokens: parameters.maxTokens,
+                        wasCancelled: Task.isCancelled
+                    ),
                     activeKVProbe: activeKVProbe,
                     decodeBatchProbe: baselineDecodeProbe
                 )

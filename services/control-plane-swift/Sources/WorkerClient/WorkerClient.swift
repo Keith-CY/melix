@@ -112,6 +112,10 @@ public protocol RuntimeIntrospectingWorkerClientProtocol: WorkerClient {
     func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse
 }
 
+public protocol LoadedModelsIntrospectingWorkerClientProtocol: WorkerClient {
+    func listLoadedModels() async throws -> Melix_Worker_V1_ListLoadedModelsResponse
+}
+
 public protocol WorkerRoutingClient: WorkerClient {
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest

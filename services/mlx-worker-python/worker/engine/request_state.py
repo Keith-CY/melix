@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from threading import Event
 
 
-@dataclass
+@dataclass(slots=True)
 class RequestState:
     request_id: str
     runtime_kind: str = "text"

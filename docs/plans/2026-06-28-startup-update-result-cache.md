@@ -73,3 +73,49 @@ Local 2026-07-03 probe decision for this pyproject path-cache slice:
 Decision: accepted because the targeted registered product-version submetric
 improved substantially across the local Linux probe triplet, memory moved lower,
 and unrelated registered metrics stayed within the warning boundary.
+
+## 2026-07-20 follow-up: update channel stat tuple locals
+
+This Python-only follow-up keeps the same registered probe and narrows to
+`check_for_updates(...)` and its `_read_update_channel_version(...)` helper.
+Repeated update checks already stat the channel file once per call and use the
+mtime/size tuple as the freshness source, but the hot path repeatedly loaded
+`stat_result.st_mtime_ns` and `stat_result.st_size` while checking both the final
+result cache and the channel decode cache.
+
+This slice hoists the stat tuple into local integers immediately after the
+single `Path.stat()` call and passes those integers into the channel helper. The
+behavior remains unchanged: cache validity is still driven only by the channel
+file mtime and size, channel JSON is still decoded after a cache miss, and
+result construction/version comparison semantics are untouched. Verification
+remains the registered focused tests, changed-scope coverage command, local
+Linux probe, and PR-scoped performance workflow as the merge gate.
+
+## 2026-07-23 follow-up: normalized parts direct materialization
+
+This Python-only follow-up keeps the same registered startup-signals probe and
+narrows to the public `normalized_version_parts(...)` helper. The helper still
+returns a materialized `list[int]` and preserves the same whitespace trimming,
+leading `v` elision, suffix cutoff, and non-numeric segment behavior, but it now
+builds that list directly instead of allocating the private generator and a
+slice of the cleaned version string.
+
+The registered probe is extended with `normalized_parts_*` metrics so the
+affected public helper is measured directly in both local Linux runs and the
+PR-scoped performance workflow. Verification remains the registered focused
+tests, changed-scope coverage command, local Linux probe, and PR-scoped
+performance workflow as the merge gate.
+
+## 2026-07-23 follow-up: normalized parts direct v-prefix check
+
+This Python-only follow-up keeps the same registered startup-signals probe and
+narrows further to `normalized_version_parts(...)`. The helper now checks the
+leading `v` prefix with a direct first-character comparison after trimming instead
+of calling `str.startswith("v")` on every normalized version parse. Whitespace
+trimming, suffix cutoff, empty-string fallback, and non-numeric segment behavior
+remain unchanged.
+
+The registered `startup-signals-version-compare-single-pass` probe already
+includes `normalized_parts_*` metrics for this helper, so verification remains
+the focused startup-signals tests, changed-scope coverage command, local Linux
+probe, and PR-scoped performance workflow as the merge gate.

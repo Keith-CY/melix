@@ -382,7 +382,99 @@ def test_hf_cache_snapshot_fallback_skips_stale_names_before_is_dir(
 
     assert source.live is False
     assert source.local_model_path == str(latest_snapshot.resolve())
-    assert is_dir_calls == ["zzz"]
+    assert is_dir_calls == []
+
+
+def test_hf_cache_snapshot_fallback_rescans_when_lexical_max_is_not_directory(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+    latest_snapshot = snapshots_root / "zzz-snapshot"
+    latest_snapshot.mkdir()
+    (snapshots_root / "zzzz-not-a-directory").write_text("ignored\n", encoding="utf-8")
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert source.live is False
+    assert source.local_model_path == str(latest_snapshot.resolve())
+    assert "using lexicographically last snapshot directory" in source.warnings[0]
+
+
+def test_hf_cache_snapshot_fallback_returns_none_for_empty_snapshots_dir(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert source.live is True
+    assert source.local_model_path == ""
+    assert source.source_resolution_mode == "hub_fallback"
+
+
+def test_hf_cache_snapshot_fast_path_treats_stat_errors_as_not_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+    (snapshots_root / "yyy-snapshot").mkdir()
+    (snapshots_root / "zzz-raises-stat").mkdir()
+
+    original_stat = real_model_support_module.os.stat
+
+    def fake_stat(path, *, follow_symlinks=True):
+        if Path(path).name == "zzz-raises-stat":
+            raise OSError("synthetic stat failure")
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(real_model_support_module.os, "stat", fake_stat)
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert real_model_support_module._is_hf_cache_snapshot_dir(
+        snapshots_root / "zzz-raises-stat"
+    ) is False
+    assert source.live is False
+    assert source.local_model_path == str((snapshots_root / "zzz-raises-stat").resolve())
 
 
 def test_runtime_model_preflight_marks_real_local_weights(tmp_path: Path) -> None:
@@ -521,12 +613,28 @@ def test_runtime_model_preflight_accepts_index_weight_files(tmp_path: Path) -> N
 def test_has_recognized_model_weight_files_skips_path_iterdir(monkeypatch, tmp_path: Path) -> None:
     model_dir = tmp_path / "weights"
     model_dir.mkdir()
-    (model_dir / "model.safetensors").write_text("{}", encoding="utf-8")
+    (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
 
-    def fail_iterdir(_: Path):
+    def fail_iterdir(self: Path):  # pragma: no cover - sentinel
         raise AssertionError("path.iterdir should not be called in _has_recognized_model_weight_files")
 
     monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    assert _has_recognized_model_weight_files(model_dir) is True
+
+
+def test_has_recognized_model_weight_files_uses_fspath_directory_probe_for_common_file(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "weights"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+
+    def fail_is_dir(self: Path) -> bool:  # pragma: no cover - sentinel
+        raise AssertionError("Path.is_dir should not run before common weight filename checks")
+
+    monkeypatch.setattr(Path, "is_dir", fail_is_dir)
 
     assert _has_recognized_model_weight_files(model_dir) is True
 
@@ -537,6 +645,54 @@ def test_has_recognized_model_weight_files_preserves_uppercase_suffix_fallback(t
     (model_dir / "MODEL.SAFETENSORS").write_text("{}", encoding="utf-8")
 
     assert _has_recognized_model_weight_files(model_dir) is True
+
+
+def test_has_recognized_model_weight_files_returns_false_for_non_directory(tmp_path: Path) -> None:
+    model_file = tmp_path / "weights"
+    model_file.write_text("not a directory\n", encoding="utf-8")
+
+    assert _has_recognized_model_weight_files(model_file) is False
+
+
+def test_has_recognized_model_weight_files_prefilters_names_before_stat(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "weights"
+    model_dir.mkdir()
+
+    class _Entry:
+        def __init__(self, name: str, is_file: bool) -> None:
+            self.name = name
+            self._is_file = is_file
+            self.is_file_calls = 0
+
+        def is_file(self) -> bool:
+            self.is_file_calls += 1
+            if self.name.startswith("metadata-"):
+                raise AssertionError("irrelevant entries should skip is_file")
+            return self._is_file
+
+    irrelevant_entries = [_Entry(f"metadata-{index:05d}.json", True) for index in range(100)]
+    weight_entry = _Entry("weights-00001.safetensors", True)
+    entries = [*irrelevant_entries, weight_entry]
+
+    class _Scandir:
+        def __enter__(self):
+            return iter(entries)
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_scandir(path: Path):
+        assert path == model_dir
+        return _Scandir()
+
+    monkeypatch.setattr(real_model_support_module.os, "scandir", fake_scandir)
+
+    assert _has_recognized_model_weight_files(model_dir) is True
+    assert weight_entry.is_file_calls == 1
+    assert all(entry.is_file_calls == 0 for entry in irrelevant_entries)
 
 
 def test_has_recognized_model_weight_files_does_not_recurse_into_subdirectories(tmp_path: Path) -> None:

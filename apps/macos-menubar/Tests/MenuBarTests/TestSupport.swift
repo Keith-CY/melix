@@ -750,6 +750,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var nextEventSequence: UInt64 = 1
 
     private(set) var recordedActions: [String] = []
+    private(set) var recordedChatRequests: [ControlPlaneChatRequest] = []
     private(set) var recordedModelSettingsUpdates: [RecordedModelSettingsUpdate] = []
     private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
     private(set) var recordedBenchRequests: [ControlPlaneBenchRequest] = []
@@ -1093,6 +1094,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
         recordedActions.append("chat:\(request.modelID)")
+        recordedChatRequests.append(request)
         if let chatError {
             throw chatError
         }
@@ -2912,6 +2914,30 @@ actor RecordingCLIWorkflowRunner: MelixCLIWorkflowRunning {
             throw failure.error
         }
         return outputs.last(where: { $0.command == command })?.output ?? "{}\n"
+    }
+
+    func snapshotRecordedCommands() -> [MelixCLICommand] {
+        recordedCommands
+    }
+}
+
+actor RecordingDelegatingCLIWorkflowRunner: MelixCLIWorkflowRunning {
+    private let delegate: any MelixCLIWorkflowRunning
+    private(set) var recordedCommands: [MelixCLICommand] = []
+
+    let surface: MelixCLIWorkflowSurface
+
+    init(
+        delegate: any MelixCLIWorkflowRunning,
+        surface: MelixCLIWorkflowSurface = .subprocess
+    ) {
+        self.delegate = delegate
+        self.surface = surface
+    }
+
+    func run(_ command: MelixCLICommand) async throws -> String {
+        recordedCommands.append(command)
+        return try await delegate.run(command)
     }
 
     func snapshotRecordedCommands() -> [MelixCLICommand] {

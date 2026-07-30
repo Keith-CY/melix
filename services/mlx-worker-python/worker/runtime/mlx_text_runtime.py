@@ -19,6 +19,7 @@ from worker.runtime.native_mtp.preload import apply_native_mtp_preload_decision
 from worker.runtime.prefix_block_store import (
     LCPResult as _LCPResult,
     clone_cache_snapshot as _clone_cache_snapshot,
+    estimate_cache_snapshot_bytes as _estimate_cache_snapshot_bytes,
     get_store as _get_prefix_store,
 )
 from worker.runtime.runtime_utils import (
@@ -26,6 +27,11 @@ from worker.runtime.runtime_utils import (
     estimate_model_weight_resident_bytes as _estimate_model_weight_resident_bytes,
     first_declared_kwarg as _first_declared_kwarg,
     installed_package_version as _installed_package_version,
+)
+from worker.runtime.structured_output_constraints import (
+    StructuredOutputConstraintError,
+    build_structured_output_logits_processors,
+    structured_output_requested,
 )
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
@@ -82,6 +88,7 @@ class RuntimeTokenEvent:
     cache_hit_mode: str | None = None
     recovered_prefix_tokens: int | None = None
     cache_fallback_reason: str | None = None
+    cache_hit_tier: str | None = None
 
 
 @dataclass(slots=True)
@@ -214,6 +221,7 @@ class _SessionPrefixCacheContext:
     block_size: int
     cache_memory_budget_bytes: int
     acceleration_mode: str
+    active_kv_quant_profile: str
     cache_mode: str
     force_fallback: bool
 
@@ -255,6 +263,7 @@ def _session_prefix_cache_context(
             default=0,
         ),
         acceleration_mode=str(ext.get("_melix.acceleration_mode", "") or ""),
+        active_kv_quant_profile=str(ext.get("_melix.active_kv_quant_profile", "") or ""),
         cache_mode=cache_mode,
         force_fallback=(
             _truthy_string(os.environ.get("MELIX_ENABLE_TEST_CACHE_HOOKS"))
@@ -464,35 +473,7 @@ def _trim_restored_cache(prompt_cache: Any, trim_tokens: int) -> bool:
 
 
 def _estimate_cache_bytes(prompt_cache: Any) -> int:
-    if not isinstance(prompt_cache, list):
-        return 0
-    total = 0
-    for layer_cache in prompt_cache:
-        # Support both .state (older mlx-lm) and .keys/.values (newer KVCache)
-        tensors: list[Any] = []
-        state = getattr(layer_cache, "state", None)
-        if state is not None:
-            if isinstance(state, list | tuple):
-                tensors.extend(state)
-            else:
-                tensors.append(state)
-        else:  # pragma: no cover - newer KVCache interface
-            keys = getattr(layer_cache, "keys", None)
-            values = getattr(layer_cache, "values", None)
-            if keys is not None:
-                tensors.append(keys)
-            if values is not None:
-                tensors.append(values)
-        for tensor in tensors:
-            nbytes = getattr(tensor, "nbytes", None)
-            if nbytes is None:
-                size = getattr(tensor, "size", None)
-                itemsize = getattr(tensor, "itemsize", None)
-                if size is not None and itemsize is not None:
-                    nbytes = int(size) * int(itemsize)
-            if nbytes is not None:
-                total += int(nbytes)
-    return total
+    return _estimate_cache_snapshot_bytes(prompt_cache)
 
 
 def _tokenizer_eos_stop_tokens(tokenizer: Any) -> list[list[int]] | None:
@@ -966,6 +947,12 @@ def _declared_kwargs(callable_obj: Any, names: tuple[str, ...]) -> tuple[str, ..
     return tuple(name for name in names if _callable_accepts_kwarg(callable_obj, name))
 
 
+def _prompt_encode_add_special_tokens(tokenizer: Any, prompt: str) -> bool:
+    return getattr(tokenizer, "bos_token", None) is None or not prompt.startswith(
+        str(getattr(tokenizer, "bos_token", "") or "")
+    )
+
+
 class AutoMLXBackend:
     runtime_name = "mlx-unavailable"
 
@@ -975,10 +962,13 @@ class AutoMLXBackend:
         load_fn=None,
         stream_generate_fn=None,
         sampler_factory=None,
+        prompt_cache_factory=None,
     ) -> None:
         self._stream_stop_kwarg = ""
         self._stream_accepts_prompt_cache = False
+        self._stream_accepts_logits_processors = False
         self._sampler_penalty_kwargs: tuple[str, ...] = ()
+        self._prompt_cache_factory = prompt_cache_factory
         if load_fn is not None and stream_generate_fn is not None and sampler_factory is not None:
             self._available = True
             self._error = None
@@ -987,6 +977,10 @@ class AutoMLXBackend:
             self._sampler_factory = sampler_factory
             self._stream_stop_kwarg = _first_declared_kwarg(stream_generate_fn, _STREAM_STOP_KWARG_NAMES)
             self._stream_accepts_prompt_cache = _callable_accepts_kwarg(stream_generate_fn, "prompt_cache")
+            self._stream_accepts_logits_processors = _callable_accepts_kwarg(
+                stream_generate_fn,
+                "logits_processors",
+            )
             self._sampler_penalty_kwargs = _declared_kwargs(sampler_factory, _SAMPLER_PENALTY_KWARG_NAMES)
             self.runtime_name = "mlx-lm"
             return
@@ -1020,6 +1014,10 @@ class AutoMLXBackend:
             self._sampler_factory = make_sampler
             self._stream_stop_kwarg = _first_declared_kwarg(stream_generate, _STREAM_STOP_KWARG_NAMES)
             self._stream_accepts_prompt_cache = _callable_accepts_kwarg(stream_generate, "prompt_cache")
+            self._stream_accepts_logits_processors = _callable_accepts_kwarg(
+                stream_generate,
+                "logits_processors",
+            )
             self._sampler_penalty_kwargs = _declared_kwargs(make_sampler, _SAMPLER_PENALTY_KWARG_NAMES)
 
     def load_model(self, model_spec, *, trust_remote_code: bool = False) -> dict[str, Any]:
@@ -1144,6 +1142,14 @@ class AutoMLXBackend:
             execution_ext,
             self._stream_stop_kwarg,
         )
+        structured_logits_processors = (
+            build_structured_output_logits_processors(
+                execution_ext,
+                loaded_model["tokenizer"],
+            )
+            if structured_output_requested(execution_ext)
+            else []
+        )
 
         if loaded_model.get(_NATIVE_MTP_TEXT_ACTIVE_FIELD) is True:
             yield from self._generate_native_mtp_batch_tokens(
@@ -1153,18 +1159,34 @@ class AutoMLXBackend:
                 max_tokens=max_tokens,
                 cancel_event=cancel_event,
                 execution_ext=execution_ext,
+                logits_processors=structured_logits_processors,
             )
             return
 
+        if structured_logits_processors and not self._stream_accepts_logits_processors:
+            raise StructuredOutputConstraintError(
+                "mlx-lm stream_generate cannot accept structured-output logits processors.",
+                details={
+                    "mode": "json_object",
+                    "enforcement": "sampler",
+                    "reason": "logits_processors_unsupported",
+                },
+            )
+
         if not execution_ext or not str(execution_ext.get("_melix.session_id", "") or "").strip():
             cumulative_raw_text = ""
+            if structured_logits_processors:
+                stream_call_kwargs = dict(stream_kwargs)
+                stream_call_kwargs["logits_processors"] = structured_logits_processors
+            else:
+                stream_call_kwargs = stream_kwargs
             for response in self._stream_generate_fn(
                 loaded_model["model"],
                 loaded_model["tokenizer"],
                 prompt,
                 max_tokens=max_tokens,
                 sampler=sampler,
-                **stream_kwargs,
+                **stream_call_kwargs,
             ):
                 if cancel_event.is_set():
                     return
@@ -1234,12 +1256,21 @@ class AutoMLXBackend:
 
         cumulative_raw_text = ""
         stream_prompt: str | list[int] = prompt
-        stream_call_kwargs = dict(stream_kwargs)
+        if structured_logits_processors:
+            stream_call_kwargs = dict(stream_kwargs)
+            stream_call_kwargs["logits_processors"] = structured_logits_processors
+        else:
+            stream_call_kwargs = stream_kwargs
         _standard_prefix_store: Any = None
         _standard_lcp_entry_to_release: Any = None
         _standard_cache_hit_mode: str | None = None
         _standard_recovered_prefix_tokens: int | None = None
         _standard_cache_fallback_reason: str | None = None
+        _standard_cache_hit_tier: str | None = None
+        _standard_cache_context: _SessionPrefixCacheContext | None = None
+        _standard_prompt_tokens: list[int] | None = None
+        _standard_prompt_cache: Any = None
+        _standard_stored = False
 
         try:
             _execution_ext = execution_ext or {}
@@ -1268,6 +1299,7 @@ class AutoMLXBackend:
                             _cache_context.model_revision,
                             _cache_context.block_size,
                             acceleration_mode=_cache_context.acceleration_mode,
+                            kv_quant_profile=_cache_context.active_kv_quant_profile,
                             force_fallback=_cache_context.force_fallback,
                         )
                         _standard_lcp_entry_to_release = _lcp.entry if _lcp is not None else None
@@ -1283,6 +1315,10 @@ class AutoMLXBackend:
                             assert _lcp is not None and _lcp.entry is not None
                             _restored = _clone_cache_snapshot(_lcp.entry.cache_snapshot)
                             _trim_tokens = len(_lcp.entry.token_ids) - _lcp.recovered_prefix_tokens
+                            _restore_token_count = _lcp.recovered_prefix_tokens
+                            if not _lcp.suffix_token_ids and prompt_tokens:
+                                _trim_tokens += 1
+                                _restore_token_count = max(0, _restore_token_count - 1)
                             _trim_ok = True
                             if _restored is not None and _trim_tokens > 0:
                                 _trim_ok = _trim_restored_cache(_restored, _trim_tokens)
@@ -1302,11 +1338,12 @@ class AutoMLXBackend:
                                 prefill_step_size=_native_mtp_text_prefill_step_size(),
                                 stream=None,
                                 restore_cache=_restored,
-                                restore_token_count=_lcp.recovered_prefix_tokens,
+                                restore_token_count=_restore_token_count,
                             )
                             _standard_cache_hit_mode = _lcp.mode
-                            _standard_recovered_prefix_tokens = _lcp.recovered_prefix_tokens
+                            _standard_recovered_prefix_tokens = _restore_token_count
                             _standard_cache_fallback_reason = _lcp.fallback_reason
+                            _standard_cache_hit_tier = _lcp.tier or None
                         else:
                             prompt_cache, last_token, _cached_tokens = _prefill_prompt_cache(
                                 loaded_model["model"],
@@ -1316,6 +1353,7 @@ class AutoMLXBackend:
                             )
                             _standard_cache_hit_mode = "none"
                             _standard_recovered_prefix_tokens = 0
+                            _standard_cache_hit_tier = None
                             if _restore_failed:
                                 _standard_cache_fallback_reason = "cache_restore_failed"
                             elif _lcp is not None:
@@ -1323,27 +1361,11 @@ class AutoMLXBackend:
                             else:
                                 _standard_cache_fallback_reason = "no_reusable_prefix"
 
-                        _snapshot = _clone_cache_snapshot(prompt_cache)
-                        if _snapshot is not None:
-                            _snapshot_bytes = _estimate_cache_bytes(prompt_cache)
-                            if (
-                                _cache_context.cache_memory_budget_bytes <= 0
-                                or _snapshot_bytes <= _cache_context.cache_memory_budget_bytes
-                            ):
-                                _standard_prefix_store.put(
-                                    session_id=_cache_context.session_id,
-                                    token_ids=list(prompt_tokens),
-                                    cache_snapshot=_snapshot,
-                                    cache_mode=_cache_context.cache_mode,
-                                    model_id=_cache_context.model_id,
-                                    model_revision=_cache_context.model_revision,
-                                    block_size=_cache_context.block_size,
-                                    total_bytes=_snapshot_bytes,
-                                    acceleration_mode=_cache_context.acceleration_mode,
-                                )
-
                         stream_prompt = last_token
                         stream_call_kwargs["prompt_cache"] = prompt_cache
+                        _standard_cache_context = _cache_context
+                        _standard_prompt_tokens = list(prompt_tokens)
+                        _standard_prompt_cache = prompt_cache
                     else:
                         _standard_cache_hit_mode = "none"
                         _standard_recovered_prefix_tokens = 0
@@ -1359,6 +1381,33 @@ class AutoMLXBackend:
             ):
                 if cancel_event.is_set():
                     return
+                if (
+                    not _standard_stored
+                    and _standard_prefix_store is not None
+                    and _standard_cache_context is not None
+                    and _standard_prompt_tokens is not None
+                    and _standard_prompt_cache is not None
+                ):
+                    _standard_stored = True
+                    _snapshot = _clone_cache_snapshot(_standard_prompt_cache)
+                    if _snapshot is not None:
+                        _snapshot_bytes = _estimate_cache_bytes(_standard_prompt_cache)
+                        if (
+                            _standard_cache_context.cache_memory_budget_bytes <= 0
+                            or _snapshot_bytes <= _standard_cache_context.cache_memory_budget_bytes
+                        ):
+                            _standard_prefix_store.put(
+                                session_id=_standard_cache_context.session_id,
+                                token_ids=list(_standard_prompt_tokens),
+                                cache_snapshot=_snapshot,
+                                cache_mode=_standard_cache_context.cache_mode,
+                                model_id=_standard_cache_context.model_id,
+                                model_revision=_standard_cache_context.model_revision,
+                                block_size=_standard_cache_context.block_size,
+                                total_bytes=_snapshot_bytes,
+                                acceleration_mode=_standard_cache_context.acceleration_mode,
+                                kv_quant_profile=_standard_cache_context.active_kv_quant_profile,
+                            )
                 text = getattr(response, "text", "")
                 finish_reason = getattr(response, "finish_reason", None)
                 if not text and finish_reason is None:
@@ -1373,10 +1422,15 @@ class AutoMLXBackend:
                     _event_cache_hit_mode = _standard_cache_hit_mode
                     _event_recovered_prefix_tokens = _standard_recovered_prefix_tokens
                     _event_cache_fallback_reason = _standard_cache_fallback_reason
+                    _event_cache_hit_tier = _standard_cache_hit_tier
                 else:
                     _event_cache_hit_mode = None
                     _event_recovered_prefix_tokens = None
                     _event_cache_fallback_reason = None
+                    _event_cache_hit_tier = None
+                _event_prompt_tokens = getattr(response, "prompt_tokens", None)
+                if _standard_prompt_tokens is not None:
+                    _event_prompt_tokens = len(_standard_prompt_tokens)
                 yield RuntimeTokenEvent(
                     text=text,
                     raw_text=raw_text,
@@ -1402,7 +1456,7 @@ class AutoMLXBackend:
                         )
                     ),
                     parser_observation=str(getattr(response, "parser_observation", "") or ""),
-                    prompt_tokens=getattr(response, "prompt_tokens", None),
+                    prompt_tokens=_event_prompt_tokens,
                     completion_tokens=getattr(response, "generation_tokens", None),
                     prompt_tps=getattr(response, "prompt_tps", None),
                     generation_tps=getattr(response, "generation_tps", None),
@@ -1428,6 +1482,7 @@ class AutoMLXBackend:
                     cache_hit_mode=_event_cache_hit_mode,
                     recovered_prefix_tokens=_event_recovered_prefix_tokens,
                     cache_fallback_reason=_event_cache_fallback_reason,
+                    cache_hit_tier=_event_cache_hit_tier,
                 )
         finally:
             if _standard_lcp_entry_to_release is not None and _standard_prefix_store is not None:
@@ -1448,6 +1503,7 @@ class AutoMLXBackend:
         max_tokens: int,
         cancel_event,
         execution_ext: dict[str, str] | None = None,
+        logits_processors: list[Any] | None = None,
     ) -> Iterable[RuntimeTokenEvent]:
         try:
             import mlx.core as mx
@@ -1471,9 +1527,7 @@ class AutoMLXBackend:
             tokenizer = TokenizerWrapper(tokenizer)
             loaded_model["tokenizer"] = tokenizer
 
-        add_special_tokens = getattr(tokenizer, "bos_token", None) is None or not prompt.startswith(
-            str(getattr(tokenizer, "bos_token", "") or "")
-        )
+        add_special_tokens = _prompt_encode_add_special_tokens(tokenizer, prompt)
         encode_started_at = time.perf_counter()
         prompt_tokens = list(tokenizer.encode(prompt, add_special_tokens=add_special_tokens))
         prompt_encode_ms = (time.perf_counter() - encode_started_at) * 1000.0
@@ -1498,6 +1552,7 @@ class AutoMLXBackend:
                 _cache_context.model_revision,
                 _cache_context.block_size,
                 acceleration_mode=_cache_context.acceleration_mode,
+                kv_quant_profile=_cache_context.active_kv_quant_profile,
                 force_fallback=_cache_context.force_fallback,
             )
 
@@ -1596,15 +1651,29 @@ class AutoMLXBackend:
                             block_size=_cache_context.block_size,
                             total_bytes=_snapshot_bytes,
                             acceleration_mode=_cache_context.acceleration_mode,
+                            kv_quant_profile=_cache_context.active_kv_quant_profile,
                         )
 
             batch_insert_started_at = time.perf_counter()
+            insert_kwargs: dict[str, Any] = {}
+            if logits_processors:
+                if not _callable_accepts_kwarg(batch_generator.insert, "logits_processors"):
+                    raise StructuredOutputConstraintError(
+                        "mlx-lm BatchGenerator cannot accept structured-output logits processors.",
+                        details={
+                            "mode": "json_object",
+                            "enforcement": "sampler",
+                            "reason": "logits_processors_unsupported",
+                        },
+                    )
+                insert_kwargs["logits_processors"] = [logits_processors]
             inserted = batch_generator.insert(
                 [last_token],
                 max_tokens=[max_tokens],
                 caches=[prompt_cache],
                 all_tokens=[cached_tokens],
                 samplers=[sampler],
+                **insert_kwargs,
             )
             batch_insert_ms = (time.perf_counter() - batch_insert_started_at) * 1000.0
             insert_ms = (time.perf_counter() - insert_started_at) * 1000.0
@@ -1643,10 +1712,12 @@ class AutoMLXBackend:
                         _cache_hit_mode = _lcp.mode if _lcp is not None else "none"
                         _recovered_prefix_tokens = _lcp.recovered_prefix_tokens if _lcp is not None else 0
                         _cache_fallback_reason = _lcp.fallback_reason if _lcp is not None else "no_session_id"
+                        _cache_hit_tier = (_lcp.tier or None) if _lcp is not None else None
                     else:
                         _cache_hit_mode = None
                         _recovered_prefix_tokens = None
                         _cache_fallback_reason = None
+                        _cache_hit_tier = None
                     yield RuntimeTokenEvent(
                         text=text,
                         raw_text=cumulative_raw_text,
@@ -1688,6 +1759,7 @@ class AutoMLXBackend:
                         cache_hit_mode=_cache_hit_mode,
                         recovered_prefix_tokens=_recovered_prefix_tokens,
                         cache_fallback_reason=_cache_fallback_reason,
+                        cache_hit_tier=_cache_hit_tier,
                     )
                     if finish_reason is not None:
                         return

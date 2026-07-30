@@ -40,3 +40,17 @@ Accept the slice only if the registered probe reports directionally lower
 changed-scope coverage. `load_probe_registry_ms_mean` and
 `cold_load_probe_registry_ms_mean` are expected to be neutral because the slice
 only touches the scope loader path.
+
+## 2026-07-11 follow-up: module-local stat binding
+
+This follow-up keeps the same Python-only boundary and registered
+`pr-scoped-performance-registry-cache` probe. Both registry loaders already use
+absolute string cache keys before checking file metadata; the hot repeated path
+still resolves `os.stat` through the module on every cached registry lookup. Bind
+`os.stat` once as `_OS_STAT` and use that local binding in `load_probe_registry()`
+and `load_probe_registry_for_scope()` while preserving the same `(mtime_ns, size)`
+cache invalidation semantics.
+
+Accept this follow-up only if the registered probe is neutral-or-better for cached
+registry loads and scope report construction, with focused tests and changed-scope
+coverage still passing.

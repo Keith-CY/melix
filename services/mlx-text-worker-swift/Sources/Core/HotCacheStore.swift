@@ -341,6 +341,7 @@ actor HotCacheStore {
         await diskStore.saveSnapshot(
             snapshot: snapshot,
             model: model,
+            execution: prefill.execution,
             messages: prefill.messages,
             resumeHint: prefill.resumeHint,
             acceleration: prefill.acceleration,
@@ -497,7 +498,7 @@ actor HotCacheStore {
         stats.supportedModes = CacheModePolicy.supportedModes
         stats.experimentalModes = CacheModePolicy.experimentalModes
         stats.supportsPrefixCache = true
-        stats.supportsPagedCache = true
+        stats.supportsPagedCache = false
         stats.supportsDiskCache = false
         stats.supportsBoundarySnapshots = false
         stats.runtimeCacheFingerprint = runtimeCacheFingerprint

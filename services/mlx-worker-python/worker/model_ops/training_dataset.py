@@ -155,11 +155,10 @@ def _iter_dataset_package_jsonl_rows(
     json_decode_error = json.JSONDecodeError
     with path.open("r", encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
-            if not line:
+            if raw_line.isspace():
                 continue
             try:
-                payload = json_loads(line)
+                payload = json_loads(raw_line)
             except json_decode_error as exc:
                 raise ModelOperationError(
                     code="invalid_dataset_package",
@@ -2297,6 +2296,7 @@ def _collect_prompt_completion_token_counts(
     prompt_tokens_append = prompt_tokens.append
     completion_tokens_append = completion_tokens.append
     total_tokens_append = total_tokens.append
+    whitespace_token_count = _whitespace_token_count
     sample_count = 0
     prompt_token_sum = 0
     completion_token_sum = 0
@@ -2305,8 +2305,8 @@ def _collect_prompt_completion_token_counts(
     for sample in samples:
         sample_count += 1
         sample_get = sample.get
-        prompt_count = _whitespace_token_count(str(sample_get("prompt", "")))
-        completion_count = _whitespace_token_count(str(sample_get("completion", "")))
+        prompt_count = whitespace_token_count(str(sample_get("prompt", "")))
+        completion_count = whitespace_token_count(str(sample_get("completion", "")))
         total_count = prompt_count + completion_count
         prompt_token_sum += prompt_count
         completion_token_sum += completion_count

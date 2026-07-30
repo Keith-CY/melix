@@ -36,9 +36,13 @@ and adds this plan to the probe watch list. No Swift runtime behavior is changed
 4. Use GitHub Actions PR-scoped performance as the final registered CI probe
    validation before merge.
 
-## Expected outcome
+## 2026-07-15 follow-up: JSON scalar-copy type binding
 
-The scalar-copy metric should improve because exact three-item tuples no longer
-pay tuple-generator overhead. Scan-only filesystem metrics are expected to stay
-within normal noise because this slice does not change candidate discovery,
-record loading, reconciliation, or follow-up claim semantics.
+This Python-only follow-up remains limited to `_copy_json_like_value(...)` in the
+local-job follow-up projection path. The copier now reuses a function-local
+`type` binding across the exact dict/list scalar scans instead of resolving the
+builtin for every nested item. The change preserves scalar reuse, recursive copy
+isolation for nested mutables, tuple fast paths, and container-subclass fallback
+behavior. The registered `local-job-followup-scan-scandir` probe remains the
+Linux and CI validation gate, with `scalar_copy_optimized_elapsed_ms_mean`,
+`scalar_copy_delta_ms`, and `scalar_copy_speedup` as the primary metrics.

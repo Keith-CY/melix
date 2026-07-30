@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import pytest
 
@@ -117,6 +118,232 @@ def test_workspace_file_integration_intent_routes_schema_without_greeting_bleed(
     assert greeting.registry.names() == ("local_compute",)
 
 
+def test_tool_schema_consistency_preflight_reports_missing_workflow_tool_without_raw_text() -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(("local_compute",))
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            {
+                "tool_name": "visit",
+                "source": "workflow_selected",
+                "procedure_text": "SECRET_PROCEDURE says to visit https://example.com",
+            },
+        ),
+        registry=registry,
+        source="workflow_selected",
+    )
+
+    assert decision.consistent is False
+    assert decision.referenced_tools == ("visit",)
+    assert decision.missing_tools == ("visit",)
+    assert decision.receipt == {
+        "schema_version": "melix.agentic_tool_schema_consistency.v1",
+        "toolset_version": tool_registry_module.BUILTIN_TOOLSET_VERSION,
+        "outcome": "mismatch",
+        "source": "workflow_selected",
+        "referenced_tools": ["visit"],
+        "callable_tools": ["local_compute"],
+        "missing_tools": ["visit"],
+        "invalid_affordance_count": 0,
+        "checked_affordance_count": 1,
+        "allowed_next_step": "strip_missing_affordances",
+        "corrective_action": "remove_unavailable_tool_affordances",
+    }
+    assert "SECRET_PROCEDURE" not in json.dumps(decision.receipt, ensure_ascii=False)
+    assert "https://example.com" not in json.dumps(decision.receipt, ensure_ascii=False)
+
+
+def test_tool_schema_consistency_preflight_accepts_viewed_procedure_tool() -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(
+        ("local_compute", "visit")
+    )
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        ({"tool_id": "visit", "source": "viewed_procedure"},),
+        registry=registry,
+        source="viewed_procedure",
+    )
+
+    assert decision.consistent is True
+    assert decision.referenced_tools == ("visit",)
+    assert decision.missing_tools == ()
+    assert decision.receipt["outcome"] == "consistent"
+    assert decision.receipt["callable_tools"] == ["local_compute", "visit"]
+    assert decision.receipt["allowed_next_step"] == "assemble_prompt"
+    assert decision.receipt["corrective_action"] == ""
+
+
+def test_tool_schema_consistency_preflight_reuses_cached_name_sets() -> None:
+    class CountingNames(tuple[str, ...]):
+        iter_calls = 0
+
+        def __iter__(self):
+            type(self).iter_calls += 1
+            return super().__iter__()
+
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(
+        ("local_compute",)
+    )
+    catalog = tool_registry_module.agentic_tool_catalog_registry()
+    object.__setattr__(catalog, "_tool_names", CountingNames(catalog.names()))
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            {"tool_id": "visit", "source": "viewed_procedure"},
+            {"tool_id": "local_compute", "source": "viewed_procedure"},
+        ),
+        registry=registry,
+        catalog=catalog,
+        source="viewed_procedure",
+    )
+
+    assert decision.referenced_tools == ("visit", "local_compute")
+    assert decision.missing_tools == ("visit",)
+    assert CountingNames.iter_calls == 1
+
+
+def test_tool_schema_consistency_preflight_reports_missing_catalog_custom_tool() -> None:
+    custom_tool = ToolDescriptor(
+        name="procedure_lookup",
+        description="Look up an operator approved procedure by id.",
+        tool_kind="procedure.lookup",
+        observation_kind="procedure",
+        arguments=(
+            ToolArgumentDescriptor(
+                name="procedure_id",
+                json_type="string",
+                description="Procedure identifier.",
+            ),
+        ),
+    )
+    catalog = ToolRegistry(
+        (*tool_registry_module.agentic_tool_catalog_registry().tools, custom_tool)
+    )
+    registry = catalog.select(("local_compute",))
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            {"tool_name": "procedure_lookup", "source": "workflow_selected"},
+            {"tool_name": "visit", "source": "workflow_selected"},
+        ),
+        registry=registry,
+        catalog=catalog,
+        source="workflow_selected",
+    )
+
+    assert decision.consistent is False
+    assert decision.referenced_tools == ("visit", "procedure_lookup")
+    assert decision.missing_tools == ("visit", "procedure_lookup")
+    assert decision.receipt["invalid_affordance_count"] == 0
+    assert decision.receipt["missing_tools"] == ["visit", "procedure_lookup"]
+
+
+def test_tool_schema_consistency_preflight_unions_registry_only_custom_tool() -> None:
+    custom_tool = ToolDescriptor(
+        name="procedure_lookup",
+        description="Look up an operator approved procedure by id.",
+        tool_kind="procedure.lookup",
+        observation_kind="procedure",
+        arguments=(
+            ToolArgumentDescriptor(
+                name="procedure_id",
+                json_type="string",
+                description="Procedure identifier.",
+            ),
+        ),
+    )
+    registry = ToolRegistry((custom_tool,))
+    catalog = tool_registry_module.agentic_tool_catalog_registry()
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            {"tool_name": "procedure_lookup", "source": "workflow_selected"},
+            {"tool_name": "visit", "source": "workflow_selected"},
+        ),
+        registry=registry,
+        catalog=catalog,
+        source="workflow_selected",
+    )
+
+    assert decision.consistent is False
+    assert decision.referenced_tools == ("visit", "procedure_lookup")
+    assert decision.missing_tools == ("visit",)
+    assert decision.receipt["invalid_affordance_count"] == 0
+
+
+def test_tool_schema_consistency_preflight_reports_policy_disabled_context_tool() -> None:
+    selection = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit https://example.com/docs and summarize the page.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        ({"tool_id": "visit", "source": "retrieved_context"},),
+        registry=selection.registry,
+        source="retrieved_context",
+    )
+
+    assert selection.registry.names() == ("local_compute",)
+    assert decision.consistent is False
+    assert decision.missing_tools == ("visit",)
+    assert decision.receipt["outcome"] == "mismatch"
+    assert decision.receipt["source"] == "retrieved_context"
+    assert decision.receipt["missing_tools"] == ["visit"]
+    assert decision.receipt["callable_tools"] == ["local_compute"]
+
+
+def test_tool_schema_consistency_preflight_counts_invalid_affordances_without_echoing() -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(("local_compute",))
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            " local_compute ",
+            "visit; SECRET_INLINE",
+            {"tool_name": "bad tool SECRET_MAPPING"},
+            {"name": ""},
+        ),
+        registry=registry,
+        source="retrieved_context",
+    )
+
+    receipt_text = json.dumps(decision.receipt, ensure_ascii=False)
+
+    assert decision.consistent is True
+    assert decision.referenced_tools == ("local_compute",)
+    assert decision.missing_tools == ()
+    assert decision.receipt["invalid_affordance_count"] == 3
+    assert decision.receipt["checked_affordance_count"] == 4
+    assert "SECRET_INLINE" not in receipt_text
+    assert "SECRET_MAPPING" not in receipt_text
+
+
+def test_tool_schema_consistency_preflight_sanitizes_empty_invalid_batch_and_source() -> None:
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(("local_compute",))
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        (
+            {"tool_id": 42},
+            object(),
+        ),
+        registry=registry,
+        source="bad source SECRET_SOURCE",
+    )
+
+    receipt_text = json.dumps(decision.receipt, ensure_ascii=False)
+
+    assert decision.consistent is True
+    assert decision.referenced_tools == ()
+    assert decision.missing_tools == ()
+    assert decision.receipt["source"] == "unspecified"
+    assert decision.receipt["invalid_affordance_count"] == 2
+    assert decision.receipt["checked_affordance_count"] == 2
+    assert "SECRET_SOURCE" not in receipt_text
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -183,11 +410,18 @@ def test_built_in_tool_config_returns_isolated_template_copies() -> None:
     assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
 
 
-def test_tool_registry_worker_config_reuses_isolated_template_copy() -> None:
+def test_tool_registry_worker_config_reuses_cached_serialized_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     first_config = registry.as_worker_tool_config()
     first_config.tools.pop()
     first_config.schema_version = "mutated"
+
+    def fail_template_copy(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:  # pragma: no cover
+        raise AssertionError("cached worker tool config should copy from serialized bytes")
+
+    monkeypatch.setattr(tool_registry_module, "_copy_tool_config", fail_template_copy)
 
     second_config = registry.as_worker_tool_config()
 
@@ -321,6 +555,26 @@ def test_tool_registry_empty_selection_reuses_cached_registry() -> None:
     assert registry.select([]) is selected
 
 
+def test_tool_registry_empty_selection_uses_direct_cache_slot() -> None:
+    registry = ToolRegistry(built_in_tool_registry().tools)
+    selected = registry.select([])
+
+    class LookupBlockedCache:
+        def get(
+            self,
+            key: tuple[str, ...],
+            default: ToolRegistry | None = None,
+        ) -> ToolRegistry | None:
+            raise AssertionError("empty selection should use the direct cache slot")
+
+    registry._selection_cache = cast(
+        dict[tuple[str, ...], ToolRegistry], LookupBlockedCache()
+    )
+
+    assert registry.select([]) is selected
+    assert registry.select(()) is selected
+
+
 def test_tool_registry_empty_selection_openai_tools_returns_fresh_empty_list() -> None:
     registry = built_in_tool_registry().select([])
 
@@ -448,7 +702,7 @@ def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
             return super().strip(chars)
 
     selected_names: list[str] = []
-    selected_sources: dict[str, str] = {}
+    selected_sources: set[str] = set()
     selected_tools: list[dict[str, str]] = []
     canonical_name = StripCountingName("text_search")
 
@@ -463,7 +717,7 @@ def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
 
     assert StripCountingName.strip_calls == 0
     assert selected_names == ["text_search"]
-    assert selected_sources == {"text_search": "keyword"}
+    assert selected_sources == {"text_search"}
     assert selected_tools == [{"tool_id": "text_search", "source": "keyword"}]
 
     whitespace_name = StripCountingName("  visit  ")
@@ -477,7 +731,7 @@ def test_append_selected_tool_skips_strip_for_canonical_names() -> None:
     )
     assert StripCountingName.strip_calls == 1
     assert selected_names == ["text_search", "visit"]
-    assert selected_sources["visit"] == "keyword"
+    assert "visit" in selected_sources
     assert selected_tools == [
         {"tool_id": "text_search", "source": "keyword"},
         {"tool_id": "visit", "source": "keyword"},
@@ -818,6 +1072,109 @@ def test_tool_registry_worker_tool_config_reuses_cached_serialized_snapshot(
     assert registry.as_worker_tool_config().tools[0].name == "image_crop"
 
 
+def test_agentic_tool_selection_seeds_local_compute_without_append_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appended_tool_names: list[str] = []
+    original_append_selected_tool = tool_registry_module._append_selected_tool
+
+    def tracking_append_selected_tool(
+        selected_names: list[str],
+        selected_sources: dict[str, str],
+        selected_tools: list[dict[str, str]],
+        tool_name: str,
+        source: str,
+        max_selected_tools: int,
+    ) -> bool:
+        appended_tool_names.append(tool_name)
+        return original_append_selected_tool(
+            selected_names,
+            selected_sources,
+            selected_tools,
+            tool_name,
+            source,
+            max_selected_tools,
+        )
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_append_selected_tool",
+        tracking_append_selected_tool,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search the local corpus, then calculate the answer.",
+            vector_selected_tool_ids=("text_search",),
+            vector_available=True,
+            max_selected_tools=3,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+    assert appended_tool_names == ["text_search"]
+
+
+def test_policy_agentic_tool_selection_seeds_local_compute_without_append_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appended_tool_names: list[str] = []
+    original_append_selected_tool = tool_registry_module._append_policy_selected_tool
+
+    def tracking_append_selected_tool(
+        selected_names: list[str],
+        selected_sources: set[str],
+        selected_tools: list[dict[str, str]],
+        tool_name: str,
+        source: str,
+        max_selected_tools: int,
+        disabled_tool_names: frozenset[str] | None,
+        denied_tool_names: list[str] | None,
+    ) -> bool:
+        appended_tool_names.append(tool_name)
+        return original_append_selected_tool(
+            selected_names,
+            selected_sources,
+            selected_tools,
+            tool_name,
+            source,
+            max_selected_tools,
+            disabled_tool_names,
+            denied_tool_names,
+        )
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "_append_policy_selected_tool",
+        tracking_append_selected_tool,
+    )
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=(
+                "Search local evidence, then visit fixture://docs/provider-contract "
+                "without web access."
+            ),
+            vector_selected_tool_ids=("visit", "text_search"),
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "keyword"},
+    ]
+    assert result.receipt["tool_policy_receipt"]["requested_tools"] == ["visit"]
+    assert appended_tool_names == ["text_search", "visit"]
+
+
 def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hits() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(
@@ -993,6 +1350,100 @@ def test_agentic_tool_selection_always_only_reuses_cached_metrics(
     )
 
 
+def test_agentic_tool_selection_no_keyword_fallback_reuses_always_only_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_select(self: ToolRegistry, names: list[str] | tuple[str, ...]) -> ToolRegistry:
+        raise AssertionError(  # pragma: no cover
+            f"no-keyword fallback should reuse cached registry for {names!r}"
+        )
+
+    def fail_metrics(self: ToolRegistry) -> ToolRegistryMetrics:
+        raise AssertionError(  # pragma: no cover
+            f"no-keyword fallback should reuse cached metrics for {self!r}"
+        )
+
+    monkeypatch.setattr(ToolRegistry, "select", fail_select)
+    monkeypatch.setattr(ToolRegistry, "metrics", fail_metrics)
+
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry is tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
+    assert result.receipt == {
+        "schema_version": "melix.agentic_tool_selection.v1",
+        "toolset_version": "melix.agentic_tools.builtin.v1",
+        "selection_mode": "fallback",
+        "vector_available": False,
+        "fallback_reason": "no_keyword_match",
+        "selected_tools": [{"tool_id": "local_compute", "source": "always"}],
+        "dropped_tool_count": tool_registry_module._ALWAYS_ONLY_DROPPED_TOOL_COUNT,
+        "full_schema_bytes": tool_registry_module._AGENTIC_TOOL_CATALOG_METRICS.schema_bytes,
+        "selected_schema_bytes": tool_registry_module._ALWAYS_ONLY_TOOL_METRICS.schema_bytes,
+    }
+
+    context_result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer briefly.",
+            recent_user_turns=("Discuss cropland.",),
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert context_result.registry is tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
+    assert context_result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+
+    invalid_vector_result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer briefly.",
+            recent_user_turns=("Discuss cropland.",),
+            vector_selected_tool_ids=("unknown_tool",),
+            vector_available=True,
+            max_selected_tools=4,
+        )
+    )
+
+    assert invalid_vector_result.registry is tool_registry_module._ALWAYS_ONLY_TOOL_REGISTRY
+    assert invalid_vector_result.receipt["vector_available"] is True
+    assert invalid_vector_result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+
+
+def test_agentic_tool_selection_always_only_receipts_are_isolated() -> None:
+    first_result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+    first_result.receipt["selected_tools"][0]["tool_id"] = "mutated"
+    first_result.receipt["selected_tools"].append(
+        {"tool_id": "mutated", "source": "test"}
+    )
+
+    second_result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert second_result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+
+
 def test_agentic_tool_selection_always_only_supports_custom_registry() -> None:
     registry = ToolRegistry(tool_registry_module.agentic_tool_catalog_registry().tools)
 
@@ -1064,6 +1515,298 @@ def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() 
         {"tool_id": "local_compute", "source": "always"},
         {"tool_id": "visit", "source": "keyword"},
     ]
+
+
+def test_agentic_tool_selection_explicit_web_deny_blocks_keyword_visit_with_policy_receipt() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit https://example.com/docs and summarize the page.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["fallback_reason"] == "policy_disabled"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+    assert result.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": ["visit"],
+    }
+    result.receipt["tool_policy_receipt"]["explicit_denies"].append("mutated")
+    result.receipt["tool_policy_receipt"]["resolved_disabled_tools"].append("mutated")
+    result.receipt["tool_policy_receipt"]["requested_tools"].append("mutated")
+    repeated = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit https://example.com/docs and summarize the page.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+    assert repeated.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": ["visit"],
+    }
+    assert "https://example.com" not in json.dumps(result.receipt)
+
+
+def test_agentic_policy_append_rejects_invalid_duplicate_and_denied_tools() -> None:
+    selected_names: list[str] = []
+    selected_sources: set[str] = set()
+    selected_tools: list[dict[str, str]] = []
+    denied_tool_names: list[str] = []
+
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        "",
+        "vector",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        " \t ",
+        "vector",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        "missing_tool",
+        "vector",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        "local_compute",
+        "always",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        "local_compute",
+        "keyword",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+    assert not tool_registry_module._append_policy_selected_tool(
+        selected_names,
+        selected_sources,
+        selected_tools,
+        " visit ",
+        "keyword",
+        4,
+        frozenset({"visit"}),
+        denied_tool_names,
+    )
+
+    assert selected_names == ["local_compute"]
+    assert selected_tools == [{"tool_id": "local_compute", "source": "always"}]
+    assert denied_tool_names == ["visit"]
+
+
+def test_agentic_tool_policy_receipt_is_absent_without_explicit_policy() -> None:
+    assert (
+        tool_registry_module._agentic_tool_policy_receipt(
+            ToolSelectionInput(current_user_turn="Search local evidence."),
+            None,
+            None,
+        )
+        is None
+    )
+
+
+def test_agentic_tool_selection_explicit_web_deny_max_always_only_records_policy() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit https://example.com/docs and summarize the page.",
+            vector_selected_tool_ids=("visit",),
+            vector_available=True,
+            max_selected_tools=1,
+            allow_web=False,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
+    assert result.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": [],
+    }
+
+
+def test_agentic_tool_selection_explicit_web_deny_blocks_vector_visit_with_policy_receipt() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Summarize the cited page.",
+            vector_selected_tool_ids=("visit",),
+            vector_available=True,
+            max_selected_tools=4,
+            allow_web=False,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["fallback_reason"] == "policy_disabled"
+    assert result.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": ["visit"],
+    }
+
+
+def test_agentic_tool_selection_explicit_web_allow_whitespace_turn_records_policy() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=" \t\n  ",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+    assert result.receipt["tool_policy_receipt"]["explicit_allows"] == ["web"]
+
+
+def test_agentic_tool_selection_explicit_web_allow_no_keyword_current_falls_back() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+    assert result.receipt["tool_policy_receipt"]["allow_web"] is True
+
+
+def test_agentic_tool_selection_explicit_web_allow_context_without_keywords_falls_back() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            recent_user_turns=("Prior note without tool hints.",),
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+    assert result.receipt["tool_policy_receipt"]["allow_web"] is True
+
+
+def test_agentic_tool_selection_explicit_web_allow_recent_context_keyword_selects_tool() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Use two results this time.",
+            recent_user_turns=("Search the local text evidence.",),
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "keyword"
+    assert result.receipt["fallback_reason"] == "vector_unavailable"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "keyword_context"},
+    ]
+    assert result.receipt["tool_policy_receipt"]["allow_web"] is True
+
+
+def test_agentic_tool_selection_explicit_web_allow_vector_selection_returns_vector() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Summarize the cited evidence.",
+            vector_selected_tool_ids=("text_search",),
+            vector_available=True,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "vector"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+    assert result.receipt["tool_policy_receipt"]["explicit_allows"] == ["web"]
+
+
+def test_agentic_tool_selection_explicit_web_allow_records_policy_without_disabling_visit() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Visit fixture://docs/provider-contract and summarize the page.",
+            vector_available=False,
+            max_selected_tools=4,
+            allow_web=True,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "visit")
+    assert result.receipt["selection_mode"] == "keyword"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "visit", "source": "keyword"},
+    ]
+    assert result.receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": True,
+        "explicit_allows": ["web"],
+        "explicit_denies": [],
+        "resolved_disabled_tools": [],
+        "requested_tools": [],
+    }
 
 
 def test_agentic_tool_selection_whitespace_turn_skips_casefold() -> None:

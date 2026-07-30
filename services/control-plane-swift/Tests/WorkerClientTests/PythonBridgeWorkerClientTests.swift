@@ -65,6 +65,7 @@ struct PythonBridgeWorkerClientTests {
             #expect(await client.canDispatchRequests())
             #expect(try await client.runtimeStats().stats.residentBytes == 12_288)
             #expect(try await client.cacheStats().stats.l1Bytes == 4_096)
+            #expect(try await client.listLoadedModels().modelHandles == ["melix-dev-vlm::python-live"])
 
             var request = Melix_Worker_V1_GenerateRequest()
             request.execution.id.requestID = "req-python-live"
@@ -243,6 +244,23 @@ struct PythonBridgeWorkerClientTests {
         let unloaded = try await client.unloadModel(request: request)
 
         #expect(unloaded.ok)
+    }
+
+    @Test("list loaded models returns the Python bridge runtime inventory")
+    func listLoadedModelsReturnsPythonBridgeRuntimeInventory() async throws {
+        var response = Melix_Worker_V1_ListLoadedModelsResponse()
+        response.modelHandles = ["melix-dev-vlm::bridge"]
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .listLoadedModels,
+            line: bridgeMessageLine(message: try response.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let loadedModels = try await client.listLoadedModels()
+
+        #expect(loadedModels.modelHandles == ["melix-dev-vlm::bridge"])
     }
 
     @Test("generate decodes streamed execute events from the bridge")
@@ -1416,7 +1434,8 @@ struct PythonBridgeWorkerClientTests {
 
     @Test("bootstrap worker preparation carries OCR profile metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesOCRProfileMetadataIntoWorkerModelSpecs() throws {
-        let summary = ModelCatalog.devOCRModel()
+        var summary = ModelCatalog.devOCRModel()
+        summary.settings.ext["melix.generation_config.top_k"] = "40"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
@@ -1426,6 +1445,7 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["ocr_auto_prompt"] == "Extract the text from the image exactly as written.")
         #expect(spec.ext["ocr_stop_sequences"] == "<ocr:end>")
         #expect(spec.ext["ocr_sampling_profile_id"] == "ocr-deterministic")
+        #expect(spec.ext["melix.generation_config.top_k"] == "40")
     }
 
     @Test("bootstrap worker preparation builds generic OCR specs and carries generation-config metadata")
@@ -1443,6 +1463,7 @@ struct PythonBridgeWorkerClientTests {
         summary.settings.ext["melix.generation_config.source"] = "/tmp/registry-root/mlx-community/Vision-OCR/8bit/generation_config.json"
         summary.settings.ext["melix.generation_config.temperature"] = "0.15"
         summary.settings.ext["melix.generation_config.top_p"] = "0.92"
+        summary.settings.ext["melix.generation_config.top_k"] = "40"
         summary.settings.ext["melix.generation_config.max_tokens"] = "384"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
@@ -1452,6 +1473,7 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.modelPath == "/tmp/registry-root/mlx-community/Vision-OCR/8bit")
         #expect(spec.ext["melix.generation_config.temperature"] == "0.15")
         #expect(spec.ext["melix.generation_config.top_p"] == "0.92")
+        #expect(spec.ext["melix.generation_config.top_k"] == "40")
         #expect(spec.ext["melix.generation_config.max_tokens"] == "384")
     }
 
@@ -2137,6 +2159,11 @@ private actor LivePythonWorkerFixture {
         runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse,
         cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse,
         generateEvents: [Melix_Worker_V1_ExecuteEvent],
+        loadedModelsResponse: Melix_Worker_V1_ListLoadedModelsResponse = {
+            var response = Melix_Worker_V1_ListLoadedModelsResponse()
+            response.modelHandles = ["melix-dev-vlm::python-live"]
+            return response
+        }(),
         exportResultsStreamEvents: [Melix_Worker_V1_ExportResultsEvent] = []
     ) async throws -> LivePythonWorkerFixture {
         let socketPath = "/tmp/melix-python-\(UUID().uuidString.prefix(8)).sock"
@@ -2152,7 +2179,8 @@ private actor LivePythonWorkerFixture {
             services: [
                 PythonTestRuntimeService(
                     handshakeResponse: handshakeResponse,
-                    runtimeStatsResponse: runtimeStatsResponse
+                    runtimeStatsResponse: runtimeStatsResponse,
+                    loadedModelsResponse: loadedModelsResponse
                 ),
                 PythonTestInferenceService(generateEvents: generateEvents),
                 PythonTestCacheService(cacheStatsResponse: cacheStatsResponse),
@@ -2185,13 +2213,16 @@ private actor LivePythonWorkerFixture {
 private final class PythonTestRuntimeService: Melix_Worker_V1_RuntimeService.SimpleServiceProtocol, @unchecked Sendable {
     private let handshakeResponse: Melix_Worker_V1_HandshakeResponse
     private let runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
+    private let loadedModelsResponse: Melix_Worker_V1_ListLoadedModelsResponse
 
     init(
         handshakeResponse: Melix_Worker_V1_HandshakeResponse,
-        runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
+        runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse,
+        loadedModelsResponse: Melix_Worker_V1_ListLoadedModelsResponse
     ) {
         self.handshakeResponse = handshakeResponse
         self.runtimeStatsResponse = runtimeStatsResponse
+        self.loadedModelsResponse = loadedModelsResponse
     }
 
     func handshake(
@@ -2233,7 +2264,7 @@ private final class PythonTestRuntimeService: Melix_Worker_V1_RuntimeService.Sim
         request: Melix_Worker_V1_ListLoadedModelsRequest,
         context: ServerContext
     ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
-        Melix_Worker_V1_ListLoadedModelsResponse()
+        loadedModelsResponse
     }
 
     func drain(

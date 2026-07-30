@@ -795,6 +795,45 @@ when reading legacy artifacts. Consumers must treat those defaults as compatibil
 unless the producing runner version is known to emit the probe field; they are not proof that the
 phase completed in zero milliseconds or that a boolean probe was explicitly observed as false.
 
+### Effective Policy Evidence Fields
+
+Text-generation benchmark request rows, benchmark matrix request rows, and
+persisted evaluation sample rows must preserve the effective text policy receipt
+when the runner can observe `melix.text_effective_policy_receipt.v1`.
+
+The row-level JSONL and CSV evidence fields are:
+
+- `effective_policy_schema`
+- `effective_config_hash`
+- `sampling_temperature`
+- `sampling_temperature_source`
+- `sampling_top_p`
+- `sampling_top_p_source`
+- `sampling_max_tokens`
+- `sampling_max_tokens_source`
+- `sampling_policy_lookup_status`
+- `sampling_policy_canonical_model`
+- `sampling_policy_matched_alias`
+- `sampling_policy_source_url`
+- `sampling_request_override_applied`
+- `recommended_sampling_required`
+- `sampling_seed`
+- `sampling_seed_source`
+- `chat_template_source`
+- `chat_template_effective_kwargs_hash`
+- `chat_template_request_override_applied`
+- `chat_template_forced_override_applied`
+- `policy_reasoning_mode`
+- `policy_reasoning_source`
+
+The fields are request-local policy receipts, not performance metrics. They
+identify the effective sampling, chat-template, and reasoning policy applied to
+that row so benchmark and evaluation exports can be audited without joining
+against runtime logs or hidden registry state. Missing policy evidence must
+serialize as empty strings, `0`, or `false` according to the field type; those
+defaults are compatibility sentinels and are not proof that Melix intentionally
+applied an empty policy.
+
 ### Summary Metrics
 
 The summary metric set is:
@@ -897,6 +936,7 @@ Each request-level phase row must include:
 - `observation_bytes`
 - `fatal_rate`
 - `turn_count`
+- the effective policy evidence fields
 - `compare_target_kind`
 - `base_model_id`
 - `adapter_manifest_path`
@@ -1207,6 +1247,7 @@ Each completed matrix request row must persist:
 - `observation_bytes`
 - `fatal_rate`
 - `turn_count`
+- the effective policy evidence fields
 - `created_at_unix_ms`
 
 The agentic tool-turn fields are derived from the shared agentic tool runtime
@@ -1374,6 +1415,9 @@ The current Melix runtime enforces these shipped control semantics:
 - compare jobs must reuse the same seeded row order and the same few-shot plan across the base and
   target runs.
 - `seed` is also threaded into worker `SamplingConfig.seed` for runtimes that honor sampling seeds.
+- persisted sample rows must include the effective policy evidence fields when
+  the runner can observe them, and must use the shared missing-evidence
+  sentinels when the receipt is unavailable.
 - `scoring_mode` selects a real scorer implementation, not only a stored label:
   - `multiple_choice_accuracy`
   - `exact_match`

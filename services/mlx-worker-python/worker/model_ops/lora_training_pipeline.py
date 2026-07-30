@@ -893,6 +893,7 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
     to_float = float
     is_instance = isinstance
     list_type = list
+    percentile_value = _percentile_value
     score_total = 0.0
     candidate_group_margins: list[float] = []
     candidate_group_margins_append = candidate_group_margins.append
@@ -941,10 +942,11 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
     if not scores:
         return {}
     scores.sort()
+    scores_len = len(scores)
     summary: dict[str, float | int] = {
-        "reward_mean": score_total / len(scores),
-        "reward_p50": _percentile_value(scores, 0.5),
-        "reward_p95": _percentile_value(scores, 0.95),
+        "reward_mean": score_total / scores_len,
+        "reward_p50": percentile_value(scores, 0.5),
+        "reward_p95": percentile_value(scores, 0.95),
     }
     if candidate_group_margins:
         candidate_group_margins.sort()
@@ -954,11 +956,11 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
                 "candidate_group_count": candidate_group_count,
                 "candidate_group_reward_margin_mean": candidate_group_margin_total
                 / candidate_group_count,
-                "candidate_group_reward_margin_p50": _percentile_value(
+                "candidate_group_reward_margin_p50": percentile_value(
                     candidate_group_margins,
                     0.5,
                 ),
-                "candidate_group_reward_margin_p95": _percentile_value(
+                "candidate_group_reward_margin_p95": percentile_value(
                     candidate_group_margins,
                     0.95,
                 ),

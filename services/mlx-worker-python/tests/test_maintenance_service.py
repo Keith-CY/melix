@@ -2351,6 +2351,9 @@ def test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack(
     nested_root = source_root / "nested"
     nested_root.mkdir()
     (nested_root / "config.json").write_text("{}", encoding="utf-8")
+    shard_root = nested_root / "shard"
+    shard_root.mkdir()
+    (shard_root / "part-0001.safetensors").write_text("weights", encoding="utf-8")
 
     def fail_os_walk(*args, **kwargs):
         raise AssertionError("published file collection should avoid os.walk")  # pragma: no cover
@@ -2359,6 +2362,7 @@ def test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack(
 
     assert UploadReceiptPipeline._collect_published_file_list(source_root) == [
         "nested/config.json",
+        "nested/shard/part-0001.safetensors",
         "weights.bin",
     ]
 
@@ -6982,6 +6986,15 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     MaintenanceCore._benchmark_prompt_token_count.cache_clear()
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
     assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
+    shaped_single_token_prompt = core._shape_benchmark_prompt(
+        "one two three four",
+        context_length=1,
+    )
+    assert shaped_single_token_prompt == "one"
+    assert getattr(shaped_single_token_prompt, "tokens") == ("one",)
+    assert getattr(shaped_single_token_prompt, "token_count") == 1
+    assert core._shape_benchmark_prompt("   ", context_length=1) == "benchmark"
+    assert core._shape_benchmark_prompt("solo", context_length=1) == "solo"
     assert core._shape_benchmark_prompt("one two three", context_length=8) == (
         "one two three one two three one two"
     )
@@ -7010,6 +7023,15 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
         def split(self, *args: object, **kwargs: object) -> list[str]:
             self.split_calls += 1
             return super().split(*args, **kwargs)
+
+    single_context_counted_prompt = SplitCountingPrompt("zero one two three")
+    shaped_counted_single_context = core._shape_benchmark_prompt(
+        single_context_counted_prompt,
+        context_length=1,
+    )
+    assert shaped_counted_single_context == "zero"
+    assert getattr(shaped_counted_single_context, "token_count") == 1
+    assert single_context_counted_prompt.split_calls == 0
 
     normalized_prompt = SplitCountingPrompt("one two three")
     assert core._benchmark_prompt_token_count(normalized_prompt) == 3

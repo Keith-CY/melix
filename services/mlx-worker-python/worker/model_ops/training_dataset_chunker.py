@@ -404,14 +404,17 @@ def _chunk_sample(
     # the same key scan and metadata reference assignments unnecessarily.
     output_base = {k: v for k, v in sample.items() if k != "messages"}
     copy_dict = _COPY_DICT
+    copy_messages = _copy_messages
+    append_chunk = chunks.append
+    chunk_id_prefix = f"{sample_id}#chunk-" if sample_id else ""
     for idx, chunk in enumerate(chunked_messages):
         # Copy only the message dict containers so each chunk has an independent
         # message list without re-copying immutable string payloads.
         out = copy_dict(output_base)
-        out["messages"] = _copy_messages(chunk)
-        if sample_id:
-            out["id"] = f"{sample_id}#chunk-{idx}"
-        chunks.append(out)
+        out["messages"] = copy_messages(chunk)
+        if chunk_id_prefix:
+            out["id"] = f"{chunk_id_prefix}{idx}"
+        append_chunk(out)
     return chunks
 
 

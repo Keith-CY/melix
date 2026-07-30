@@ -48,6 +48,11 @@ class FakeRuntimeStub:
             )
         )
 
+    def ListLoadedModels(self, request):
+        return runtime_pb2.ListLoadedModelsResponse(
+            model_handles=["melix-dev-vlm::bridge"],
+        )
+
 
 class FakeCacheStub:
     def GetCacheStats(self, request):
@@ -238,6 +243,26 @@ def test_bridge_helper_handles_health_load_and_generate(monkeypatch, capsys) -> 
     assert runtime_stats_payload.stats.worker_state == "idle"
     assert runtime_stats_payload.stats.active_multimodal_requests == 2
     assert runtime_stats_payload.stats.last_probe_kind == "transcription"
+
+    list_loaded_models_request = runtime_pb2.ListLoadedModelsRequest()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "list-loaded-models",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(list_loaded_models_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    loaded_models_line = json.loads(capsys.readouterr().out.strip())
+    loaded_models_payload = runtime_pb2.ListLoadedModelsResponse.FromString(
+        base64.b64decode(loaded_models_line["message_b64"])
+    )
+    assert list(loaded_models_payload.model_handles) == ["melix-dev-vlm::bridge"]
 
     cache_stats_request = cache_pb2.GetCacheStatsRequest()
     monkeypatch.setattr(

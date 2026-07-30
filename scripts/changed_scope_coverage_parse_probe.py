@@ -43,13 +43,18 @@ def _build_synthetic_diff(file_count: int = 240, hunks_per_file: int = 8, additi
 def run_probe(repo_root: Path) -> dict[str, float]:
     module = _load_changed_scope_module(repo_root)
     diff_text = _build_synthetic_diff()
+    diff_payload = (
+        diff_text.encode()
+        if getattr(module, "_DIFF_PARSER_ACCEPTS_BYTES", False)
+        else diff_text
+    )
     expected_changed = 240 * 8 * 4
     samples: list[float] = []
     observed_changed = 0
     observed_files = 0
     for _ in range(12):
         start = time.perf_counter()
-        parsed = module._parse_changed_lines(diff_text)
+        parsed = module._parse_changed_lines(diff_payload)
         samples.append((time.perf_counter() - start) * 1000.0)
         observed_files = len(parsed)
         observed_changed = sum(len(lines) for lines in parsed.values())

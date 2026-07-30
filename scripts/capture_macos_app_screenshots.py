@@ -13,6 +13,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.dev_up import compatible_mlx_metal_versions_for_swift_mlx
 
 
 def run_command(
@@ -75,6 +79,16 @@ def build_required_artifacts(repo_root: Path) -> None:
             "swift",
             "build",
             "--package-path",
+            "services/control-plane-swift",
+            "--product",
+            "melix-control-plane",
+            "--disable-automatic-resolution",
+        ],
+        [
+            "xcrun",
+            "swift",
+            "build",
+            "--package-path",
             "services/mlx-text-worker-swift",
             "--product",
             "melix-text-worker-swift",
@@ -95,7 +109,45 @@ def build_required_artifacts(repo_root: Path) -> None:
         run_command(command, cwd=repo_root, env=environment)
 
 
-def package_app(repo_root: Path, app_path: Path) -> dict[str, Any]:
+def prepare_swift_mlx_metallib(repo_root: Path, output_dir: Path) -> Path:
+    compatible_versions = compatible_mlx_metal_versions_for_swift_mlx(repo_root)
+    if not compatible_versions:
+        raise RuntimeError(
+            "Unable to determine a compatible mlx-metal version for the Swift text worker."
+        )
+
+    version = compatible_versions[0]
+    target_root = output_dir / ".packaging" / f"swift-mlx-metal-{version}"
+    metallib_path = target_root / "mlx" / "lib" / "mlx.metallib"
+    run_command(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--target",
+            str(target_root),
+            "--python",
+            str(package_python_executable(repo_root)),
+            "--no-deps",
+            "--reinstall",
+            f"mlx-metal=={version}",
+        ],
+        cwd=repo_root,
+        env=build_environment(repo_root),
+    )
+    if not metallib_path.is_file():
+        raise RuntimeError(
+            f"Matching Swift MLX metallib was not installed at the expected path: {metallib_path}"
+        )
+    return metallib_path
+
+
+def package_app(
+    repo_root: Path,
+    app_path: Path,
+    *,
+    swift_mlx_metallib_path: Path,
+) -> dict[str, Any]:
     completed = run_command(
         [
             str(package_python_executable(repo_root)),
@@ -104,6 +156,8 @@ def package_app(repo_root: Path, app_path: Path) -> dict[str, Any]:
             str(repo_root),
             "--output-path",
             str(app_path),
+            "--swift-mlx-metallib-path",
+            str(swift_mlx_metallib_path),
             "--json",
         ],
         cwd=repo_root,
@@ -187,7 +241,12 @@ def run_capture(
     app_path = output_dir / "Melix.app"
     if not skip_build:
         build_required_artifacts(repo_root)
-    package_manifest = package_app(repo_root, app_path)
+    swift_mlx_metallib_path = prepare_swift_mlx_metallib(repo_root, output_dir)
+    package_manifest = package_app(
+        repo_root,
+        app_path,
+        swift_mlx_metallib_path=swift_mlx_metallib_path,
+    )
     packaged_app_path = Path(str(package_manifest.get("app_path", app_path))).expanduser().resolve()
     screenshot_manifest = capture_screenshots(
         repo_root=repo_root,

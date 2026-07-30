@@ -41,7 +41,12 @@ def test_build_macos_app_bundle_layout_uses_standard_app_structure(tmp_path: Pat
     assert layout.resources_path == layout.contents_path / "Resources"
     assert layout.launcher_path == layout.macos_path / "Melix"
     assert layout.launcher_script_path == layout.resources_path / "Melix.sh"
+    assert layout.bundled_app_binary_path == layout.resources_path / "melix-menubar"
+    assert layout.bundled_cli_binary_path == layout.resources_path / "melix"
+    assert layout.bundled_control_plane_binary_path == layout.resources_path / "melix-control-plane"
     assert layout.bundled_swift_worker_binary_path == layout.resources_path / "melix-text-worker-swift"
+    assert layout.bundled_swift_mlx_metallib_path == layout.resources_path / "swift-mlx/mlx.metallib"
+    assert layout.swift_mlx_metallib_link_path == layout.resources_path / "mlx.metallib"
     assert layout.bundled_icon_path == layout.resources_path / "MelixAppIcon.icns"
 
 
@@ -106,6 +111,7 @@ def test_render_portable_environment_script_uses_home_relative_paths() -> None:
     assert 'export MELIX_HTTP_HOST="${MELIX_HTTP_HOST:-0.0.0.0}"' in script
     assert 'export MELIX_HTTP_CONNECT_HOST="${MELIX_HTTP_CONNECT_HOST:-127.0.0.1}"' in script
     assert 'export MELIX_HTTP_PORT="${MELIX_HTTP_PORT:-12436}"' in script
+    assert 'export MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY="environment"' in script
     assert 'export MELIX_BACKEND_MODE="auto"' in script
     assert 'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"' in script
     assert 'export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$MELIX_RUNTIME_DIR/python-bytecode-cache}"' in script
@@ -117,6 +123,7 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
         bundle_repo_root=Path("repo"),
         bundled_app_binary_name="melix-menubar",
         bundled_cli_binary_name="melix",
+        bundled_control_plane_binary_name="melix-control-plane",
         bundled_swift_worker_binary_name="melix-text-worker-swift",
         bundled_python_executable_relative_path="python-runtime/bin/python3",
         bundled_site_packages_relative_path="python-site-packages",
@@ -133,6 +140,21 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
     assert '--backend-mode "$MELIX_BACKEND_MODE"' in script
     assert "export MELIX_SWIFT_WORKER_PID" in script
     assert "export MELIX_PYTHON_WORKER_PID" in script
+    assert '"$RESOURCES_DIR/melix-control-plane"' in script
+    assert "export MELIX_CONTROL_PLANE_PID" in script
+    assert 'http://$MELIX_HTTP_CONNECT_HOST:$MELIX_HTTP_PORT/health' in script
+    assert "socket.create_connection" in script
+    assert "Melix HTTP port %s is already in use" in script
+    assert script.index("socket.create_connection") < script.index('"$RESOURCES_DIR/melix-control-plane"')
+    assert 'export MELIX_ACTIVE_RUNTIME_PATH=' in script
+    assert '-m worker.productization.active_runtime' in script
+    assert '--app-process-id "$$"' in script
+    assert '--control-plane-process-id "$MELIX_CONTROL_PLANE_PID"' in script
+    assert 'MELIX_APP_PROCESS_PID=$$' in script
+    assert 'while kill -0 "$MELIX_APP_PROCESS_PID"' in script
+    assert 'MELIX_WATCHDOG_CONTROL_PLANE_PID=""' in script
+    assert script.count('rm -f "$MELIX_ACTIVE_RUNTIME_PATH"') == 2
+    assert script.index('MELIX_APP_PROCESS_PID=$$') < script.index('exec "$RESOURCES_DIR/melix-menubar"')
     assert '"$MELIX_RUNTIME_DIR/python-bytecode-cache"' in script
     assert '"$MELIX_MODEL_OPS_JOBS_ROOT"' in script
     assert '"$MELIX_EVALUATION_JOBS_ROOT"' in script
@@ -277,13 +299,21 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     home_dir.mkdir()
     menubar = tmp_path / "melix-menubar"
     cli = tmp_path / "melix"
-    swift_worker = tmp_path / "melix-text-worker-swift"
-    for executable in (menubar, cli, swift_worker):
+    control_plane = tmp_path / "melix-control-plane"
+    swift_worker = tmp_path / "swift-worker-release/melix-text-worker-swift"
+    for executable in (menubar, cli, control_plane, swift_worker):
+        executable.parent.mkdir(parents=True, exist_ok=True)
         executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
         executable.chmod(0o755)
+    swift_mlx_metallib = tmp_path / "swift-mlx-runtime/mlx.metallib"
+    swift_mlx_metallib.parent.mkdir()
+    swift_mlx_metallib.write_bytes(b"matching-swift-mlx-metallib")
     swiftpm_resource_bundle = tmp_path / "MelixMacOSMenubar_AppMain.bundle"
     swiftpm_resource_bundle.mkdir()
     (swiftpm_resource_bundle / "melix-status-template.png").write_bytes(b"png")
+    swift_worker_resource_bundle = swift_worker.parent / "swift-transformers_Hub.bundle"
+    swift_worker_resource_bundle.mkdir()
+    (swift_worker_resource_bundle / "gpt2_tokenizer_config.json").write_text("{}\n", encoding="utf-8")
 
     python_runtime = tmp_path / "python-runtime"
     (python_runtime / "bin").mkdir(parents=True)
@@ -312,7 +342,10 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
         repo_root=repo_root,
         executable_path=menubar,
         cli_executable_path=cli,
+        control_plane_executable_path=control_plane,
         swift_text_worker_executable_path=swift_worker,
+        swift_mlx_metallib_path=swift_mlx_metallib,
+        swift_mlx_metallib_version="0.31.1",
         python_runtime_root=python_runtime,
         python_site_packages_path=python_site_packages,
         output_path=tmp_path / "Melix.app",
@@ -324,7 +357,15 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     app_path = Path(manifest["app_path"])
     assert app_path.exists() is True
     assert Path(manifest["bundled_cli_binary_path"]).exists() is True
+    assert Path(manifest["bundled_control_plane_binary_path"]).exists() is True
     assert Path(manifest["bundled_swift_worker_binary_path"]).exists() is True
+    bundled_swift_mlx_metallib = Path(manifest["bundled_swift_mlx_metallib_path"])
+    swift_mlx_metallib_link = app_path / "Contents/Resources/mlx.metallib"
+    assert bundled_swift_mlx_metallib.read_bytes() == b"matching-swift-mlx-metallib"
+    assert swift_mlx_metallib_link.is_symlink()
+    assert swift_mlx_metallib_link.readlink() == Path("swift-mlx/mlx.metallib")
+    assert swift_mlx_metallib_link.resolve() == bundled_swift_mlx_metallib.resolve()
+    assert manifest["swift_mlx_metallib_version"] == "0.31.1"
     assert Path(manifest["bundled_python_runtime_path"]).exists() is True
     assert Path(manifest["bundled_site_packages_path"]).exists() is True
     bundled_repo_root = Path(manifest["bundled_repo_root_path"])
@@ -344,8 +385,12 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     assert (
         app_path / "Contents/Resources/MelixMacOSMenubar_AppMain.bundle/melix-status-template.png"
     ).is_file()
+    assert (
+        app_path / "Contents/Resources/swift-transformers_Hub.bundle/gpt2_tokenizer_config.json"
+    ).is_file()
     assert manifest["bundled_swiftpm_resource_bundle_paths"] == [
         str(app_path / "Contents/Resources/MelixMacOSMenubar_AppMain.bundle"),
+        str(app_path / "Contents/Resources/swift-transformers_Hub.bundle"),
     ]
     assert Path(manifest["packaging_target_manifest_path"]).exists() is True
     assert Path(manifest["launcher_path"]).is_file() is True
@@ -355,12 +400,16 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     launcher = Path(manifest["launcher_script_path"]).read_text(encoding="utf-8")
     assert "worker.bootstrap" in launcher
     assert 'export MELIX_CLI="$RESOURCES_DIR/melix"' in launcher
+    assert '"$RESOURCES_DIR/melix-control-plane"' in launcher
     assert "melix-text-worker-swift" in launcher
     assert 'export MELIX_MENU_BAR_STARTUP_SURFACE="console"' in launcher
     assert 'export MELIX_MENU_BAR_PRESENTATION_MODE="dock-and-tray"' in launcher
     assert '"$MELIX_RUNTIME_DIR/python-bytecode-cache"' in launcher
     assert "export MELIX_SWIFT_WORKER_PID" in launcher
     assert "export MELIX_PYTHON_WORKER_PID" in launcher
+    assert "export MELIX_CONTROL_PLANE_PID" in launcher
+    assert 'http://$MELIX_HTTP_CONNECT_HOST:$MELIX_HTTP_PORT/health' in launcher
+    assert '-m worker.productization.active_runtime' in launcher
     assert 'exec "$RESOURCES_DIR/melix-menubar" "$@"' in launcher
     plist_payload = plistlib.loads(Path(manifest["plist_path"]).read_bytes())
     assert plist_payload["CFBundleIdentifier"] == "io.melix.menubar.preview"
@@ -371,6 +420,7 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     assert 'export MELIX_PRODUCT_VERSION="0.1.0"' in env_script
     assert 'export MELIX_HTTP_HOST="${MELIX_HTTP_HOST:-0.0.0.0}"' in env_script
     assert 'export MELIX_HTTP_CONNECT_HOST="${MELIX_HTTP_CONNECT_HOST:-127.0.0.1}"' in env_script
+    assert 'export MELIX_GATEWAY_RUNTIME_BINDING_AUTHORITY="environment"' in env_script
     assert "MELIX_APP_SUPPORT_DIR" not in env_script
     assert 'export MELIX_MODEL_OPS_JOBS_ROOT="${MELIX_MODEL_OPS_JOBS_ROOT:-$MELIX_HOME/jobs/model-ops}"' in env_script
     assert 'export MELIX_EVALUATION_JOBS_ROOT="${MELIX_EVALUATION_JOBS_ROOT:-$MELIX_HOME/jobs/evaluation}"' in env_script
@@ -379,12 +429,15 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     assert target_payload["logical_product_identity"] == "io.melix"
     assert target_payload["http_bind_host"] == "0.0.0.0"
     assert target_payload["http_connect_host"] == "127.0.0.1"
+    assert target_payload["swift_mlx_metallib_path"] == "mlx.metallib"
+    assert target_payload["swift_mlx_metallib_version"] == "0.31.1"
     assert target_payload["health_probe_url"] == "http://127.0.0.1:12436/health"
     assert manifest["service_base_url"] == "http://127.0.0.1:12436/v1"
     timings = manifest["timings"]
     for key in (
         "copy_app_binary_seconds",
         "copy_swift_worker_binary_seconds",
+        "copy_swift_mlx_metallib_seconds",
         "copy_icon_seconds",
         "copy_python_runtime_seconds",
         "copy_python_site_packages_seconds",
@@ -415,8 +468,9 @@ def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
 
     menubar = tmp_path / "melix-menubar"
     cli = tmp_path / "melix"
+    control_plane = tmp_path / "melix-control-plane"
     swift_worker = tmp_path / "melix-text-worker-swift"
-    for executable in (menubar, cli, swift_worker):
+    for executable in (menubar, cli, control_plane, swift_worker):
         executable.write_text("#!/usr/bin/env bash\necho debug-symbols\n", encoding="utf-8")
         executable.chmod(0o755)
 
@@ -458,6 +512,9 @@ def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
         (path / "fixture.txt").write_text("not needed at runtime\n", encoding="utf-8")
     retained_source = native_package / "runtime.py"
     retained_source.write_text("VALUE = 'kept'\n", encoding="utf-8")
+    swift_mlx_metallib = tmp_path / "swift-mlx-runtime/mlx.metallib"
+    swift_mlx_metallib.parent.mkdir()
+    swift_mlx_metallib.write_bytes(b"matching-swift-mlx-metallib")
 
     icon_file = tmp_path / "MelixAppIcon.icns"
     icon_file.write_bytes(b"icns")
@@ -492,7 +549,10 @@ def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
         repo_root=repo_root,
         executable_path=menubar,
         cli_executable_path=cli,
+        control_plane_executable_path=control_plane,
         swift_text_worker_executable_path=swift_worker,
+        swift_mlx_metallib_path=swift_mlx_metallib,
+        swift_mlx_metallib_version="0.31.1",
         python_runtime_root=python_runtime,
         python_site_packages_path=python_site_packages,
         output_path=tmp_path / "Melix.app",
@@ -511,6 +571,7 @@ def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
         assert (bundled_package / pruned_dir).exists() is False
     assert "melix-menubar" in strip_calls
     assert "melix" in strip_calls
+    assert "melix-control-plane" in strip_calls
     assert "melix-text-worker-swift" in strip_calls
     assert "python3" in strip_calls
     assert "libpython3.12.dylib" in strip_calls
@@ -519,7 +580,7 @@ def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
     assert external_native_extension.read_text(encoding="utf-8") == "external-native-debug-symbols\n"
     assert (native_package / "tests").is_dir()
     slimming = manifest["slimming"]
-    assert slimming["swift_binaries_stripped"] == 3
+    assert slimming["swift_binaries_stripped"] == 4
     assert slimming["python_native_binaries_stripped"] == 3
     assert slimming["python_package_directories_pruned"] == 6
     assert slimming["python_runtime_baggage_bytes_saved"] > 0
@@ -621,6 +682,22 @@ def test_bundle_slimming_helpers_cover_runtime_edge_cases(
         runtime_so,
         site_so,
     }
+
+    path_constructor_calls = 0
+    real_path = Path
+
+    def counting_path(value: object = ".", *args: object, **kwargs: object) -> Path:
+        nonlocal path_constructor_calls
+        path_constructor_calls += 1
+        return real_path(value, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(macos_app_bundle_module, "Path", counting_path)
+    assert set(_iter_python_native_binary_candidates(runtime, site_packages)) == {
+        python_versioned,
+        runtime_so,
+        site_so,
+    }
+    assert path_constructor_calls == 3
 
     monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/strip")
 
@@ -1265,8 +1342,12 @@ def test_iter_nested_macho_signing_targets_uses_scandir_without_os_walk_or_path_
     def fail_os_walk(*args: object, **kwargs: object):  # pragma: no cover - regression guard
         raise AssertionError("_iter_nested_macho_signing_targets() should use os.scandir() directly")
 
+    def fail_sorted(iterable, *args: object, **kwargs: object):  # pragma: no cover - regression guard
+        raise AssertionError("_iter_nested_macho_signing_targets() should stream unsorted scandir entries")
+
     monkeypatch.setattr(Path, "rglob", fail_rglob)
     monkeypatch.setattr(macos_app_bundle_module.os, "walk", fail_os_walk)
+    monkeypatch.setattr(macos_app_bundle_module, "sorted", fail_sorted, raising=False)
 
     assert _iter_nested_macho_signing_targets(app_path) == [
         launcher,
@@ -1610,6 +1691,63 @@ def test_copy_swiftpm_resource_bundles_returns_empty_when_source_missing(tmp_pat
     assert _copy_swiftpm_resource_bundles(tmp_path / "missing", [tmp_path / "target"]) == []
 
 
+def test_write_unsigned_macos_app_bundle_requires_control_plane_executable(tmp_path: Path) -> None:
+    menubar = tmp_path / "melix-menubar"
+    cli = tmp_path / "melix"
+    menubar.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    cli.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="Missing Melix control-plane executable"):
+        write_unsigned_macos_app_bundle(
+            repo_root=tmp_path / "repo",
+            executable_path=menubar,
+            cli_executable_path=cli,
+            control_plane_executable_path=tmp_path / "missing-melix-control-plane",
+            swift_text_worker_executable_path=tmp_path / "melix-text-worker-swift",
+            swift_mlx_metallib_path=tmp_path / "mlx.metallib",
+            swift_mlx_metallib_version="0.31.1",
+            python_runtime_root=tmp_path / "python-runtime",
+            python_site_packages_path=tmp_path / "python-site-packages",
+            output_path=tmp_path / "Melix.app",
+        )
+
+
+@pytest.mark.parametrize(
+    ("metallib_exists", "metallib_version", "error_type", "message"),
+    (
+        (False, "0.31.1", FileNotFoundError, "Missing Swift MLX metallib"),
+        (True, "   ", ValueError, "Swift MLX metallib version must not be empty"),
+    ),
+)
+def test_write_unsigned_macos_app_bundle_validates_swift_mlx_metallib(
+    tmp_path: Path,
+    metallib_exists: bool,
+    metallib_version: str,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    executables = [tmp_path / name for name in ("melix-menubar", "melix", "melix-control-plane", "melix-text-worker-swift")]
+    for executable in executables:
+        executable.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    metallib_path = tmp_path / "mlx.metallib"
+    if metallib_exists:
+        metallib_path.write_bytes(b"metal")
+
+    with pytest.raises(error_type, match=message):
+        write_unsigned_macos_app_bundle(
+            repo_root=tmp_path / "repo",
+            executable_path=executables[0],
+            cli_executable_path=executables[1],
+            control_plane_executable_path=executables[2],
+            swift_text_worker_executable_path=executables[3],
+            swift_mlx_metallib_path=metallib_path,
+            swift_mlx_metallib_version=metallib_version,
+            python_runtime_root=tmp_path / "python-runtime",
+            python_site_packages_path=tmp_path / "python-site-packages",
+            output_path=tmp_path / "Melix.app",
+        )
+
+
 def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     (repo_root / "services/mlx-worker-python/worker").mkdir(parents=True)
@@ -1622,8 +1760,9 @@ def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -
     (repo_root / "scripts/wait_for_worker_ready.py").write_text("print('wait')\n", encoding="utf-8")
     menubar = tmp_path / "melix-menubar"
     cli = tmp_path / "melix"
+    control_plane = tmp_path / "melix-control-plane"
     swift_worker = tmp_path / "melix-text-worker-swift"
-    for executable in (menubar, cli, swift_worker):
+    for executable in (menubar, cli, control_plane, swift_worker):
         executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
         executable.chmod(0o755)
 
@@ -1634,13 +1773,19 @@ def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -
     python_executable.chmod(0o755)
     python_site_packages = tmp_path / "python-site-packages"
     python_site_packages.mkdir()
+    swift_mlx_metallib = tmp_path / "swift-mlx-runtime/mlx.metallib"
+    swift_mlx_metallib.parent.mkdir()
+    swift_mlx_metallib.write_bytes(b"matching-swift-mlx-metallib")
 
     try:
         write_unsigned_macos_app_bundle(
             repo_root=repo_root,
             executable_path=menubar,
             cli_executable_path=cli,
+            control_plane_executable_path=control_plane,
             swift_text_worker_executable_path=swift_worker,
+            swift_mlx_metallib_path=swift_mlx_metallib,
+            swift_mlx_metallib_version="0.31.1",
             python_runtime_root=python_runtime,
             python_site_packages_path=python_site_packages,
             output_path=tmp_path / "Melix.app",

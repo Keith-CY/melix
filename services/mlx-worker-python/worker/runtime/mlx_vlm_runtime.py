@@ -44,6 +44,10 @@ from worker.runtime.multimodal_attention_policy import (
     int_metadata as _attention_int_metadata,
 )
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
+from worker.runtime.text_prefill_chunk_policy import (
+    build_text_prefill_chunk_receipt,
+    resolve_configured_text_prefill_chunk_policy,
+)
 from worker.runtime.multimodal_position_receipts import (
     NO_MEDIA_HYBRID_STATE_PATCH_RECEIPT,
     build_hybrid_state_patch_receipt,
@@ -3978,6 +3982,18 @@ class MLXVLMRuntime:
                     loaded_model=loaded_model,
                     prepared_request=prepared_request,
                     seq_len=seq_len,
+                )
+            ),
+            # Receipt-only slice: partial-mask, cache-presence, and
+            # sequence-aligned-extra-input guards are decode-loop facts
+            # unavailable at probe time, so the resolver applies its eligible
+            # defaults here. The follow-up that drives real chunked execution
+            # must pass the observed signals through the resolver.
+            text_prefill_chunk_receipt=build_text_prefill_chunk_receipt(
+                resolve_configured_text_prefill_chunk_policy(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    seq_len=int(position_metadata_receipt["seq_len"]),
                 )
             ),
             position_metadata_receipt=position_metadata_receipt,

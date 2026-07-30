@@ -771,12 +771,17 @@ struct MelixCLIRunnerTests {
     @Test("json metric placeholders sanitize scalar names without changing token shape")
     func jsonMetricPlaceholdersSanitizeScalarNamesWithoutChangingTokenShape() {
         let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode-ms")
+        let jsonEncodePlaceholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode_ms")
         let unicodePlaceholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.測試-ms")
 
         #expect(placeholder.token.hasPrefix("__MELIX_METRIC_melix_cli_json_encode_ms_"))
         #expect(placeholder.token.hasSuffix("__"))
         #expect(placeholder.jsonLiteral == "\"\(placeholder.token)\"")
         #expect(placeholder.jsonLiteralData == Data(placeholder.jsonLiteral.utf8))
+        #expect(jsonEncodePlaceholder.token.hasPrefix("__MELIX_METRIC_melix_cli_json_encode_ms_"))
+        #expect(jsonEncodePlaceholder.token.hasSuffix("__"))
+        #expect(jsonEncodePlaceholder.jsonLiteral == "\"\(jsonEncodePlaceholder.token)\"")
+        #expect(jsonEncodePlaceholder.jsonLiteralData == Data(jsonEncodePlaceholder.jsonLiteral.utf8))
         #expect(unicodePlaceholder.token.hasPrefix("__MELIX_METRIC_melix_cli_測試_ms_"))
     }
 
@@ -1114,8 +1119,10 @@ struct MelixCLIRunnerTests {
         #expect(throws: MelixCLIError.runtime("Pipeline metrics placeholder is too short for the encoded metric.")) {
             try MelixCLIJSONMetricPatch.paddedLiteralData(for: 1, byteCount: 1)
         }
-        #expect(MelixCLIJSONMetricPatch.literal(for: 1.5) == "1.5000000000000000e+00")
-        #expect(MelixCLIJSONMetricPatch.literal(for: -1) == "0.0000000000000000e+00")
+        #expect(Double(MelixCLIJSONMetricPatch.literal(for: 1.5)) == 1.5)
+        #expect(Double(MelixCLIJSONMetricPatch.literal(for: -1)) == 0)
+        #expect(MelixCLIJSONMetricPatch.literal(for: 1.5).count == 22)
+        #expect(MelixCLIJSONMetricPatch.literal(for: -1).count == 22)
     }
 
     @Test("batch run dry-run writes effective config and manifest artifacts")
@@ -5559,7 +5566,7 @@ struct MelixCLIRunnerTests {
                     modelID: "melix-dev-qwen-local",
                     message: "Reply with BASE_OK",
                     systemPrompt: "Be terse.",
-                    serverSessionID: "server-session-1",
+                    serverSessionID: "server-session-blue",
                     json: true
                 )
             )
@@ -5571,6 +5578,7 @@ struct MelixCLIRunnerTests {
             request ==
                 ControlPlaneChatRequest(
                     modelID: "melix-dev-qwen-local",
+                    serverSessionID: "server-session-blue",
                     messages: [
                         .init(role: "system", content: "Be terse."),
                         .init(role: "user", content: "Reply with BASE_OK"),
@@ -5578,7 +5586,7 @@ struct MelixCLIRunnerTests {
                 )
         )
         #expect(payload["model_id"] as? String == "melix-dev-qwen-local")
-        #expect(payload["server_session_id"] as? String == "server-session-1")
+        #expect(payload["server_session_id"] as? String == "server-session-blue")
         #expect(payload["assistant_text"] as? String == "Echo: Reply with BASE_OK")
         #expect(payload["finish_reason"] as? String == "stop")
         #expect(payload["request_id"] as? String == "chat-run-1")
@@ -11402,8 +11410,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "bench-matrix-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms"))
-        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,0.0,0.0,0.0,0.0,0.0,0,0,0,false,,,0.0,0.0,0,0,0,0,false,0.0,0.0,false,0,0,0,1,6.25,48,0.0,2,1712200000000"))
+        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,feature_guardrail_requested_num_draft_tokens,feature_guardrail_effective_num_draft_tokens,feature_guardrail_resource_fanout_estimate,feature_guardrail_requested_cache_budget_bytes,feature_guardrail_effective_cache_budget_bytes,feature_guardrail_reason,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,0.0,0.0,0.0,0.0,0.0,0,0,0,false,,,0.0,0.0,0,0,0,0,false,0.0,0.0,false,0,0,0,0,0,0.0,0,0,,1,6.25,48,0.0,2,1712200000000"))
     }
 
     @Test("bench matrix export-requests-csv returns the written path in plain text")

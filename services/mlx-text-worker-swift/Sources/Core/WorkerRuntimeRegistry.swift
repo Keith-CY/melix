@@ -9,10 +9,60 @@ struct LoadedModelRecord: @unchecked Sendable {
     let residency: Melix_Worker_V1_ResidencyInfo
 }
 
+private struct WorkerModelResidencyKey: Hashable, Sendable {
+    let modelID: String
+    let modelPath: String
+    let modelKind: String
+    let revision: String
+    let tokenizerHash: String
+    let quantProfileID: String
+    let parserMode: String
+    let reasoningMode: String
+    let maxContext: UInt32
+    let adapterSetHash: String
+    let capabilityClass: Int
+    let runtimeMode: Int
+    let routeClass: Int
+
+    init(_ spec: Melix_Worker_V1_ModelSpec) {
+        self.modelID = spec.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.modelPath = spec.modelPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.modelKind = spec.modelKind.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.revision = spec.revision.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.tokenizerHash = spec.tokenizerHash.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.quantProfileID = spec.quantProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.parserMode = spec.parserMode.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.reasoningMode = spec.reasoningMode.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.maxContext = spec.maxContext
+        self.adapterSetHash = cacheAdapterSetHash(from: spec)
+        self.capabilityClass = spec.capabilityClass.rawValue
+        self.runtimeMode = spec.runtimeMode.rawValue
+        self.routeClass = spec.routeClass.rawValue
+    }
+}
+
+private struct WorkerModelLoadAttempt: Sendable {
+    let id: UInt64
+    let task: Task<LoadedModelRecord, Error>
+}
+
+private struct WorkerModelUnloadAttempt: Sendable {
+    let id: UInt64
+    let task: Task<Void, Never>
+}
+
+enum WorkerModelUnloadResult: Equatable {
+    case unloaded
+    case notFound
+    case activeRequests
+    case sharedResidency
+}
+
 struct StoredPrefillContext: @unchecked Sendable {
     let decodeHandle: String
     let modelHandle: String
     let requestID: String
+    let execution: Melix_Worker_V1_ExecutionMetadata
     let promptTokens: Int
     let messages: [Melix_Worker_V1_ChatMessage]
     let resumeHint: String
@@ -100,13 +150,13 @@ actor WorkerRuntimeRegistry {
     private typealias BoundarySnapshotRecord = (
         snapshot: Melix_Worker_V1_SnapshotRef,
         model: Melix_Worker_V1_ModelSpec,
+        execution: Melix_Worker_V1_ExecutionMetadata?,
         messages: [Melix_Worker_V1_ChatMessage],
         resumeHint: String,
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         promptTokens: Int,
         blockTableID: String,
-        blockTable: Melix_Worker_V1_BlockTable,
-        decodeHandle: String
+        blockTable: Melix_Worker_V1_BlockTable
     )
 
     private let configuration: WorkerConfiguration
@@ -115,11 +165,20 @@ actor WorkerRuntimeRegistry {
     private let cacheStore: HotCacheStore
 
     private var loadedModels: [String: LoadedModelRecord]
+    private var loadedModelHandlesByResidencyKey: [WorkerModelResidencyKey: String]
+    private var residencyKeysByLoadedModelHandle: [String: WorkerModelResidencyKey]
+    private var modelLoadsInFlight: [WorkerModelResidencyKey: WorkerModelLoadAttempt]
+    private var modelUnloadsInFlight: [WorkerModelResidencyKey: WorkerModelUnloadAttempt]
+    // LoadModel does not carry a caller lease, and short-lived control planes cannot reliably
+    // release one on exit. Once more than one caller observes a residency, keep that protection
+    // sticky and require the protocol's explicit force bit for destructive unload.
+    private var sharedModelHandles: Set<String>
     private var activeRequests: UInt64
     private var activePrefills: UInt64
     private var activeDecodes: UInt64
     private var draining: Bool
     private var nextModelHandle: UInt64
+    private var nextModelLifecycleAttempt: UInt64
     private var nextDecodeHandle: UInt64
     private var prefillContexts: [String: StoredPrefillContext]
 
@@ -142,11 +201,17 @@ actor WorkerRuntimeRegistry {
             initialCacheBlocks: configuration.initialCacheBlocks
         )
         self.loadedModels = [:]
+        self.loadedModelHandlesByResidencyKey = [:]
+        self.residencyKeysByLoadedModelHandle = [:]
+        self.modelLoadsInFlight = [:]
+        self.modelUnloadsInFlight = [:]
+        self.sharedModelHandles = []
         self.activeRequests = 0
         self.activePrefills = 0
         self.activeDecodes = 0
         self.draining = false
         self.nextModelHandle = 1
+        self.nextModelLifecycleAttempt = 1
         self.nextDecodeHandle = 1
         self.prefillContexts = [:]
     }
@@ -156,7 +221,7 @@ actor WorkerRuntimeRegistry {
 
         var cache = Melix_Worker_V1_CacheCapabilities()
         cache.supportsPrefixCache = true
-        cache.supportsPagedCache = true
+        cache.supportsPagedCache = false
         cache.supportsDiskCache = false
         cache.kvQuantProfiles = ActiveKVQuantizationProfiles.supportedProfiles
         cache.supportsBoundarySnapshots = false
@@ -215,7 +280,76 @@ actor WorkerRuntimeRegistry {
             )
         }
 
-        let loaded = try await runtime.loadModel(spec: resolved)
+        let residencyKey = WorkerModelResidencyKey(resolved)
+        if let unloadAttempt = modelUnloadsInFlight[residencyKey] {
+            await unloadAttempt.task.value
+            clearModelUnloadAttempt(residencyKey, attemptID: unloadAttempt.id)
+            return try await loadModel(
+                requested,
+                memoryBudgetBytes: memoryBudgetBytes,
+                pinOnLoad: pinOnLoad,
+                diskStreamingMode: diskStreamingMode
+            )
+        }
+        if let handle = loadedModelHandlesByResidencyKey[residencyKey],
+           let existing = loadedModels[handle] {
+            sharedModelHandles.insert(handle)
+            return try reuseLoadedModel(
+                existing,
+                memoryBudgetBytes: memoryBudgetBytes,
+                pinOnLoad: pinOnLoad || resolved.settings.pinOnLoad
+            )
+        }
+        if let loadAttempt = modelLoadsInFlight[residencyKey] {
+            let loaded = try await loadAttempt.task.value
+            guard let current = loadedModels[loaded.handle] else {
+                return try await loadModel(
+                    requested,
+                    memoryBudgetBytes: memoryBudgetBytes,
+                    pinOnLoad: pinOnLoad,
+                    diskStreamingMode: diskStreamingMode
+                )
+            }
+            sharedModelHandles.insert(current.handle)
+            return try reuseLoadedModel(
+                current,
+                memoryBudgetBytes: memoryBudgetBytes,
+                pinOnLoad: pinOnLoad || resolved.settings.pinOnLoad
+            )
+        }
+
+        let attemptID = nextModelLifecycleAttempt
+        nextModelLifecycleAttempt += 1
+        let loadTask = Task {
+            try await self.performModelLoad(
+                resolved,
+                residencyKey: residencyKey,
+                attemptID: attemptID,
+                memoryBudgetBytes: memoryBudgetBytes,
+                pinOnLoad: pinOnLoad,
+                requestedDiskStreamingMode: requestedDiskStreamingMode
+            )
+        }
+        modelLoadsInFlight[residencyKey] = WorkerModelLoadAttempt(id: attemptID, task: loadTask)
+        return try await loadTask.value
+    }
+
+    private func performModelLoad(
+        _ resolved: Melix_Worker_V1_ModelSpec,
+        residencyKey: WorkerModelResidencyKey,
+        attemptID: UInt64,
+        memoryBudgetBytes: UInt64,
+        pinOnLoad: Bool,
+        requestedDiskStreamingMode: Melix_Worker_V1_DiskStreamingMode
+    ) async throws -> LoadedModelRecord {
+        let loaded: RuntimeLoadResult
+        do {
+            loaded = try await runtime.loadModel(spec: resolved)
+        } catch {
+            clearModelLoadAttempt(residencyKey, attemptID: attemptID)
+            throw error
+        }
+
         let existingResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
         let projectedResidentBytes = existingResidentBytes &+ loaded.estimatedResidentBytes
         let requiredProcessBytes = projectedResidentBytes &+ configuration.modelLoadHeadroomBytes
@@ -223,6 +357,7 @@ actor WorkerRuntimeRegistry {
            configuration.processMemoryBudgetBytes > 0,
            requiredProcessBytes > configuration.processMemoryBudgetBytes {
             await runtime.unloadModel(loaded.model)
+            clearModelLoadAttempt(residencyKey, attemptID: attemptID)
             throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
                 budgetBytes: configuration.processMemoryBudgetBytes,
                 headroomBytes: configuration.modelLoadHeadroomBytes,
@@ -236,6 +371,7 @@ actor WorkerRuntimeRegistry {
            memoryBudgetBytes > 0,
            requiredRequestBytes > memoryBudgetBytes {
             await runtime.unloadModel(loaded.model)
+            clearModelLoadAttempt(residencyKey, attemptID: attemptID)
             throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
                 budgetBytes: memoryBudgetBytes,
                 headroomBytes: configuration.modelLoadHeadroomBytes,
@@ -258,17 +394,102 @@ actor WorkerRuntimeRegistry {
             )
         )
         loadedModels[handle] = record
+        loadedModelHandlesByResidencyKey[residencyKey] = handle
+        residencyKeysByLoadedModelHandle[handle] = residencyKey
+        clearModelLoadAttempt(residencyKey, attemptID: attemptID)
         return record
     }
 
     func unloadModel(_ handle: String) async -> Bool {
-        guard let removed = loadedModels.removeValue(forKey: handle) else {
-            return false
+        await unloadModel(handle, force: false) == .unloaded
+    }
+
+    func unloadModel(_ handle: String, force: Bool) async -> WorkerModelUnloadResult {
+        guard let removed = loadedModels[handle] else {
+            return .notFound
         }
+        if activeRequests > 0 {
+            return .activeRequests
+        }
+        if !force, sharedModelHandles.contains(handle) {
+            return .sharedResidency
+        }
+        loadedModels.removeValue(forKey: handle)
+        let residencyKey = residencyKeysByLoadedModelHandle.removeValue(forKey: handle)
+            ?? WorkerModelResidencyKey(removed.spec)
+        loadedModelHandlesByResidencyKey.removeValue(forKey: residencyKey)
+        sharedModelHandles.remove(handle)
         prefillContexts = prefillContexts.filter { $0.value.modelHandle != handle }
-        await cacheStore.purgeScope(resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: removed.spec))
-        await runtime.unloadModel(removed.runtimeModel)
-        return true
+        let attemptID = nextModelLifecycleAttempt
+        nextModelLifecycleAttempt += 1
+        let cacheStore = self.cacheStore
+        let runtime = self.runtime
+        let unloadTask = Task {
+            await cacheStore.purgeScope(
+                resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: removed.spec)
+            )
+            await runtime.unloadModel(removed.runtimeModel)
+        }
+        modelUnloadsInFlight[residencyKey] = WorkerModelUnloadAttempt(id: attemptID, task: unloadTask)
+        await unloadTask.value
+        clearModelUnloadAttempt(residencyKey, attemptID: attemptID)
+        return .unloaded
+    }
+
+    private func reuseLoadedModel(
+        _ loaded: LoadedModelRecord,
+        memoryBudgetBytes: UInt64,
+        pinOnLoad: Bool
+    ) throws -> LoadedModelRecord {
+        let requiredBytes = loaded.estimatedResidentBytes &+ configuration.modelLoadHeadroomBytes
+        if configuration.memoryEnforcementEnabled,
+           memoryBudgetBytes > 0,
+           requiredBytes > memoryBudgetBytes {
+            throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
+                budgetBytes: memoryBudgetBytes,
+                headroomBytes: configuration.modelLoadHeadroomBytes,
+                projectedResidentBytes: loaded.estimatedResidentBytes,
+                requiredBytes: requiredBytes
+            )
+        }
+        guard pinOnLoad, !loaded.residency.pinned else {
+            return loaded
+        }
+        var residency = loaded.residency
+        residency.state = .pinned
+        residency.policy = .memoryResidencyPinned
+        residency.pinRequested = true
+        residency.pinned = true
+        residency.transitionReason = "load_model_reused_and_pinned"
+        let promoted = LoadedModelRecord(
+            handle: loaded.handle,
+            spec: loaded.spec,
+            runtimeModel: loaded.runtimeModel,
+            estimatedResidentBytes: loaded.estimatedResidentBytes,
+            residency: residency
+        )
+        loadedModels[loaded.handle] = promoted
+        return promoted
+    }
+
+    private func clearModelLoadAttempt(
+        _ residencyKey: WorkerModelResidencyKey,
+        attemptID: UInt64
+    ) {
+        guard modelLoadsInFlight[residencyKey]?.id == attemptID else {
+            return
+        }
+        modelLoadsInFlight.removeValue(forKey: residencyKey)
+    }
+
+    private func clearModelUnloadAttempt(
+        _ residencyKey: WorkerModelResidencyKey,
+        attemptID: UInt64
+    ) {
+        guard modelUnloadsInFlight[residencyKey]?.id == attemptID else {
+            return
+        }
+        modelUnloadsInFlight.removeValue(forKey: residencyKey)
     }
 
     func getLoadedModel(_ handle: String) -> LoadedModelRecord? {
@@ -345,12 +566,29 @@ actor WorkerRuntimeRegistry {
         sampling: Melix_Worker_V1_SamplingConfig,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
-        guard let loaded = loadedModels[modelHandle] else {
+        var execution = Melix_Worker_V1_ExecutionMetadata()
+        execution.modelHandle = modelHandle
+        return try await generateEvents(
+            execution: execution,
+            messages: messages,
+            sampling: sampling,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func generateEvents(
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        guard let loaded = loadedModels[execution.modelHandle] else {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
 
         return try await runtime.generateEvents(
             model: loaded.runtimeModel,
+            execution: execution,
             messages: messages,
             sampling: sampling,
             shouldAbort: shouldAbort
@@ -405,7 +643,7 @@ actor WorkerRuntimeRegistry {
         if !effectiveExecution.cacheHints.restoreSnapshotID.isEmpty {
             let restored: BoundarySnapshotRecord
             do {
-                restored = try await restoreBoundarySnapshotRecord(
+                restored = try await loadBoundarySnapshotRecord(
                     snapshotID: effectiveExecution.cacheHints.restoreSnapshotID,
                     shouldAbort: shouldAbort
                 )
@@ -414,6 +652,10 @@ actor WorkerRuntimeRegistry {
                 // the observability blind spot and rethrow the original error.
                 await cacheStore.recordReconstructionFailure()
                 throw error
+            }
+            guard WorkerModelResidencyKey(loaded.spec) == WorkerModelResidencyKey(restored.model) else {
+                await cacheStore.recordReconstructionFailure()
+                throw WorkerRuntimeRegistryError.snapshotScopeMismatch
             }
             let requestMessages = messages.isEmpty ? restored.messages : messages
             let walkedBackPlan = makeWalkedBackCacheRestorePlan(
@@ -438,6 +680,7 @@ actor WorkerRuntimeRegistry {
                 )
                 let runtimePrefill = try await runtime.prefill(
                     model: loaded.runtimeModel,
+                    execution: effectiveExecution,
                     messages: requestMessages,
                     prefillStepSize: prefillStepSize,
                     resumeHint: restoreResumeHint,
@@ -454,6 +697,7 @@ actor WorkerRuntimeRegistry {
                     decodeHandle: decodeHandle,
                     modelHandle: loaded.handle,
                     requestID: requestID,
+                    execution: effectiveExecution,
                     promptTokens: runtimePrefill.promptTokens,
                     messages: requestMessages,
                     resumeHint: restoreResumeHint,
@@ -491,6 +735,7 @@ actor WorkerRuntimeRegistry {
 
         let result = try await runtime.prefill(
             model: loaded.runtimeModel,
+            execution: effectiveExecution,
             messages: messages,
             prefillStepSize: prefillStepSize,
             resumeHint: resumeHint,
@@ -521,6 +766,7 @@ actor WorkerRuntimeRegistry {
                 decodeHandle: decodeHandle,
                 modelHandle: modelHandle,
                 requestID: requestID,
+                execution: effectiveExecution,
                 promptTokens: result.promptTokens,
                 messages: messages,
                 resumeHint: resumeHint,
@@ -886,11 +1132,47 @@ actor WorkerRuntimeRegistry {
     func restoreBoundarySnapshot(
         snapshotID: String
     ) async throws -> Melix_Worker_V1_RestoreBoundarySnapshotResponse {
-        let restored = try await restoreBoundarySnapshotRecord(snapshotID: snapshotID)
+        let restored = try await loadBoundarySnapshotRecord(snapshotID: snapshotID)
+        let loaded = try loadedModelForBoundarySnapshot(restored)
+        var execution = restored.execution ?? Melix_Worker_V1_ExecutionMetadata()
+        execution.modelHandle = loaded.handle
+        if execution.id.requestID.isEmpty {
+            execution.id.requestID = restored.snapshot.requestID
+        }
+
+        let runtimePrefill = try await runtime.prefill(
+            model: loaded.runtimeModel,
+            execution: execution,
+            messages: restored.messages,
+            prefillStepSize: 0,
+            resumeHint: restored.resumeHint,
+            acceleration: restored.acceleration,
+            shouldAbort: { false }
+        )
+
+        let decodeHandle = "\(loaded.handle)::decode::\(nextDecodeHandle)"
+        nextDecodeHandle += 1
+        let restoredPrefix = await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey)
+        prefillContexts[decodeHandle] = StoredPrefillContext(
+            decodeHandle: decodeHandle,
+            modelHandle: loaded.handle,
+            requestID: restored.snapshot.requestID,
+            execution: execution,
+            promptTokens: runtimePrefill.promptTokens,
+            messages: restored.messages,
+            resumeHint: restored.resumeHint,
+            acceleration: runtimePrefill.appliedAcceleration,
+            activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
+            blockTableID: restored.blockTableID,
+            blockTable: restored.blockTable,
+            restoredSnapshotID: restored.snapshot.snapshotID,
+            prefix: restoredPrefix,
+            context: runtimePrefill.context
+        )
 
         var response = Melix_Worker_V1_RestoreBoundarySnapshotResponse()
         response.ok = true
-        response.decodeHandle = restored.decodeHandle
+        response.decodeHandle = decodeHandle
         response.blockTableID = restored.blockTableID
         response.blockTable = normalizedBlockTable(restored.blockTable)
         response.snapshot = restored.snapshot
@@ -908,7 +1190,7 @@ actor WorkerRuntimeRegistry {
         return response
     }
 
-    private func restoreBoundarySnapshotRecord(
+    private func loadBoundarySnapshotRecord(
         snapshotID: String,
         shouldAbort: @escaping @Sendable () -> Bool = { false }
     ) async throws -> BoundarySnapshotRecord {
@@ -918,70 +1200,32 @@ actor WorkerRuntimeRegistry {
         }
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
-        let restoredScopeID = if !restored.blockTable.scopeID.isEmpty {
-            restored.blockTable.scopeID
-        } else if !restored.blockTable.cacheKey.scopeID.isEmpty {
-            restored.blockTable.cacheKey.scopeID
-        } else {
-            resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: restored.model).scopeID
-        }
-
-        if loadedModels.values.contains(where: { $0.spec.modelID == restored.model.modelID }),
-           !loadedModels.values.contains(where: {
-               $0.spec.modelID == restored.model.modelID &&
-                   resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: $0.spec).scopeID == restoredScopeID
-           }) {
-            throw WorkerRuntimeRegistryError.snapshotScopeMismatch
-        }
-
-        guard let loaded = loadedModels.values.first(where: {
-            $0.spec.modelID == restored.model.modelID &&
-                resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: $0.spec).scopeID == restoredScopeID
-        }) else {
-            throw WorkerRuntimeRegistryError.snapshotModelNotLoaded
-        }
-
-        let runtimePrefill = try await runtime.prefill(
-            model: loaded.runtimeModel,
-            messages: restored.messages,
-            prefillStepSize: 0,
-            resumeHint: restored.resumeHint,
-            acceleration: restored.acceleration,
-            shouldAbort: shouldAbort
-        )
-        try throwIfTextRuntimeCancellationRequested(shouldAbort)
-
-        let decodeHandle = "\(loaded.handle)::decode::\(nextDecodeHandle)"
-        nextDecodeHandle += 1
-        let restoredPrefix = await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey)
-        try throwIfTextRuntimeCancellationRequested(shouldAbort)
-        prefillContexts[decodeHandle] = StoredPrefillContext(
-            decodeHandle: decodeHandle,
-            modelHandle: loaded.handle,
-            requestID: restored.snapshot.requestID,
-            promptTokens: restored.promptTokens,
-            messages: restored.messages,
-            resumeHint: restored.resumeHint,
-            acceleration: restored.acceleration,
-            activeKVQuantizationRatio: activeKVQuantizationRatio(from: restored.acceleration),
-            blockTableID: restored.blockTableID,
-            blockTable: restored.blockTable,
-            restoredSnapshotID: restored.snapshot.snapshotID,
-            prefix: restoredPrefix,
-            context: runtimePrefill.context
-        )
-
         return (
             snapshot: restored.snapshot,
             model: restored.model,
+            execution: restored.execution,
             messages: restored.messages,
             resumeHint: restored.resumeHint,
             acceleration: restored.acceleration,
             promptTokens: restored.promptTokens,
             blockTableID: restored.blockTableID,
-            blockTable: restored.blockTable,
-            decodeHandle: decodeHandle
+            blockTable: restored.blockTable
         )
+    }
+
+    private func loadedModelForBoundarySnapshot(
+        _ restored: BoundarySnapshotRecord
+    ) throws -> LoadedModelRecord {
+        let residencyKey = WorkerModelResidencyKey(restored.model)
+        if let loaded = loadedModels.values.first(where: {
+            WorkerModelResidencyKey($0.spec) == residencyKey
+        }) {
+            return loaded
+        }
+        if loadedModels.values.contains(where: { $0.spec.modelID == restored.model.modelID }) {
+            throw WorkerRuntimeRegistryError.snapshotScopeMismatch
+        }
+        throw WorkerRuntimeRegistryError.snapshotModelNotLoaded
     }
 
     private func enforcePrefillGuards(

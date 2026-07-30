@@ -339,6 +339,36 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
     assert mutable_roles == ["dynamic", "numeric_rule"]
 
 
+def test_report_evidence_gate_release_matrix_rows_defers_unmatched_id_strings() -> None:
+    class StringTrackedEvidence:
+        calls = 0
+
+        def __str__(self) -> str:  # pragma: no cover - this slice verifies no calls
+            type(self).calls += 1
+            return "unmatched-evidence"
+
+    rows = report_evidence_gate_module._release_matrix_rows(
+        [
+            {
+                "release_matrix_roles": ["unknown-a", "unknown-b"],
+                "source_evidence_ids": [StringTrackedEvidence()],
+            }
+        ],
+        {"serving": {"description": "Serving evidence"}},
+    )
+
+    assert rows == [
+        {
+            "role": "serving",
+            "required": True,
+            "present": False,
+            "evidence_ids": [],
+            "description": "Serving evidence",
+        }
+    ]
+    assert StringTrackedEvidence.calls == 0
+
+
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
     report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_clear()
     rule: dict[str, object] = {"metric_prefixes": ("adapter.", "runtime.")}
@@ -367,6 +397,7 @@ def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple()
     assert cached_state[1] == ("adapter.", "runtime.")
     assert cached_state[2] == frozenset({"a", "r"})
     assert cached_state[3] is False
+    assert cached_state[4] == {"a": "adapter.", "r": "runtime."}
 
 
 def test_report_evidence_gate_metric_prefix_fast_reject_preserves_empty_prefix() -> None:
@@ -544,6 +575,20 @@ def test_report_evidence_gate_target_field_preserves_stringified_presence() -> N
     )
 
 
+def test_report_evidence_gate_target_field_preserves_string_subclass_strip() -> None:
+    class BlankWhenStripped(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - regression guard
+            return ""
+
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule={"target_fields": ("adapter_id",)},
+        runs=[],
+        targets=[{"adapter_id": BlankWhenStripped("adapter-a")}],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+
 def test_report_evidence_gate_probe_phase_tuple_rules_reuse_normalized_set() -> None:
     report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
     rule = {"probe_phases": ("runtime_prepare", "model_load", "decode")}
@@ -676,6 +721,64 @@ def test_report_matrix_roles_reuses_run_kind_value_set_for_run_kind_only_rules(
     assert calls == 1
 
 
+def test_report_matrix_roles_lazily_loads_targets_and_metrics_for_run_kind_only_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    original_dict_list = report_evidence_gate_module._dict_list
+
+    def count_dict_list(value: object) -> list[dict[str, object]]:
+        calls.append(value)
+        return original_dict_list(value)
+
+    monkeypatch.setattr(report_evidence_gate_module, "_dict_list", count_dict_list)
+
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {
+            "runs": [{"run_kind": "serving_benchmark"}],
+            "targets": [{"adapter_id": "adapter-a"}],
+            "metrics": [{"metric": "adapter.loss"}],
+        },
+        {"serving": {"run_kinds": ("serving_benchmark",)}},
+    )
+
+    assert roles == ["serving"]
+    assert calls == [[{"run_kind": "serving_benchmark"}]]
+
+
+def test_report_matrix_roles_materializes_targets_and_metrics_for_mixed_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    original_dict_list = report_evidence_gate_module._dict_list
+
+    def count_dict_list(value: object) -> list[dict[str, object]]:
+        calls.append(value)
+        return original_dict_list(value)
+
+    monkeypatch.setattr(report_evidence_gate_module, "_dict_list", count_dict_list)
+
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {
+            "runs": [{"run_kind": "serving_benchmark"}],
+            "targets": [{"adapter_id": "adapter-a"}],
+            "metrics": [{"metric": "adapter.loss"}],
+        },
+        {
+            "serving": {"run_kinds": ("serving_benchmark",)},
+            "adapter_metric": {"metric_prefixes": ("adapter.",)},
+            "adapter_target": {"target_fields": ("adapter_id",)},
+        },
+    )
+
+    assert roles == ["serving", "adapter_metric", "adapter_target"]
+    assert calls == [
+        [{"run_kind": "serving_benchmark"}],
+        [{"adapter_id": "adapter-a"}],
+        [{"metric": "adapter.loss"}],
+    ]
+
+
 def test_report_matrix_roles_scans_probe_phases_once_for_phase_rules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -736,6 +839,68 @@ def test_report_evidence_gate_probe_phases_scans_buckets_without_dict_list(
     assert phases == {"runtime_prepare", "model_load", "decode", "42"}
 
 
+def test_report_evidence_gate_probe_phases_preserves_clean_string_fast_path() -> None:
+    phases = report_evidence_gate_module._probe_phases(
+        {
+            "probe_summary": {
+                "baseline": {
+                    "slowest_phases": [
+                        {"phase": "runtime_prepare"},
+                        {"phase": " model_load "},
+                    ]
+                },
+                "candidate": {
+                    "failed_phases": [
+                        {"phase": "decode"},
+                        {"phase": 42},
+                    ]
+                },
+            }
+        }
+    )
+
+    assert phases == {"runtime_prepare", "model_load", "decode", "42"}
+
+
+def test_report_evidence_gate_probe_phases_keeps_blank_and_padded_string_semantics() -> None:
+    phases = report_evidence_gate_module._probe_phases(
+        {
+            "probe_summary": {
+                "baseline": {
+                    "slowest_phases": [
+                        {"phase": "runtime_prepare"},
+                        {"phase": " runtime_prepare "},
+                        {"phase": "   "},
+                    ],
+                    "failed_phases": [{"phase": "decode"}],
+                }
+            }
+        }
+    )
+
+    assert phases == {"runtime_prepare", "decode"}
+
+
+def test_report_evidence_gate_probe_phases_preserves_dict_subclass_rows() -> None:
+    class PhaseRow(dict[str, object]):
+        pass
+
+    phases = report_evidence_gate_module._probe_phases(
+        {
+            "probe_summary": {
+                "baseline": {
+                    "slowest_phases": [
+                        PhaseRow(phase=" runtime_prepare "),
+                        PhaseRow(phase="runtime_prepare"),
+                    ]
+                }
+            }
+        }
+    )
+
+    assert phases == {"runtime_prepare"}
+
+
 def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     run_kinds = ["evaluation"]
     rule = {"run_kinds": run_kinds}
@@ -755,6 +920,23 @@ def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
         metrics=[],
         probe_phases=set(),
     )
+
+
+def test_report_evidence_gate_load_report_payload_reuses_exact_path_instances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / "report.json"
+    report_path.write_text('{"schema_version":"fixture","metrics":[]}', encoding="utf-8")
+
+    def fail_path_constructor(path: object) -> Path:
+        raise AssertionError(  # pragma: no cover - only exercised on regression
+            f"Path constructor should not run for exact Path input: {path!r}"
+        )
+
+    monkeypatch.setattr(report_evidence_gate_module, "Path", fail_path_constructor)
+
+    assert load_report_payload(report_path) == {"schema_version": "fixture", "metrics": []}
 
 
 def test_report_evidence_gate_passes_complete_release_matrix(tmp_path: Path) -> None:
@@ -959,6 +1141,15 @@ def test_report_evidence_gate_covers_invalid_payload_and_edge_summaries(tmp_path
     subclass_rows: list[object] = [DictRow({"phase": "subclass"}), {"phase": "plain"}]
     assert report_evidence_gate_module._dict_list(subclass_rows) is subclass_rows
 
+    class RowList(list[object]):
+        pass
+
+    subclass_list = RowList([{"phase": "plain"}, DictRow({"phase": "subclass"})])
+    assert report_evidence_gate_module._dict_list(subclass_list) is subclass_list
+    assert report_evidence_gate_module._dict_list(RowList([subclass_list[0], "skip"])) == [
+        subclass_list[0]
+    ]
+
     markdown = render_pr_evidence_markdown(
         {
             **gate,
@@ -982,6 +1173,25 @@ def test_load_report_payload_reads_json_bytes(
     monkeypatch.setattr(Path, "read_text", fail_read_text)
 
     assert load_report_payload(report_path) == {"schema_version": "fixture", "value": 3}
+
+
+def test_load_report_payload_uses_module_local_json_loads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / "report.json"
+    report_path.write_bytes(b'{"schema_version":"fixture","value":3}')
+    calls: list[bytes] = []
+    original_loads = report_evidence_gate_module._JSON_LOADS
+
+    def tracked_loads(payload: bytes) -> object:
+        calls.append(payload)
+        return original_loads(payload)
+
+    monkeypatch.setattr(report_evidence_gate_module, "_JSON_LOADS", tracked_loads)
+
+    assert load_report_payload(report_path) == {"schema_version": "fixture", "value": 3}
+    assert calls == [b'{"schema_version":"fixture","value":3}']
 
 
 def test_report_evidence_gate_script_handles_errors_and_failed_gate(

@@ -16,18 +16,25 @@ import textwrap
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
+_CODE_BLOCK_FENCE = "```"
 _PYTHON_CODE_BLOCK_TAG = "python"
 _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 _ASCII_SPLITLINE_BOUNDARIES = frozenset("\n\r\v\f\x1c\x1d\x1e")
 _ASCII_NON_LINE_WHITESPACE = frozenset(" \t\x1f")
 _ORD_ZERO = ord("0")
+_ORD_MINUS = ord("-")
 _ORD_QUOTE = ord('"')
 _ORD_COLON = ord(":")
 _ORD_OBJECT_START = ord("{")
 _ORD_OBJECT_END = ord("}")
 _ASSERT_PRECEDING_BOUNDARIES = frozenset("\n\r;:")
 _ASSERT_LINE_SPACING = frozenset(" \t")
+_OS_OPEN = os.open
+_OS_FSTAT = os.fstat
+_OS_READ = os.read
+_OS_CLOSE = os.close
+_OS_RDONLY = os.O_RDONLY
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +61,7 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     if not raw_response or raw_response.isspace():
         return "", "empty_prediction"
 
-    fence = "```"
+    fence = _CODE_BLOCK_FENCE
     closing = raw_response.rfind(fence)
     if closing >= 0:
         opening = raw_response.rfind(fence, 0, closing)
@@ -63,7 +70,16 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
             candidate = _stripped_slice(raw_response, content_start, closing)
             if candidate:
                 return candidate, "parsed_code_block"
-            if raw_response.count(fence) % 2 == 0:
+            previous_fence = raw_response.rfind(fence, 0, opening)
+            if previous_fence < 0:
+                return candidate, "parsed_code_block"
+            previous_opening = raw_response.rfind(fence, 0, previous_fence)
+            if (
+                previous_opening >= 0
+                and _code_block_content_start(raw_response, previous_opening + 3) <= previous_fence
+            ):
+                return candidate, "parsed_code_block"
+            if raw_response.count(fence, 0, opening) % 2 == 0:
                 return candidate, "parsed_code_block"
             closing = opening
             opening = raw_response.rfind(fence, 0, closing)
@@ -274,6 +290,9 @@ def run_python_code_evaluation(
 def _count_tests(test_code: str) -> int:
     if not _may_contain_assert_statement(test_code):
         return _count_nonblank_test_lines(test_code)
+    plain_assert_count = _count_plain_assert_statement_lines(test_code)
+    if plain_assert_count > 0:
+        return plain_assert_count
     try:
         module = ast.parse(test_code, filename="<tests>", mode="exec")
     except SyntaxError:
@@ -282,26 +301,96 @@ def _count_tests(test_code: str) -> int:
     return assert_count or _count_nonblank_test_lines(test_code)
 
 
-def _may_contain_assert_statement(test_code: str) -> bool:
-    if "assert" not in test_code:
-        return False
-    cursor = 0
+def _count_plain_assert_statement_lines(
+    test_code: str,
+    *,
+    _assert_prefix="assert",
+    _assert_prefix_length=6,
+    _assert_line_prefix="assert ",
+    _newline_assert_prefix="\nassert ",
+    _count=str.count,
+    _endswith=str.endswith,
+    _find=str.find,
+    _isalnum=str.isalnum,
+    _line_spacing=_ASSERT_LINE_SPACING,
+    _startswith=str.startswith,
+) -> int:
+    """Count simple assert-only test payloads without building a Python AST.
+
+    Code-eval fixtures often consist of thousands of one-line top-level assert
+    statements.  If every nonblank line is such a plain assert statement, the
+    AST parse and walk can be skipped while preserving the slower parser path for
+    mixed statements, inline asserts, comments, and multiline assertions.
+    """
+
     text_length = len(test_code)
-    while True:
-        cursor = test_code.find("assert", cursor)
-        if cursor < 0:
-            return False
+    if text_length and _startswith(test_code, _assert_line_prefix):
+        newline_count = _count(test_code, "\n")
+        newline_assert_count = _count(test_code, _newline_assert_prefix)
+        if newline_assert_count == newline_count:
+            return newline_count + 1
+        if _endswith(test_code, "\n") and newline_assert_count == newline_count - 1:
+            return newline_count
+
+        count = 1
+        newline_index = _find(test_code, "\n")
+        while newline_index >= 0:
+            if newline_index == text_length - 1:
+                return count
+            if not _startswith(test_code, _newline_assert_prefix, newline_index):
+                break
+            count += 1
+            newline_index = _find(test_code, "\n", newline_index + 1)
+        else:
+            return count
+
+    count = 0
+    start = 0
+    while start < text_length:
+        newline_index = _find(test_code, "\n", start)
+        end = text_length if newline_index < 0 else newline_index
+        cursor = start
+        while cursor < end and test_code[cursor] in _line_spacing:
+            cursor += 1
+        if cursor < end:
+            after_index = cursor + _assert_prefix_length
+            if after_index > end or not _startswith(
+                test_code, _assert_prefix, cursor, end
+            ):
+                return 0
+            after = test_code[after_index] if after_index < end else "\n"
+            if after == "_" or (after not in _line_spacing and _isalnum(after)):
+                return 0
+            count += 1
+        if newline_index < 0:
+            break
+        start = newline_index + 1
+    return count
+
+
+def _may_contain_assert_statement(
+    test_code: str,
+    *,
+    _find=str.find,
+    _isalnum=str.isalnum,
+    _line_spacing=_ASSERT_LINE_SPACING,
+    _preceding_boundaries=_ASSERT_PRECEDING_BOUNDARIES,
+) -> bool:
+    cursor = _find(test_code, "assert")
+    if cursor < 0:
+        return False
+    text_length = len(test_code)
+    while cursor >= 0:
         after_index = cursor + 6
         after = test_code[after_index] if after_index < text_length else "\n"
-        if after == "_" or after.isalnum():
-            cursor = after_index
-            continue
-        before_index = cursor - 1
-        while before_index >= 0 and test_code[before_index] in _ASSERT_LINE_SPACING:
-            before_index -= 1
-        if before_index < 0 or test_code[before_index] in _ASSERT_PRECEDING_BOUNDARIES:
-            return True
-        cursor = after_index
+        if after != "_" and not _isalnum(after):
+            before_index = cursor - 1
+            while before_index >= 0 and test_code[before_index] in _line_spacing:
+                before_index -= 1
+            if before_index < 0 or test_code[before_index] in _preceding_boundaries:
+                return True
+        cursor = _find(test_code, "assert", after_index)
+    return False
 
 
 def _count_assert_nodes(
@@ -311,6 +400,7 @@ def _count_assert_nodes(
     _assert_type=ast.Assert,
     _isinstance=isinstance,
     _type=type,
+    _len=len,
 ) -> int:
     module_body = getattr(module, "body", ())
     if module_body:
@@ -318,7 +408,7 @@ def _count_assert_nodes(
             if _type(node) is not _assert_type:
                 break
         else:
-            return len(module_body)
+            return _len(module_body)
 
     count = 0
     stack: list[ast.AST] = []
@@ -376,9 +466,8 @@ def _load_payload_file(
     _loads=_JSON_LOADS,
     _decode_error=_JSON_DECODE_ERROR,
 ) -> dict[str, object] | None:
-    try:
-        payload_bytes = payload_path.read_bytes()
-    except OSError:
+    payload_bytes = _read_payload_file_bytes(payload_path)
+    if payload_bytes is None:
         return None
 
     fast_payload = _extract_code_eval_payload_fields(payload_bytes)
@@ -394,6 +483,33 @@ def _load_payload_file(
     return payload
 
 
+def _read_payload_file_bytes(payload_path: Path) -> bytes | None:
+    os_open = _OS_OPEN
+    os_fstat = _OS_FSTAT
+    os_read = _OS_READ
+    os_close = _OS_CLOSE
+    try:
+        fd = os_open(payload_path, _OS_RDONLY)
+    except TypeError:
+        try:
+            return payload_path.read_bytes()
+        except OSError:
+            return None
+    except OSError:
+        return None
+
+    try:
+        size = os_fstat(fd).st_size
+        return os_read(fd, size) if size > 0 else b""
+    except OSError:
+        return None
+    finally:
+        try:
+            os_close(fd)
+        except OSError:
+            pass
+
+
 _CODE_EVAL_PAYLOAD_STRING_KEYS = (
     "compile_status",
     "runtime_status",
@@ -406,6 +522,23 @@ _CODE_EVAL_PAYLOAD_KEY_TOKENS = {
     key: json.dumps(key, separators=(",", ":")).encode("utf-8")
     for key in (*_CODE_EVAL_PAYLOAD_STRING_KEYS, *_CODE_EVAL_PAYLOAD_INT_KEYS)
 }
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_COMPILE_STATUS = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "compile_status"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "runtime_status"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_TIMEOUT_STATUS = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "timeout_status"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_TEST_STATUS = _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "failure_detail"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_PASSED = _CODE_EVAL_PAYLOAD_KEY_TOKENS[
+    "tests_passed"
+]
+_CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_TOTAL = _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"]
 _CODE_EVAL_PAYLOAD_STRING_FIELD_TOKENS = tuple(
     (key, _CODE_EVAL_PAYLOAD_KEY_TOKENS[key]) for key in _CODE_EVAL_PAYLOAD_STRING_KEYS
 )
@@ -413,27 +546,29 @@ _CODE_EVAL_PAYLOAD_INT_FIELD_TOKENS = tuple(
     (key, _CODE_EVAL_PAYLOAD_KEY_TOKENS[key]) for key in _CODE_EVAL_PAYLOAD_INT_KEYS
 )
 _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY = (
-    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"], "string"),
-    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"], "string"),
-    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"], "string"),
-    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"], "int"),
-    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"], "int"),
-    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"], "string"),
+    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL, "string"),
+    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS, "string"),
+    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TEST_STATUS, "string"),
+    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_PASSED, "int"),
+    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_TOTAL, "int"),
+    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TIMEOUT_STATUS, "string"),
 )
 _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_WITH_COMPILE = (
-    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["compile_status"], "string"),
+    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_COMPILE_STATUS, "string"),
     *_CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY,
 )
 _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY = (
-    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["compile_status"], "string"),
-    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"], "string"),
-    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"], "string"),
-    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"], "string"),
-    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"], "int"),
-    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"], "int"),
-    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"], "string"),
+    ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_COMPILE_STATUS, "string"),
+    ("runtime_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS, "string"),
+    ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TIMEOUT_STATUS, "string"),
+    ("test_status", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TEST_STATUS, "string"),
+    ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_PASSED, "int"),
+    ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_TOTAL, "int"),
+    ("failure_detail", _CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL, "string"),
 )
 _CODE_EVAL_PAYLOAD_RUNNER_PREFIX = b'{"compile_status"'
+_CODE_EVAL_SORTED_EMPTY_FAILURE_PREFIX = b'{"failure_detail":""'
+_CODE_EVAL_SORTED_EMPTY_FAILURE_VALUE_START = len(b'{"failure_detail":')
 
 _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
 
@@ -466,8 +601,8 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
 
     payload_startswith = payload_bytes.startswith
     if payload_startswith(_CODE_EVAL_PAYLOAD_RUNNER_PREFIX, bounds[0]):
-        failure_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"])
-        runtime_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"])
+        failure_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL)
+        runtime_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS)
         if 0 <= failure_index < runtime_index:
             field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_WITH_COMPILE
         else:
@@ -507,69 +642,76 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
 
 
 def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
-    payload: dict[str, object] = {}
     field_value_start = _compact_json_field_value_start_for_token
+    reverse_field_value_start = _compact_json_field_value_start_for_token_reverse
     extract_int_and_end = _extract_json_int_field_value_and_end
     payload_startswith = payload_bytes.startswith
 
-    failure_start = field_value_start(
-        payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"],
-    )
-    if failure_start is None or not payload_startswith(b'""', failure_start):
-        return None
-    payload["failure_detail"] = ""
+    if payload_startswith(_CODE_EVAL_SORTED_EMPTY_FAILURE_PREFIX):
+        failure_start = _CODE_EVAL_SORTED_EMPTY_FAILURE_VALUE_START
+    else:
+        failure_start = field_value_start(
+            payload_bytes,
+            _CODE_EVAL_PAYLOAD_KEY_TOKEN_FAILURE_DETAIL,
+        )
+        if failure_start is None or not payload_startswith(b'""', failure_start):
+            return None
 
-    runtime_start = field_value_start(
+    timeout_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"],
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_TIMEOUT_STATUS,
         start=failure_start + 2,
     )
-    if runtime_start is None or not payload_startswith(b'"ok"', runtime_start):
+    if timeout_start is None or not payload_startswith(b'"ok"', timeout_start):
         return None
-    payload["runtime_status"] = "ok"
 
-    test_start = field_value_start(
+    total_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["test_status"],
-        start=runtime_start + 4,
-    )
-    if test_start is None or not payload_startswith(b'"passed"', test_start):
-        return None
-    payload["test_status"] = "passed"
-
-    passed_start = field_value_start(
-        payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"],
-        start=test_start + 8,
-    )
-    passed_result = extract_int_and_end(payload_bytes, passed_start)
-    if passed_result is None:
-        return None
-    tests_passed, passed_end = passed_result
-    payload["tests_passed"] = tests_passed
-
-    total_start = field_value_start(
-        payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"],
-        start=passed_end,
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_TOTAL,
+        start=failure_start + 2,
+        end=timeout_start,
     )
     total_result = extract_int_and_end(payload_bytes, total_start)
     if total_result is None:
         return None
-    tests_total, total_end = total_result
-    payload["tests_total"] = tests_total
+    tests_total, _total_end = total_result
 
-    timeout_start = field_value_start(
+    passed_start = reverse_field_value_start(
         payload_bytes,
-        _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"],
-        start=total_end,
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_PASSED,
+        start=failure_start + 2,
+        end=total_start,
     )
-    if timeout_start is None or not payload_startswith(b'"ok"', timeout_start):
+    passed_result = extract_int_and_end(payload_bytes, passed_start)
+    if passed_result is None:
         return None
-    payload["timeout_status"] = "ok"
+    tests_passed, _passed_end = passed_result
 
-    return payload
+    test_start = reverse_field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_TEST_STATUS,
+        start=failure_start + 2,
+        end=passed_start,
+    )
+    if test_start is None or not payload_startswith(b'"passed"', test_start):
+        return None
+
+    runtime_start = reverse_field_value_start(
+        payload_bytes,
+        _CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS,
+        start=failure_start + 2,
+        end=test_start,
+    )
+    if runtime_start is None or not payload_startswith(b'"ok"', runtime_start):
+        return None
+    return {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": tests_passed,
+        "tests_total": tests_total,
+        "timeout_status": "ok",
+    }
 
 
 def _compact_json_field_value_start_for_token(
@@ -587,7 +729,27 @@ def _compact_json_field_value_start_for_token(
         or payload_bytes[value_start - 1] != _ORD_COLON
         or payload_bytes[value_start] in _JSON_PAYLOAD_WHITESPACE
     ):
-        return _json_field_value_start_for_token(payload_bytes, key_token, start=key_index)
+        return _json_field_value_start_after_key_index(payload_bytes, value_start - 1)
+    return value_start
+
+
+def _compact_json_field_value_start_for_token_reverse(
+    payload_bytes: bytes,
+    key_token: bytes,
+    *,
+    start: int = 0,
+    end: int | None = None,
+) -> int | None:
+    key_index = payload_bytes.rfind(key_token, start, len(payload_bytes) if end is None else end)
+    if key_index < 0:
+        return None
+    value_start = key_index + len(key_token) + 1
+    if (
+        value_start >= len(payload_bytes)
+        or payload_bytes[value_start - 1] != _ORD_COLON
+        or payload_bytes[value_start] in _JSON_PAYLOAD_WHITESPACE
+    ):
+        return _json_field_value_start_after_key_index(payload_bytes, value_start - 1)
     return value_start
 
 
@@ -608,6 +770,13 @@ def _json_field_value_start_for_token(
     if key_index < 0:
         return None
     cursor = key_index + len(key_token)
+    return _json_field_value_start_after_key_index(payload_bytes, cursor)
+
+
+def _json_field_value_start_after_key_index(
+    payload_bytes: bytes,
+    cursor: int,
+) -> int | None:
     payload_length = len(payload_bytes)
     whitespace = _JSON_PAYLOAD_WHITESPACE
     colon = _ORD_COLON
@@ -712,7 +881,7 @@ def _extract_json_int_field_value_and_end(
     cursor = start
     payload_length = len(payload_bytes)
     sign = 1
-    if cursor < payload_length and payload_bytes[cursor] == ord("-"):
+    if cursor < payload_length and payload_bytes[cursor] == _ORD_MINUS:
         sign = -1
         cursor += 1
     if cursor >= payload_length:
@@ -744,8 +913,10 @@ def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
         if read_size == 0:
             return "", size
         if size > read_limit:
-            os.lseek(fd, -read_limit, os.SEEK_END)
-        return os.read(fd, read_size).decode("utf-8", errors="replace").strip(), size
+            payload = os.pread(fd, read_size, size - read_size)
+        else:
+            payload = os.read(fd, read_size)
+        return payload.decode("utf-8", errors="replace").strip(), size
     except OSError:
         return "", 0
     finally:
@@ -791,22 +962,24 @@ def _summarize_stdio(*, stdout_tail: str, stderr_tail: str) -> str:
 def _sandbox_profile(*, temp_root: Path) -> str:
     static_profile = _sandbox_static_profile_fragments(_sandbox_static_profile_key())
     temp_read_filters = _sandbox_temp_root_read_filters(temp_root)
-    return " ".join(
-        (
-            static_profile.prefix,
-            f"(allow file-read* {static_profile.runtime_read_filters} {temp_read_filters})",
-            f"(allow file-write* (subpath {json.dumps(str(temp_root))}))",
-        )
+    quoted_temp_root = json.dumps(str(temp_root))
+    return (
+        f"{static_profile.prefix} "
+        f"(allow file-read* {static_profile.runtime_read_filters} {temp_read_filters}) "
+        f"(allow file-write* (subpath {quoted_temp_root}))"
     )
 
 
 def _sandbox_temp_root_read_filters(temp_root: Path) -> str:
     temp_root_text = str(temp_root)
-    try:
-        resolved = temp_root.resolve()
-    except OSError:
-        resolved = temp_root
-    resolved_text = str(resolved)
+    if isinstance(temp_root, Path):
+        resolved_text = os.path.realpath(temp_root_text)
+    else:
+        try:
+            resolved = temp_root.resolve()
+        except OSError:
+            resolved = temp_root
+        resolved_text = str(resolved)
     temp_filter = f"(subpath {json.dumps(temp_root_text)})"
     if resolved_text == temp_root_text:
         return temp_filter

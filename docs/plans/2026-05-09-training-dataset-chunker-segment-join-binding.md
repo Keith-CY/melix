@@ -23,3 +23,12 @@ Bind the whitespace join callable once per `_iter_word_segments` invocation befo
 - Run changed-scope coverage for the touched source, test, and probe files.
 - Run the registered local probe on Linux and compare against an `origin/main` base worktree.
 - Let GitHub Actions run the PR-scoped performance workflow before merge.
+
+## 2026-07-20 output chunk loop local bindings
+
+This follow-up Python-only slice keeps the same registered probe and narrows to
+`_chunk_sample(...)` after chunk message groups have already been selected. Bind
+`_copy_messages`, `chunks.append`, and the optional chunk-id prefix once before
+the output materialization loop so every emitted chunk preserves the same shallow
+source fields and independent message containers while avoiding repeated global
+lookups and repeated prefix formatting setup.

@@ -254,9 +254,15 @@ def test_read_product_version_reuses_cached_pyproject_path(
     pyproject_path.write_text('[project]\nname = "melix"\nversion = "1.2.3"\n', encoding="utf-8")
     startup_signals_module._PRODUCT_VERSION_CACHE.clear()
     startup_signals_module._PRODUCT_VERSION_PATH_CACHE.clear()
+    startup_signals_module._PRODUCT_VERSION_CACHE_KEY_CACHE.clear()
 
     assert read_product_version(tmp_path) == "1.2.3"
-    assert startup_signals_module._PRODUCT_VERSION_PATH_CACHE[str(tmp_path)] == pyproject_path
+    root_key = str(tmp_path)
+    assert startup_signals_module._PRODUCT_VERSION_PATH_CACHE[root_key] == pyproject_path
+    assert startup_signals_module._PRODUCT_VERSION_CACHE_KEY_CACHE[root_key] == str(pyproject_path)
+    startup_signals_module._PRODUCT_VERSION_CACHE_KEY_CACHE.clear()
+    assert read_product_version(tmp_path) == "1.2.3"
+    assert startup_signals_module._PRODUCT_VERSION_CACHE_KEY_CACHE[root_key] == str(pyproject_path)
 
     def fail_path_join(self: Path, key: str) -> Path:  # pragma: no cover - sentinel
         raise AssertionError("stat-valid product version reads should reuse cached pyproject path")
@@ -346,6 +352,36 @@ def test_compare_versions_handles_suffixes_without_padding_lists() -> None:
     assert normalized_version_parts("release") == [0]
     assert compare_versions("2.10rc1", "2.9.99") == 1
     assert compare_versions("2.10", "2.10.0.0") == 0
+
+
+def test_normalized_version_parts_materializes_without_generator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_iter_parts(value: str):  # pragma: no cover - sentinel
+        raise AssertionError(f"normalized_version_parts allocated generator for {value}")
+
+    monkeypatch.setattr(startup_signals_module, "_iter_normalized_version_parts", fail_iter_parts)
+
+    assert normalized_version_parts(" v3.2rc1.0-beta+build ") == [3, 2, 0]
+    assert normalized_version_parts("release") == [0]
+    assert normalized_version_parts("\u2003v4.5.6\u2003") == [4, 5, 6]
+
+
+def test_normalized_version_parts_checks_v_prefix_without_startswith() -> None:
+    class StartswithForbiddenVersion(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - sentinel
+            raise AssertionError("normalized_version_parts should scan strip bounds without allocation")
+
+        def startswith(
+            self,
+            prefix: str | tuple[str, ...],
+            start: Any = None,
+            end: Any = None,
+        ) -> bool:  # pragma: no cover - sentinel
+            raise AssertionError("normalized_version_parts should check the v prefix directly")
+
+    assert normalized_version_parts(StartswithForbiddenVersion(" v3.2rc1.0-beta+build ")) == [3, 2, 0]
+    assert normalized_version_parts(StartswithForbiddenVersion(" release ")) == [0]
 
 
 def test_compare_versions_reuses_cached_result_for_repeated_pairs(
@@ -463,6 +499,9 @@ def test_compare_versions_clean_differing_values_skip_stripping() -> None:
 def test_compare_versions_whitespace_differing_values_still_normalize() -> None:
     assert compare_versions(" v3.2.1+build ", "v3.2.0+build") == 1
     assert compare_versions("2.9.99", " 2.10.0 ") == -1
+    assert compare_versions(" v2.10rc1.0-beta+build ", "2.9.99") == 1
+    assert compare_versions("\u2003v2.10\u2003", "2.9.99") == 1
+
 
 
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
@@ -526,6 +565,33 @@ def test_classify_startup_failure_reports_host_port_conflict(tmp_path: Path) -> 
     assert report.classification == "host_port_conflict"
     assert "11434" in report.summary
     assert "Address already in use" in report.log_excerpt
+
+
+def test_classify_startup_failure_plain_log_path_skips_expanduser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    control_plane_stderr.write_text("fatal error: boot failed\n", encoding="utf-8")
+
+    def fail_expanduser(self: Path) -> Path:
+        raise AssertionError(  # pragma: no cover
+            f"plain startup log path should not expanduser: {self}"
+        )
+
+    monkeypatch.setattr(Path, "expanduser", fail_expanduser)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+        },
+        error_text="handshake failed",
+    )
+
+    assert report.classification == "control_plane_crash"
+    assert report.log_excerpt == "fatal error: boot failed"
 
 
 def test_startup_failure_report_uses_slots_without_changing_dict_payload(tmp_path: Path) -> None:
@@ -605,6 +671,26 @@ def test_classify_startup_failure_skips_log_reads_when_error_text_reports_port_c
     assert report.classification == "host_port_conflict"
     assert report.log_excerpt == "bind() failed: Address already in use"
     assert read_paths == []
+
+
+def test_classify_startup_failure_skips_log_excerpt_helpers_without_log_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_log_excerpt(*paths: object) -> str:  # pragma: no cover - sentinel
+        raise AssertionError(f"empty startup manifests should not scan log paths: {paths}")
+
+    monkeypatch.setattr(startup_signals_module, "_log_excerpt", fail_log_excerpt)
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+        },
+        error_text="handshake timed out",
+    )
+
+    assert report.classification == "startup_hang"
+    assert report.log_excerpt == "handshake timed out"
 
 
 def test_classify_startup_failure_skips_logs_when_error_text_reports_control_plane_crash(
@@ -856,6 +942,11 @@ def test_read_last_nonempty_line_trims_byte_whitespace_without_python_byte_loop(
     log_path.write_bytes(b"booting\nlast line\x85\xa0\n\t  \r\n")
 
     assert _read_last_nonempty_line(log_path, chunk_size=4) == "last line"
+
+
+def test_right_stripped_chunk_length_short_circuits_all_whitespace_chunks() -> None:
+    assert startup_signals_module._right_stripped_chunk_length(b"\n\t  \r\n") == 0
+    assert startup_signals_module._right_stripped_chunk_length(b"ready\n\t") == len(b"ready")
 
 
 def test_log_excerpt_uses_read_fallback_without_exists_preflight(

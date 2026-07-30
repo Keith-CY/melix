@@ -425,6 +425,13 @@ def test_statistical_helper_edges_cover_percentiles_and_interval_sign_fallbacks(
 
 
 def test_build_category_breakdown_aggregates_supported_categories_only() -> None:
+    class CategoryLabel(str):
+        def __str__(self) -> str:
+            return "override-should-not-relabel-str-subclasses"
+
+    subclass_label = CategoryLabel(" subclass ")
+    assert str(subclass_label) == "override-should-not-relabel-str-subclasses"
+
     breakdown = build_category_breakdown(
         rows=(
             {"category_label": "math", "base_correct": False, "target_correct": True},
@@ -432,6 +439,7 @@ def test_build_category_breakdown_aggregates_supported_categories_only() -> None
             {"category_label": "history", "base_correct": True, "target_correct": False},
             {"category_label": "history"},
             {"category_label": 7, "base_correct": False, "target_correct": True},
+            {"category_label": subclass_label, "base_correct": True, "target_correct": True},
             {"category_label": "", "base_correct": True, "target_correct": True},
         )
     )
@@ -442,6 +450,12 @@ def test_build_category_breakdown_aggregates_supported_categories_only() -> None
             "base_accuracy": 0.0,
             "target_accuracy": 1.0,
             "delta_accuracy": 1.0,
+        },
+        "subclass": {
+            "sample_size": 1,
+            "base_accuracy": 1.0,
+            "target_accuracy": 1.0,
+            "delta_accuracy": 0.0,
         },
         "history": {
             "sample_size": 2,

@@ -19,6 +19,47 @@ public enum TextWorkflowKind: String, Sendable, Codable, Equatable {
     case backgroundAnalysis = "background_analysis"
 }
 
+public enum RecommendedSamplingPolicyMode: Sendable, Equatable, Codable {
+    case off
+    case strict
+
+    public var requiresKnownPolicy: Bool {
+        self == .strict
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let boolValue = try? container.decode(Bool.self) {
+            self = boolValue ? .strict : .off
+            return
+        }
+        let rawValue = try container.decode(String.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch rawValue {
+        case "", "off", "false", "none", "disabled":
+            self = .off
+        case "strict", "required", "require", "true":
+            self = .strict
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "melix_recommended_sampling must be false, off, true, required, or strict."
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .off:
+            try container.encode("off")
+        case .strict:
+            try container.encode("strict")
+        }
+    }
+}
+
 public struct HarmonyMessageMetadata: Sendable, Equatable {
     public let channel: String?
     public let recipient: String?
@@ -123,6 +164,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let topP: Double?
     public let maxTokens: UInt32?
     public let maxCompletionTokens: UInt32?
+    public let maxOutputTokens: UInt32?
     public let topK: UInt32?
     public let minP: Double?
     public let repeatPenalty: Double?
@@ -151,6 +193,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let mediaPartsSummary: NormalizedMediaPartsSummary
     public let orderedMessagePartsRequired: Bool
     public let legacyImageFallbackInjected: Bool
+    public let recommendedSampling: RecommendedSamplingPolicyMode?
     public let openAICompatibilityReceipts: [String: String]
 
     public init(
@@ -163,6 +206,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         topP: Double?,
         maxTokens: UInt32?,
         maxCompletionTokens: UInt32? = nil,
+        maxOutputTokens: UInt32? = nil,
         topK: UInt32? = nil,
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
@@ -191,6 +235,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         mediaPartsSummary: NormalizedMediaPartsSummary = .init(),
         orderedMessagePartsRequired: Bool = false,
         legacyImageFallbackInjected: Bool = false,
+        recommendedSampling: RecommendedSamplingPolicyMode? = nil,
         openAICompatibilityReceipts: [String: String] = [:]
     ) {
         self.endpoint = endpoint
@@ -202,6 +247,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.topP = topP
         self.maxTokens = maxTokens
         self.maxCompletionTokens = maxCompletionTokens
+        self.maxOutputTokens = maxOutputTokens
         self.topK = topK
         self.minP = minP
         self.repeatPenalty = repeatPenalty
@@ -232,6 +278,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         self.mediaPartsSummary = mediaPartsSummary
         self.orderedMessagePartsRequired = orderedMessagePartsRequired
         self.legacyImageFallbackInjected = legacyImageFallbackInjected
+        self.recommendedSampling = recommendedSampling
         self.openAICompatibilityReceipts = openAICompatibilityReceipts.filter { key, value in
             !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -275,6 +322,7 @@ public extension NormalizedTextRequest {
             topP: topP,
             maxTokens: maxTokens,
             maxCompletionTokens: maxCompletionTokens,
+            maxOutputTokens: maxOutputTokens,
             topK: topK,
             minP: minP,
             repeatPenalty: repeatPenalty,
@@ -303,6 +351,7 @@ public extension NormalizedTextRequest {
             mediaPartsSummary: mediaPartsSummary,
             orderedMessagePartsRequired: orderedMessagePartsRequired,
             legacyImageFallbackInjected: legacyImageFallbackInjected,
+            recommendedSampling: recommendedSampling,
             openAICompatibilityReceipts: openAICompatibilityReceipts
         )
     }
@@ -334,10 +383,19 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let stream: Bool
     public let includeUsage: Bool
     public let temperature: Double
+    public let temperatureSource: String
     public let topP: Double
+    public let topPSource: String
     public let maxTokens: UInt32
+    public let maxTokensSource: String
+    public let samplingPolicyLookupStatus: String
+    public let samplingPolicyCanonicalModel: String
+    public let samplingPolicyMatchedAlias: String
+    public let samplingPolicySourceURL: String
+    public let samplingRequestOverrideApplied: Bool
     public let requestedMaxTokens: UInt32?
     public let requestedMaxCompletionTokens: UInt32?
+    public let requestedMaxOutputTokens: UInt32?
     public let outputCapSource: String
     public let topK: UInt32?
     public let minP: Double?
@@ -393,6 +451,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let mediaPartsSummary: NormalizedMediaPartsSummary
     public let orderedMessagePartsRequired: Bool
     public let legacyImageFallbackInjected: Bool
+    public let recommendedSamplingRequired: Bool
     public let openAICompatibilityReceipts: [String: String]
 }
 
@@ -726,6 +785,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let legacyImage: String?
     public let legacyImageURL: String?
     public let legacyImageBase64: String?
+    public let recommendedSampling: RecommendedSamplingPolicyMode?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -769,6 +829,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case legacyImage = "image"
         case legacyImageURL = "image_url"
         case legacyImageBase64 = "image_base64"
+        case recommendedSampling = "melix_recommended_sampling"
     }
 
     public init(
@@ -811,7 +872,8 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil,
         legacyImage: String? = nil,
         legacyImageURL: String? = nil,
-        legacyImageBase64: String? = nil
+        legacyImageBase64: String? = nil,
+        recommendedSampling: RecommendedSamplingPolicyMode? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -853,6 +915,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.legacyImage = legacyImage
         self.legacyImageURL = legacyImageURL
         self.legacyImageBase64 = legacyImageBase64
+        self.recommendedSampling = recommendedSampling
     }
 
     public init(from decoder: Decoder) throws {
@@ -903,6 +966,10 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.legacyImage = try container.decodeIfPresent(String.self, forKey: .legacyImage)
         self.legacyImageURL = try container.decodeIfPresent(String.self, forKey: .legacyImageURL)
         self.legacyImageBase64 = try container.decodeIfPresent(String.self, forKey: .legacyImageBase64)
+        self.recommendedSampling = try container.decodeIfPresent(
+            RecommendedSamplingPolicyMode.self,
+            forKey: .recommendedSampling
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -947,6 +1014,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         try container.encodeIfPresent(legacyImage, forKey: .legacyImage)
         try container.encodeIfPresent(legacyImageURL, forKey: .legacyImageURL)
         try container.encodeIfPresent(legacyImageBase64, forKey: .legacyImageBase64)
+        try container.encodeIfPresent(recommendedSampling, forKey: .recommendedSampling)
     }
 
     public var structuredOutputConfiguration: StructuredOutputConfiguration? {
@@ -1458,6 +1526,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
     public let topP: Double?
     public let maxTokens: UInt32?
     public let maxCompletionTokens: UInt32?
+    public let maxOutputTokens: UInt32?
     public let topK: UInt32?
     public let minP: Double?
     public let repeatPenalty: Double?
@@ -1490,6 +1559,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         case topP = "top_p"
         case maxTokens = "max_tokens"
         case maxCompletionTokens = "max_completion_tokens"
+        case maxOutputTokens = "max_output_tokens"
         case topK = "top_k"
         case minP = "min_p"
         case repeatPenalty = "repeat_penalty"
@@ -1524,6 +1594,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         topP: Double? = nil,
         maxTokens: UInt32? = nil,
         maxCompletionTokens: UInt32? = nil,
+        maxOutputTokens: UInt32? = nil,
         topK: UInt32? = nil,
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
@@ -1555,6 +1626,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.topP = topP
         self.maxTokens = maxTokens
         self.maxCompletionTokens = maxCompletionTokens
+        self.maxOutputTokens = maxOutputTokens
         self.topK = topK
         self.minP = minP
         self.repeatPenalty = repeatPenalty
@@ -1589,6 +1661,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         self.topP = try container.decodeIfPresent(Double.self, forKey: .topP)
         self.maxTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxTokens)
         self.maxCompletionTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxCompletionTokens)
+        self.maxOutputTokens = try container.decodeIfPresent(UInt32.self, forKey: .maxOutputTokens)
         self.topK = try container.decodeIfPresent(UInt32.self, forKey: .topK)
         self.minP = try container.decodeIfPresent(Double.self, forKey: .minP)
         self.repeatPenalty = try container.decodeIfPresent(Double.self, forKey: .repeatPenalty)
@@ -1623,6 +1696,7 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
         try container.encodeIfPresent(topP, forKey: .topP)
         try container.encodeIfPresent(maxTokens, forKey: .maxTokens)
         try container.encodeIfPresent(maxCompletionTokens, forKey: .maxCompletionTokens)
+        try container.encodeIfPresent(maxOutputTokens, forKey: .maxOutputTokens)
         try container.encodeIfPresent(topK, forKey: .topK)
         try container.encodeIfPresent(minP, forKey: .minP)
         try container.encodeIfPresent(repeatPenalty, forKey: .repeatPenalty)
@@ -2208,6 +2282,7 @@ public struct ChatRequestTranslator: Sendable {
             toolChoice: request.normalizedToolChoice,
             chatTemplate: request.chatTemplateSelection,
             legacyImageFallbackInjected: fallbackInjection.injected,
+            recommendedSampling: request.recommendedSampling,
             openAICompatibilityReceipts: request.compatibilityReceipts
         )
     }
@@ -2274,6 +2349,7 @@ public struct ChatRequestTranslator: Sendable {
             orderedMessagePartsRequired: request.messages.contains(where: { $0.contentParts != nil })
                 || !fallbackInjection.messages.flatMap(\.parts).filter { $0.media.mediaType != .text }.isEmpty,
             legacyImageFallbackInjected: fallbackInjection.injected,
+            recommendedSampling: request.recommendedSampling,
             openAICompatibilityReceipts: request.compatibilityReceipts
         )
     }
@@ -2352,6 +2428,7 @@ public struct ChatRequestTranslator: Sendable {
             topP: request.topP,
             maxTokens: request.maxTokens,
             maxCompletionTokens: request.maxCompletionTokens,
+            maxOutputTokens: request.maxOutputTokens,
             topK: request.topK,
             minP: request.minP,
             repeatPenalty: request.repeatPenalty,
@@ -2443,6 +2520,7 @@ public struct ChatRequestTranslator: Sendable {
         topP: Double?,
         maxTokens: UInt32?,
         maxCompletionTokens: UInt32? = nil,
+        maxOutputTokens: UInt32? = nil,
         topK: UInt32? = nil,
         minP: Double? = nil,
         repeatPenalty: Double? = nil,
@@ -2471,6 +2549,7 @@ public struct ChatRequestTranslator: Sendable {
         mediaPartsSummary: NormalizedMediaPartsSummary? = nil,
         orderedMessagePartsRequired: Bool? = nil,
         legacyImageFallbackInjected: Bool = false,
+        recommendedSampling: RecommendedSamplingPolicyMode? = nil,
         openAICompatibilityReceipts: [String: String] = [:]
     ) -> NormalizedTextRequest {
         let resolvedMediaPartsSummary = mediaPartsSummary
@@ -2487,6 +2566,7 @@ public struct ChatRequestTranslator: Sendable {
             topP: topP,
             maxTokens: maxTokens,
             maxCompletionTokens: maxCompletionTokens,
+            maxOutputTokens: maxOutputTokens,
             topK: topK,
             minP: minP,
             repeatPenalty: repeatPenalty,
@@ -2515,6 +2595,7 @@ public struct ChatRequestTranslator: Sendable {
             mediaPartsSummary: resolvedMediaPartsSummary,
             orderedMessagePartsRequired: resolvedOrderedMessagePartsRequired,
             legacyImageFallbackInjected: legacyImageFallbackInjected,
+            recommendedSampling: recommendedSampling,
             openAICompatibilityReceipts: openAICompatibilityReceipts
         )
     }
@@ -2624,7 +2705,8 @@ public struct ChatRequestTranslator: Sendable {
         modelOCRPolicy: OCRExecutionPolicy? = nil,
         modelSamplingPolicy: ModelSamplingPolicy? = nil,
         gatewayServingDefaults: GatewayServingDefaultsPolicy? = nil,
-        mcpToolCatalog: MCPToolCatalog = .empty
+        mcpToolCatalog: MCPToolCatalog = .empty,
+        sessionCompactionContext: SessionCompactionRequestContext? = nil
     ) throws -> TranslatedChatRequest {
         let requestID = requestIDGenerator()
         let shapedRequest = requestShaper.shape(
@@ -2768,6 +2850,15 @@ public struct ChatRequestTranslator: Sendable {
             shapedRequest.openAICompatibilityReceipts,
             uniquingKeysWith: { _, new in new }
         )
+        if let sessionCompactionPlan = sessionCompactionContext?.plan(
+            requestID: requestID,
+            messages: shapedRequest.messages
+        ) {
+            generateRequest.execution.ext.merge(
+                sessionCompactionPlan.extFields,
+                uniquingKeysWith: { _, new in new }
+            )
+        }
         if let assistantPrefill = shapedRequest.assistantPrefill {
             generateRequest.execution.ext["melix.assistant_prefill"] = "true"
             generateRequest.execution.ext["melix.assistant_prefill.message_index"] = String(assistantPrefill.messageIndex)
@@ -2839,6 +2930,11 @@ public struct ChatRequestTranslator: Sendable {
         generateRequest.execution.ext.merge(
             compatibilityPolicyReceipt.extFields,
             uniquingKeysWith: { _, new in new }
+        )
+        let effectivePolicyReceipt = TextEffectivePolicyReceipt(shapedRequest: shapedRequest)
+        generateRequest.execution.ext.merge(
+            effectivePolicyReceipt.extFields,
+            uniquingKeysWith: { _, receiptValue in receiptValue }
         )
         let promptContextReceipts = PromptContextBoundaryReceipts(
             requestID: requestID,
@@ -2975,6 +3071,9 @@ public struct ChatRequestTranslator: Sendable {
         request.execution.ext["\(extPrefix)max_completion_tokens_requested"] =
             stringValue(shapedRequest.requestedMaxCompletionTokens)
         request.execution.ext["\(extPrefix)max_completion_tokens_effective"] = String(shapedRequest.maxTokens)
+        request.execution.ext["\(extPrefix)max_output_tokens_requested"] =
+            stringValue(shapedRequest.requestedMaxOutputTokens)
+        request.execution.ext["\(extPrefix)max_output_tokens_effective"] = String(shapedRequest.maxTokens)
         request.execution.ext["\(extPrefix)output_cap_source"] = shapedRequest.outputCapSource
         request.execution.ext["\(extPrefix)bounds_rejection_reason"] = ""
         request.execution.ext["\(extPrefix)stop_requested"] = stopReceiptValue(shapedRequest.requestedStopSequences)

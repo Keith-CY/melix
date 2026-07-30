@@ -942,10 +942,18 @@ class WorkerRegistry:
     def set_request_phase(self, request_id: str, phase: str) -> None:
         with self._lock:
             state = self._requests.get(request_id)
-            if state is not None:
-                self._remove_request_from_counters(state)
-                state.phase = phase
-                self._add_request_to_counters(state)
+            if state is None or state.phase == phase:
+                return
+            old_phase = state.phase
+            if old_phase == "prefill" and self._active_prefill_count > 0:
+                self._active_prefill_count -= 1
+            elif old_phase == "decode" and self._active_decode_count > 0:
+                self._active_decode_count -= 1
+            state.phase = phase
+            if phase == "prefill":
+                self._active_prefill_count += 1
+            elif phase == "decode":
+                self._active_decode_count += 1
 
     def finish_request(self, request_id: str) -> None:
         loaded_to_close: LoadedModel | None = None
@@ -1136,26 +1144,34 @@ class WorkerRegistry:
         return runtime_kind in _MULTIMODAL_REQUEST_KINDS
 
     def _add_request_to_counters(self, state: RequestState) -> None:
+        phase = state.phase
+        runtime_kind = state.runtime_kind
         self._active_request_count += 1
-        if state.phase == "prefill":
+        if phase == "prefill":
             self._active_prefill_count += 1
-        elif state.phase == "decode":
+        elif phase == "decode":
             self._active_decode_count += 1
-        if self._is_multimodal_request_kind(state.runtime_kind):
+        if runtime_kind in _MULTIMODAL_REQUEST_KINDS:
             self._active_multimodal_request_count += 1
-        if state.runtime_kind == "vlm":
+        if runtime_kind == "vlm":
             self._active_vlm_request_count += 1
 
     def _remove_request_from_counters(self, state: RequestState) -> None:
-        self._active_request_count = max(0, self._active_request_count - 1)
-        if state.phase == "prefill":
-            self._active_prefill_count = max(0, self._active_prefill_count - 1)
-        elif state.phase == "decode":
-            self._active_decode_count = max(0, self._active_decode_count - 1)
-        if self._is_multimodal_request_kind(state.runtime_kind):
-            self._active_multimodal_request_count = max(0, self._active_multimodal_request_count - 1)
-        if state.runtime_kind == "vlm":
-            self._active_vlm_request_count = max(0, self._active_vlm_request_count - 1)
+        phase = state.phase
+        runtime_kind = state.runtime_kind
+        if self._active_request_count > 0:
+            self._active_request_count -= 1
+        if phase == "prefill" and self._active_prefill_count > 0:
+            self._active_prefill_count -= 1
+        elif phase == "decode" and self._active_decode_count > 0:
+            self._active_decode_count -= 1
+        if (
+            runtime_kind in _MULTIMODAL_REQUEST_KINDS
+            and self._active_multimodal_request_count > 0
+        ):
+            self._active_multimodal_request_count -= 1
+        if runtime_kind == "vlm" and self._active_vlm_request_count > 0:
+            self._active_vlm_request_count -= 1
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
         response = cache_pb2.GetCacheStatsResponse()

@@ -29,6 +29,7 @@ def main() -> None:
             "load-model",
             "unload-model",
             "get-runtime-stats",
+            "list-loaded-models",
             "get-cache-stats",
             "generate",
             "prefill",
@@ -79,6 +80,10 @@ def main() -> None:
                 stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
                 request = runtime_pb2.GetRuntimeStatsRequest.FromString(request_bytes)
                 emit_message(stub.GetRuntimeStats(request).SerializeToString())
+            elif args.command == "list-loaded-models":
+                stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
+                request = runtime_pb2.ListLoadedModelsRequest.FromString(request_bytes)
+                emit_message(stub.ListLoadedModels(request).SerializeToString())
             elif args.command == "get-cache-stats":
                 stub = cache_pb2_grpc.CacheServiceStub(channel)
                 request = cache_pb2.GetCacheStatsRequest.FromString(request_bytes)

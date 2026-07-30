@@ -77,6 +77,27 @@ def test_export_target_diagnostics_common_phrase_fast_path_skips_regex_table(
     assert diagnoses[0]["matched_pattern_id"] == "runtime-load-failed-v1"
 
 
+def test_export_target_diagnostics_exact_source_text_fast_path_skips_regex_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(export_target_diagnostics_module, "_DIAGNOSIS_PATTERNS", ())
+    source_lines = [
+        _SourceLine(
+            source_path="logs/ollama-create.log",
+            text="Metal out of memory during load",
+        ),
+    ]
+
+    diagnoses = _diagnoses_from_excerpt(
+        source_lines,
+        {0: 1},
+        "diagnostics/redacted-log-excerpt.txt",
+    )
+
+    assert [diagnosis["code"] for diagnosis in diagnoses] == [CODE_INSUFFICIENT_MEMORY]
+    assert diagnoses[0]["matched_pattern_id"] == "insufficient-memory-v1"
+
+
 def test_export_target_diagnostics_source_line_extension_matches_split_helper() -> None:
     lines: list[_SourceLine] = []
 
@@ -92,6 +113,35 @@ def test_export_target_diagnostics_source_line_extension_matches_split_helper() 
 
 def test_export_target_diagnostics_target_relative_text_handles_root_slash_boundary() -> None:
     assert _target_relative_text("/tmp/melix-target/", "/tmp/melix-target") is None
+
+
+def test_export_target_diagnostics_target_path_fast_path_skips_absolute_path_regex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FailAbsolutePathPattern:
+        def sub(self, *_args: object, **_kwargs: object) -> str:  # pragma: no cover - regression guard
+            raise AssertionError("target-root path redaction should use the lexical fast path")
+
+    monkeypatch.setattr(
+        export_target_diagnostics_module,
+        "_ABSOLUTE_PATH_PATTERN",
+        FailAbsolutePathPattern(),
+    )
+    summary = export_target_diagnostics_module._RedactionSummary()
+    target_root = tmp_path / "target"
+    raw_path = target_root / "artifacts" / "model.gguf"
+
+    redacted = export_target_diagnostics_module._redact_text(
+        f"runtime load failed at {raw_path}",
+        target_root,
+        str(target_root),
+        summary,
+    )
+
+    assert redacted == "runtime load failed at <target>/artifacts/model.gguf"
+    assert summary.redacted_absolute_path_count == 1
+    assert summary.redaction_count == 1
 
 
 @pytest.mark.parametrize(
@@ -190,7 +240,9 @@ def test_export_target_diagnostics_identity_marker_fast_path_matches_markers(
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("plain runtime status", False),
+        ("ordinary runtime status", False),
+        ("", False),
+        ("   ", False),
         ("p", False),
         ("R", False),
         ("  prompt: private customer prompt", True),

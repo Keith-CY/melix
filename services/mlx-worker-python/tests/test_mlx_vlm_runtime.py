@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 from threading import Barrier
@@ -195,6 +196,7 @@ def _write_fake_safetensors_header(path: Path, tensor_names: tuple[str, ...]) ->
         }
         for tensor_name in tensor_names
     }
+    header["__metadata__"] = {"format": "pt"}
     payload = json.dumps(header, sort_keys=True).encode("utf-8")
     path.write_bytes(len(payload).to_bytes(8, "little") + payload)
 
@@ -2453,6 +2455,84 @@ def test_quantized_tensor_metadata_merges_cross_shard_index_and_headers(
     }
     assert cross_shard_quantized_metadata_fixup_count(header_metadata) == 1
 
+
+def test_cross_shard_quantized_metadata_fixup_count_avoids_shard_dict_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = QuantizedTensorMetadata(
+        {
+            "language_model.layers.0.q_proj.weight": "model-00001.safetensors",
+            "language_model.layers.0.q_proj.scales": "model-00002.safetensors",
+            "language_model.layers.1.q_proj.weight": "model-00003.safetensors",
+            "language_model.layers.1.q_proj.scales": "model-00003.safetensors",
+            "language_model.layers.2.q_proj.weight": "model-00004.safetensors",
+        }
+    )
+
+    def fail_quantized_tensor_shards(
+        self: QuantizedTensorMetadata,
+        prefix: str,
+    ) -> dict[str, str]:  # pragma: no cover - regression guard
+        raise AssertionError(
+            "cross-shard counting should read the shard mapping directly, "
+            "not allocate a per-prefix shard dict"
+        )
+
+    monkeypatch.setattr(
+        QuantizedTensorMetadata,
+        "quantized_tensor_shards",
+        fail_quantized_tensor_shards,
+    )
+
+    assert cross_shard_quantized_metadata_fixup_count(metadata) == 1
+
+    class UnexpectedMappingIteration(dict[str, str]):
+        def items(self):  # pragma: no cover - regression guard
+            raise AssertionError(
+                "repeated cross-shard fixup reads should use the cached count"
+            )
+
+    object.__setattr__(
+        metadata,
+        "tensor_to_shard",
+        UnexpectedMappingIteration(metadata.tensor_to_shard),
+    )
+    assert cross_shard_quantized_metadata_fixup_count(metadata) == 1
+
+    scales_heavy_metadata = QuantizedTensorMetadata(
+        {
+            "language_model.layers.3.q_proj.scales": "model-00005.safetensors",
+            "language_model.layers.4.q_proj.weight": "model-00006.safetensors",
+            "language_model.layers.4.q_proj.scales": "model-00007.safetensors",
+            "language_model.layers.5.q_proj.scales": "model-00008.safetensors",
+        }
+    )
+
+    assert cross_shard_quantized_metadata_fixup_count(scales_heavy_metadata) == 1
+
+
+def test_quantized_tensor_metadata_reads_string_shard_paths_without_path_open(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    shard_path = tmp_path / "model-00001.safetensors"
+    _write_fake_safetensors_header(
+        shard_path,
+        ("language_model.layers.1.q_proj.weight",),
+    )
+
+    def fail_path_open(self: Path, *args, **kwargs):  # pragma: no cover - regression guard
+        raise AssertionError("safetensors header reads should use direct open(path), not Path.open()")
+
+    monkeypatch.setattr(Path, "open", fail_path_open)
+
+    metadata = quantized_tensor_metadata_from_safetensor_headers([os.fspath(shard_path)])
+
+    assert metadata.tensor_to_shard == {
+        "language_model.layers.1.q_proj.weight": os.fspath(shard_path)
+    }
+
+
     mutable_source = {
         "language_model.layers.2.q_proj.scales": "model-00001.safetensors"
     }
@@ -2488,6 +2568,11 @@ class _CountingEmptyWeights(dict[str, object]):
         return super().__contains__(key)
 
 
+class _UnexpectedTensorMapping(dict[str, str]):
+    def __contains__(self, key: object) -> bool:  # pragma: no cover - regression guard
+        raise AssertionError("hot tensor membership should use the cached tensor-name set")
+
+
 class _StringifiedOnce:
     def __init__(self, value: str) -> None:
         self.value = value
@@ -2496,6 +2581,32 @@ class _StringifiedOnce:
     def __str__(self) -> str:
         self.calls += 1
         return self.value
+
+
+class _CountingString(str):
+    def __new__(cls, value: str) -> _CountingString:
+        instance = super().__new__(cls, value)
+        instance.str_calls = 0
+        return instance
+
+    def __str__(self) -> str:  # pragma: no cover - regression guard
+        self.str_calls += 1
+        return super().__str__()
+
+
+def test_quantized_tensor_metadata_skips_string_key_normalization() -> None:
+    tensor_name = _CountingString("language_model.layers.0.q_proj.weight")
+    shard_name = _CountingString("model-00001.safetensors")
+
+    metadata = quantized_tensor_metadata_from_index_payload(
+        {"weight_map": {tensor_name: shard_name}}
+    )
+
+    assert metadata.tensor_to_shard == {
+        "language_model.layers.0.q_proj.weight": "model-00001.safetensors"
+    }
+    assert tensor_name.str_calls == 0
+    assert shard_name.str_calls == 0
 
 
 def test_quantized_tensor_metadata_normalizes_index_keys_once() -> None:
@@ -2526,8 +2637,14 @@ def test_quantized_scales_present_skips_empty_weight_lookup() -> None:
     metadata = QuantizedTensorMetadata(
         {"language_model.layers.0.q_proj.scales": "model-00001.safetensors"}
     )
+    object.__setattr__(
+        metadata,
+        "tensor_to_shard",
+        _UnexpectedTensorMapping(metadata.tensor_to_shard),
+    )
     empty_weights = _CountingEmptyWeights()
 
+    assert metadata.has_tensor("language_model.layers.0.q_proj.scales") is True
     assert (
         quantized_scales_present(
             "language_model.layers.0.q_proj",
@@ -2872,6 +2989,7 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
             "language_model.mtp.layers.4.weight": "mtp-missing.safetensors",
             "language_model.mtp.layers.5.weight": "nested/mtp-00002.safetensors",
             "language_model.mtp.layers.5.duplicate_weight": "nested/mtp-00002.safetensors",
+            "language_model.mtp.layers.6.weight": "nested/model-mtp-00003.safetensors",
             "language_model.layers.0.weight": "ignored-mtp.safetensors",
         }
     }
@@ -3125,7 +3243,10 @@ def test_native_mtp_preload_patch_detects_qwen36_mtp_weights(
 
     metadata = maybe_apply_native_mtp_preload_patches(
         str(model_dir),
-        metadata={"melix.native_mtp.enabled": "true"},
+        metadata={
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.device_policy": "force_on",
+        },
     )
 
     assert metadata["melix.native_mtp.compatible"] == "true"

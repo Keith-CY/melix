@@ -28,15 +28,19 @@ def run_probe(
 ) -> dict[str, float]:
     module = _load_changed_scope_coverage(repo_root)
     elapsed_samples: list[float] = []
+    measured_elapsed_samples: list[float] = []
     read_samples: list[float] = []
 
     with tempfile.TemporaryDirectory(prefix="melix-changed-scope-singleton-probe-") as tmp:
         root = Path(tmp)
         rel_paths = [f"pkg/module_{index}.py" for index in range(path_count)]
+        source_text = "\n".join(
+            f"line_{line_no}" for line_no in range(1, measured_lines_per_path + 1)
+        )
         for rel_path in rel_paths:
             source_path = root / rel_path
             source_path.parent.mkdir(parents=True, exist_ok=True)
-            source_path.write_text("covered = 1\n", encoding="utf-8")
+            source_path.write_text(source_text, encoding="utf-8")
 
         coverage_payload = {
             "files": {
@@ -48,6 +52,7 @@ def run_probe(
             }
         }
         changed_lines = {measured_lines_per_path + 1}
+        measured_changed_lines = {measured_lines_per_path - 1}
 
         original_read_text = module.Path.read_text
         try:
@@ -71,12 +76,26 @@ def run_probe(
                     if measurable or covered or missed:
                         raise RuntimeError("singleton changed line outside measured ranges must not produce measurable lines")
                 elapsed_samples.append((time.perf_counter() - start) * 1000.0)
+
+                start = time.perf_counter()
+                for rel_path in rel_paths:
+                    measurable, covered, missed = module._measurable_changed_lines(
+                        root,
+                        coverage_payload,
+                        rel_path,
+                        measured_changed_lines,
+                    )
+                    expected_line = measured_lines_per_path - 1
+                    if measurable != [expected_line] or covered != [expected_line] or missed:
+                        raise RuntimeError("singleton measured coverage classification changed")
+                measured_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
                 read_samples.append(float(read_calls))
         finally:
             module.Path.read_text = original_read_text
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "singleton_measured_elapsed_ms_mean": statistics.fmean(measured_elapsed_samples),
         "source_read_calls_mean": statistics.fmean(read_samples),
         "path_count": float(path_count),
         "measured_lines_per_path": float(measured_lines_per_path),

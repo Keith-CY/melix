@@ -124,7 +124,12 @@ Each tool descriptor must include:
 The worker-facing default registry must be serializable to a deterministic
 `ToolConfig` receipt. Explicit selections are resolved against the selectable
 catalog, must preserve request order, deduplicate repeated names, and fail
-before execution on unknown names.
+before execution on unknown names. Empty selections are a hot-path selector
+case and must reuse the registry's direct empty-selection cache slot rather
+than performing a dictionary cache lookup on every request. The registered
+PR-scoped performance probe for this path is
+`tool-registry-select-name-index-cache`, which reports selection timings,
+including `empty_selection_elapsed_ms_mean` for the empty-selection fast path.
 
 Every selectable tool schema must also have matching index metadata with the
 same tool ID and retrieval description as the schema description. Non-always
@@ -162,6 +167,126 @@ the default no-selection tool set. The deterministic agentic runtime records
 the selector receipt inside its `melix.agentic_tool_run.v1` registry receipt
 when a caller provides a selection input, and the selected registry is the
 execution allowlist for that run.
+
+Request-local tool policy is part of the same selector boundary. The selector
+accepts `allow_web = null|true|false`, where `null` means no explicit operator
+choice was supplied, `true` means web-capable tools are explicitly allowed, and
+`false` means web-capable tools are explicitly denied even when the prompt asks
+to browse, visit, fetch, or open a page. The current network-capable v1 tool is
+`visit`; local compute, workspace-file operations, and local fixture/corpus
+lookup remain separate local capabilities.
+
+When an explicit web policy is present, or when a candidate tool is disabled by
+policy, the selector receipt includes `tool_policy_receipt` with:
+
+- `schema_version = melix.agentic_tool_policy.v1`
+- `allow_web`
+- `explicit_allows[]`
+- `explicit_denies[]`
+- `resolved_disabled_tools[]`
+- `requested_tools[]`
+
+The policy receipt contains only policy states and tool IDs. It must not include
+raw prompts, URLs, tool arguments, account identifiers, or workspace paths. A
+tool that is disabled by policy must be omitted from the selected registry, so
+the deterministic runtime cannot execute it through a later model-emitted tool
+call.
+
+Before prompt assembly exposes workflow-selected tools, retrieved procedure
+references, or admin affordances to the model, the runtime must compare those
+prompt-visible tool IDs with the selected registry's callable schema list. The
+selected registry is the execution allowlist for the current request; a full
+agentic tool catalog may also be supplied so known but unselected custom tools
+are reported as missing instead of being counted as invalid affordances. The
+v1 schema-consistency preflight receipt is
+`melix.agentic_tool_schema_consistency.v1` and records:
+
+- `outcome = consistent|mismatch`
+- `source`
+- `referenced_tools[]`
+- `callable_tools[]`
+- `missing_tools[]`
+- `invalid_affordance_count`
+- `checked_affordance_count`
+- `allowed_next_step`
+- `corrective_action`
+
+Schema-consistency receipts must not include raw prompt text, retrieved text,
+procedure bodies, URLs, workspace paths, tool arguments, observation payloads,
+or account identifiers. When `missing_tools[]` is non-empty, prompt assembly
+must strip the unavailable affordances or block generation with a diagnostic
+before the model can be instructed to call a tool absent from the callable
+schema list. Policy-disabled tools are surfaced through the same mechanism
+because the selected registry is the execution allowlist.
+
+## Tool Guardrail Admission Receipt Contract
+
+Agentic loops should validate model-emitted tool calls before executing any
+adapter. The v1 admission receipt is `melix.agentic_tool_guardrail.v1` and
+records one decision for a candidate tool-call batch.
+
+The receipt includes:
+
+- `outcome = admitted|retry_nudge|terminal_failure`
+- `failure_class`
+- `nudge_type`
+- `attempt_index`
+- `max_retry_nudges`
+- `terminal_after_budget`
+- `tool_call_id`
+- `tool_name`
+- `allowed_tools[]`
+- `missing_required_arguments[]`
+- `allowed_next_step`
+- `corrective_action`
+
+Receipts must not include raw prompt text, raw tool arguments, URLs, workspace
+paths, retrieved content, or observation payloads. Unknown tools, malformed
+tool-call objects, non-object arguments, and missing required arguments should
+produce stable retry-nudge receipts. Callers may still fail closed after the
+configured retry budget is exhausted, but the terminal decision must preserve
+the same sanitized evidence shape.
+
+Tool healing runs before admission when an agent loop receives model output
+that may contain a recoverable tool-call wire shape instead of canonical tool
+calls. The v1 healing receipt is `melix.agentic_tool_healing.v1` and records the
+pre-admission recovery decision for fenced JSON tool calls, XML-style tool
+tags, provider-style fragments, and pseudo-tool text blobs.
+
+The receipt includes:
+
+- `outcome = healed|retry_nudge|terminal_failure`
+- `source_format`
+- `healed`
+- `nudge_reason`
+- `attempt_index`
+- `max_retry_nudges`
+- `terminal_after_budget`
+- `tool_call_id`
+- `tool_name`
+- `call_count`
+- `admitted_tool_count`
+- `allowed_next_step`
+- `corrective_action`
+
+Healing receipts must not include raw model output, raw prompt text, raw tool
+arguments, URLs, workspace paths, retrieved content, observation payloads, or
+account identifiers. A healed response must still pass through normal guardrail
+admission before any adapter executes. If healing recovers a candidate with an
+unknown tool, missing required arguments, non-object arguments, or an
+unsatisfied prerequisite, the healing receipt should point at the admission
+failure class through `nudge_reason` and keep the detailed failure in the
+paired `melix.agentic_tool_guardrail.v1` receipt.
+
+Tool prerequisite checks are part of the same admission boundary. A caller may
+keep completed-step state outside model context and pass it to admission so a
+target tool can require a prior tool before execution. Prerequisites may also
+name argument keys that must match between the completed tool call and the
+target tool call. Admission may compare the raw values in memory, but receipts
+must serialize only the target tool plus, for prerequisite rejections, the
+`required_prior_tool` and `argument_match_keys[]` fields. They must not
+serialize matched argument values or any observation payload from the
+prerequisite tool.
 
 ## Observation Contract
 

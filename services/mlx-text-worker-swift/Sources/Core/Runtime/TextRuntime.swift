@@ -5,10 +5,16 @@ import MelixWorkerProtocol
 struct LoadedTextModel: @unchecked Sendable {
     let storage: Any
     let residentBytesHint: UInt64
+    let textFamilyID: String
 
-    init(storage: Any, residentBytesHint: UInt64 = 0) {
+    init(
+        storage: Any,
+        residentBytesHint: UInt64 = 0,
+        textFamilyID: String = ""
+    ) {
         self.storage = storage
         self.residentBytesHint = residentBytesHint
+        self.textFamilyID = textFamilyID
     }
 }
 
@@ -304,6 +310,7 @@ struct TextGenerationSummary: Sendable {
     let promptTokens: Int
     let completionTokens: Int
     let tokensPerSecond: Double?
+    let finishReason: String
     let decodeBatchSize: Int?
     let modelEvalBatchSize: Int?
     let decodeLoopIterations: Int?
@@ -326,6 +333,7 @@ struct TextGenerationSummary: Sendable {
         promptTokens: Int,
         completionTokens: Int,
         tokensPerSecond: Double?,
+        finishReason: String = "stop",
         decodeBatchSize: Int? = nil,
         modelEvalBatchSize: Int? = nil,
         decodeLoopIterations: Int? = nil,
@@ -347,6 +355,7 @@ struct TextGenerationSummary: Sendable {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
         self.tokensPerSecond = tokensPerSecond
+        self.finishReason = finishReason
         self.decodeBatchSize = decodeBatchSize
         self.modelEvalBatchSize = modelEvalBatchSize
         self.decodeLoopIterations = decodeLoopIterations
@@ -371,6 +380,7 @@ struct TextGenerationSummary: Sendable {
             promptTokens: promptTokens,
             completionTokens: completionTokens,
             tokensPerSecond: tokensPerSecond,
+            finishReason: finishReason,
             decodeBatchSize: decodeBatchSize,
             modelEvalBatchSize: modelEvalBatchSize,
             decodeLoopIterations: decodeLoopIterations,
@@ -541,8 +551,24 @@ protocol TextRuntimeBackend: Sendable {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult
     func generateEvents(
         model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error>
+    func generateEvents(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
         messages: [Melix_Worker_V1_ChatMessage],
         sampling: Melix_Worker_V1_SamplingConfig,
         shouldAbort: @escaping @Sendable () -> Bool
@@ -585,6 +611,26 @@ extension TextRuntimeBackend {
         )
     }
 
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        _ = execution
+        return try await prefill(
+            model: model,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
     func generateEvents(
         model: LoadedTextModel,
         messages: [Melix_Worker_V1_ChatMessage],
@@ -593,6 +639,22 @@ extension TextRuntimeBackend {
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
         throw RuntimeUnavailableError(
             message: "Text generation is not available for the current backend."
+        )
+    }
+
+    func generateEvents(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        _ = execution
+        return try await generateEvents(
+            model: model,
+            messages: messages,
+            sampling: sampling,
+            shouldAbort: shouldAbort
         )
     }
 
@@ -678,6 +740,26 @@ struct TextRuntime: Sendable {
         )
     }
 
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        try await backend.prefill(
+            model: model,
+            execution: execution,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
     func generateEvents(
         model: LoadedTextModel,
         messages: [Melix_Worker_V1_ChatMessage],
@@ -686,6 +768,22 @@ struct TextRuntime: Sendable {
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
         try await backend.generateEvents(
             model: model,
+            messages: messages,
+            sampling: sampling,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func generateEvents(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        try await backend.generateEvents(
+            model: model,
+            execution: execution,
             messages: messages,
             sampling: sampling,
             shouldAbort: shouldAbort

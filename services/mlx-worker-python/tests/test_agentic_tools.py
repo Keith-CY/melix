@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from worker.runtime import agentic_tools as agentic_tools_module
-from worker.runtime.agentic_tools import AgenticToolRuntimeError, _context_list, execute_agentic_tool_calls
+from worker.runtime.agentic_tools import (
+    AgenticToolRuntimeError,
+    _context_list,
+    admit_agentic_tool_calls,
+    execute_agentic_tool_calls,
+)
 from worker.runtime.retrieval_context import (
     project_retrieval_lookup_result as real_project_retrieval_lookup_result,
 )
@@ -15,7 +20,12 @@ from worker.runtime.skill_memory_context import (
     project_skill_memory_lookup_result as real_project_skill_memory_lookup_result,
 )
 from worker.runtime.tool_observation import ToolObservationPolicy
-from worker.runtime.tool_registry import ToolSelectionInput
+from worker.runtime.tool_registry import (
+    ToolArgumentDescriptor,
+    ToolDescriptor,
+    ToolRegistry,
+    ToolSelectionInput,
+)
 
 
 _BUILT_IN_TOOL_CALLS = (
@@ -59,6 +69,32 @@ def _expected_receipt_source_id(source_id: str) -> str:
 
 def _expected_source_segment_id(source_id: str, suffix: str) -> str:
     return f"{_expected_receipt_source_id(source_id)}:{suffix}"
+
+
+def _ticket_tool_registry() -> ToolRegistry:
+    ticket_id_argument = ToolArgumentDescriptor(
+        name="ticket_id",
+        json_type="string",
+        description="Ticket identifier.",
+    )
+    return ToolRegistry(
+        (
+            ToolDescriptor(
+                name="lookup_ticket",
+                description="Look up a ticket before changing it.",
+                tool_kind="ticket.lookup",
+                observation_kind="ticket_lookup",
+                arguments=(ticket_id_argument,),
+            ),
+            ToolDescriptor(
+                name="close_ticket",
+                description="Close a ticket after lookup.",
+                tool_kind="ticket.close",
+                observation_kind="ticket_close",
+                arguments=(ticket_id_argument,),
+            ),
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -270,6 +306,690 @@ def test_agentic_tool_runtime_rejects_tool_dropped_by_selection() -> None:
                 vector_available=False,
             ),
         )
+
+
+def test_agentic_tool_runtime_web_deny_keeps_visit_out_of_execution_allowlist() -> None:
+    tool_selection = ToolSelectionInput(
+        current_user_turn="Visit fixture://page-1 and summarize it.",
+        vector_available=False,
+        max_selected_tools=4,
+        allow_web=False,
+    )
+    run = execute_agentic_tool_calls(
+        [{"id": "compute-1", "name": "local_compute", "arguments": {"code": "1 + 1"}}],
+        tool_selection=tool_selection,
+    )
+
+    selection_receipt = run.registry_receipt["tool_selection_receipt"]
+
+    assert run.registry_receipt["tools"] == ["local_compute"]
+    assert selection_receipt["tool_policy_receipt"] == {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": False,
+        "explicit_allows": [],
+        "explicit_denies": ["web"],
+        "resolved_disabled_tools": ["visit"],
+        "requested_tools": ["visit"],
+    }
+
+    with pytest.raises(AgenticToolRuntimeError, match="Unknown agentic tool requested: visit"):
+        execute_agentic_tool_calls(
+            [{"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://page-1"}}],
+            fixture_context={"pages": {"fixture://page-1": "secret page"}},
+            tool_selection=tool_selection,
+        )
+
+
+def test_agentic_tool_guardrail_admission_accepts_valid_calls_without_raw_arguments() -> None:
+    admission = admit_agentic_tool_calls(
+        [
+            {
+                "id": "compute-1",
+                "name": "local_compute",
+                "arguments": {"code": "2 + 2"},
+            }
+        ],
+    )
+
+    assert admission.admitted is True
+    assert admission.terminal is False
+    assert admission.normalized_calls == (
+        {"id": "compute-1", "name": "local_compute", "arguments": {"code": "2 + 2"}},
+    )
+    assert admission.receipts == (
+        {
+            "schema_version": "melix.agentic_tool_guardrail.v1",
+            "outcome": "admitted",
+            "failure_class": "",
+            "nudge_type": "",
+            "attempt_index": 1,
+            "max_retry_nudges": 1,
+            "terminal_after_budget": False,
+            "tool_call_id": "",
+            "tool_name": "",
+            "allowed_tools": [
+                "image_crop",
+                "layout_parse",
+                "text_search",
+                "image_search",
+                "skill_lookup",
+                "memory_lookup",
+                "visit",
+                "workspace_file",
+                "local_compute",
+            ],
+            "missing_required_arguments": [],
+            "call_count": 1,
+            "admitted_tool_count": 1,
+            "allowed_next_step": "execute_tools",
+            "corrective_action": "",
+        },
+    )
+    assert "2 + 2" not in json.dumps(admission.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_guardrail_admission_returns_retry_nudge_for_unknown_tool() -> None:
+    admission = admit_agentic_tool_calls(
+        [
+            {
+                "id": "ghost-1",
+                "name": "ghost_tool",
+                "arguments": {"secret": "do not log this argument"},
+            }
+        ],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert admission.admitted is False
+    assert admission.terminal is False
+    assert admission.normalized_calls == ()
+    assert admission.receipts == (
+        {
+            "schema_version": "melix.agentic_tool_guardrail.v1",
+            "outcome": "retry_nudge",
+            "failure_class": "unknown_tool",
+            "nudge_type": "unknown_tool_name",
+            "attempt_index": 1,
+            "max_retry_nudges": 2,
+            "terminal_after_budget": False,
+            "tool_call_id": "ghost-1",
+            "tool_name": "ghost_tool",
+            "allowed_tools": [
+                "image_crop",
+                "layout_parse",
+                "text_search",
+                "image_search",
+                "skill_lookup",
+                "memory_lookup",
+                "visit",
+                "workspace_file",
+                "local_compute",
+            ],
+            "missing_required_arguments": [],
+            "call_count": 1,
+            "admitted_tool_count": 0,
+            "allowed_next_step": "retry_with_declared_tool",
+            "corrective_action": "Emit a tool call whose name exactly matches one declared tool.",
+        },
+    )
+    receipt_json = json.dumps(admission.receipts, ensure_ascii=False)
+    assert "do not log this argument" not in receipt_json
+
+
+def test_agentic_tool_guardrail_admission_marks_budget_exhaustion() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "ghost-1", "name": "ghost_tool", "arguments": {}}],
+        attempt_index=3,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert admission.terminal is True
+    assert receipt["outcome"] == "terminal_failure"
+    assert receipt["terminal_after_budget"] is True
+    assert receipt["allowed_next_step"] == "stop_with_guardrail_error"
+
+
+def test_agentic_tool_guardrail_admission_rejects_non_object_arguments() -> None:
+    admission = admit_agentic_tool_calls(
+        [
+            {
+                "id": "bad-args",
+                "name": "local_compute",
+                "arguments": ["2 + 2"],
+            }
+        ],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "invalid_arguments"
+    assert receipt["nudge_type"] == "tool_arguments_object_required"
+    assert receipt["tool_call_id"] == "bad-args"
+    assert receipt["tool_name"] == "local_compute"
+    assert receipt["allowed_next_step"] == "retry_with_object_arguments"
+    assert "2 + 2" not in json.dumps(receipt, ensure_ascii=False)
+
+
+def test_agentic_tool_guardrail_admission_reports_missing_required_arguments() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "compute-missing", "name": "local_compute", "arguments": {}}],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "missing_required_arguments"
+    assert receipt["nudge_type"] == "missing_required_arguments"
+    assert receipt["tool_call_id"] == "compute-missing"
+    assert receipt["tool_name"] == "local_compute"
+    assert receipt["missing_required_arguments"] == ["code"]
+    assert receipt["allowed_next_step"] == "retry_with_required_arguments"
+
+
+def test_agentic_tool_guardrail_admission_treats_none_required_argument_as_missing() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "compute-none", "name": "local_compute", "arguments": {"code": None}}],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "missing_required_arguments"
+    assert receipt["nudge_type"] == "missing_required_arguments"
+    assert receipt["tool_call_id"] == "compute-none"
+    assert receipt["tool_name"] == "local_compute"
+    assert receipt["missing_required_arguments"] == ["code"]
+
+
+def test_agentic_tool_guardrail_admission_blocks_missing_prerequisite_without_raw_arguments() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "close-1", "name": "close_ticket", "arguments": {"ticket_id": "SECRET-T-100"}}],
+        registry=_ticket_tool_registry(),
+        prerequisites=(
+            agentic_tools_module.AgenticToolPrerequisite(
+                tool_name="close_ticket",
+                required_tool_name="lookup_ticket",
+                argument_match_keys=("ticket_id",),
+            ),
+        ),
+        completed_tool_calls=(),
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert admission.terminal is False
+    assert admission.normalized_calls == ()
+    assert receipt["outcome"] == "retry_nudge"
+    assert receipt["failure_class"] == "tool_prerequisite_violation"
+    assert receipt["nudge_type"] == "tool_prerequisite_required"
+    assert receipt["tool_call_id"] == "close-1"
+    assert receipt["tool_name"] == "close_ticket"
+    assert receipt["required_prior_tool"] == "lookup_ticket"
+    assert receipt["argument_match_keys"] == ["ticket_id"]
+    assert receipt["allowed_next_step"] == "retry_with_prerequisite_tool"
+    assert "SECRET-T-100" not in json.dumps(receipt, ensure_ascii=False)
+
+
+def test_agentic_tool_guardrail_admission_blocks_argument_mismatched_prerequisite() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "close-1", "name": "close_ticket", "arguments": {"ticket_id": "T-100"}}],
+        registry=_ticket_tool_registry(),
+        prerequisites=(
+            agentic_tools_module.AgenticToolPrerequisite(
+                tool_name="close_ticket",
+                required_tool_name="lookup_ticket",
+                argument_match_keys=("ticket_id",),
+            ),
+        ),
+        completed_tool_calls=(
+            {"id": "lookup-1", "name": "lookup_ticket", "arguments": {"ticket_id": "T-200"}},
+        ),
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "tool_prerequisite_violation"
+    assert receipt["required_prior_tool"] == "lookup_ticket"
+    assert receipt["argument_match_keys"] == ["ticket_id"]
+    assert "T-100" not in json.dumps(receipt, ensure_ascii=False)
+    assert "T-200" not in json.dumps(receipt, ensure_ascii=False)
+
+
+def test_agentic_tool_guardrail_admission_accepts_satisfied_prerequisite() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "close-1", "name": "close_ticket", "arguments": {"ticket_id": "T-100"}}],
+        registry=_ticket_tool_registry(),
+        prerequisites=(
+            agentic_tools_module.AgenticToolPrerequisite(
+                tool_name="close_ticket",
+                required_tool_name="lookup_ticket",
+                argument_match_keys=("ticket_id",),
+            ),
+        ),
+        completed_tool_calls=(
+            {"id": "lookup-1", "name": "lookup_ticket", "arguments": {"ticket_id": "T-100"}},
+        ),
+    )
+
+    assert admission.admitted is True
+    assert admission.terminal is False
+    assert admission.normalized_calls == (
+        {"id": "close-1", "name": "close_ticket", "arguments": {"ticket_id": "T-100"}},
+    )
+    assert admission.receipts[0]["outcome"] == "admitted"
+
+
+def test_normalize_completed_tool_calls_skips_empty_names_and_normalizes_none_arguments() -> None:
+    assert agentic_tools_module._normalize_completed_tool_calls(
+        (
+            {"name": None, "arguments": {"ticket_id": "T-100"}},
+            {"name": "lookup_ticket", "arguments": None},
+        )
+    ) == [{"name": "lookup_ticket", "arguments": {}}]
+
+
+def test_agentic_tool_prerequisite_normalizes_and_rejects_empty_tool_names() -> None:
+    prerequisite = agentic_tools_module.AgenticToolPrerequisite(
+        tool_name=" close_ticket ",
+        required_tool_name=" lookup_ticket ",
+        argument_match_keys=(" ticket_id ", ""),
+    )
+
+    assert prerequisite.tool_name == "close_ticket"
+    assert prerequisite.required_tool_name == "lookup_ticket"
+    assert prerequisite.argument_match_keys == ("ticket_id",)
+
+    with pytest.raises(AgenticToolRuntimeError, match="must include a tool name"):
+        agentic_tools_module.AgenticToolPrerequisite(
+            tool_name=" ",
+            required_tool_name="lookup_ticket",
+        )
+
+    with pytest.raises(AgenticToolRuntimeError, match="must include a required tool name"):
+        agentic_tools_module.AgenticToolPrerequisite(
+            tool_name="close_ticket",
+            required_tool_name=" ",
+        )
+
+
+def test_agentic_tool_guardrail_admission_ignores_irrelevant_prerequisites() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "close-1", "name": "close_ticket", "arguments": {"ticket_id": "T-100"}}],
+        registry=_ticket_tool_registry(),
+        prerequisites=(
+            agentic_tools_module.AgenticToolPrerequisite(
+                tool_name="lookup_ticket",
+                required_tool_name="close_ticket",
+                argument_match_keys=("ticket_id",),
+            ),
+        ),
+    )
+
+    assert admission.admitted is True
+    assert admission.normalized_calls == (
+        {"id": "close-1", "name": "close_ticket", "arguments": {"ticket_id": "T-100"}},
+    )
+
+
+def test_agentic_tool_guardrail_admission_ignores_malformed_completed_steps() -> None:
+    admission = admit_agentic_tool_calls(
+        [{"id": "close-1", "name": "close_ticket", "arguments": {"ticket_id": "T-100"}}],
+        registry=_ticket_tool_registry(),
+        prerequisites=(
+            agentic_tools_module.AgenticToolPrerequisite(
+                tool_name="close_ticket",
+                required_tool_name="lookup_ticket",
+                argument_match_keys=("ticket_id",),
+            ),
+        ),
+        completed_tool_calls=(
+            "not-a-call",
+            {"name": "", "arguments": {"ticket_id": "T-100"}},
+            {"name": "lookup_ticket", "arguments": None},
+            {"name": "lookup_ticket", "arguments": ["T-100"]},
+            {"name": "lookup_ticket", "arguments": {}},
+        ),
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "tool_prerequisite_violation"
+    assert receipt["argument_match_keys"] == ["ticket_id"]
+
+
+def test_completed_tool_prerequisite_rejects_non_object_completed_arguments() -> None:
+    prerequisite = agentic_tools_module.AgenticToolPrerequisite(
+        tool_name="close_ticket",
+        required_tool_name="lookup_ticket",
+        argument_match_keys=("ticket_id",),
+    )
+
+    assert (
+        agentic_tools_module._completed_call_satisfies_prerequisite(
+            completed_call={"name": "lookup_ticket", "arguments": ["T-100"]},
+            target_arguments={"ticket_id": "T-100"},
+            prerequisite=prerequisite,
+        )
+        is False
+    )
+
+
+def test_agentic_tool_guardrail_admission_blocks_when_target_argument_is_missing() -> None:
+    ticket_id_argument = ToolArgumentDescriptor(
+        name="ticket_id",
+        json_type="string",
+        description="Ticket identifier.",
+        required=False,
+    )
+    registry = ToolRegistry(
+        (
+            ToolDescriptor(
+                name="lookup_ticket",
+                description="Look up a ticket.",
+                tool_kind="ticket.lookup",
+                observation_kind="ticket_lookup",
+                arguments=(ticket_id_argument,),
+            ),
+            ToolDescriptor(
+                name="close_ticket",
+                description="Close a ticket.",
+                tool_kind="ticket.close",
+                observation_kind="ticket_close",
+                arguments=(ticket_id_argument,),
+            ),
+        )
+    )
+    admission = admit_agentic_tool_calls(
+        [{"id": "close-1", "name": "close_ticket", "arguments": {}}],
+        registry=registry,
+        prerequisites=(
+            agentic_tools_module.AgenticToolPrerequisite(
+                tool_name="close_ticket",
+                required_tool_name="lookup_ticket",
+                argument_match_keys=("ticket_id",),
+            ),
+        ),
+        completed_tool_calls=(
+            {"id": "lookup-1", "name": "lookup_ticket", "arguments": {"ticket_id": "T-100"}},
+        ),
+    )
+
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert receipt["failure_class"] == "tool_prerequisite_violation"
+    assert receipt["argument_match_keys"] == ["ticket_id"]
+
+
+@pytest.mark.parametrize(
+    ("raw_call", "expected_call_id", "expected_nudge_type"),
+    [
+        ("not-a-tool-call", "call-1", "tool_call_object_required"),
+        ({"id": "empty-name", "name": " ", "arguments": {}}, "empty-name", "tool_name_required"),
+        ({"id": "none-name", "name": None, "arguments": {}}, "none-name", "tool_name_required"),
+        (
+            {"id": "none-args", "name": "local_compute", "arguments": None},
+            "none-args",
+            "missing_required_arguments",
+        ),
+    ],
+)
+def test_agentic_tool_guardrail_admission_covers_malformed_shape_branches(
+    raw_call: object,
+    expected_call_id: str,
+    expected_nudge_type: str,
+) -> None:
+    admission = admit_agentic_tool_calls([raw_call], attempt_index=1, max_retry_nudges=1)
+    receipt = admission.receipts[0]
+
+    assert admission.admitted is False
+    assert admission.terminal is False
+    assert receipt["outcome"] == "retry_nudge"
+    assert receipt["tool_call_id"] == expected_call_id
+    assert receipt["nudge_type"] == expected_nudge_type
+    assert receipt["terminal_after_budget"] is True
+
+
+def test_agentic_tool_healing_accepts_fenced_json_without_raw_arguments() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        '```json\n{"id":"compute-1","name":"local_compute","arguments":{"code":"SECRET + 1"}}\n```',
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert decision.healed is True
+    assert decision.terminal is False
+    assert decision.normalized_calls == (
+        {"id": "compute-1", "name": "local_compute", "arguments": {"code": "SECRET + 1"}},
+    )
+    healing_receipt = decision.receipts[0]
+    assert healing_receipt["schema_version"] == "melix.agentic_tool_healing.v1"
+    assert healing_receipt["outcome"] == "healed"
+    assert healing_receipt["source_format"] == "fenced_json_tool_call"
+    assert healing_receipt["healed"] is True
+    assert healing_receipt["nudge_reason"] == ""
+    assert healing_receipt["allowed_next_step"] == "execute_tools"
+    assert "SECRET + 1" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_normalizes_provider_function_fragments() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        {
+            "id": "provider-1",
+            "function": {
+                "name": "local_compute",
+                "arguments": "{\"code\":\"SECRET_PROVIDER + 2\"}",
+            },
+        },
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert decision.healed is True
+    assert decision.normalized_calls == (
+        {
+            "id": "provider-1",
+            "name": "local_compute",
+            "arguments": {"code": "SECRET_PROVIDER + 2"},
+        },
+    )
+    assert decision.receipts[0]["source_format"] == "provider_tool_fragment"
+    assert "SECRET_PROVIDER" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_preserves_invalid_arguments_for_admission_receipt() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        '<tool_code>{"id":"bad-args","name":"local_compute","arguments":["SECRET_LIST_ARG"]}</tool_code>',
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    healing_receipt = decision.receipts[0]
+    admission_receipt = decision.receipts[1]
+
+    assert decision.healed is False
+    assert decision.normalized_calls == ()
+    assert healing_receipt["source_format"] == "minimax_tool_code"
+    assert healing_receipt["nudge_reason"] == "invalid_arguments"
+    assert admission_receipt["schema_version"] == "melix.agentic_tool_guardrail.v1"
+    assert admission_receipt["failure_class"] == "invalid_arguments"
+    assert "SECRET_LIST_ARG" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_reports_unknown_tool_without_hiding_admission() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        '<invoke name="ghost_tool"><arguments>{"secret":"SECRET_GHOST"}</arguments></invoke>',
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert decision.healed is False
+    assert decision.terminal is False
+    assert decision.receipts[0]["source_format"] == "xml_invoke_tool_call"
+    assert decision.receipts[0]["nudge_reason"] == "unknown_tool"
+    assert decision.receipts[1]["failure_class"] == "unknown_tool"
+    assert "SECRET_GHOST" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_rejects_pseudo_tool_text_blob_with_budget() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        '{"content":"please run local_compute({\\"code\\":\\"SECRET_TEXT\\"})"}',
+        attempt_index=3,
+        max_retry_nudges=2,
+    )
+
+    receipt = decision.receipts[0]
+
+    assert decision.healed is False
+    assert decision.terminal is True
+    assert decision.normalized_calls == ()
+    assert receipt["outcome"] == "terminal_failure"
+    assert receipt["source_format"] == "pseudo_tool_text_blob"
+    assert receipt["nudge_reason"] == "tool_call_wire_shape_required"
+    assert receipt["terminal_after_budget"] is True
+    assert receipt["allowed_next_step"] == "stop_with_guardrail_error"
+    assert "SECRET_TEXT" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+def test_agentic_tool_healing_does_not_drop_malformed_native_call_batch() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        [
+            "not-a-tool-call",
+            {
+                "id": "compute-1",
+                "name": "local_compute",
+                "arguments": {"code": "SECRET_VALID"},
+            },
+        ],
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    healing_receipt = decision.receipts[0]
+    admission_receipt = decision.receipts[1]
+
+    assert decision.healed is False
+    assert decision.normalized_calls == ()
+    assert healing_receipt["source_format"] == "native_tool_calls"
+    assert healing_receipt["nudge_reason"] == "malformed_tool_call"
+    assert admission_receipt["failure_class"] == "malformed_tool_call"
+    assert admission_receipt["tool_call_id"] == "call-1"
+    assert "SECRET_VALID" not in json.dumps(decision.receipts, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_source_format"),
+    [
+        (
+            '[TOOL_CALL]{"id":"bracket-1","name":"local_compute","arguments":{"code":"2 + 2"}}[/TOOL_CALL]',
+            "bracket_tool_call",
+        ),
+        (
+            '<tool_call><name>local_compute</name><arguments>{"code":"2 + 3"}</arguments></tool_call>',
+            "qwen_xml_tool_call",
+        ),
+        (
+            'call:local_compute {"code":"2 + 4"}',
+            "pipe_tool_call",
+        ),
+        (
+            '[{"id":"array-1","name":"local_compute","arguments":{"code":"2 + 5"}}]',
+            "json_tool_call",
+        ),
+        (
+            {
+                "tool_calls": [
+                    {
+                        "id": "nested-1",
+                        "function": {
+                            "name": "local_compute",
+                            "arguments": "{\"code\":\"2 + 6\"}",
+                        },
+                    }
+                ]
+            },
+            "provider_tool_fragment",
+        ),
+    ],
+)
+def test_agentic_tool_healing_accepts_additional_recoverable_formats(
+    response: object,
+    expected_source_format: str,
+) -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(response)
+
+    assert decision.healed is True
+    assert decision.normalized_calls[0]["name"] == "local_compute"
+    assert decision.receipts[0]["source_format"] == expected_source_format
+    assert decision.receipts[0]["allowed_next_step"] == "execute_tools"
+
+
+def test_agentic_tool_healing_missing_arguments_still_uses_admission() -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        {"id": "missing-args", "name": "local_compute"},
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    assert decision.healed is False
+    assert decision.receipts[0]["source_format"] == "provider_tool_fragment"
+    assert decision.receipts[0]["nudge_reason"] == "missing_required_arguments"
+    assert decision.receipts[1]["failure_class"] == "missing_required_arguments"
+    assert decision.receipts[1]["missing_required_arguments"] == ["code"]
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_source_format"),
+    [
+        (None, "unsupported_tool_response"),
+        ("", "empty_tool_response"),
+        ([], "empty_tool_response"),
+        ((), "empty_tool_response"),
+        ("assistant text ```json\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}\n```", "unparseable_tool_response"),
+        ("```json\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}", "fenced_json_tool_call"),
+        ("```python\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}\n```", "wrong_envelope_tool_call"),
+        ("```json\n{\"name\":\"local_compute\",\"arguments\":{\"code\":\"SECRET\"}}\n``` trailing", "unparseable_tool_response"),
+        ({"message": "not a tool"}, "provider_tool_fragment"),
+    ],
+)
+def test_agentic_tool_healing_reports_retry_nudges_for_unrecoverable_shapes(
+    response: object,
+    expected_source_format: str,
+) -> None:
+    decision = agentic_tools_module.heal_agentic_tool_calls(
+        response,
+        attempt_index=1,
+        max_retry_nudges=2,
+    )
+
+    receipt = decision.receipts[0]
+
+    assert decision.healed is False
+    assert decision.terminal is False
+    assert decision.normalized_calls == ()
+    assert receipt["outcome"] == "retry_nudge"
+    assert receipt["source_format"] == expected_source_format
+    assert receipt["nudge_reason"] == "tool_call_wire_shape_required"
+    assert receipt["allowed_next_step"] == "retry_with_tool_call_wire_shape"
+    assert "SECRET" not in json.dumps(decision.receipts, ensure_ascii=False)
 
 
 @pytest.mark.parametrize(("tool_name", "arguments"), _BUILT_IN_TOOL_CALLS)

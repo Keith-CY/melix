@@ -46,16 +46,19 @@ _DEFAULT_CONFIG_FIRST_PARTS = frozenset(
 _JSON_LIMITED_PREVIEW_CHUNK_CHARS = 16 * 1024
 
 
-def _is_supported_dataset_file_name(name: str) -> bool:
+def _is_supported_dataset_file_name(
+    name: str,
+    supported_suffixes: Mapping[str, str] = _SUPPORTED_DATASET_SUFFIXES,
+) -> bool:
     dot_index = name.rfind(".")
     if dot_index <= 0 or dot_index == len(name) - 1:
         return False
     suffix = name[dot_index:]
-    if suffix in _SUPPORTED_DATASET_SUFFIXES:
+    if suffix in supported_suffixes:
         return True
     if suffix.islower():
         return False
-    return suffix.lower() in _SUPPORTED_DATASET_SUFFIXES
+    return suffix.lower() in supported_suffixes
 
 
 @dataclass(frozen=True, slots=True)
@@ -454,6 +457,11 @@ def read_hf_dataset_snapshot_rows(
     normalized_split = _normalized(split)
     rows: list[dict[str, Any]] = []
     if limit is not None and not normalized_split:
+        if limit == 1:
+            first_path = _first_supported_dataset_file(resolved_snapshot_path)
+            if first_path is None:
+                return []
+            return _read_rows_from_file(first_path, limit=1)
         selected_files = _iter_limited_preview_dataset_files(resolved_snapshot_path, limit=limit)
     else:
         selected_files = _iter_selected_dataset_files(resolved_snapshot_path, split=normalized_split)
@@ -546,7 +554,9 @@ def _supported_scan_entry_records(
         name = entry.name
         if name <= after:
             continue
-        if name not in _README_NAMES and _is_supported_dataset_file_name(name):
+        is_readme = name in _README_NAMES
+        is_supported = False if is_readme else _is_supported_dataset_file_name(name)
+        if is_supported:
             try:
                 if entry.is_file(follow_symlinks=False):
                     yield name, entry.path, False, True
@@ -560,7 +570,7 @@ def _supported_scan_entry_records(
                 continue
         except OSError:
             continue
-        if name in _README_NAMES or not _is_supported_dataset_file_name(name):
+        if is_readme or not is_supported:
             continue
 
 
@@ -586,6 +596,9 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
     best_path_raw = ""
     best_is_dir = False
     best_is_file = False
+    readme_names = _README_NAMES
+    is_supported_dataset_file_name = _is_supported_dataset_file_name
+    make_path = Path
     try:
         with os.scandir(os.fspath(directory)) as entries:
             for entry in entries:
@@ -598,7 +611,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                     continue
                 if is_dir:
                     is_file = False
-                elif name in _README_NAMES or not _is_supported_dataset_file_name(name):
+                elif name in readme_names or not is_supported_dataset_file_name(name):
                     continue
                 else:
                     try:
@@ -615,7 +628,7 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
         return None
     if not best_path_raw:
         return None
-    return best_name, Path(best_path_raw), best_is_dir, best_is_file
+    return best_name, make_path(best_path_raw), best_is_dir, best_is_file
 
 
 def _selected_dataset_files(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:
@@ -649,10 +662,9 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
         if limit == 1:
             with path.open("r", encoding="utf-8") as handle:
                 for raw_line in handle:
-                    line = raw_line.strip()
-                    if not line:
+                    if raw_line.isspace():
                         continue
-                    payload = loads(line)
+                    payload = loads(raw_line)
                     if isinstance(payload, dict):
                         return [payload]
             return []
@@ -660,10 +672,9 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
         append_row = rows.append
         with path.open("r", encoding="utf-8") as handle:
             for raw_line in handle:
-                line = raw_line.strip()
-                if not line:
+                if raw_line.isspace():
                     continue
-                payload = loads(line)
+                payload = loads(raw_line)
                 if isinstance(payload, dict):
                     append_row(payload)
                     if limit is not None and len(rows) >= limit:
@@ -980,16 +991,39 @@ def _build_dataset_snapshot(
 
 
 def _dataset_files(snapshot_dir: Path) -> Iterator[DatasetFile]:
-    for path, relative_path, file_format in _iter_supported_dataset_file_records(snapshot_dir):
-        try:
-            stat_result = path.stat()
-        except OSError:
-            continue
+    for relative_path, file_format, size_bytes in _iter_supported_dataset_file_stat_records(snapshot_dir):
         yield DatasetFile(
             relative_path=relative_path,
-            size_bytes=stat_result.st_size,
+            size_bytes=size_bytes,
             file_format=file_format,
         )
+
+
+def _iter_supported_dataset_file_stat_records(
+    snapshot_dir: Path, relative_prefix: str = ""
+) -> Iterator[tuple[str, str, int]]:
+    try:
+        with os.scandir(os.fspath(snapshot_dir)) as entries:
+            child_entries = sorted(entries, key=lambda entry: entry.name)
+    except OSError:
+        return
+    for entry in child_entries:
+        name = entry.name
+        relative_path = f"{relative_prefix}{name}"
+        try:
+            if entry.is_dir():
+                yield from _iter_supported_dataset_file_stat_records(
+                    Path(entry.path), f"{relative_path}/"
+                )
+                continue
+            if not entry.is_file():
+                continue
+            stat_result = entry.stat()
+        except OSError:
+            continue
+        file_format = _dataset_file_format_name(name)
+        if file_format:
+            yield relative_path, file_format, stat_result.st_size
 
 
 def _iter_supported_dataset_files(snapshot_dir: Path) -> Iterator[Path]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, rebuild_multimodal_hash
@@ -132,8 +133,8 @@ class ResolvedVisionFamilyConfig:
 class VisionFamilyAdapter:
     descriptor: VisionFamilyDescriptor
 
-    def resolve(self, metadata: dict[str, str] | None = None) -> ResolvedVisionFamilyConfig:
-        metadata = dict(metadata or {})
+    def resolve(self, metadata: Mapping[str, str] | None = None) -> ResolvedVisionFamilyConfig:
+        metadata = metadata or {}
         return ResolvedVisionFamilyConfig(
             family_id=self.descriptor.family_id,
             prompt_profile_id=_string_value(
@@ -201,6 +202,10 @@ _VISION_PROCESSOR_DEFAULTS: dict[str, tuple[str, str, str, int, str, str]] = {
         "4x256x4096",
     ),
 }
+_BOOL_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_BOOL_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+
+
 _VISION_FAMILY_ADAPTERS: dict[str, VisionFamilyAdapter] = {
     "llava-v1": VisionFamilyAdapter(
         descriptor=VisionFamilyDescriptor(
@@ -253,8 +258,8 @@ _VISION_FAMILY_ADAPTERS: dict[str, VisionFamilyAdapter] = {
 }
 
 
-def resolve_vision_family_config(metadata: dict[str, str] | None = None) -> ResolvedVisionFamilyConfig:
-    metadata = dict(metadata or {})
+def resolve_vision_family_config(metadata: Mapping[str, str] | None = None) -> ResolvedVisionFamilyConfig:
+    metadata = metadata or {}
     family_id = _string_value(metadata, "vision_family_id", _DEFAULT_FAMILY_ID)
     adapter = _VISION_FAMILY_ADAPTERS.get(family_id)
     if adapter is None:
@@ -262,8 +267,8 @@ def resolve_vision_family_config(metadata: dict[str, str] | None = None) -> Reso
     return adapter.resolve(metadata)
 
 
-def vision_processor_capability_metadata(metadata: dict[str, str] | None = None) -> dict[str, str]:
-    metadata = dict(metadata or {})
+def vision_processor_capability_metadata(metadata: Mapping[str, str] | None = None) -> dict[str, str]:
+    metadata = metadata or {}
     family_id = _string_value(metadata, "vision_family_id", _DEFAULT_FAMILY_ID)
     defaults = _VISION_PROCESSOR_DEFAULTS.get(family_id, _VISION_PROCESSOR_DEFAULTS[_DEFAULT_FAMILY_ID])
     return {
@@ -304,12 +309,12 @@ def _with_prompt_text(
     )
 
 
-def _string_value(metadata: dict[str, str], key: str, default: str) -> str:
+def _string_value(metadata: Mapping[str, str], key: str, default: str) -> str:
     value = metadata.get(key, "").strip()
     return value or default
 
 
-def _int_value(metadata: dict[str, str], key: str, default: int) -> int:
+def _int_value(metadata: Mapping[str, str], key: str, default: int) -> int:
     raw_value = metadata.get(key, "").strip()
     if not raw_value:
         return default
@@ -320,12 +325,12 @@ def _int_value(metadata: dict[str, str], key: str, default: int) -> int:
     return max(1, parsed)
 
 
-def _bool_value(metadata: dict[str, str], key: str, default: bool) -> bool:
+def _bool_value(metadata: Mapping[str, str], key: str, default: bool) -> bool:
     raw_value = metadata.get(key, "").strip().lower()
     if not raw_value:
         return default
-    if raw_value in {"1", "true", "yes", "on"}:
+    if raw_value in _BOOL_TRUE_VALUES:
         return True
-    if raw_value in {"0", "false", "no", "off"}:
+    if raw_value in _BOOL_FALSE_VALUES:
         return False
     return default

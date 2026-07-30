@@ -132,12 +132,45 @@ def _version_pairs(count: int) -> list[tuple[str, str]]:
     return differing_pairs + exact_pairs + prefix_equivalent_pairs
 
 
+def _measure_normalized_version_parts(iterations: int, sample_count: int) -> dict[str, float]:
+    versions = [
+        f" v{major}.{minor}rc{patch}.0-beta+build.{index} "
+        for index in range(iterations)
+        for major in range(1, 4)
+        for minor in range(0, 4)
+        for patch in range(0, 3)
+    ][:iterations]
+    elapsed_samples: list[float] = []
+    peak_samples: list[float] = []
+    checksum = 0
+
+    for _ in range(sample_count):
+        tracemalloc.start()
+        started = time.perf_counter()
+        checksum = 0
+        for version in versions:
+            parts = startup_signals.normalized_version_parts(version)
+            checksum += len(parts) + parts[0]
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_samples.append(float(peak))
+
+    return {
+        "normalized_parts_checksum": float(checksum),
+        "normalized_parts_elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "normalized_parts_iterations": float(len(versions)),
+        "normalized_parts_peak_bytes_mean": statistics.fmean(peak_samples),
+    }
+
+
 def main() -> int:
     pair_count = 12_000
     sample_count = 7
     update_result_iterations = 25_000
     update_channel_iterations = 7_500
     product_version_iterations = 20_000
+    normalized_parts_iterations = 24_000
     pairs = _version_pairs(pair_count)
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
@@ -164,6 +197,7 @@ def main() -> int:
     metrics.update(_measure_update_result_allocations(update_result_iterations, sample_count))
     metrics.update(_measure_update_channel_read(update_channel_iterations, sample_count))
     metrics.update(_measure_product_version_read(product_version_iterations, sample_count))
+    metrics.update(_measure_normalized_version_parts(normalized_parts_iterations, sample_count))
     print(json.dumps(metrics, sort_keys=True))
     return 0
 

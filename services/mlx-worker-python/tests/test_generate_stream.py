@@ -23,6 +23,7 @@ from worker.runtime.multimodal_attention_policy import (
     MultimodalPrefillAttentionBudgetExceeded,
     choose_attention_prefill_policy,
 )
+from worker.runtime.structured_output_constraints import StructuredOutputConstraintError
 
 
 class StreamingFakeBackend:
@@ -107,12 +108,18 @@ def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
 
     assert engine_core_module._non_negative_int("invalid") == 0
     assert engine_core_module._cached_prompt_tokens_from_event(None) == 0
-    assert engine_core_module._media_feature_usage_from_probe(None) == {
-        "media_feature_cache_hits": 0,
-        "media_feature_cache_misses": 0,
-        "media_feature_encoder_calls_saved": 0,
-        "media_feature_work_saved_bytes": 0,
-    }
+    assert engine_core_module._media_feature_usage_from_probe(None) is None
+    assert (
+        engine_core_module._media_feature_usage_from_probe(
+            SimpleNamespace(
+                media_feature_cache_hits=0,
+                media_feature_cache_misses=0,
+                media_feature_encoder_calls_saved=0,
+                media_feature_work_saved_bytes=0,
+            )
+        )
+        is None
+    )
     assert engine_core_module._usage_delta(
         prompt_tokens=8,
         completion_tokens=2,
@@ -565,6 +572,32 @@ class AttentionBudgetFailingRuntime:
         )
 
 
+class RuntimeStructuredOutputFailingRuntime:
+    runtime_name = "fake-structured-output-runtime"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        _ = model_spec
+        return 0
+
+    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+        _ = (messages, loaded_model, template_kwargs, execution_ext)
+        return "structured output prompt"
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+        _ = (loaded_model, prompt, sampling, cancel_event, execution_ext)
+        raise StructuredOutputConstraintError(
+            "json_object constraints require sampler logits processor support.",
+            details={
+                "mode": "json_object",
+                "enforcement": "sampler",
+                "reason": "logits_processors_unsupported",
+            },
+        )
+
+
 def build_services():
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StreamingFakeBackend()),
@@ -664,6 +697,26 @@ def generate_usage_request(model_handle: str, *, return_usage: bool) -> inferenc
         stream=True,
         return_usage=return_usage,
     )
+
+
+def test_generate_plain_token_skips_native_metric_parser(monkeypatch) -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+    native_parser_calls = 0
+    original_parser = engine_core_module._text_native_mtp_parser_metrics
+
+    def counted_native_parser(event):  # pragma: no cover - regression guard should stay unused.
+        nonlocal native_parser_calls
+        native_parser_calls += 1  # pragma: no cover
+        return original_parser(event)  # pragma: no cover
+
+    monkeypatch.setattr(engine_core_module, "_text_native_mtp_parser_metrics", counted_native_parser)
+
+    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+
+    completed = next(event.completed for event in events if event.HasField("completed"))
+    assert completed.finish_reason == "stop"
+    assert native_parser_calls == 0
 
 
 def test_generate_without_usage_skips_prompt_token_count_fallback(monkeypatch) -> None:
@@ -875,6 +928,8 @@ def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> 
     request.execution.scope.revision = "revision-routing-custom"
     request.execution.ext["client-key"] = "client-value"
     request.execution.cache_hints.preferred_block_size = 16
+    request.execution.acceleration.mode = common_pb2.ACCELERATION_MODE_ACTIVE_KV_QUANTIZED
+    request.execution.acceleration.active_kv_quant_profile = "q4:g64"
 
     events = list(inference_service.Generate(request, context=None))
 
@@ -886,7 +941,8 @@ def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> 
             "_melix.session_id": "session-routing-custom",
             "_melix.model_id": "model-routing-custom",
             "_melix.model_revision": "revision-routing-custom",
-            "_melix.acceleration_mode": "0",
+            "_melix.acceleration_mode": "4",
+            "_melix.active_kv_quant_profile": "q4:g64",
             "_melix.cache_mode": "0",
             "_melix.block_size": "16",
         }
@@ -1738,6 +1794,77 @@ def test_generate_stream_preserves_explicit_tool_parser_with_structured_json_mod
     assert completed.parser_metrics["reasoning_leak_count"] == "0"
 
 
+def test_generate_rejects_schema_backed_json_schema_when_sampler_cannot_enforce() -> None:
+    _, inference_service, model_handle = build_services()
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-json-schema-unsupported"),
+            model_handle=model_handle,
+            ext={
+                "melix.structured_output.mode": "json_schema",
+                "melix.structured_output.schema_name": "answer",
+                "melix.structured_output.schema_json": '{"type":"object","required":["answer"]}',
+                "melix.structured_output.strict": "true",
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Return an answer object.")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    error = next(event.error.error for event in events if event.HasField("error"))
+    assert error.code == "unsupported_structured_output"
+    assert error.details["mode"] == "json_schema"
+    assert error.details["enforcement"] == "sampler"
+    assert error.details["reason"] == "json_schema_grammar_unavailable"
+    assert not any(event.HasField("completed") for event in events)
+
+
+def test_generate_reports_runtime_structured_output_constraint_error() -> None:
+    registry = WorkerRegistry(
+        runtime=RuntimeStructuredOutputFailingRuntime(),
+        model_catalog=WorkerModelCatalog(),
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-runtime-structured-output-error"),
+            model_handle=load_response.model_handle,
+            ext={"melix.structured_output.mode": "json_object"},
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Return a JSON object.")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+
+    error = next(event.error.error for event in events if event.HasField("error"))
+    assert error.code == "unsupported_structured_output"
+    assert error.message == "json_object constraints require sampler logits processor support."
+    assert error.details["mode"] == "json_object"
+    assert error.details["enforcement"] == "sampler"
+    assert error.details["reason"] == "logits_processors_unsupported"
+    assert not any(event.HasField("completed") for event in events)
+
+
 def test_generate_stream_normalizes_tool_calls_to_declared_openai_tool_names() -> None:
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=ActionQualifiedToolStreamingBackend()),
@@ -2414,12 +2541,12 @@ def test_text_native_mtp_parser_metrics_fallback_reason_surfaced() -> None:
             text="done",
             cache_hit_mode="none",
             recovered_prefix_tokens=0,
-            cache_fallback_reason="active_kv_excluded",
+            cache_fallback_reason="kv_quant_profile_missing",
         )
     )
     assert metrics["cache_hit_mode"] == "none"
     assert metrics["recovered_prefix_tokens"] == "0"
-    assert metrics["cache_fallback_reason"] == "active_kv_excluded"
+    assert metrics["cache_fallback_reason"] == "kv_quant_profile_missing"
 
 
 def test_generate_forwards_positive_block_size_to_runtime() -> None:

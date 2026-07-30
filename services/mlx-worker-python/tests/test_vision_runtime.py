@@ -1,5 +1,7 @@
+from collections.abc import Mapping
 from pathlib import Path
 from threading import Event
+from typing import Iterator, SupportsIndex
 from urllib.error import URLError
 
 import pytest
@@ -30,7 +32,11 @@ from worker.runtime.multimodal_preprocessing import (
     rebuild_multimodal_hash,
 )
 from worker.runtime.token_counting import whitespace_token_count
-from worker.runtime.vision_family_adapters import ResolvedVisionFamilyConfig, resolve_vision_family_config
+from worker.runtime.vision_family_adapters import (
+    ResolvedVisionFamilyConfig,
+    resolve_vision_family_config,
+    vision_processor_capability_metadata,
+)
 
 
 class PassiveTextBackend:
@@ -97,6 +103,60 @@ def text_only_vlm_request(prompt_text: str) -> PreparedVisionRequest:
         prompt_hash_hex="1" * 64,
         multimodal_hash_hex="2" * 64,
     )
+
+
+class IterationCountingMetadata(Mapping[str, str]):
+    def __init__(self, values: dict[str, str]) -> None:
+        self._values = values
+        self.iteration_count = 0
+
+    def __iter__(self) -> Iterator[str]:
+        self.iteration_count += 1
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, key: str) -> str:
+        return self._values[key]
+
+
+def test_vision_family_metadata_resolution_reads_mapping_without_copy() -> None:
+    iteration_probe = IterationCountingMetadata({"vision_family_id": "gemma4-v1"})
+    assert list(iteration_probe) == ["vision_family_id"]
+    assert iteration_probe.iteration_count == 1
+
+    metadata = IterationCountingMetadata(
+        {
+            "vision_family_id": "gemma4-v1",
+            "vision_prompt_profile_id": "gemma4-chatml-v1",
+            "vision_max_images_per_prompt": "4",
+            "vision_supports_tool_calls": "true",
+        }
+    )
+
+    config = resolve_vision_family_config(metadata)
+
+    assert config.family_id == "gemma4-v1"
+    assert config.max_images_per_prompt == 4
+    assert config.supports_tool_calls is True
+    assert metadata.iteration_count == 0
+
+
+def test_vision_processor_metadata_reads_mapping_without_copy() -> None:
+    metadata = IterationCountingMetadata(
+        {
+            "vision_family_id": "paligemma-v1",
+            "vision_processor_crop_grid": "1x2",
+            "vision_processor_max_crop_count": "2",
+        }
+    )
+
+    capability_metadata = vision_processor_capability_metadata(metadata)
+
+    assert capability_metadata["vision_processor_crop_grid"] == "1x2"
+    assert capability_metadata["vision_processor_max_crop_count"] == "2"
+    assert metadata.iteration_count == 0
 
 
 def test_generate_streams_ocr_text_from_inline_image_bytes() -> None:
@@ -366,6 +426,47 @@ def test_ocr_single_image_token_count_reuses_same_request_cache(
     assert runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
     assert runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
     assert token_count_calls == 1
+
+
+def test_vlm_cache_identity_fingerprint_uses_tail_scan_without_split_list() -> None:
+    class SplitTrackingIdentity(str):
+        rsplit_calls = 0
+
+        def rsplit(self, sep: str | None = None, maxsplit: SupportsIndex = -1) -> list[str]:
+            type(self).rsplit_calls += 1
+            return super().rsplit(sep, maxsplit)
+
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"synthetic image bytes",
+                source_kind="inline",
+                reference="inline:image.png",
+                mime_type="image/png",
+                format="png",
+                filename="image.png",
+                sha256_hex="a" * 64,
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=128,
+        preprocess_peak_memory_bytes=128,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    cache_identity = SplitTrackingIdentity(f"model:rev:q8:text:off:{'f' * 64}")
+
+    assert (
+        DeterministicVLMRuntime._cache_identity_fingerprint_hash_hex(
+            cache_identity=cache_identity,
+            prepared_request=request,
+        )
+        == "f" * 64
+    )
+    assert SplitTrackingIdentity.rsplit_calls == 1
 
 
 def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest.MonkeyPatch) -> None:

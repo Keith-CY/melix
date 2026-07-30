@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import builtins
 from dataclasses import replace
 import gc
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -33,6 +35,7 @@ from worker.productization.pr_scoped_performance import (
     _float_or_none,
     _format_delta,
     _format_value,
+    _glob_has_magic,
     _glob_literal_prefix,
     _is_relative_to,
     _load_upload_receipt_pipeline_module,
@@ -124,6 +127,33 @@ def test_scope_report_selects_event_extraction_probe() -> None:
         "event-extraction-group-actor-alias-cache",
         "event-extraction-response-json-fence-trim",
     }
+
+
+def test_scope_report_selects_image_family_config_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/image_family_adapters.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["image-family-config-copy-elision"]
+
+
+def test_image_family_config_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_IMAGE_FAMILY_CONFIG_ITERATIONS", "128")
+    monkeypatch.setenv("MELIX_IMAGE_FAMILY_CONFIG_SAMPLES", "2")
+
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/image_family_config_probe.py"))
+    probe_script["main"]()
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] > 0.0
+    assert metrics["metadata_iteration_calls_mean"] == 0.0
+    assert metrics["iteration_count"] == 128.0
+    assert metrics["sample_count"] == 2.0
 
 
 def test_scope_report_selects_hub_catalog_probe() -> None:
@@ -367,6 +397,7 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["run_kind_elapsed_ms_mean"] >= 0.0
     assert metrics["metric_prefix_elapsed_ms_mean"] >= 0.0
     assert metrics["target_field_elapsed_ms_mean"] >= 0.0
+    assert metrics["release_matrix_unmatched_elapsed_ms_mean"] >= 0.0
     assert metrics["matrix_roles_elapsed_ms_mean"] >= 0.0
     assert metrics["dict_list_elapsed_ms_mean"] >= 0.0
     assert metrics["probe_phases_elapsed_ms_mean"] >= 0.0
@@ -384,6 +415,8 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["run_kind_count"] == 65.0
     assert metrics["metric_prefix_count"] == 65.0
     assert metrics["target_field_count"] == 65.0
+    assert metrics["release_matrix_unmatched_role_count"] == 16.0
+    assert metrics["release_matrix_unmatched_report_count"] == 96.0
     assert metrics["matrix_roles_role_count"] == 32.0
     assert metrics["matrix_roles_probe_phase_rows"] == 2048.0
     assert metrics["metrics_per_call"] == 80.0
@@ -477,7 +510,9 @@ def test_lora_aux_modules_sidecar_delta_metrics_are_informational() -> None:
     probe = next(probe for probe in probes if probe.probe_id == "lora-aux-modules-scandir")
     directions = {metric.key: metric.direction for metric in probe.metrics}
 
+    assert directions["processor_resume_baseline_elapsed_ms_mean"] == "informational"
     assert directions["processor_resume_delta_ms"] == "informational"
+    assert directions["quantized_kind_baseline_elapsed_ms_mean"] == "informational"
     assert directions["quantized_kind_delta_ms"] == "informational"
 
 
@@ -491,6 +526,20 @@ def test_scope_report_selects_trajectory_provenance_copy_elision_probe() -> None
         "trajectory-provenance-copy-elision",
         "trajectory-manifest-json-load",
     ]
+
+
+def test_trajectory_provenance_copy_elision_sidecar_speedups_are_informational() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "trajectory-provenance-copy-elision"
+    )
+    directions = {metric.key: metric.direction for metric in probe.metrics}
+
+    assert directions["speedup"] == "higher_is_better"
+    assert directions["scalar_list_speedup"] == "informational"
+    assert directions["scalar_dict_speedup"] == "informational"
+    assert directions["adapter_manifest_speedup"] == "informational"
 
 
 def test_scope_report_selects_native_mtp_loader_probe() -> None:
@@ -526,6 +575,53 @@ def test_scope_report_selects_retrieval_context_projection_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/retrieval_context.py"],
     )
     assert _selected_probe_ids(scope) == ["retrieval-context-projection-fastpath"]
+
+
+def test_scope_report_selects_prefix_cold_index_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/prefix_block_store.py"],
+    )
+    assert "prefix-cold-index-scandir" in _selected_probe_ids(scope)
+    assert "prefix-cache-snapshot-byte-streaming" in _selected_probe_ids(scope)
+
+
+def test_prefix_cache_snapshot_bytes_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_PREFIX_CACHE_SNAPSHOT_LAYERS", "8")
+    monkeypatch.setenv("MELIX_PREFIX_CACHE_SNAPSHOT_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_PREFIX_CACHE_SNAPSHOT_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/prefix_cache_snapshot_bytes_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["iteration_count"] == 2.0
+    assert metrics["layer_count"] == 8.0
+    assert metrics["peak_bytes_mean"] >= 0.0
+    assert metrics["sample_count"] == 1.0
+
+
+def test_prefix_cold_index_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_PREFIX_COLD_INDEX_PROBE_ENTRIES", "5")
+    monkeypatch.setenv("MELIX_PREFIX_COLD_INDEX_PROBE_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/prefix_cold_index_scandir_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["entry_count"] == 5.0
+    assert metrics["loaded_count_mean"] == 5.0
+    assert metrics["path_glob_calls_mean"] == 0.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["scandir_calls_mean"] == 1.0
 
 
 def test_retrieval_context_projection_probe_script_emits_metrics(
@@ -691,6 +787,12 @@ def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iteration_count"] == 10.0
     assert metrics["component_count"] == 4.0
+    assert metrics["scalar_dict_baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["scalar_dict_elapsed_ms_mean"] >= 0.0
+    assert metrics["scalar_dict_speedup"] >= 0.0
+    assert metrics["adapter_manifest_baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["adapter_manifest_elapsed_ms_mean"] >= 0.0
+    assert metrics["adapter_manifest_speedup"] >= 0.0
 
 
 def test_trajectory_manifest_json_load_probe_script_emits_metrics(
@@ -772,6 +874,9 @@ def test_quantized_tensor_metadata_prepass_probe_script_emits_metrics(
     assert metrics["tensor_names_access_peak_bytes_mean"] >= 0.0
     assert metrics["header_tensor_count"] == 18.0
     assert metrics["cross_shard_pair_count"] == 6.0
+    assert metrics["cross_shard_fixup_count"] == 12.0
+    assert metrics["cross_shard_fixup_elapsed_ms_mean"] >= 0.0
+    assert metrics["cross_shard_fixup_peak_bytes_mean"] >= 0.0
     assert metrics["matched_decision_count"] == 12.0
     assert metrics["pair_count"] == 6.0
     assert metrics["shard_count"] == 3.0
@@ -811,6 +916,7 @@ def test_quantized_tensor_metadata_prepass_probe_base_fallback(
     assert metrics["metadata_tensor_count"] == 12.0
     assert metrics["header_tensor_count"] == 12.0
     assert metrics["cross_shard_pair_count"] == 4.0
+    assert metrics["cross_shard_fixup_count"] == 8.0
     assert metrics["matched_decision_count"] == 8.0
     assert metrics["high_precision_decision_count"] == 6.0
     assert probe_script["main"]() == 0
@@ -878,6 +984,10 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["elapsed_ms_p95"] >= 0.0
     assert metrics["source_kind_elapsed_ms_mean"] >= 0.0
     assert metrics["source_kind_elapsed_ms_p95"] >= 0.0
+    assert metrics["read_elapsed_ms_mean"] >= 0.0
+    assert metrics["read_elapsed_ms_p95"] >= 0.0
+    assert metrics["capped_read_elapsed_ms_mean"] >= 0.0
+    assert metrics["capped_read_elapsed_ms_p95"] >= 0.0
     assert metrics["record_elapsed_ms_mean"] >= 0.0
     assert metrics["record_elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
@@ -1024,7 +1134,7 @@ def test_tool_registry_select_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] >= 0.0
     assert metrics["select_calls_mean"] == 20.0
-    assert metrics["selection_case_count"] == 5.0
+    assert metrics["selection_case_count"] == 6.0
     assert metrics["full_list_self_hits_mean"] == 4.0
     assert metrics["full_config_template_elapsed_ms_mean"] >= 0.0
     assert metrics["full_config_template_hits_mean"] == 4.0
@@ -1034,6 +1144,10 @@ def test_tool_registry_select_probe_script_emits_metrics(
     assert metrics["selector_selected_schema_bytes_mean"] > 0.0
     assert metrics["always_only_planning_elapsed_ms_mean"] >= 0.0
     assert metrics["always_only_selected_schema_bytes_mean"] > 0.0
+    assert metrics["policy_planning_elapsed_ms_mean"] >= 0.0
+    assert metrics["policy_selected_schema_bytes_mean"] > 0.0
+    assert metrics["preflight_consistency_elapsed_ms_mean"] >= 0.0
+    assert metrics["preflight_referenced_tools_mean"] == 3.0
 
 
 def test_tool_registry_names_probe_script_emits_metrics(
@@ -1234,11 +1348,122 @@ def test_scope_report_selects_mlx_text_stop_kwarg_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/mlx_text_runtime.py"],
     )
 
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert _selected_probe_ids(scope) == [
         "mlx-text-stop-kwarg-signature-cache",
         "mlx-text-stop-filter-prefix-cache",
+        "structured-output-json-object-constraint-cache",
     ]
+
+
+def test_scope_report_selects_structured_output_constraint_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/runtime/structured_output_constraints.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["structured-output-json-object-constraint-cache"]
+
+
+def test_structured_output_constraint_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_REPO_ROOT", str(REPO_ROOT))
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_VOCAB_SIZE", "64")
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_MASK_ITERATIONS", "4")
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_SAMPLES", "1")
+
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/structured_output_constraint_probe.py"))
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["implementation_available"] == 1.0
+    assert metrics["build_first_decode_calls_mean"] == 64.0
+    assert metrics["build_second_decode_calls_mean"] == 0.0
+    assert metrics["cached_mask_elapsed_ms_mean"] >= 0.0
+    assert metrics["initial_allowed_count_mean"] >= 1.0
+
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_FORCE_FALLBACK", "1")
+    assert probe_script["main"]() == 0
+
+    fallback_metrics = json.loads(capsys.readouterr().out)
+    assert fallback_metrics["implementation_available"] == 0.0
+    assert fallback_metrics["build_first_decode_calls_mean"] == 64.0
+    assert fallback_metrics["build_second_decode_calls_mean"] == 64.0
+
+    probe_tokenizer = probe_script["ProbeTokenizer"](32)
+    assert probe_tokenizer.get_vocab()["{"] == 0
+    assert probe_script["_fallback_builder"]({}, probe_tokenizer) == []
+    assert probe_script["_uncached_tokenizer_vocabulary"](object()) == {}
+    assert probe_script["_env_int"]("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", 4, 2) == 4
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", "1")
+    assert probe_script["_env_int"]("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", 4, 2) == 2
+    monkeypatch.setenv("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", "bad")
+    assert probe_script["_env_int"]("MELIX_STRUCTURED_OUTPUT_CONSTRAINT_BAD_INT", 4, 2) == 4
+
+    class ScalarTokenList:
+        def tolist(self) -> int:
+            return 7
+
+    assert probe_script["_token_ids"](7) == [7]
+    assert probe_script["_token_ids"](ScalarTokenList()) == [7]
+    assert probe_script["_token_ids"]([[1, 2]]) == [1, 2]
+    with pytest.raises(ValueError, match="single-sequence"):
+        probe_script["_token_ids"]([[1, 2], [3, 4]])
+
+    mx = probe_script["_mx"]()
+    fallback_processors = probe_script["_fallback_builder"](
+        {"melix.structured_output.mode": "json_object"},
+        probe_tokenizer,
+    )
+    fallback_processor = fallback_processors[0]
+    logits = mx.zeros((1, 32))
+    fallback_processor(mx.array([30]), logits)
+    fallback_processor(mx.array([30, 0]), logits)
+    fallback_processor(mx.array([30, 0, 1]), logits)
+    fallback_processor(mx.array([30, 0, 1, 31]), logits)
+    invalid = fallback_processor(mx.array([30, 0, 1, 31, 2]), logits)
+    assert int(mx.sum(mx.isfinite(invalid)).item()) == 0
+
+
+def test_structured_output_constraint_probe_uses_fake_mx_when_mlx_import_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/structured_output_constraint_probe.py"))
+    monkeypatch.delitem(sys.modules, "mlx", raising=False)
+    monkeypatch.delitem(sys.modules, "mlx.core", raising=False)
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "mlx.core":
+            raise ImportError("libmlx.so: cannot open shared object file")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert fake_import("json") is json
+    mx = probe_script["_mx"]()
+    values = mx.array([0.0, -math.inf, 2.0])
+
+    assert int(mx.sum(mx.isfinite(values)).item()) == 2
+    assert mx.array(mx.array([1.0, 2.0])).tolist() == [1.0, 2.0]
+    assert mx.array([[1.0, 2.0]])[0].tolist() == [1.0, 2.0]
+    assert (mx.array([1.0]) + 2.0).tolist() == [3.0]
+    assert (2.0 + mx.array([1.0])).tolist() == [3.0]
+    assert mx.array([1.0]).__radd__(mx.array([2.0])).tolist() == [3.0]
+    assert mx.array([[1.0, 2.0]]).reshape((2,)).tolist() == [1.0, 2.0]
+    assert mx.array([]).shape == (0,)
+    assert mx.zeros((2,)).tolist() == [0.0, 0.0]
+    assert mx.zeros((1, 2)).tolist() == [[0.0, 0.0]]
+    with pytest.raises(ValueError):
+        mx.array([1.0]).reshape((2, 2))
+    with pytest.raises(ValueError):
+        mx.zeros((1, 1, 1))
 
 
 def test_mlx_text_stop_filter_probe_script_emits_metrics(
@@ -1474,7 +1699,9 @@ def test_scope_report_selects_response_only_boundary_slots_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "response-only-boundary-slotted-records"
 
 
-def test_response_only_boundary_slots_probe_script_emits_metrics() -> None:
+def test_response_only_boundary_slots_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     probe = next(
         probe
         for probe in load_probe_registry(REGISTRY_PATH)
@@ -1485,8 +1712,21 @@ def test_response_only_boundary_slots_probe_script_emits_metrics() -> None:
 
     assert metrics["construction_elapsed_ms_mean"] > 0
     assert metrics["aggregation_elapsed_ms_mean"] > 0
+    assert metrics["aggregation_no_limit_elapsed_ms_mean"] > 0
     assert metrics["instance_dict_count_mean"] == 0.0
     assert metrics["boundary_count"] == 50000.0
+
+    monkeypatch.setenv("MELIX_RESPONSE_BOUNDARY_SLOT_PROBE_COUNT", "100")
+    monkeypatch.setenv("MELIX_RESPONSE_BOUNDARY_SLOT_PROBE_SAMPLES", "1")
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/response_only_boundary_slots_probe.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+    runpy_metrics = json.loads(capsys.readouterr().out)
+    assert runpy_metrics["aggregation_no_limit_elapsed_ms_mean"] > 0
+    assert runpy_metrics["boundary_count"] == 100.0
 
 
 def test_scope_report_selects_quantization_qat_source_scan_probe() -> None:
@@ -1960,8 +2200,26 @@ def test_scope_report_selects_lora_reward_summary_probe() -> None:
         ],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "lora-reward-summary-candidate-minmax"
+    assert scope["selected_count"] == 2
+    assert set(_selected_probe_ids(scope)) == {
+        "lora-normalized-manifest-io-count",
+        "lora-reward-summary-candidate-minmax",
+    }
+
+
+def test_lora_normalized_manifest_probe_script_smoke(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/lora_normalized_manifest_probe.py"))
+
+    probe_script["main"]()
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["manifest_write_text_calls_mean"] == 1.0
+    assert metrics["manifest_read_text_calls_mean"] == 0.0
+    assert metrics["iteration_count"] == 12.0
+    assert metrics["manifest_checksum"] == 24.0
 
 
 def test_scope_report_selects_statistical_evidence_probe() -> None:
@@ -2700,6 +2958,28 @@ def test_maintenance_prompt_shape_probe_is_importable_without_running() -> None:
     assert "elapsed_samples" not in probe_script
 
 
+def test_maintenance_prompt_shape_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/maintenance_prompt_shape_probe.py"))
+    main = probe_script["main"]
+    probe_globals = main.__globals__
+
+    monkeypatch.setitem(probe_globals, "contexts", (2,))
+    monkeypatch.setitem(probe_globals, "sample_count", 1)
+    monkeypatch.setitem(probe_globals, "iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "plain_iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "single_context_iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "single_context_prompt", "single0 single1")
+
+    assert main() == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["single_context_elapsed_ms_mean"] >= 0.0
+    assert metrics["single_context_iteration_count"] == 1.0
+    assert metrics["single_context_token_count_mean"] == 1.0
+
+
 def test_maintenance_prompt_shape_probe_validates_invariants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2712,6 +2992,7 @@ def test_maintenance_prompt_shape_probe_validates_invariants(
     monkeypatch.setitem(probe_globals, "sample_count", 1)
     monkeypatch.setitem(probe_globals, "iteration_count", 1)
     monkeypatch.setitem(probe_globals, "plain_iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "single_context_iteration_count", 1)
     monkeypatch.setitem(probe_globals, "plain_prompt", "one two")
 
     monkeypatch.setattr(
@@ -2722,10 +3003,18 @@ def test_maintenance_prompt_shape_probe_validates_invariants(
     with pytest.raises(SystemExit, match="unexpected token count"):
         main()
 
+    class SingleTokenPrompt(str):
+        token_count = 1
+
+    def shaped_probe_prompt(prompt: str, *, context_length: int) -> str:
+        if context_length == 1:
+            return SingleTokenPrompt("single0")
+        return "one two"
+
     monkeypatch.setattr(
         maintenance_core,
         "_shape_benchmark_prompt",
-        staticmethod(lambda prompt, *, context_length: "one two"),
+        staticmethod(shaped_probe_prompt),
     )
     monkeypatch.setattr(
         maintenance_core,
@@ -2960,25 +3249,42 @@ def test_changed_paths_force_all_wildcards_short_circuits_on_match(
 ) -> None:
     match_calls: list[str] = []
 
+    class TrackingPattern:
+        def match(self, path: str) -> object | None:
+            match_calls.append(path)
+            return object() if path.startswith("scripts/pr_scoped_performance_") or path.endswith("report.py") else None
+
     monkeypatch.setattr(
         pr_scoped_performance_module,
         "_force_all_wildcard_matchers",
-        lambda: (("scripts/", re.compile(r"scripts/pr_scoped_performance_.*\.py")),),
+        lambda: (("scripts/", TrackingPattern()),),
     )
-
-    def tracked_match(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
-        match_calls.append(path)
-        return path.startswith("scripts/pr_scoped_performance_")
-
-    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_compiled_glob", tracked_match)
 
     assert (
         pr_scoped_performance_module._changed_paths_match_force_all_wildcards(
-            ["scripts/pr_scoped_performance_report.py", "docs/late.md"]  # type: ignore[arg-type]
+            ["docs/early.md", "scripts/other.py", "services/late.py"]
+        )
+        is False
+    )
+    assert match_calls == ["scripts/other.py"]
+    match_calls.clear()
+
+    assert (
+        pr_scoped_performance_module._changed_paths_match_force_all_wildcards(
+            ("docs/early.md", "scripts/pr_scoped_performance_report.py", "services/late.py")
         )
         is True
     )
     assert match_calls == ["scripts/pr_scoped_performance_report.py"]
+    match_calls.clear()
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_force_all_wildcard_matchers",
+        lambda: (("", TrackingPattern()),),
+    )
+    assert pr_scoped_performance_module._changed_paths_match_force_all_wildcards(("docs/report.py",)) is True
+    assert match_calls == ["docs/report.py"]
 
 
 def test_matches_any_glob_uses_explicit_short_circuit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3028,6 +3334,69 @@ def test_coverage_paths_for_probe_uses_cached_watch_glob_matchers(monkeypatch: p
     assert matcher_calls == [("services/a.py", ("services/", "docs/"))]
 
 
+def test_coverage_paths_by_probe_id_buckets_wildcard_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/*.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="beta",
+            name="Beta",
+            runner="ubuntu-latest",
+            watch_globs=("docs/*.md",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    match_calls: list[tuple[str, str]] = []
+
+    class TrackingPattern:
+        def __init__(self, name: str, matched_path: str) -> None:
+            self.name = name
+            self.matched_path = matched_path
+
+        def match(self, path: str) -> object | None:
+            match_calls.append((self.name, path))
+            return object() if path == self.matched_path else None
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_probe_match_indexes",
+        lambda probe_tuple: (
+            {},
+            (),
+            {
+                "": (("README", TrackingPattern("readme", "README.md"), (1,)),),
+                "services/": (("services/", TrackingPattern("services", "services/a.py"), (0,)),),
+                "docs/": (("docs/", TrackingPattern("docs", "docs/plan.md"), (1,)),),
+            },
+        ),
+    )
+
+    assert _coverage_paths_by_probe_id(
+        changed_paths=("services/a.py",),
+        probes=probes,
+        selected_probe_ids=frozenset({"alpha"}),
+    ) == {"alpha": ("services/a.py",)}
+    assert _coverage_paths_by_probe_id(
+        changed_paths=("services/a.py",),
+        probes=probes,
+        selected_probe_ids=None,
+    ) == {"alpha": ("services/a.py",)}
+    assert match_calls == [("services", "services/a.py"), ("services", "services/a.py")]
+
+
 def test_probe_watch_glob_matchers_reuses_cached_matchers(monkeypatch: pytest.MonkeyPatch) -> None:
     compile_calls: list[str] = []
     original_compile = pr_scoped_performance_module._compiled_glob_pattern
@@ -3067,6 +3436,105 @@ def test_scope_report_empty_direct_paths_skips_probe_matching(monkeypatch: pytes
     assert scope["matched_probe_ids"] == []
 
     assert _coverage_paths_by_probe_id(changed_paths=(), probes=()) == {}
+
+
+def test_scope_selection_reuses_sorted_direct_path_tuple_without_resorting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/a.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    captured_calls: list[tuple[tuple[str, ...], frozenset[str]]] = []
+
+    def tracked_normalized_match(
+        *,
+        changed_path_tuple: tuple[str, ...],
+        changed_path_set: frozenset[str],
+        probes: tuple[ProbeDefinition, ...],
+    ) -> frozenset[int]:
+        _ = probes
+        captured_calls.append((changed_path_tuple, changed_path_set))
+        return frozenset({0})
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_match_probe_indexes_for_normalized_paths",
+        tracked_normalized_match,
+    )
+
+    pr_scoped_performance_module._scope_selection_uncached(
+        probes=probes,
+        changed_paths=("infra/perf/pr_scoped_probes.json", "services/a.py"),
+    )
+
+    assert captured_calls == [(("services/a.py",), frozenset({"services/a.py"}))]
+
+
+def test_scope_selection_reuses_full_path_set_when_no_context_only_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="alpha",
+            name="Alpha",
+            runner="ubuntu-latest",
+            watch_globs=("services/a.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    changed_paths = ("README.md", "services/a.py")
+    captured_calls: list[tuple[tuple[str, ...], frozenset[str]]] = []
+
+    def tracked_normalized_match(
+        *,
+        changed_path_tuple: tuple[str, ...],
+        changed_path_set: frozenset[str],
+        probes: tuple[ProbeDefinition, ...],
+    ) -> frozenset[int]:
+        _ = probes
+        captured_calls.append((changed_path_tuple, changed_path_set))
+        return frozenset({0})
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_match_probe_indexes_for_normalized_paths",
+        tracked_normalized_match,
+    )
+
+    def fail_direct_probe_scan(
+        *,
+        changed_paths: frozenset[str],
+        probes: tuple[ProbeDefinition, ...],
+    ) -> frozenset[int]:  # pragma: no cover - sentinel
+        _ = (changed_paths, probes)
+        raise AssertionError("disjoint direct probe paths should skip direct probe scan")
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_force_all_direct_probe_indexes",
+        fail_direct_probe_scan,
+    )
+
+    pr_scoped_performance_module._scope_selection_uncached(
+        probes=probes,
+        changed_paths=changed_paths,
+    )
+
+    assert captured_calls == [(changed_paths, frozenset(changed_paths))]
 
 
 def test_scope_report_large_changed_set_preserves_exact_selection_semantics() -> None:
@@ -3238,6 +3706,116 @@ def test_match_probe_indexes_skips_prefix_misses_before_regex(monkeypatch: pytes
     assert match_calls == []
 
 
+def test_match_probe_indexes_skips_unbucketed_prefix_misses_before_regex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="readme-prefix",
+            name="Readme prefix",
+            runner="ubuntu-latest",
+            watch_globs=("README*.md",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    match_calls: list[str] = []
+
+    class FailingPattern:
+        def match(self, path: str) -> None:  # pragma: no cover - sentinel
+            match_calls.append(path)
+            raise AssertionError("unbucketed prefix misses should not invoke regex matching")
+
+    pr_scoped_performance_module._probe_match_indexes.cache_clear()
+    monkeypatch.setattr(pr_scoped_performance_module, "_compiled_glob_pattern", lambda glob: FailingPattern())
+    try:
+        assert _match_probe_indexes(changed_paths=("docs/README.md",), probes=probes) == set()
+    finally:
+        pr_scoped_performance_module._probe_match_indexes.cache_clear()
+    assert match_calls == []
+
+
+def test_match_probe_indexes_buckets_wildcards_by_top_level_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="services-probe",
+            name="Services probe",
+            runner="ubuntu-latest",
+            watch_globs=("services/mlx-worker-python/**/*.py",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="docs-probe",
+            name="Docs probe",
+            runner="ubuntu-latest",
+            watch_globs=("docs/**/*.md",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+        ProbeDefinition(
+            probe_id="unbucketed-probe",
+            name="Unbucketed probe",
+            runner="ubuntu-latest",
+            watch_globs=("*.md",),
+            test_command="true",
+            coverage_command="true",
+            probe_impl="benchmark_evaluation_report",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    regex_calls: list[str] = []
+    original_compile = pr_scoped_performance_module._compiled_glob_pattern
+
+    class TrackingPattern:
+        def __init__(self, glob: str) -> None:
+            self.glob = glob
+            self.pattern = original_compile(glob)
+
+        def match(self, path: str):
+            regex_calls.append(f"{self.glob}:{path}")
+            return self.pattern.match(path)
+
+    pr_scoped_performance_module._probe_match_indexes.cache_clear()
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_compiled_glob_pattern",
+        lambda glob: TrackingPattern(glob),
+    )
+    try:
+        matched = _match_probe_indexes(
+            changed_paths=(
+                "docs/notes/perf.md",
+                "README.md",
+                "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+            ),
+            probes=probes,
+        )
+    finally:
+        pr_scoped_performance_module._probe_match_indexes.cache_clear()
+
+    assert matched == {0, 1, 2}
+    assert regex_calls == [
+        "*.md:README.md",
+        "*.md:docs/notes/perf.md",
+        "docs/**/*.md:docs/notes/perf.md",
+        "*.md:services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        "services/mlx-worker-python/**/*.py:services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+    ]
+
+
 def test_compiled_glob_pattern_reuses_cached_regex(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _compiled_glob_pattern("services/*.py") is _compiled_glob_pattern("services/*.py")
 
@@ -3351,6 +3929,7 @@ def test_event_extraction_response_json_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["checksum"] == 12.0
     assert metrics["direct_checksum"] == 12.0
+    assert metrics["json_fence_startswith_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["direct_elapsed_ms_mean"] >= 0
@@ -3505,6 +4084,7 @@ def test_multimodal_fast_path_signature_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iterations_per_sample"] == 3.0
     assert metrics["signature_count"] == 3.0
+    assert metrics["processor_metadata_key_gets_mean"] == 0.0
     assert metrics["top_level_item_count"] == 4.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
@@ -3560,6 +4140,8 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["checksum"] > 0
+    assert metrics["sequence_cycle_detection_elapsed_ms_mean"] >= 0
+    assert metrics["sequence_cycle_detection_slices_mean"] == 0.0
 
 
 def test_embedding_core_inputs_probe_script_emits_metrics(
@@ -3628,9 +4210,13 @@ def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
     assert metrics["iteration_count"] == 3.0
     assert metrics["held_suffix_hits"] == 3.0
     assert metrics["partial_suffix_hits"] == 3.0
+    assert metrics["long_literal_empty_hits"] == 3.0
+    assert metrics["close_marker_hits"] == 3.0
     assert metrics["prefix_identity_hits"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["partial_suffix_elapsed_ms_mean"] >= 0
+    assert metrics["long_literal_suffix_elapsed_ms_mean"] >= 0
+    assert metrics["close_marker_prefix_elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
 
@@ -3640,6 +4226,8 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
 ) -> None:
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_EVENTS", "8")
     monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_BYTES_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_ANNOTATION_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_TOKEN_COMPRESSION_ITERATIONS", "2")
 
     runpy.run_path(
         str(REPO_ROOT / "scripts/stream_assembler_token_bytes_probe.py"),
@@ -3658,6 +4246,35 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
     assert metrics["delta_token_count_speedup"] > 0
     assert metrics["delta_token_count_text_count"] == 4096.0
     assert metrics["delta_token_count_checksum"] > 0
+    assert metrics["token_count_annotation_ms_mean"] >= 0
+    assert metrics["token_count_annotation_iterations"] == 2.0
+    assert metrics["token_count_annotation_delta_count"] == 192.0
+    assert metrics["token_count_annotation_checksum"] > 0
+    assert metrics["token_count_compression_ms_mean"] >= 0
+    assert metrics["token_count_compression_iterations"] == 2.0
+    assert metrics["token_count_compression_delta_count"] == 192.0
+    assert metrics["token_count_compression_checksum"] > 0
+
+
+def test_stream_assembler_token_compression_probe_rejects_bad_totals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "stream_assembler_token_bytes_probe_under_test",
+        REPO_ROOT / "scripts/stream_assembler_token_bytes_probe.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def bad_compress(weights: list[int], token_count: int) -> list[int]:
+        return [1 for _ in weights]
+
+    monkeypatch.setattr(module.RequestStreamAssembler, "_compress_delta_token_counts", bad_compress)
+
+    with pytest.raises(SystemExit, match="compressed token counts diverged"):
+        module._measure_token_count_compression(1)
 
 
 def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
@@ -3797,6 +4414,7 @@ def test_runtime_utils_top_level_weights_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("MELIX_RUNTIME_UTILS_WEIGHT_FILES", "8")
+    monkeypatch.setenv("MELIX_RUNTIME_UTILS_INDEXED_SHARDS", "4")
     monkeypatch.setenv("MELIX_RUNTIME_UTILS_WEIGHT_ITERATIONS", "2")
     monkeypatch.setenv("MELIX_RUNTIME_UTILS_WEIGHT_SAMPLES", "1")
 
@@ -3809,11 +4427,16 @@ def test_runtime_utils_top_level_weights_probe_script_emits_metrics(
     assert exc_info.value.code == 0
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["file_count"] == 8.0
+    assert metrics["indexed_shard_count"] == 4.0
     assert metrics["iterations"] == 2.0
     assert metrics["expected_bytes"] > 0
+    assert metrics["indexed_expected_bytes"] > 0
     assert metrics["checksum"] == metrics["expected_bytes"] * metrics["iterations"]
+    assert metrics["indexed_checksum"] == metrics["indexed_expected_bytes"] * metrics["iterations"]
     assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["indexed_elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["indexed_peak_bytes_mean"] > 0
 
 
 def test_mlx_text_stop_kwarg_signature_probe_script_emits_metrics(
@@ -4240,6 +4863,8 @@ def test_text_family_config_probe_script_emits_metrics(
 
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
+        "prefix-cold-index-scandir",
+        "prefix-cache-snapshot-byte-streaming",
         "dataset-registry-limited-read-streaming",
         "dataset-registry-snapshot-inference-single-pass",
         "event-extraction-alignment-accepted-edge-cache",
@@ -4249,6 +4874,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "hub-catalog-tag-normalization-single-pass",
         "hub-catalog-next-cursor-fast-parse",
         "hub-catalog-size-hint-regex-precompile",
+        "image-family-config-copy-elision",
         "integration-swift-binary-resolution-scandir",
         "benchmark-evaluation-report-running-aggregates",
         "stream-assembler-parser-mode-cache",
@@ -4316,6 +4942,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "job-registry-restore-sort-elision",
         "lora-aux-modules-scandir",
         "lora-experiment-run-dir-name-scan",
+        "lora-normalized-manifest-io-count",
         "local-job-followup-scan-scandir",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
@@ -4379,6 +5006,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "model-ops-bundle-artifact-byte-accounting",
         "statistical-evidence-bootstrap-single-sort",
         "statistical-evidence-category-breakdown-single-pass",
+        "structured-output-json-object-constraint-cache",
         "text-family-config-copy-elision",
         "response-only-boundary-slotted-records",
         "tool-registry-schema-bytes-cache",
@@ -4393,6 +5021,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     video_preprocessing_probe = None
     gemma4_weight_presence_probe = None
     worker_registry_probe = None
+    evaluation_store_samples_probe = None
     swift_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
@@ -4418,8 +5047,18 @@ def test_registered_probes_expose_focused_commands() -> None:
             gemma4_weight_presence_probe = probe
         if probe.probe_id == "worker-registry-resident-bytes-accumulator":
             worker_registry_probe = probe
+        if probe.probe_id == "evaluation-store-samples-csv-streaming":
+            evaluation_store_samples_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
             swift_probe = probe
+
+    assert evaluation_store_samples_probe is not None
+    evaluation_store_samples_metrics = {
+        metric.key: metric for metric in evaluation_store_samples_probe.metrics
+    }
+    assert evaluation_store_samples_metrics["elapsed_ms_mean"].warn_pct == 20.0
+    assert evaluation_store_samples_metrics["elapsed_ms_mean"].warn_abs == 350.0
+    assert evaluation_store_samples_metrics["peak_bytes_mean"].warn_pct == 5.0
 
     assert worker_registry_probe is not None
     assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.test_command
@@ -4687,6 +5326,7 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         metric["key"]: metric for metric in by_id["model-load-config-json-bytes"]["metrics"]
     }
     assert model_load_config_metrics["elapsed_ms_mean"]["warn_abs"] == 1.0
+    assert model_load_config_metrics["executable_elapsed_ms_mean"]["warn_abs"] == 0.5
 
 
 def test_scope_report_selects_probe_policy_overhead_probe() -> None:
@@ -5076,6 +5716,27 @@ def test_load_probe_registry_rejects_invalid_payloads(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="non-empty list"):
         load_probe_registry(invalid_metrics)
 
+    mixed_metrics = tmp_path / "mixed-metrics.json"
+    mixed_metrics.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "demo",
+                    "name": "Demo",
+                    "probe_impl": "command_json",
+                    "probe_command": "python3 -c \"import json; print(json.dumps({'elapsed_ms_mean': 1.0}))\"",
+                    "metrics": [
+                        "ignored",
+                        {"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"},
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    probes = load_probe_registry(mixed_metrics)
+    assert [metric.key for metric in probes[0].metrics] == ["elapsed_ms_mean"]
+
 
 def test_load_probe_registry_reuses_cached_payload_when_file_is_unchanged(
     monkeypatch: pytest.MonkeyPatch,
@@ -5162,7 +5823,7 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
         return original_os_stat(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", fail_path_stat)
-    monkeypatch.setattr(os, "stat", tracked_os_stat)
+    monkeypatch.setattr(pr_scoped_performance_module, "_OS_STAT", tracked_os_stat)
 
     try:
         first = build_scope_report(
@@ -5446,9 +6107,11 @@ def test_code_eval_count_tests_probe_script_emits_metrics(
     assert metrics["syntax_count"] == 5334.0
     assert metrics["no_assert_count"] == 6002.0
     assert metrics["assert_elapsed_ms_mean"] > 0
+    assert metrics["plain_assert_elapsed_ms_mean"] > 0
     assert metrics["assert_line_count"] == 8000.0
     assert metrics["assert_node_iterations"] == 20.0
     assert metrics["assert_count"] == 8000.0
+    assert metrics["plain_assert_count"] == 8000.0
 
 
 def test_code_eval_assert_prescan_probe_script_emits_metrics(
@@ -6467,7 +7130,7 @@ def test_evaluation_latency_percentile_probe_command_emits_metrics() -> None:
     assert metrics["p95"] >= metrics["p50"]
 
 
-def test_model_registry_catalog_probe_command_emits_metrics() -> None:
+def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     probe = next(
         probe
         for probe in load_probe_registry(REGISTRY_PATH)
@@ -6477,11 +7140,20 @@ def test_model_registry_catalog_probe_command_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["manifest_is_file_calls_mean"] == 0.0
-    assert metrics["config_load_calls_mean"] == 400.0
-    assert metrics["manifest_parse_calls_mean"] == 0.0
-    assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 400.0
-    assert metrics["sample_count"] == 2.0
+    assert metrics["root_plain_child_path_joins_mean"] == 0.0
+    assert metrics["root_identity_comparisons_mean"] == 0.0
+    assert metrics["plain_scan_count_mean"] == metrics["model_count"] == 400.0
+    assert metrics["manifest_count_mean"] == 400.0
+    assert metrics["sample_count"] == 5.0
+
+    monkeypatch.setenv("MELIX_MODEL_REGISTRY_PLAIN_CHILD_PROBE_MODELS", "3")
+    monkeypatch.setenv("MELIX_MODEL_REGISTRY_PLAIN_CHILD_PROBE_SAMPLES", "1")
+    script_globals = runpy.run_path(str(REPO_ROOT / "scripts/model_registry_plain_child_path_probe.py"), run_name="melix_probe_under_test")
+    assert script_globals["main"]() == 0
+    direct_metrics = json.loads(capsys.readouterr().out)
+    assert direct_metrics["root_plain_child_path_joins_mean"] == 0.0
+    assert direct_metrics["root_identity_comparisons_mean"] == 0.0
+    assert direct_metrics["plain_scan_count_mean"] == direct_metrics["manifest_count_mean"] == 3.0
 
 
 def test_model_registry_readme_source_probe_command_emits_metrics() -> None:
@@ -6549,6 +7221,7 @@ def test_mlx_audio_local_uri_probe_script_emits_metrics() -> None:
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["local_uri_exists_calls_mean"] == 0.0
+    assert metrics["local_uri_field_access_calls_mean"] == 1.0
     assert metrics["local_uri_read_bytes_calls_mean"] == 0.0
     assert metrics["audio_size_bytes"] == 8_388_608.0
     assert metrics["sample_count"] == 5.0
@@ -6584,6 +7257,7 @@ def test_mlx_audio_local_uri_probe_script_main_covers_checked_in_file(
     payload = json.loads(capsys.readouterr().out.strip())
 
     assert payload["local_uri_exists_calls_mean"] == 0.0
+    assert payload["local_uri_field_access_calls_mean"] == 1.0
     assert payload["local_uri_read_bytes_calls_mean"] == 0.0
     assert payload["audio_size_bytes"] == 1024.0
     assert payload["sample_count"] == 1.0
@@ -6852,6 +7526,13 @@ def test_glob_matching_preserves_wildcard_semantics() -> None:
     ) is True
 
 
+def test_glob_has_magic_preserves_fnmatch_magic_detection() -> None:
+    assert _glob_has_magic("services/*.py") is True
+    assert _glob_has_magic("services/test?.py") is True
+    assert _glob_has_magic("tests/test_[ab].py") is True
+    assert _glob_has_magic("services/mlx-worker-python/tests/test_pr_scoped_performance.py") is False
+
+
 def test_glob_matching_exact_path_skips_regex_compile(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_compile(glob: str):  # pragma: no cover - sentinel
         raise AssertionError(f"regex should not be compiled for exact glob: {glob}")
@@ -6937,6 +7618,7 @@ def test_report_results_loader_uses_scandir_and_binary_json_reads(
     results_dir.mkdir()
     (results_dir / "b.json").write_text(json.dumps({"probe": {"id": "b"}}), encoding="utf-8")
     (results_dir / "a.json").write_text(json.dumps({"probe": {"id": "a"}}), encoding="utf-8")
+    (results_dir / "list.json").write_text(json.dumps(["ignored"]), encoding="utf-8")
     (results_dir / "ignored.txt").write_text("ignored", encoding="utf-8")
 
     def fail_glob(self: Path, pattern: str):
@@ -6952,6 +7634,31 @@ def test_report_results_loader_uses_scandir_and_binary_json_reads(
     loaded = report_script["_load_results"](results_dir)
 
     assert [payload["probe"]["id"] for payload in loaded] == ["a", "b"]
+
+
+def test_report_results_loader_uses_module_open_binding(
+    tmp_path: Path,
+) -> None:
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    (results_dir / "result.json").write_text(json.dumps({"probe": {"id": "result"}}), encoding="utf-8")
+
+    report_script = runpy.run_path(str(REPO_ROOT / "scripts/pr_scoped_performance_report.py"))
+    load_results = report_script["_load_results"]
+    open_calls = 0
+    original_open = load_results.__globals__["_OPEN"]
+
+    def counted_open(*args: object, **kwargs: object):
+        nonlocal open_calls
+        open_calls += 1
+        return original_open(*args, **kwargs)
+
+    load_results.__globals__["_OPEN"] = counted_open
+
+    loaded = load_results(results_dir)
+
+    assert loaded == [{"probe": {"id": "result"}}]
+    assert open_calls == 1
 
 
 def test_performance_report_script_load_results_handles_missing_directory() -> None:
@@ -7252,7 +7959,7 @@ def test_report_script_preserves_exact_sticky_comment_body_on_markdown_stdout(
 
 
 
-def test_scope_cli_loads_changed_files_with_binary_json_read(
+def test_scope_cli_loads_changed_files_reuses_path_input_for_binary_json_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7266,7 +7973,14 @@ def test_scope_cli_loads_changed_files_with_binary_json_read(
 
     monkeypatch.setattr(scope_script["Path"], "read_text", fail_read_text)
 
+    loaded = load_changed_files(changed_files_path)
+    assert loaded == ["scripts/pr_scoped_performance_scope.py"]
+    loaded.append("mutated.py")
     assert load_changed_files(changed_files_path) == ["scripts/pr_scoped_performance_scope.py"]
+    assert load_changed_files(str(changed_files_path)) == ["scripts/pr_scoped_performance_scope.py"]
+
+    changed_files_path.write_text(json.dumps(["scripts/changed_scope_coverage.py", "extra.py"]), encoding="utf-8")
+    assert load_changed_files(changed_files_path) == ["scripts/changed_scope_coverage.py", "extra.py"]
 
     changed_files_path.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
     with pytest.raises(ValueError, match="changed files payload must be a JSON list"):
@@ -7370,6 +8084,8 @@ def test_engine_generate_usage_token_probe_script_emits_metrics(
     assert metrics["request_state_append_calls_per_request"] == 0
     assert metrics["token_events_mean"] == 3
     assert metrics["fallback_request_count"] == 2
+    assert metrics["fallback_native_parser_calls_mean"] == 0
+    assert metrics["fallback_native_parser_calls_per_request"] == 0
     assert metrics["fallback_elapsed_ms_mean"] > 0
     assert metrics["fallback_peak_bytes_mean"] > 0
 
@@ -7570,6 +8286,8 @@ def test_vision_family_prompt_token_count_probe_script_emits_metrics(
     assert metrics["split_calls_mean"] == 0.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["config_object_footprint_bytes"] > 0
+    assert metrics["config_resolve_elapsed_ms_mean"] > 0
+    assert metrics["metadata_iteration_calls_mean"] == 0.0
 
 
 def test_scope_report_selects_deterministic_ocr_probe() -> None:
@@ -7670,5 +8388,8 @@ def test_model_load_config_json_bytes_probe_script_emits_metrics(
     assert metrics["iterations"] == 10
     assert metrics["config_padding_bytes"] == 128
     assert metrics["rejections_mean"] == 10
+    assert metrics["executable_rejections_mean"] == 10
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["executable_elapsed_ms_mean"] > 0
+    assert metrics["executable_peak_bytes_mean"] > 0

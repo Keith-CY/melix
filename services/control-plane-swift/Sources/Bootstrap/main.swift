@@ -8,6 +8,7 @@ enum MelixControlPlaneBootstrap {
         let bootstrapStartedAt = Date()
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
+        let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
         let mcpLoadStartedAt = Date()
         let mcpToolCatalog = MCPToolCatalog.load(environment: ProcessInfo.processInfo.environment)
         let gatewayAccessPolicy = GatewayAccessPolicy.load(environment: ProcessInfo.processInfo.environment)
@@ -15,7 +16,7 @@ enum MelixControlPlaneBootstrap {
         let gatewayConfigStore = GatewayConfigStore(environment: ProcessInfo.processInfo.environment)
         let gatewayServingDefaultsStore = GatewayServingDefaultsStore(environment: ProcessInfo.processInfo.environment)
         let gatewayRuntimeBinding = await gatewayConfigStore.bootstrapBinding()
-        let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
+        await gatewayConfigStore.publishRefreshDiagnostics(to: metricsStore)
         let persistentAuthSessionStore = PersistentAuthSessionStore(
             environment: ProcessInfo.processInfo.environment,
             metricsStore: metricsStore

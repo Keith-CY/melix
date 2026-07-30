@@ -221,6 +221,18 @@ def test_dataset_quality_output_lengths_preserve_completion_and_message_semantic
     assert _sample_output_length_stats([], []) == (0, 0, 0)
 
 
+def test_dataset_quality_completion_rows_use_get_sentinel_fast_path() -> None:
+    class CompletionRow(dict[str, object]):
+        def __contains__(self, key: object) -> bool:  # pragma: no cover - regression tripwire
+            if key == "completion":  # pragma: no cover - regression tripwire
+                raise AssertionError("completion rows should use a sentinel get() instead of a contains lookup")
+            return super().__contains__(key)  # pragma: no cover - regression tripwire
+
+    row = CompletionRow({"completion": "hello"})
+
+    assert _sample_output_lengths([row], []) == [5]
+
+
 def test_dataset_quality_message_rows_skip_completion_key_lookup() -> None:
     class MessageRow(dict[str, object]):
         def __getitem__(self, key: str) -> object:  # pragma: no cover - regression tripwire
@@ -231,6 +243,42 @@ def test_dataset_quality_message_rows_skip_completion_key_lookup() -> None:
     row = MessageRow({"messages": [{"content": "hello"}, {"content": 678}, "skip-me"]})
 
     assert _sample_output_lengths([], [row]) == [8]
+
+
+def test_dataset_quality_two_message_rows_preserve_content_lengths() -> None:
+    assert _sample_output_lengths(
+        [],
+        [
+            {"messages": [{"content": "hello"}, {"content": "world"}]},
+            {"messages": [{"content": "hello"}, {"content": 678}]},
+        ],
+    ) == [10, 8]
+
+
+def test_dataset_quality_completion_shaped_batches_preserve_mixed_rows() -> None:
+    class MessageItem:
+        def get(self, key: str, default: object = "") -> object:
+            return "tail" if key == "content" else default
+
+    assert _sample_output_lengths(
+        [
+            {"completion": "abc"},
+            {"messages": [{"content": "hello"}, {"content": "world"}]},
+            {"messages": [{"content": "hello"}, {"content": 678}, MessageItem()]},
+            {"messages": "not-a-list"},
+        ],
+        [],
+    ) == [3, 10, 12, 0]
+
+
+def test_dataset_quality_message_shaped_batches_preserve_non_list_rows() -> None:
+    assert _sample_output_lengths(
+        [],
+        [
+            {"messages": "not-a-list"},
+            {"messages": [{"content": "hello"}, {"content": "world"}]},
+        ],
+    ) == [0, 10]
 
 
 def test_dataset_quality_length_stats_accumulates_total_inline(

@@ -22,3 +22,9 @@ The touched files are already watched by the registered `maintenance-prompt-shap
 ## Success metric
 
 For one case, one context length, and three repeats, `_shape_benchmark_prompt(...)` should run once instead of once per repeat plus the initial shape pass, while preserving benchmark row output.
+
+## 2026-07-23 single-token shaping slice
+
+Some maintenance benchmark matrix cases request a one-token context length. In that case, the full prompt token vector does not need to be materialized just to return the first token. This slice keeps normal `str.split()` semantics for blank and Unicode-whitespace prompts by using `split(maxsplit=1)`, then returns a `ShapedBenchmarkPrompt` with a one-token tuple.
+
+The registered `maintenance-prompt-shape-vector-repeat` probe now also reports `single_context_elapsed_ms_mean` for repeated one-token shaping of long prompts so the PR-scoped workflow can compare the new fast path against `origin/main`.

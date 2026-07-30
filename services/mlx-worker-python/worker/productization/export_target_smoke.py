@@ -503,12 +503,19 @@ def _output_preview_payload(
 
 
 def _terminal_status(checks: Iterable[_CheckResult]) -> str:
-    statuses = {check.status for check in checks}
-    if CHECK_STATUS_FAILED in statuses:
-        return CHECK_STATUS_FAILED
-    if CHECK_STATUS_BLOCKED in statuses:
+    saw_blocked = False
+    saw_waived = False
+    for check in checks:
+        status = check.status
+        if status == CHECK_STATUS_FAILED:
+            return CHECK_STATUS_FAILED
+        if status == CHECK_STATUS_BLOCKED:
+            saw_blocked = True
+        elif status == CHECK_STATUS_WAIVED:
+            saw_waived = True
+    if saw_blocked:
         return CHECK_STATUS_BLOCKED
-    if CHECK_STATUS_WAIVED in statuses:
+    if saw_waived:
         return CHECK_STATUS_WAIVED
     return CHECK_STATUS_PASSED
 
