@@ -499,6 +499,8 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
             with os.scandir(ancestor) as entries:
                 for entry in entries:
                     entry_name = entry.name
+                    if entry_name[:1] != "m":
+                        continue
                     if not (
                         entry_name.startswith(dist_info_prefix)
                         and entry_name.endswith(dist_info_suffix)
