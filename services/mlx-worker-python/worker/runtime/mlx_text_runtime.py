@@ -28,6 +28,13 @@ from worker.runtime.runtime_utils import (
     first_declared_kwarg as _first_declared_kwarg,
     installed_package_version as _installed_package_version,
 )
+from worker.runtime.prompt_lookup import (
+    ENABLED_EXT_KEY as _PROMPT_LOOKUP_ENABLED_EXT_KEY,
+    PromptLookupConfig,
+    PromptLookupDecoder,
+    receipt_fields as _prompt_lookup_receipt_fields,
+)
+from worker.runtime.prompt_lookup_mlx import PromptLookupUnavailable, build_mlx_step
 from worker.runtime.structured_output_constraints import (
     StructuredOutputConstraintError,
     build_structured_output_logits_processors,
@@ -495,6 +502,56 @@ def _tokenizer_eos_stop_tokens(tokenizer: Any) -> list[list[int]] | None:
             continue
         stop_tokens.append([token_id])
     return stop_tokens or None
+
+
+def _flat_stop_token_ids(stop_tokens: list[list[int]] | None) -> tuple[int, ...]:
+    """Flatten mlx-lm's stop-sequence shape to the single-token ids it contains.
+
+    Prompt lookup stops on single EOS ids; multi-token stop sequences stay the
+    responsibility of the text stop contract applied downstream.
+    """
+    if not stop_tokens:
+        return ()
+    return tuple(sequence[0] for sequence in stop_tokens if len(sequence) == 1)
+
+
+def _is_greedy_sampling(sampling: Any) -> bool:
+    """True when the request provably decodes to the model's plain argmax.
+
+    Prompt lookup verifies drafts against an unmodified `mx.argmax`, so it may
+    only run when the standard path would emit that same argmax. The bar here is
+    deliberately "provable from a documented contract", not "probably equivalent":
+
+    - `temperature <= 0` is the one documented guarantee — mlx-lm's `make_sampler`
+      returns `lambda x: mx.argmax(x, axis=-1)` outright when `temp == 0`.
+    - `top_k == 1` with a non-zero temperature is *also* argmax under the pinned
+      mlx-lm, but only by an argument about the sampler chain's internal ordering
+      (top-k masking runs last, leaving one candidate for `categorical_sampling`).
+      That is upstream-owned ordering, not a contract, so it is excluded rather
+      than relied on.
+    - Any non-zero `frequency_penalty` / `presence_penalty` disqualifies the
+      request. Those never reach the pinned mlx-lm's `make_sampler` (it does not
+      declare them; penalties live in `make_logits_processors`), so today they
+      could not perturb the argmax. But `_sampler_penalty_kwargs` is *runtime
+      detected* from the sampler factory, so an mlx-lm bump that starts accepting
+      them — or an injected factory that does — would silently apply penalties on
+      the standard path while this path stayed unpenalized, breaking the
+      greedy-identity guarantee with no test to catch it. Gating costs only the
+      acceleration of penalized requests.
+    """
+    try:
+        temperature = float(getattr(sampling, "temperature", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if temperature > 0.0:
+        return False
+    for penalty_name in _SAMPLER_PENALTY_KWARG_NAMES:
+        try:
+            if float(getattr(sampling, penalty_name, 0.0) or 0.0) != 0.0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
 
 
 def _mlx_peak_memory_gb(mx: Any) -> float | None:
@@ -1118,6 +1175,116 @@ class AutoMLXBackend:
         )
         return _parse_reward_score_text(score_text)
 
+    def _maybe_generate_prompt_lookup_tokens(
+        self,
+        loaded_model,
+        prompt: str,
+        *,
+        config: PromptLookupConfig,
+        sampling,
+        max_tokens: int,
+        cancel_event,
+    ) -> Iterable[RuntimeTokenEvent] | None:
+        """Return a prompt-lookup generator, or None to use the standard path.
+
+        Prompt lookup is greedy-only: its acceptance rule reproduces the target
+        model's argmax, which is exactly equal to plain greedy decoding but not
+        to sampled decoding. Preserving a sampled distribution needs the
+        stochastic accept/residual rule, so sampled requests stay on the
+        standard path rather than silently changing their output distribution.
+        """
+        if not _is_greedy_sampling(sampling):
+            return None
+        tokenizer = loaded_model.get("tokenizer") if isinstance(loaded_model, dict) else None
+        if tokenizer is None or not hasattr(tokenizer, "encode"):
+            return None
+        detokenizer = _copyable_native_mtp_text_detokenizer(loaded_model, tokenizer)
+        if detokenizer is None:
+            return None
+        try:
+            step = build_mlx_step(
+                loaded_model["model"],
+                prefill_step_size=_native_mtp_text_prefill_step_size(),
+            )
+        except PromptLookupUnavailable:
+            return None
+        return self._generate_prompt_lookup_tokens(
+            loaded_model,
+            prompt,
+            config=config,
+            step=step,
+            detokenizer=detokenizer,
+            max_tokens=max_tokens,
+            cancel_event=cancel_event,
+        )
+
+    def _generate_prompt_lookup_tokens(
+        self,
+        loaded_model,
+        prompt: str,
+        *,
+        config: PromptLookupConfig,
+        step,
+        detokenizer,
+        max_tokens: int,
+        cancel_event,
+    ) -> Iterable[RuntimeTokenEvent]:
+        tokenizer = loaded_model["tokenizer"]
+        prompt_tokens = list(
+            tokenizer.encode(
+                prompt,
+                add_special_tokens=_prompt_encode_add_special_tokens(tokenizer, prompt),
+            )
+        )
+        if not prompt_tokens:
+            return
+        reset = getattr(detokenizer, "reset", None)
+        if callable(reset):
+            reset()
+
+        decoder = PromptLookupDecoder(config)
+        stop_token_ids = _flat_stop_token_ids(_tokenizer_eos_stop_tokens(tokenizer))
+        started_at = time.perf_counter()
+        cumulative_raw_text = ""
+        completion_tokens = 0
+
+        for emission in decoder.decode(
+            prompt_tokens=prompt_tokens,
+            step_fn=step,
+            max_tokens=max_tokens,
+            stop_token_ids=stop_token_ids,
+            should_stop=cancel_event.is_set,
+        ):
+            for position, token_id in enumerate(emission.tokens):
+                detokenizer.add_token(token_id)
+                completion_tokens += 1
+                is_last = position == len(emission.tokens) - 1
+                finish_reason = emission.finish_reason if is_last else None
+                if finish_reason is not None:
+                    finalize = getattr(detokenizer, "finalize", None)
+                    if callable(finalize):
+                        finalize()
+                text = str(getattr(detokenizer, "last_segment", "") or "")
+                cumulative_raw_text += text
+                if not text and finish_reason is None:
+                    continue
+                terminal_fields: dict[str, Any] = {}
+                if finish_reason is not None:
+                    elapsed = max(time.perf_counter() - started_at, 1e-9)
+                    terminal_fields = {
+                        "generation_tps": completion_tokens / elapsed,
+                        **_prompt_lookup_receipt_fields(decoder.stats, config),
+                    }
+                yield RuntimeTokenEvent(
+                    text=text,
+                    raw_text=cumulative_raw_text,
+                    token_ids=(token_id,),
+                    prompt_tokens=len(prompt_tokens),
+                    completion_tokens=completion_tokens,
+                    finish_reason=finish_reason,
+                    **terminal_fields,
+                )
+
     def generate_tokens(
         self,
         loaded_model,
@@ -1164,6 +1331,23 @@ class AutoMLXBackend:
                 logits_processors=structured_logits_processors,
             )
             return
+
+        # Cheapest possible opt-out for the overwhelmingly common case: one dict
+        # lookup on an absent key before any config resolution runs.
+        if execution_ext and execution_ext.get(_PROMPT_LOOKUP_ENABLED_EXT_KEY):
+            prompt_lookup_config = PromptLookupConfig.from_ext(execution_ext)
+            if prompt_lookup_config.enabled and not structured_logits_processors:
+                prompt_lookup_events = self._maybe_generate_prompt_lookup_tokens(
+                    loaded_model,
+                    prompt,
+                    config=prompt_lookup_config,
+                    sampling=sampling,
+                    max_tokens=max_tokens,
+                    cancel_event=cancel_event,
+                )
+                if prompt_lookup_events is not None:
+                    yield from prompt_lookup_events
+                    return
 
         if structured_logits_processors and not self._stream_accepts_logits_processors:
             constraint_kind = str(
