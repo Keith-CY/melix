@@ -217,6 +217,7 @@ public struct PythonBridgeWorkerClient:
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol,
     LoadedModelsIntrospectingWorkerClientProtocol,
+    BackendHealthIdentifyingWorkerClientProtocol,
     ModelOperationsWorkerClientProtocol,
     StreamingExportResultsWorkerClientProtocol,
     Sendable
@@ -259,25 +260,24 @@ public struct PythonBridgeWorkerClient:
     }
 
     public func canDispatchRequests() async -> Bool {
+        (try? await backendHealthIdentity()) != nil
+    }
+
+    public func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
         var request = Melix_Worker_V1_HandshakeRequest()
         request.protocolVersion = "melix.worker.v1"
         request.workerID = "control-plane"
         request.controlplaneInstanceID = "melix-control-plane"
 
-        do {
-            switch transport {
-            case .bridge:
-                _ = try await sendUnary(
-                    kind: .handshake,
-                    request: request,
-                    as: Melix_Worker_V1_HandshakeResponse.self
-                )
-            case .rpc(let runner):
-                _ = try await runner.handshake(socketPath: socketPath, request: request)
-            }
-            return true
-        } catch {
-            return false
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .handshake,
+                request: request,
+                as: Melix_Worker_V1_HandshakeResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.handshake(socketPath: socketPath, request: request)
         }
     }
 
@@ -1292,7 +1292,21 @@ public enum BootstrapWorkerPreparation {
         model: Melix_Worker_V1_ModelSpec,
         memoryBudgetBytes: UInt64
     ) async throws -> Bool {
-        _ = await modelCatalog.beginLoad(id: model.modelID)
+        guard let route = preloadRouteKind(for: model),
+              let healthClient = workerClient as? any BackendHealthIdentifyingWorkerClientProtocol,
+              let health = try? await healthClient.backendHealthIdentity() else {
+            return false
+        }
+        let workerInstanceID = health.workerInstanceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !workerInstanceID.isEmpty,
+              let reservation = await modelCatalog.beginBackendRouteLoad(
+                id: model.modelID,
+                routeKind: route,
+                workerInstanceID: workerInstanceID,
+                reason: "bootstrap_preload"
+              ) else {
+            return false
+        }
         var request = Melix_Worker_V1_LoadModelRequest()
         request.model = model
         request.memoryBudgetBytes = memoryBudgetBytes
@@ -1300,6 +1314,7 @@ public enum BootstrapWorkerPreparation {
         request.warmupAfterLoad = false
         request.diskStreamingMode = model.settings.diskStreamingMode
         request.loadTrust = bootstrapLoadTrustPolicy(for: model)
+        request.backendIdentity = reservation.identity
 
         let response = try await workerClient.loadModel(request: request)
         guard response.ok, !response.modelHandle.isEmpty else {
@@ -1312,7 +1327,9 @@ public enum BootstrapWorkerPreparation {
                 loadTrust: ModelLoadTrustPolicyResolver.receiptForLoadFailure(
                     response: response,
                     fallback: fallback
-                )
+                ),
+                routeKind: route,
+                expectedRouteGeneration: reservation.generation
             )
             return false
         }
@@ -1321,16 +1338,52 @@ public enum BootstrapWorkerPreparation {
             from: request.loadTrust,
             fallback: Melix_Controlplane_V1_ModelLoadTrustPolicy()
         )
-        _ = await modelCatalog.recordLoadSucceeded(
+        guard await modelCatalog.recordLoadSucceeded(
             id: request.model.modelID,
             dispatchHandle: response.modelHandle,
             pinRequested: request.pinOnLoad,
             workerResidency: response.hasResidency ? response.residency : nil,
             loadTrust: response.hasLoadTrust
                 ? ModelLoadTrustPolicyResolver.controlPlanePolicy(from: response.loadTrust, fallback: fallback)
-                : fallback
-        )
+                : fallback,
+            routeKind: route,
+            expectedRouteGeneration: reservation.generation,
+            workerInstanceID: reservation.workerInstanceID
+        ) != nil else {
+            var unload = Melix_Worker_V1_UnloadModelRequest()
+            unload.modelHandle = response.modelHandle
+            _ = try? await workerClient.unloadModel(request: unload)
+            return false
+        }
         return true
+    }
+
+    private static func preloadRouteKind(
+        for model: Melix_Worker_V1_ModelSpec
+    ) -> WorkerRouteKind? {
+        if let route = WorkerRouteKind(metadataIdentifier: model.ext["melix.capability.route_kind"]) {
+            return route
+        }
+        switch model.modelKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "text":
+            return .swiftText
+        case "embedding":
+            return .pythonEmbedding
+        case "rerank":
+            return .pythonRerank
+        case "ocr":
+            return .pythonOCR
+        case "vlm", "vision":
+            return .pythonVLM
+        case "transcription":
+            return .pythonTranscription
+        case "speech":
+            return .pythonSpeech
+        case "image":
+            return .pythonImage
+        default:
+            return nil
+        }
     }
 
     private static func bootstrapLoadTrustPolicy(

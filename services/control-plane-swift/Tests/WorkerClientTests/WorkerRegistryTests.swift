@@ -366,7 +366,17 @@ struct WorkerRegistryTests {
     }
 }
 
-private actor RouteTestingWorkerClient: WorkerRoutingClient {
+private protocol RegistryTestWorkerHealth: BackendHealthIdentifyingWorkerClientProtocol {}
+
+extension RegistryTestWorkerHealth {
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerInstanceID = String(reflecting: Self.self)
+        return response
+    }
+}
+
+private actor RouteTestingWorkerClient: WorkerRoutingClient, RegistryTestWorkerHealth {
     func canDispatchRequests() async -> Bool {
         true
     }

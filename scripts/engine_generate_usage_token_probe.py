@@ -22,6 +22,14 @@ from worker.registry import WorkerRegistry
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 
 
+_PROBE_BACKEND_IDENTITY = common_pb2.BackendModelIdentity(
+    requested_model_id="melix-dev-text",
+    requested_adapter_id="text-family-llama",
+    route_generation=1,
+    worker_instance_id="worker-text-001",
+)
+
+
 class CountingRuntime:
     runtime_name = "probe-counting-runtime"
 
@@ -96,7 +104,10 @@ def _load_services(runtime) -> tuple[WorkerInferenceService, str]:
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
     load_response = runtime_service.LoadModel(
-        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_text_model(),
+            backend_identity=_PROBE_BACKEND_IDENTITY,
+        ),
         context=None,
     )
     return inference_service, load_response.model_handle
@@ -107,6 +118,7 @@ def _build_request(model_handle: str, *, request_index: int, return_usage: bool)
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id=f"probe-generate-{request_index}"),
             model_handle=model_handle,
+            backend_identity=_PROBE_BACKEND_IDENTITY,
         ),
         messages=[
             common_pb2.ChatMessage(
@@ -171,7 +183,17 @@ def _run_fallback_sample(*, request_count: int, prompt_words: int, sample: int) 
                 return_usage=True,
             )
             events = list(inference_service.Generate(request, context=None))
-            usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
+            usage = next(
+                (event.usage_delta for event in events if event.HasField("usage_delta")),
+                None,
+            )
+            if usage is None:
+                worker_errors = [
+                    event.error.error.code
+                    for event in events
+                    if event.HasField("error")
+                ]
+                raise RuntimeError(f"fallback probe emitted no usage event; worker_errors={worker_errors}")
             prompt_tokens = int(usage.prompt_tokens)
     finally:
         engine_core_module._text_native_mtp_parser_metrics = original_native_parser

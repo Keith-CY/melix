@@ -32,6 +32,593 @@ struct RequestCoordinatorTests {
         }
     }
 
+    @Test("backend stream creation without semantic output remains replay safe")
+    func backendStreamCreationWithoutSemanticOutputRemainsReplaySafe() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .streamFailureThenSuccess)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-replay-before-output")
+        )
+        let events = try await collectRequestCoordinatorEvents(execution.stream)
+        let identities = await workerClient.requestedIdentities
+
+        #expect(events.contains { if case .tokenDelta = $0.payload { true } else { false } })
+        #expect(events.contains { if case .completed = $0.payload { true } else { false } })
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(identities.count == 2)
+        #expect(identities.first?.routeGeneration == 1)
+        #expect((identities.last?.routeGeneration ?? 0) > (identities.first?.routeGeneration ?? 0))
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_retry_allowed_count") == 1)
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_retry_exhausted_count") == 0)
+    }
+
+    @Test("backend admission opens the response and suppresses later transport replay")
+    func backendAdmissionSuppressesLaterTransportReplay() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .admissionThenFailure)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-admission-partial")
+        )
+        var sawAdmission = false
+
+        do {
+            for try await event in execution.stream {
+                if case .admitted = event.payload {
+                    sawAdmission = true
+                }
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
+
+        #expect(sawAdmission)
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
+    }
+
+    @Test(
+        "external worker pre-response failures receive one fresh dispatch",
+        arguments: ["connect_error", "read_error", "write_error", "protocol_error", "timeout"]
+    )
+    func externalWorkerPreResponseFailureMatrix(failureCode: String) async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(
+            script: .preResponseFailureThenSuccess(failureCode)
+        )
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-\(failureCode)")
+        )
+        let events = try await collectRequestCoordinatorEvents(execution.stream)
+
+        #expect(events.filter { if case .tokenDelta = $0.payload { true } else { false } }.count == 1)
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+    }
+
+    @Test("reused backend endpoint cannot emit until replacement identity is loaded")
+    func reusedBackendEndpointRequiresReplacementIdentity() async throws {
+        await BackendIdentityRecoveryDiagnostics.shared.resetForTesting()
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .identityMismatchThenSuccess)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "reused-port-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-reused-backend-endpoint")
+        )
+        let events = try await collectRequestCoordinatorEvents(execution.stream)
+        let requestedIdentities = await workerClient.requestedIdentities
+        let loadedIdentities = await workerClient.loadedIdentities
+        let diagnostics = await BackendIdentityRecoveryDiagnostics.shared.snapshot()
+
+        #expect(events.filter { if case .tokenDelta = $0.payload { true } else { false } }.count == 1)
+        #expect(requestedIdentities.count == 2)
+        #expect(loadedIdentities.count == 1)
+        #expect(requestedIdentities.last == loadedIdentities.first)
+        #expect((requestedIdentities.last?.routeGeneration ?? 0) > (requestedIdentities.first?.routeGeneration ?? 0))
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_mismatch_count") == 1)
+        #expect(diagnostics.lastMismatch?.loadedModelID == "other-model-on-reused-endpoint")
+        #expect(diagnostics.lastMismatch?.mismatchReason == "model_id")
+    }
+
+    @Test("repeated identity mismatch events exhaust exactly one retry")
+    func repeatedIdentityMismatchEventsExhaustOneRetry() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .alwaysIdentityMismatch)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: coordinator,
+                requestID: "req-repeated-identity-mismatch"
+            )
+            Issue.record("Expected typed backend recovery exhaustion.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.recoveryExhaustedError())
+        }
+
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_exhausted_count"
+        ) == 1)
+    }
+
+    @Test("identity mismatch event after token output is never replayed")
+    func identityMismatchEventAfterTokenOutputIsNeverReplayed() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .tokenThenIdentityMismatch)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-token-then-identity-mismatch")
+        )
+        var tokenCount = 0
+
+        do {
+            for try await event in execution.stream {
+                if case .tokenDelta = event.payload {
+                    tokenCount += 1
+                }
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
+
+        #expect(tokenCount == 1)
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
+    }
+
+    @Test("identity mismatch recovery load failure is typed as exhausted")
+    func identityMismatchRecoveryLoadFailureIsTypedAsExhausted() async throws {
+        try await assertRecoveryLoadFailure(
+            script: .identityMismatchThenLoadFailure,
+            requestID: "req-identity-mismatch-load-failure"
+        )
+    }
+
+    @Test("transport recovery load failure is typed as exhausted")
+    func transportRecoveryLoadFailureIsTypedAsExhausted() async throws {
+        try await assertRecoveryLoadFailure(
+            script: .streamFailureThenLoadFailure,
+            requestID: "req-transport-load-failure"
+        )
+    }
+
+    private func assertRecoveryLoadFailure(
+        script: BackendIdentityRecoveryWorkerClient.Script,
+        requestID: String
+    ) async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: script)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: coordinator,
+                requestID: requestID
+            )
+            Issue.record("Expected typed backend recovery exhaustion.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.recoveryExhaustedError())
+        }
+
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_exhausted_count"
+        ) == 1)
+    }
+
+    @Test("concurrent identity mismatch dispatches coalesce one fresh binding")
+    func concurrentIdentityMismatchDispatchesCoalesceOneFreshBinding() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(
+            script: .concurrentIdentityMismatchThenSuccess
+        )
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let firstCoordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+        let secondCoordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        async let firstEvents = recoveredCoordinatorEvents(
+            coordinator: firstCoordinator,
+            requestID: "req-concurrent-mismatch-1"
+        )
+        async let secondEvents = recoveredCoordinatorEvents(
+            coordinator: secondCoordinator,
+            requestID: "req-concurrent-mismatch-2"
+        )
+        let eventSets = try await [firstEvents, secondEvents]
+
+        #expect(eventSets.allSatisfy { events in
+            events.filter { if case .tokenDelta = $0.payload { true } else { false } }.count == 1
+        })
+        #expect(await workerClient.generateCallCount == 4)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_recovery_coalesced_caller_count"
+        ) == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_fresh_binding_count"
+        ) == 1)
+    }
+
+    @Test("backend identity recovery probe emits measured control-plane evidence")
+    func backendIdentityRecoveryProbeEmitsMeasuredControlPlaneEvidence() async throws {
+        let metricsStore = MetricsStore()
+
+        let concurrentClient = BackendIdentityRecoveryWorkerClient(
+            script: .concurrentIdentityMismatchThenSuccess
+        )
+        let concurrentCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await concurrentCatalog.loadModel(
+            id: "melix-dev-text",
+            dispatchHandle: "probe-initial-handle"
+        )
+        let concurrentRegistry = WorkerRegistry(
+            defaultTextClient: concurrentClient,
+            modelCatalog: concurrentCatalog
+        )
+        let firstCoordinator = RequestCoordinator(
+            workerRegistry: concurrentRegistry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: concurrentCatalog
+        )
+        let secondCoordinator = RequestCoordinator(
+            workerRegistry: concurrentRegistry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: concurrentCatalog
+        )
+        async let firstEvents = recoveredCoordinatorEvents(
+            coordinator: firstCoordinator,
+            requestID: "probe-concurrent-1"
+        )
+        async let secondEvents = recoveredCoordinatorEvents(
+            coordinator: secondCoordinator,
+            requestID: "probe-concurrent-2"
+        )
+        _ = try await [firstEvents, secondEvents]
+
+        let exhaustedClient = BackendIdentityRecoveryWorkerClient(script: .alwaysStreamFailure)
+        let exhaustedCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await exhaustedCatalog.loadModel(
+            id: "melix-dev-text",
+            dispatchHandle: "probe-exhausted-handle"
+        )
+        let exhaustedCoordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: exhaustedClient,
+                modelCatalog: exhaustedCatalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: exhaustedCatalog
+        )
+        do {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: exhaustedCoordinator,
+                requestID: "probe-exhausted"
+            )
+            Issue.record("Expected recovery exhaustion in control-plane probe.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.recoveryExhaustedError())
+        }
+
+        let tokenClient = BackendIdentityRecoveryWorkerClient(script: .tokenThenFailure)
+        let tokenCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await tokenCatalog.loadModel(
+            id: "melix-dev-text",
+            dispatchHandle: "probe-token-handle"
+        )
+        let tokenCoordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: tokenClient,
+                modelCatalog: tokenCatalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: tokenCatalog
+        )
+        do {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: tokenCoordinator,
+                requestID: "probe-token-partial"
+            )
+            Issue.record("Expected token partial failure in control-plane probe.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
+
+        let toolClient = BackendIdentityRecoveryWorkerClient(script: .toolResultThenFailure)
+        let toolCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await toolCatalog.loadModel(
+            id: "melix-dev-text",
+            dispatchHandle: "probe-tool-handle"
+        )
+        let toolCoordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: toolClient,
+                modelCatalog: toolCatalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: toolCatalog
+        )
+        var completedToolCount = 0
+        do {
+            let execution = try await toolCoordinator.startChatCompletion(
+                makeTranslatedChatRequest(requestID: "probe-tool-partial")
+            )
+            for try await event in execution.stream {
+                if case .toolResultDelta = event.payload {
+                    completedToolCount += 1
+                }
+            }
+            Issue.record("Expected tool partial failure in control-plane probe.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
+
+        #expect(completedToolCount == 1)
+        let binding = ModelCatalog.BackendRouteBinding(
+            modelID: "probe-model",
+            adapterID: "probe-adapter",
+            generation: 7,
+            handle: "probe-handle",
+            routeKind: .swiftText
+        )
+        let boundaryIterations = 2_000
+        var boundarySamples: [Double] = []
+        for _ in 0..<7 {
+            let started = DispatchTime.now().uptimeNanoseconds
+            for _ in 0..<boundaryIterations {
+                var request = Melix_Worker_V1_GenerateRequest()
+                BackendModelIdentityStamping.stamp(binding, on: &request)
+                _ = BackendRouteRecoveryClassifier.shouldRecover(
+                    WorkerClientError.requestFailed(
+                        code: "read_error",
+                        message: "probe"
+                    )
+                )
+            }
+            let elapsed = DispatchTime.now().uptimeNanoseconds - started
+            boundarySamples.append(
+                Double(elapsed) / 1_000_000 / Double(boundaryIterations)
+            )
+        }
+        let sortedBoundarySamples = boundarySamples.sorted()
+        let p95Index = max(
+            0,
+            Int(ceil(Double(sortedBoundarySamples.count) * 0.95)) - 1
+        )
+        let metricSnapshot = await metricsStore.snapshot()
+        let payload: [String: Double] = [
+            "control_plane_probe_available": 1,
+            "control_plane_boundary_latency_ms_mean":
+                boundarySamples.reduce(0, +) / Double(boundarySamples.count),
+            "control_plane_boundary_latency_ms_p95": sortedBoundarySamples[p95Index],
+            "retry_allowed_count":
+                metricSnapshot.values["control_plane.backend_identity_retry_allowed_count"] ?? 0,
+            "retry_suppressed_count":
+                metricSnapshot.values["control_plane.backend_identity_retry_suppressed_count"] ?? 0,
+            "retry_exhausted_count":
+                metricSnapshot.values["control_plane.backend_identity_retry_exhausted_count"] ?? 0,
+            "recovery_coalesced_caller_count":
+                metricSnapshot.values[
+                    "control_plane.backend_identity_recovery_coalesced_caller_count"
+                ] ?? 0,
+            "fresh_binding_count":
+                metricSnapshot.values["control_plane.backend_identity_fresh_binding_count"] ?? 0,
+            "duplicate_completed_tool_count": Double(completedToolCount - 1),
+        ]
+
+        #expect(payload["retry_allowed_count"] == 3)
+        #expect(payload["retry_suppressed_count"] == 2)
+        #expect(payload["retry_exhausted_count"] == 1)
+        #expect(payload["recovery_coalesced_caller_count"] == 1)
+        #expect(payload["fresh_binding_count"] == 2)
+        #expect(payload["duplicate_completed_tool_count"] == 0)
+        if ProcessInfo.processInfo.environment["MELIX_BACKEND_IDENTITY_PROBE"] == "1" {
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            let json = try #require(String(data: data, encoding: .utf8))
+            print("MELIX_BACKEND_IDENTITY_PROBE_JSON=\(json)")
+        }
+    }
+
+    @Test("backend transport failure after token output is typed and never replayed")
+    func backendTransportFailureAfterTokenOutputIsTypedAndNeverReplayed() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .tokenThenFailure)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-token-partial")
+        )
+        var sawToken = false
+        do {
+            for try await event in execution.stream {
+                if case .tokenDelta = event.payload {
+                    sawToken = true
+                }
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == .requestFailed(
+                code: "partial_stream_failure",
+                message: "The backend stream failed after response output began and was not replayed."
+            ))
+        }
+
+        #expect(sawToken)
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
+    }
+
+    @Test("backend transport failure after completed tool output is typed and never replayed")
+    func backendTransportFailureAfterCompletedToolOutputIsTypedAndNeverReplayed() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .toolResultThenFailure)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-tool-result-partial")
+        )
+        var sawToolResult = false
+        do {
+            for try await event in execution.stream {
+                if case .toolResultDelta = event.payload {
+                    sawToolResult = true
+                }
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == .requestFailed(
+                code: "partial_stream_failure",
+                message: "The backend stream failed after response output began and was not replayed."
+            ))
+        }
+
+        #expect(sawToolResult)
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
+    }
+
+    @Test("backend pre-response retry exhaustion returns a stable typed failure")
+    func backendPreResponseRetryExhaustionReturnsAStableTypedFailure() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .alwaysStreamFailure)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-retry-exhausted")
+        )
+        do {
+            for try await _ in execution.stream {}
+            Issue.record("Expected typed backend recovery exhaustion.")
+        } catch let error as WorkerClientError {
+            #expect(error == .requestFailed(
+                code: "backend_route_recovery_exhausted",
+                message: "The backend route could not be recovered before response output began."
+            ))
+        }
+
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_retry_allowed_count") == 1)
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_retry_exhausted_count") == 1)
+    }
+
     @Test("request cancellation triggers worker abort")
     func cancellationTriggersWorkerAbort() async throws {
         let workerClient = BlockingWorkerClient()
@@ -6829,6 +7416,228 @@ private actor AsyncFlag {
 private enum TestWorkerFailure: Error, Equatable {
     case streamFailed
     case generateFailed
+}
+
+private actor BackendIdentityRecoveryWorkerClient:
+    WorkerRoutingClient,
+    BackendHealthIdentifyingWorkerClientProtocol
+{
+    enum Script: Sendable {
+        case streamFailureThenSuccess
+        case preResponseFailureThenSuccess(String)
+        case identityMismatchThenSuccess
+        case alwaysIdentityMismatch
+        case tokenThenIdentityMismatch
+        case identityMismatchThenLoadFailure
+        case streamFailureThenLoadFailure
+        case concurrentIdentityMismatchThenSuccess
+        case tokenThenFailure
+        case toolResultThenFailure
+        case admissionThenFailure
+        case alwaysStreamFailure
+    }
+
+    private let script: Script
+    private(set) var generateCallCount = 0
+    private(set) var loadCallCount = 0
+    private(set) var requestedIdentities: [Melix_Worker_V1_BackendModelIdentity] = []
+    private(set) var loadedIdentities: [Melix_Worker_V1_BackendModelIdentity] = []
+
+    init(script: Script) {
+        self.script = script
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerInstanceID = "backend-identity-recovery-worker"
+        return response
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        generateCallCount += 1
+        requestedIdentities.append(request.execution.backendIdentity)
+        let callIndex = generateCallCount
+        let script = self.script
+        return AsyncThrowingStream { continuation in
+            switch script {
+            case .streamFailureThenSuccess where callIndex == 1,
+                 .alwaysStreamFailure:
+                continuation.finish(throwing: WorkerClientError.requestFailed(
+                    code: "read_error",
+                    message: "scripted pre-response read failure"
+                ))
+            case .preResponseFailureThenSuccess(let code):
+                if callIndex == 1 {
+                    continuation.finish(throwing: WorkerClientError.requestFailed(
+                        code: code,
+                        message: "scripted pre-response \(code)"
+                    ))
+                } else {
+                    Self.yieldSuccess(
+                        requestID: request.execution.id.requestID,
+                        continuation: continuation
+                    )
+                }
+            case .identityMismatchThenSuccess:
+                if callIndex == 1 {
+                    continuation.yield(Self.identityMismatchEvent(request: request))
+                    continuation.finish()
+                } else {
+                    Self.yieldSuccess(
+                        requestID: request.execution.id.requestID,
+                        continuation: continuation
+                    )
+                }
+            case .alwaysIdentityMismatch,
+                 .identityMismatchThenLoadFailure:
+                continuation.yield(Self.identityMismatchEvent(request: request))
+                continuation.finish()
+            case .tokenThenIdentityMismatch:
+                continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
+                continuation.yield(Self.identityMismatchEvent(request: request))
+                continuation.finish()
+            case .streamFailureThenLoadFailure:
+                continuation.finish(throwing: WorkerClientError.requestFailed(
+                    code: "read_error",
+                    message: "scripted pre-response read failure"
+                ))
+            case .concurrentIdentityMismatchThenSuccess:
+                if callIndex <= 2 {
+                    continuation.yield(Self.identityMismatchEvent(request: request))
+                    continuation.finish()
+                } else {
+                    Self.yieldSuccess(
+                        requestID: request.execution.id.requestID,
+                        continuation: continuation
+                    )
+                }
+            case .tokenThenFailure:
+                continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
+                continuation.finish(throwing: WorkerClientError.unavailable)
+            case .toolResultThenFailure:
+                continuation.yield(Self.toolResultEvent(requestID: request.execution.id.requestID))
+                continuation.finish(throwing: WorkerClientError.unavailable)
+            case .admissionThenFailure:
+                continuation.yield(Self.admissionEvent(requestID: request.execution.id.requestID))
+                continuation.finish(throwing: WorkerClientError.unavailable)
+            case .streamFailureThenSuccess:
+                Self.yieldSuccess(
+                    requestID: request.execution.id.requestID,
+                    continuation: continuation
+                )
+            }
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        loadCallCount += 1
+        loadedIdentities.append(request.backendIdentity)
+        switch script {
+        case .identityMismatchThenLoadFailure, .streamFailureThenLoadFailure:
+            throw WorkerClientError.unavailable
+        default:
+            break
+        }
+        if case .concurrentIdentityMismatchThenSuccess = script {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "replacement-\(loadCallCount)"
+        return response
+    }
+
+    private static func yieldSuccess(
+        requestID: String,
+        continuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation
+    ) {
+        continuation.yield(tokenEvent(requestID: requestID))
+        continuation.yield(completedEvent(requestID: requestID))
+        continuation.finish()
+    }
+
+    private static func identityMismatchEvent(
+        request: Melix_Worker_V1_GenerateRequest
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = request.execution.id.requestID
+        event.executionKind = "generate"
+        event.phase = .executionFailed
+        event.error.error.code = "model_identity_mismatch"
+        event.error.error.message = "The reused endpoint loaded a different backend model."
+        event.error.error.backendIdentityMismatch.requestedModelID =
+            request.execution.backendIdentity.requestedModelID
+        event.error.error.backendIdentityMismatch.loadedModelID = "other-model-on-reused-endpoint"
+        event.error.error.backendIdentityMismatch.requestedAdapterID =
+            request.execution.backendIdentity.requestedAdapterID
+        event.error.error.backendIdentityMismatch.loadedAdapterID = ""
+        event.error.error.backendIdentityMismatch.requestedRouteGeneration =
+            request.execution.backendIdentity.routeGeneration
+        event.error.error.backendIdentityMismatch.loadedRouteGeneration = 1
+        event.error.error.backendIdentityMismatch.observedAtUnixMs = 123
+        event.error.error.backendIdentityMismatch.mismatchReason = "model_id"
+        return event
+    }
+
+    private static func tokenEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionDecoding
+        event.tokenDelta.text = "ok"
+        return event
+    }
+
+    private static func toolResultEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionDecoding
+        event.toolResultDelta.callID = "tool-call-1"
+        event.toolResultDelta.resultJson = #"{"ok":true}"#
+        return event
+    }
+
+    private static func admissionEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionPrefilling
+        event.admitted = Melix_Worker_V1_Admitted()
+        return event
+    }
+
+    private static func completedEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionCompleted
+        event.completed.assistantText = "ok"
+        event.completed.finishReason = "stop"
+        return event
+    }
+}
+
+private func recoveredCoordinatorEvents(
+    coordinator: RequestCoordinator,
+    requestID: String
+) async throws -> [Melix_Worker_V1_ExecuteEvent] {
+    let execution = try await coordinator.startChatCompletion(
+        makeTranslatedChatRequest(requestID: requestID)
+    )
+    return try await collectRequestCoordinatorEvents(execution.stream)
 }
 
 private func makeTranslatedChatRequest(

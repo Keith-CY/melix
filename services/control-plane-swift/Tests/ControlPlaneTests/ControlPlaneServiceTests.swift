@@ -2622,6 +2622,27 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::swift")
     }
 
+    @Test("execute worker-backed model.load fails closed when backend identity is unavailable or empty")
+    func executeWorkerBackedModelLoadFailsClosedWithoutBackendIdentity() async throws {
+        for workerInstanceID: String? in [nil, "   "] {
+            let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+            let workerClient = ModelLifecycleWorkerClient()
+            await workerClient.setHealthWorkerInstanceID(workerInstanceID)
+            let service = ControlPlaneService(
+                modelCatalog: catalog,
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+            )
+
+            let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+
+            #expect(!response.ok)
+            #expect(response.error.code == "worker_identity_unavailable")
+            #expect(await workerClient.loadRequests.isEmpty)
+            #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+            #expect(await catalog.model(id: "melix-dev-text")?.state == .modelFailed)
+        }
+    }
+
     @Test("execute worker-backed model.load forwards adapter-set hash from model settings")
     func executeWorkerBackedModelLoadForwardsAdapterSetHashFromModelSettings() async throws {
         var seeded = ModelCatalog.devTextModel()
@@ -8021,8 +8042,8 @@ struct ControlPlaneServiceTests {
         #expect(recordedJob.error.code == "unavailable")
     }
 
-    @Test("execute maps image generate deadline_exceeded failures into explicit timeout state")
-    func executeMapsImageGenerateDeadlineExceededFailuresIntoTimeoutState() async throws {
+    @Test("execute does not replay an ambiguous image deadline failure")
+    func executeMapsExhaustedImageGenerateDeadlineRecoveryIntoTypedUnavailableState() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
         let imageClient = ScriptedImageWorkerClient()
@@ -8062,12 +8083,12 @@ struct ControlPlaneServiceTests {
 
         #expect(response.ok == false)
         #expect(response.error.code == "deadline_exceeded")
-        #expect(response.error.message.contains("600-second creative workflow deadline"))
         #expect(recordedJob.state == Melix_Controlplane_V1_ImageJobState.imageJobFailed)
         #expect(recordedJob.progress.stage == "timed_out")
         #expect(recordedJob.error.code == "deadline_exceeded")
         #expect(recordedJob.timeoutSeconds == 600)
         #expect(recordedJob.recipe.prompt == "Draw a fox")
+        #expect(await imageClient.loadModelCallCount == 0)
     }
 
     @Test("execute falls back to request mapped image jobs when worker job identifiers drift")
@@ -8153,7 +8174,12 @@ struct ControlPlaneServiceTests {
         )
 
         let cases: [(String, Error, String, String)] = [
-            ("req-image-generate-unavailable", WorkerClientError.unavailable, "unavailable", "Image worker request failed"),
+            (
+                "req-image-generate-unavailable",
+                WorkerClientError.unavailable,
+                "unavailable",
+                "unavailable"
+            ),
             ("req-image-generate-cancelled", WorkerClientError.requestFailed(code: "cancelled", message: "operator stop"), "cancelled", "operator stop"),
             ("req-image-generate-empty", WorkerClientError.requestFailed(code: "", message: ""), "unavailable", "Image worker request failed."),
             ("req-image-generate-resource", WorkerClientError.requestFailed(code: "RESOURCE_EXHAUSTED", message: "queue full"), "resource_exhausted", "queue full"),
@@ -11122,9 +11148,30 @@ struct ControlPlaneServiceTests {
     }
 }
 
-private actor ScriptedImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+private protocol ControlPlaneTestWorkerHealth: BackendHealthIdentifyingWorkerClientProtocol {
+    func testWorkerInstanceID() async throws -> String
+}
+
+extension ControlPlaneTestWorkerHealth {
+    func testWorkerInstanceID() async throws -> String {
+        String(reflecting: Self.self)
+    }
+
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerInstanceID = try await testWorkerInstanceID()
+        return response
+    }
+}
+
+private actor ScriptedImageWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     private(set) var lastImageGenerateRequest: Melix_Worker_V1_ImageGenerateRequest?
     private(set) var lastImageEditRequest: Melix_Worker_V1_ImageEditRequest?
+    private(set) var loadModelCallCount = 0
     private var imageGenerateResponse = Melix_Worker_V1_ImageGenerateResponse()
     private var imageEditResponse = Melix_Worker_V1_ImageEditResponse()
     private var imageGenerateError: Error?
@@ -11167,6 +11214,7 @@ private actor ScriptedImageWorkerClient: WorkerRoutingClient, NonTextInferenceWo
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        loadModelCallCount += 1
         var response = Melix_Worker_V1_LoadModelResponse()
         response.ok = true
         response.modelHandle = "\(request.model.modelID)::python"
@@ -11222,7 +11270,11 @@ private enum ImageWorkerFailure: Error {
     case synthetic
 }
 
-private actor BlockingImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+private actor BlockingImageWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     private var generateRequests: [String: Melix_Worker_V1_ImageGenerateRequest] = [:]
     private var generateContinuations: [String: CheckedContinuation<Melix_Worker_V1_ImageGenerateResponse, Error>] = [:]
 
@@ -11332,7 +11384,11 @@ private actor BlockingImageWorkerClient: WorkerRoutingClient, NonTextInferenceWo
     }
 }
 
-private actor AbortFalseImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+private actor AbortFalseImageWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     func canDispatchRequests() async -> Bool {
         true
     }
@@ -11403,7 +11459,11 @@ private actor AbortFalseImageWorkerClient: WorkerRoutingClient, NonTextInference
     }
 }
 
-private actor ThrowingAbortImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+private actor ThrowingAbortImageWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     func canDispatchRequests() async -> Bool {
         true
     }
@@ -11509,7 +11569,7 @@ private actor StubImageJobAdmissionController: ImageJobAdmissionControlling {
     }
 }
 
-private actor BlockingAbortTextWorkerClient: WorkerRoutingClient {
+private actor BlockingAbortTextWorkerClient: WorkerRoutingClient, ControlPlaneTestWorkerHealth {
     private let abortError: Error?
     private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
 
@@ -11618,7 +11678,11 @@ private struct ControlPlaneConditionTimeoutError: Error, CustomStringConvertible
     let description: String
 }
 
-private actor RuntimeStatsSnapshotWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWorkerClientProtocol {
+private actor RuntimeStatsSnapshotWorkerClient:
+    WorkerRoutingClient,
+    RuntimeIntrospectingWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     private let runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
 
     init(runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse) {
@@ -11657,11 +11721,12 @@ private actor RuntimeStatsSnapshotWorkerClient: WorkerRoutingClient, RuntimeIntr
     }
 }
 
-private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
+private actor ModelLifecycleWorkerClient: WorkerRoutingClient, ControlPlaneTestWorkerHealth {
     private var loadResponse = Melix_Worker_V1_LoadModelResponse()
     private var unloadResponse = Melix_Worker_V1_UnloadModelResponse()
     private var loadError: Error?
     private var unloadError: Error?
+    private var healthWorkerInstanceID: String? = String(reflecting: ModelLifecycleWorkerClient.self)
     private(set) var loadRequests: [Melix_Worker_V1_LoadModelRequest] = []
     private(set) var unloadRequests: [Melix_Worker_V1_UnloadModelRequest] = []
     private(set) var recordedOperations: [String] = []
@@ -11680,6 +11745,17 @@ private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
 
     func setUnloadError(_ error: Error?) {
         unloadError = error
+    }
+
+    func setHealthWorkerInstanceID(_ workerInstanceID: String?) {
+        healthWorkerInstanceID = workerInstanceID
+    }
+
+    func testWorkerInstanceID() async throws -> String {
+        guard let healthWorkerInstanceID else {
+            throw WorkerClientError.unavailable
+        }
+        return healthWorkerInstanceID
     }
 
     func canDispatchRequests() async -> Bool {
@@ -11724,7 +11800,8 @@ private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
 private actor ScriptedModelOperationsWorkerClient:
     WorkerRoutingClient,
     ModelOperationsWorkerClientProtocol,
-    StreamingExportResultsWorkerClientProtocol
+    StreamingExportResultsWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
 {
     private(set) var lastInfoRequest: Melix_Worker_V1_GetModelInfoRequest?
     private(set) var lastConvertRequest: Melix_Worker_V1_ConvertModelRequest?
@@ -11999,7 +12076,7 @@ private actor ScriptedModelOperationsWorkerClient:
     }
 }
 
-private actor ScriptedChatWorkerClient: WorkerRoutingClient {
+private actor ScriptedChatWorkerClient: WorkerRoutingClient, ControlPlaneTestWorkerHealth {
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?

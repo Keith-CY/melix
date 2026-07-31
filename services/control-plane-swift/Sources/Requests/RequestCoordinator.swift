@@ -803,7 +803,24 @@ public actor RequestCoordinator {
         }
         let requestMetricStartedAt = requestStartedAt ?? now()
         let plan = try await resolvedSchedulingPlan(translatedRequest)
-        let request = plan.translatedRequest
+        var request = plan.translatedRequest
+        var backendBinding: ModelCatalog.BackendRouteBinding?
+        if let modelCatalog,
+           let binding = await modelCatalog.backendRouteBinding(
+                for: request.modelID,
+                routeKind: plan.routeKind
+           ) {
+            backendBinding = binding
+            var stampedWorkerRequest = request.workerRequest
+            BackendModelIdentityStamping.stamp(binding, on: &stampedWorkerRequest)
+            request = TranslatedChatRequest(
+                requestID: request.requestID,
+                modelID: request.modelID,
+                responseModelID: request.responseModelID,
+                workerRequest: stampedWorkerRequest,
+                stream: request.stream
+            )
+        }
         if let accelerationRefusal = plan.accelerationRefusal {
             await metricsStore.increment("control_plane.acceleration_refusal_count")
             _ = await schedulerReadModel.recordRejected(
@@ -937,7 +954,17 @@ public actor RequestCoordinator {
 
         do {
             let upstream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
-            if plan.cacheRouteEligible,
+            if let backendBinding,
+               let modelCatalog {
+                upstream = makeReplaySafeBackendUpstream(
+                    initialBinding: backendBinding,
+                    request: workerRequest,
+                    modelCatalog: modelCatalog,
+                    routeKind: plan.routeKind,
+                    cacheRouteEligible: plan.cacheRouteEligible,
+                    prefillLane: plan.prefillLane
+                )
+            } else if plan.cacheRouteEligible,
                let phaseAwareClient = workerClient as? any PhaseAwareWorkerClientProtocol,
                shouldUsePhaseAwareExecution(for: workerRequest) {
                 upstream = makePhaseAwareUpstream(
@@ -1205,6 +1232,146 @@ public actor RequestCoordinator {
             await metricsStore.decrement("requests.inflight")
             await finishRequestTracking(requestID: request.requestID, phase: .requestFailed)
             throw error
+        }
+    }
+
+    private func makeReplaySafeBackendUpstream(
+        initialBinding: ModelCatalog.BackendRouteBinding,
+        request: Melix_Worker_V1_GenerateRequest,
+        modelCatalog: ModelCatalog,
+        routeKind: WorkerRouteKind,
+        cacheRouteEligible: Bool,
+        prefillLane: String
+    ) -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                var attemptBinding = initialBinding
+                for attemptIndex in 0...1 {
+                    var responseOpened = false
+                    do {
+                        guard let client = await workerRegistry.client(for: routeKind) else {
+                            throw WorkerClientError.unavailable
+                        }
+                        var attempt = request
+                        BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                        let stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+                        if cacheRouteEligible,
+                           let phaseAwareClient = client as? any PhaseAwareWorkerClientProtocol,
+                           shouldUsePhaseAwareExecution(for: attempt) {
+                            stream = makePhaseAwareUpstream(
+                                client: phaseAwareClient,
+                                request: attempt,
+                                modelID: attemptBinding.modelID,
+                                prefillLane: prefillLane
+                            )
+                        } else {
+                            stream = try await client.generate(request: attempt)
+                        }
+
+                        var retryRequested = false
+                        for try await event in stream {
+                            if case .error(let errorEvent) = event.payload {
+                                let recoverable = BackendRouteRecoveryClassifier.shouldRecover(
+                                    errorEvent.error
+                                )
+                                if recoverable {
+                                    await BackendRouteRecovery.recordMismatch(
+                                        errorEvent.error,
+                                        metricsStore: metricsStore
+                                    )
+                                }
+                                if responseOpened {
+                                    if recoverable {
+                                        await BackendRouteRecovery.recordRetrySuppressed(
+                                            metricsStore: metricsStore
+                                        )
+                                    }
+                                    throw BackendRouteRecovery.partialStreamFailure()
+                                }
+                                if recoverable, attemptIndex == 0 {
+                                    retryRequested = true
+                                    break
+                                }
+                                if recoverable {
+                                    await BackendRouteRecovery.recordRetryExhausted(
+                                        metricsStore: metricsStore
+                                    )
+                                    throw BackendRouteRecovery.recoveryExhaustedError()
+                                }
+                            }
+
+                            responseOpened = true
+                            continuation.yield(event)
+                        }
+
+                        if retryRequested {
+                            await BackendRouteRecovery.recordRetryAllowed(metricsStore: metricsStore)
+                            do {
+                                attemptBinding = try await BackendRouteRecovery.recoverBinding(
+                                    failedBinding: attemptBinding,
+                                    modelCatalog: modelCatalog,
+                                    workerRegistry: workerRegistry,
+                                    metricsStore: metricsStore
+                                )
+                            } catch {
+                                await BackendRouteRecovery.recordRetryExhausted(
+                                    metricsStore: metricsStore
+                                )
+                                continuation.finish(
+                                    throwing: BackendRouteRecovery.recoveryExhaustedError()
+                                )
+                                return
+                            }
+                            continue
+                        }
+                        continuation.finish()
+                        return
+                    } catch {
+                        if responseOpened {
+                            if BackendRouteRecoveryClassifier.shouldRecover(error) {
+                                await BackendRouteRecovery.recordRetrySuppressed(
+                                    metricsStore: metricsStore
+                                )
+                            }
+                            continuation.finish(
+                                throwing: BackendRouteRecovery.partialStreamFailure()
+                            )
+                            return
+                        }
+                        guard BackendRouteRecoveryClassifier.shouldRecover(error) else {
+                            continuation.finish(throwing: error)
+                            return
+                        }
+                        guard attemptIndex == 0 else {
+                            await BackendRouteRecovery.recordRetryExhausted(
+                                metricsStore: metricsStore
+                            )
+                            continuation.finish(
+                                throwing: BackendRouteRecovery.recoveryExhaustedError()
+                            )
+                            return
+                        }
+                        await BackendRouteRecovery.recordRetryAllowed(metricsStore: metricsStore)
+                        do {
+                            attemptBinding = try await BackendRouteRecovery.recoverBinding(
+                                failedBinding: attemptBinding,
+                                modelCatalog: modelCatalog,
+                                workerRegistry: workerRegistry,
+                                metricsStore: metricsStore
+                            )
+                        } catch {
+                            await BackendRouteRecovery.recordRetryExhausted(
+                                metricsStore: metricsStore
+                            )
+                            continuation.finish(
+                                throwing: BackendRouteRecovery.recoveryExhaustedError()
+                            )
+                            return
+                        }
+                    }
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 

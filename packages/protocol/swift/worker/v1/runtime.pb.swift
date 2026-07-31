@@ -108,6 +108,15 @@ public nonisolated struct Melix_Worker_V1_LoadModelRequest: @unchecked Sendable 
   /// Clears the value of `loadTrust`. Subsequent reads from it will return its default value.
   public mutating func clearLoadTrust() {_uniqueStorage()._loadTrust = nil}
 
+  public var backendIdentity: Melix_Worker_V1_BackendModelIdentity {
+    get {_storage._backendIdentity ?? Melix_Worker_V1_BackendModelIdentity()}
+    set {_uniqueStorage()._backendIdentity = newValue}
+  }
+  /// Returns true if `backendIdentity` has been explicitly set.
+  public var hasBackendIdentity: Bool {_storage._backendIdentity != nil}
+  /// Clears the value of `backendIdentity`. Subsequent reads from it will return its default value.
+  public mutating func clearBackendIdentity() {_uniqueStorage()._backendIdentity = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -819,6 +828,20 @@ public nonisolated struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
     set {_uniqueStorage()._speculativeProbeSamplingMatchesBaseline = newValue}
   }
 
+  public var modelIdentityMismatchCount: UInt64 {
+    get {_storage._modelIdentityMismatchCount}
+    set {_uniqueStorage()._modelIdentityMismatchCount = newValue}
+  }
+
+  public var lastModelIdentityMismatch: Melix_Worker_V1_BackendIdentityMismatchReceipt {
+    get {_storage._lastModelIdentityMismatch ?? Melix_Worker_V1_BackendIdentityMismatchReceipt()}
+    set {_uniqueStorage()._lastModelIdentityMismatch = newValue}
+  }
+  /// Returns true if `lastModelIdentityMismatch` has been explicitly set.
+  public var hasLastModelIdentityMismatch: Bool {_storage._lastModelIdentityMismatch != nil}
+  /// Clears the value of `lastModelIdentityMismatch`. Subsequent reads from it will return its default value.
+  public mutating func clearLastModelIdentityMismatch() {_uniqueStorage()._lastModelIdentityMismatch = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -923,6 +946,15 @@ public nonisolated struct Melix_Worker_V1_LoadedModelSummary: @unchecked Sendabl
     get {_storage._generationTps}
     set {_uniqueStorage()._generationTps = newValue}
   }
+
+  public var backendIdentity: Melix_Worker_V1_BackendModelIdentity {
+    get {_storage._backendIdentity ?? Melix_Worker_V1_BackendModelIdentity()}
+    set {_uniqueStorage()._backendIdentity = newValue}
+  }
+  /// Returns true if `backendIdentity` has been explicitly set.
+  public var hasBackendIdentity: Bool {_storage._backendIdentity != nil}
+  /// Clears the value of `backendIdentity`. Subsequent reads from it will return its default value.
+  public mutating func clearBackendIdentity() {_uniqueStorage()._backendIdentity = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1079,7 +1111,7 @@ nonisolated extension Melix_Worker_V1_HandshakeResponse: SwiftProtobuf.Message, 
 
 nonisolated extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LoadModelRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{3}memory_budget_bytes\0\u{3}pin_on_load\0\u{3}warmup_after_load\0\u{3}disk_streaming_mode\0\u{3}load_trust\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{3}memory_budget_bytes\0\u{3}pin_on_load\0\u{3}warmup_after_load\0\u{3}disk_streaming_mode\0\u{3}load_trust\0\u{3}backend_identity\0")
 
   fileprivate class _StorageClass {
     var _model: Melix_Worker_V1_ModelSpec? = nil
@@ -1088,6 +1120,7 @@ nonisolated extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, S
     var _warmupAfterLoad: Bool = false
     var _diskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified
     var _loadTrust: Melix_Worker_V1_ModelLoadTrustPolicy? = nil
+    var _backendIdentity: Melix_Worker_V1_BackendModelIdentity? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1104,6 +1137,7 @@ nonisolated extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, S
       _warmupAfterLoad = source._warmupAfterLoad
       _diskStreamingMode = source._diskStreamingMode
       _loadTrust = source._loadTrust
+      _backendIdentity = source._backendIdentity
     }
   }
 
@@ -1128,6 +1162,7 @@ nonisolated extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, S
         case 4: try { try decoder.decodeSingularBoolField(value: &_storage._warmupAfterLoad) }()
         case 5: try { try decoder.decodeSingularEnumField(value: &_storage._diskStreamingMode) }()
         case 6: try { try decoder.decodeSingularMessageField(value: &_storage._loadTrust) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._backendIdentity) }()
         default: break
         }
       }
@@ -1158,6 +1193,9 @@ nonisolated extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, S
       try { if let v = _storage._loadTrust {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
       } }()
+      try { if let v = _storage._backendIdentity {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1173,6 +1211,7 @@ nonisolated extension Melix_Worker_V1_LoadModelRequest: SwiftProtobuf.Message, S
         if _storage._warmupAfterLoad != rhs_storage._warmupAfterLoad {return false}
         if _storage._diskStreamingMode != rhs_storage._diskStreamingMode {return false}
         if _storage._loadTrust != rhs_storage._loadTrust {return false}
+        if _storage._backendIdentity != rhs_storage._backendIdentity {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -1449,7 +1488,7 @@ nonisolated extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message
 
 nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0\u{3}text_batch_generator_speculative_cycle_count_total\0\u{3}text_batch_generator_speculative_accepted_count_total\0\u{3}text_batch_generator_speculative_rejected_count_total\0\u{3}text_batch_generator_speculative_backbone_ms_total\0\u{3}text_batch_generator_speculative_mtp_head_ms_total\0\u{3}text_batch_generator_speculative_sample_ms_total\0\u{3}text_batch_generator_speculative_cache_ops_ms_total\0\u{3}last_hybrid_state_patch_mode\0\u{3}last_hybrid_state_advance_count\0\u{3}last_family_fast_path_override_count\0\u{3}last_cached_prompt_tokens\0\u{3}last_media_feature_cache_hits\0\u{3}last_media_feature_cache_misses\0\u{3}last_media_feature_encoder_calls_saved\0\u{3}last_media_feature_work_saved_bytes\0\u{3}last_image_feature_cache_hits\0\u{3}last_image_feature_cache_misses\0\u{3}last_image_feature_encoder_calls_saved\0\u{3}last_image_feature_work_saved_bytes\0\u{3}native_quantized_load_count\0\u{3}bridge_quantized_fallback_count\0\u{3}cross_shard_metadata_fixup_count\0\u{3}speculative_probe_enabled_count\0\u{3}speculative_probe_fallback_count\0\u{3}speculative_probe_position_aligned_count\0\u{3}speculative_probe_cache_aligned_count\0\u{3}speculative_probe_status\0\u{3}speculative_probe_mode\0\u{3}speculative_probe_fallback_reason\0\u{3}speculative_probe_request_gate\0\u{3}speculative_probe_runtime_scope\0\u{3}speculative_probe_runtime_active\0\u{3}speculative_probe_draft_supported\0\u{3}speculative_probe_effective_depth\0\u{3}speculative_probe_rounds\0\u{3}speculative_probe_accepted_tokens\0\u{3}speculative_probe_rejected_tokens\0\u{3}speculative_probe_acceptance_rate\0\u{3}speculative_probe_rollback_rate\0\u{3}speculative_probe_draft_propose_ms\0\u{3}speculative_probe_target_verify_ms\0\u{3}speculative_probe_autoregressive_fallback\0\u{3}speculative_probe_sampling_matches_baseline\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0\u{3}text_batch_generator_speculative_cycle_count_total\0\u{3}text_batch_generator_speculative_accepted_count_total\0\u{3}text_batch_generator_speculative_rejected_count_total\0\u{3}text_batch_generator_speculative_backbone_ms_total\0\u{3}text_batch_generator_speculative_mtp_head_ms_total\0\u{3}text_batch_generator_speculative_sample_ms_total\0\u{3}text_batch_generator_speculative_cache_ops_ms_total\0\u{3}last_hybrid_state_patch_mode\0\u{3}last_hybrid_state_advance_count\0\u{3}last_family_fast_path_override_count\0\u{3}last_cached_prompt_tokens\0\u{3}last_media_feature_cache_hits\0\u{3}last_media_feature_cache_misses\0\u{3}last_media_feature_encoder_calls_saved\0\u{3}last_media_feature_work_saved_bytes\0\u{3}last_image_feature_cache_hits\0\u{3}last_image_feature_cache_misses\0\u{3}last_image_feature_encoder_calls_saved\0\u{3}last_image_feature_work_saved_bytes\0\u{3}native_quantized_load_count\0\u{3}bridge_quantized_fallback_count\0\u{3}cross_shard_metadata_fixup_count\0\u{3}speculative_probe_enabled_count\0\u{3}speculative_probe_fallback_count\0\u{3}speculative_probe_position_aligned_count\0\u{3}speculative_probe_cache_aligned_count\0\u{3}speculative_probe_status\0\u{3}speculative_probe_mode\0\u{3}speculative_probe_fallback_reason\0\u{3}speculative_probe_request_gate\0\u{3}speculative_probe_runtime_scope\0\u{3}speculative_probe_runtime_active\0\u{3}speculative_probe_draft_supported\0\u{3}speculative_probe_effective_depth\0\u{3}speculative_probe_rounds\0\u{3}speculative_probe_accepted_tokens\0\u{3}speculative_probe_rejected_tokens\0\u{3}speculative_probe_acceptance_rate\0\u{3}speculative_probe_rollback_rate\0\u{3}speculative_probe_draft_propose_ms\0\u{3}speculative_probe_target_verify_ms\0\u{3}speculative_probe_autoregressive_fallback\0\u{3}speculative_probe_sampling_matches_baseline\0\u{3}model_identity_mismatch_count\0\u{3}last_model_identity_mismatch\0")
 
   fileprivate class _StorageClass {
     var _workerState: String = String()
@@ -1564,6 +1603,8 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
     var _speculativeProbeTargetVerifyMs: Double = 0
     var _speculativeProbeAutoregressiveFallback: Bool = false
     var _speculativeProbeSamplingMatchesBaseline: Bool = false
+    var _modelIdentityMismatchCount: UInt64 = 0
+    var _lastModelIdentityMismatch: Melix_Worker_V1_BackendIdentityMismatchReceipt? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1686,6 +1727,8 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       _speculativeProbeTargetVerifyMs = source._speculativeProbeTargetVerifyMs
       _speculativeProbeAutoregressiveFallback = source._speculativeProbeAutoregressiveFallback
       _speculativeProbeSamplingMatchesBaseline = source._speculativeProbeSamplingMatchesBaseline
+      _modelIdentityMismatchCount = source._modelIdentityMismatchCount
+      _lastModelIdentityMismatch = source._lastModelIdentityMismatch
     }
   }
 
@@ -1816,6 +1859,8 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         case 110: try { try decoder.decodeSingularDoubleField(value: &_storage._speculativeProbeTargetVerifyMs) }()
         case 111: try { try decoder.decodeSingularBoolField(value: &_storage._speculativeProbeAutoregressiveFallback) }()
         case 112: try { try decoder.decodeSingularBoolField(value: &_storage._speculativeProbeSamplingMatchesBaseline) }()
+        case 113: try { try decoder.decodeSingularUInt64Field(value: &_storage._modelIdentityMismatchCount) }()
+        case 114: try { try decoder.decodeSingularMessageField(value: &_storage._lastModelIdentityMismatch) }()
         default: break
         }
       }
@@ -1824,6 +1869,10 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
     try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
       if !_storage._workerState.isEmpty {
         try visitor.visitSingularStringField(value: _storage._workerState, fieldNumber: 1)
       }
@@ -2160,6 +2209,12 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       if _storage._speculativeProbeSamplingMatchesBaseline != false {
         try visitor.visitSingularBoolField(value: _storage._speculativeProbeSamplingMatchesBaseline, fieldNumber: 112)
       }
+      if _storage._modelIdentityMismatchCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._modelIdentityMismatchCount, fieldNumber: 113)
+      }
+      try { if let v = _storage._lastModelIdentityMismatch {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 114)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -2281,6 +2336,8 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         if _storage._speculativeProbeTargetVerifyMs != rhs_storage._speculativeProbeTargetVerifyMs {return false}
         if _storage._speculativeProbeAutoregressiveFallback != rhs_storage._speculativeProbeAutoregressiveFallback {return false}
         if _storage._speculativeProbeSamplingMatchesBaseline != rhs_storage._speculativeProbeSamplingMatchesBaseline {return false}
+        if _storage._modelIdentityMismatchCount != rhs_storage._modelIdentityMismatchCount {return false}
+        if _storage._lastModelIdentityMismatch != rhs_storage._lastModelIdentityMismatch {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -2399,7 +2456,7 @@ nonisolated extension Melix_Worker_V1_ListLoadedModelsResponse: SwiftProtobuf.Me
 
 nonisolated extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LoadedModelSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}model\0\u{1}residency\0\u{3}estimated_resident_bytes\0\u{3}prompt_tps\0\u{3}generation_tps\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}model\0\u{1}residency\0\u{3}estimated_resident_bytes\0\u{3}prompt_tps\0\u{3}generation_tps\0\u{3}backend_identity\0")
 
   fileprivate class _StorageClass {
     var _modelHandle: String = String()
@@ -2408,6 +2465,7 @@ nonisolated extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message,
     var _estimatedResidentBytes: UInt64 = 0
     var _promptTps: Double = 0
     var _generationTps: Double = 0
+    var _backendIdentity: Melix_Worker_V1_BackendModelIdentity? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -2424,6 +2482,7 @@ nonisolated extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message,
       _estimatedResidentBytes = source._estimatedResidentBytes
       _promptTps = source._promptTps
       _generationTps = source._generationTps
+      _backendIdentity = source._backendIdentity
     }
   }
 
@@ -2448,6 +2507,7 @@ nonisolated extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message,
         case 4: try { try decoder.decodeSingularUInt64Field(value: &_storage._estimatedResidentBytes) }()
         case 5: try { try decoder.decodeSingularDoubleField(value: &_storage._promptTps) }()
         case 6: try { try decoder.decodeSingularDoubleField(value: &_storage._generationTps) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._backendIdentity) }()
         default: break
         }
       }
@@ -2478,6 +2538,9 @@ nonisolated extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message,
       if _storage._generationTps.bitPattern != 0 {
         try visitor.visitSingularDoubleField(value: _storage._generationTps, fieldNumber: 6)
       }
+      try { if let v = _storage._backendIdentity {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -2493,6 +2556,7 @@ nonisolated extension Melix_Worker_V1_LoadedModelSummary: SwiftProtobuf.Message,
         if _storage._estimatedResidentBytes != rhs_storage._estimatedResidentBytes {return false}
         if _storage._promptTps != rhs_storage._promptTps {return false}
         if _storage._generationTps != rhs_storage._generationTps {return false}
+        if _storage._backendIdentity != rhs_storage._backendIdentity {return false}
         return true
       }
       if !storagesAreEqual {return false}

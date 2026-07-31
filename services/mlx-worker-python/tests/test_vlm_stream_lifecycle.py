@@ -3,10 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Event
 
-from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, inference_pb2, runtime_pb2
+from packages.protocol.python.worker.v1 import (
+    cache_pb2,
+    common_pb2,
+    inference_pb2,
+    runtime_pb2,
+)
 
 from worker.engine.maintenance_core import MaintenanceCore
-from worker.grpc_server import WorkerCacheService, WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
+from worker.grpc_server import WorkerCacheService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
@@ -32,11 +42,15 @@ def build_services(vlm_runtime: DeterministicVLMRuntime | None = None):
     )
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
-    maintenance_core = MaintenanceCore(registry, jobs_root=Path(".runtime/test-model-ops"))
+    maintenance_core = MaintenanceCore(
+        registry, jobs_root=Path(".runtime/test-model-ops")
+    )
     return runtime_service, inference_service, maintenance_core
 
 
-def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
+def load_model(
+    runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec
+) -> str:
     response = runtime_service.LoadModel(
         runtime_pb2.LoadModelRequest(model=model),
         context=None,
@@ -86,11 +100,15 @@ def image_request(
     )
 
 
-def completed_event(events: list[inference_pb2.ExecuteEvent]) -> inference_pb2.Completed:
+def completed_event(
+    events: list[inference_pb2.ExecuteEvent],
+) -> inference_pb2.Completed:
     return next(event.completed for event in events if event.HasField("completed"))
 
 
-def runtime_error_event(events: list[inference_pb2.ExecuteEvent]) -> inference_pb2.ErrorEvent:
+def runtime_error_event(
+    events: list[inference_pb2.ExecuteEvent],
+) -> inference_pb2.ErrorEvent:
     return next(event.error for event in events if event.HasField("error"))
 
 
@@ -160,24 +178,49 @@ def test_vlm_stream_close_preserves_cache_until_explicit_unload() -> None:
             return_usage=True,
         )
 
-    drained_events = list(inference_service.Generate(image_request("vlm-stream-drain"), context=None))
-    after_drain = cache_service.GetCacheStats(cache_pb2.GetCacheStatsRequest(), context=None)
+    drained_events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, image_request("vlm-stream-drain")),
+            context=None,
+        )
+    )
+    after_drain = cache_service.GetCacheStats(
+        cache_pb2.GetCacheStatsRequest(), context=None
+    )
 
     assert drained_events[-1].HasField("completed")
     assert after_drain.stats.block_count == 1
     assert after_drain.stats.l1_bytes > 0
 
-    list(inference_service.Generate(image_request("vlm-stream-cache-hit"), context=None))
-    after_repeat = cache_service.GetCacheStats(cache_pb2.GetCacheStatsRequest(), context=None)
+    list(
+        inference_service.Generate(
+            bind_backend_identity(
+                inference_service, image_request("vlm-stream-cache-hit")
+            ),
+            context=None,
+        )
+    )
+    after_repeat = cache_service.GetCacheStats(
+        cache_pb2.GetCacheStatsRequest(), context=None
+    )
 
     assert after_repeat.stats.block_count == 1
     assert after_repeat.stats.l1_hit_rate > 0.0
 
-    early_stream = inference_service.Generate(image_request("vlm-stream-early-close"), context=None)
+    early_stream = inference_service.Generate(
+        bind_backend_identity(
+            inference_service, image_request("vlm-stream-early-close")
+        ),
+        context=None,
+    )
     first_event = next(early_stream)
     early_stream.close()
-    after_early_close = cache_service.GetCacheStats(cache_pb2.GetCacheStatsRequest(), context=None)
-    runtime_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    after_early_close = cache_service.GetCacheStats(
+        cache_pb2.GetCacheStatsRequest(), context=None
+    )
+    runtime_stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
 
     assert first_event.HasField("token_delta")
     assert registry.get_request("vlm-stream-early-close") is None
@@ -191,7 +234,9 @@ def test_vlm_stream_close_preserves_cache_until_explicit_unload() -> None:
         context=None,
     )
     receipt = registry.pending_unload_receipt(model_handle)
-    after_unload = cache_service.GetCacheStats(cache_pb2.GetCacheStatsRequest(), context=None)
+    after_unload = cache_service.GetCacheStats(
+        cache_pb2.GetCacheStatsRequest(), context=None
+    )
 
     assert unload.ok is True
     assert receipt is not None
@@ -209,13 +254,23 @@ def test_vlm_cache_hit_replay_uses_fresh_request_local_stream_boundary() -> None
 
     first_events = list(
         inference_service.Generate(
-            image_request(model_handle=model_handle, request_id="vlm-cache-boundary-first"),
+            bind_backend_identity(
+                inference_service,
+                image_request(
+                    model_handle=model_handle, request_id="vlm-cache-boundary-first"
+                ),
+            ),
             context=None,
         )
     )
     second_events = list(
         inference_service.Generate(
-            image_request(model_handle=model_handle, request_id="vlm-cache-boundary-second"),
+            bind_backend_identity(
+                inference_service,
+                image_request(
+                    model_handle=model_handle, request_id="vlm-cache-boundary-second"
+                ),
+            ),
             context=None,
         )
     )
@@ -246,20 +301,30 @@ def test_vlm_model_switch_keeps_cache_scopes_isolated_until_each_unload() -> Non
 
     list(
         inference_service.Generate(
-            image_request(model_handle=first_handle, request_id="vlm-switch-a"),
+            bind_backend_identity(
+                inference_service,
+                image_request(model_handle=first_handle, request_id="vlm-switch-a"),
+            ),
             context=None,
         )
     )
     list(
         inference_service.Generate(
-            image_request(model_handle=second_handle, request_id="vlm-switch-b"),
+            bind_backend_identity(
+                inference_service,
+                image_request(model_handle=second_handle, request_id="vlm-switch-b"),
+            ),
             context=None,
         )
     )
-    switched_stats = cache_service.GetCacheStats(cache_pb2.GetCacheStatsRequest(), context=None)
+    switched_stats = cache_service.GetCacheStats(
+        cache_pb2.GetCacheStatsRequest(), context=None
+    )
 
     assert switched_stats.stats.block_count == 2
-    assert {prefix.scope.model_id for prefix in switched_stats.snapshot.hot_prefixes} == {
+    assert {
+        prefix.scope.model_id for prefix in switched_stats.snapshot.hot_prefixes
+    } == {
         "melix-test-vlm-switch-a",
         "melix-test-vlm-switch-b",
     }
@@ -269,21 +334,30 @@ def test_vlm_model_switch_keeps_cache_scopes_isolated_until_each_unload() -> Non
         runtime_pb2.UnloadModelRequest(model_handle=first_handle),
         context=None,
     )
-    after_first_unload = cache_service.GetCacheStats(cache_pb2.GetCacheStatsRequest(), context=None)
+    after_first_unload = cache_service.GetCacheStats(
+        cache_pb2.GetCacheStatsRequest(), context=None
+    )
 
     assert unload_first.ok is True
     assert after_first_unload.stats.block_count == 1
-    assert [prefix.scope.model_id for prefix in after_first_unload.snapshot.hot_prefixes] == [
-        "melix-test-vlm-switch-b"
-    ]
+    assert [
+        prefix.scope.model_id for prefix in after_first_unload.snapshot.hot_prefixes
+    ] == ["melix-test-vlm-switch-b"]
 
     list(
         inference_service.Generate(
-            image_request(model_handle=second_handle, request_id="vlm-switch-b-replay"),
+            bind_backend_identity(
+                inference_service,
+                image_request(
+                    model_handle=second_handle, request_id="vlm-switch-b-replay"
+                ),
+            ),
             context=None,
         )
     )
-    after_replay = cache_service.GetCacheStats(cache_pb2.GetCacheStatsRequest(), context=None)
+    after_replay = cache_service.GetCacheStats(
+        cache_pb2.GetCacheStatsRequest(), context=None
+    )
 
     assert registry.vlm_runtime.last_probe_snapshot().cache_hit is True
     assert after_replay.stats.block_count == 1
@@ -309,20 +383,29 @@ def test_vlm_warmup_wake_releases_stream_and_resume_uses_fresh_boundary() -> Non
         ),
         context=None,
     )
-    after_warmup_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
-    after_warmup_cache = cache_service.GetCacheStats(cache_pb2.GetCacheStatsRequest(), context=None)
+    after_warmup_stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
+    after_warmup_cache = cache_service.GetCacheStats(
+        cache_pb2.GetCacheStatsRequest(), context=None
+    )
     resumed_events = list(
         inference_service.Generate(
-            image_request(
-                model_handle=model_handle,
-                request_id="vlm-warmup-resume",
-                payload=payload,
+            bind_backend_identity(
+                inference_service,
+                image_request(
+                    model_handle=model_handle,
+                    request_id="vlm-warmup-resume",
+                    payload=payload,
+                ),
             ),
             context=None,
         )
     )
     resumed_completed = completed_event(resumed_events)
-    after_resume_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    after_resume_stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
 
     assert warmup.ok is True
     assert after_warmup_stats.active_requests == 0
@@ -341,7 +424,9 @@ class StageThenFailTempMediaSession(TempMediaSession):
         raise OSError(f"staging failed after {path.name}")
 
 
-def test_vlm_failed_generation_cleans_staged_temp_media_and_releases_stream(tmp_path: Path) -> None:
+def test_vlm_failed_generation_cleans_staged_temp_media_and_releases_stream(
+    tmp_path: Path,
+) -> None:
     sessions: list[StageThenFailTempMediaSession] = []
 
     def session_factory(**kwargs) -> StageThenFailTempMediaSession:
@@ -358,12 +443,19 @@ def test_vlm_failed_generation_cleans_staged_temp_media_and_releases_stream(tmp_
 
     events = list(
         inference_service.Generate(
-            image_request(model_handle=model_handle, request_id="vlm-staging-failure"),
+            bind_backend_identity(
+                inference_service,
+                image_request(
+                    model_handle=model_handle, request_id="vlm-staging-failure"
+                ),
+            ),
             context=None,
         )
     )
     error = runtime_error_event(events).error
-    stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
     probe = runtime.last_probe_snapshot()
 
     assert error.code == "runtime_error"
@@ -371,7 +463,9 @@ def test_vlm_failed_generation_cleans_staged_temp_media_and_releases_stream(tmp_
     assert sessions[0].session_root is not None
     assert not sessions[0].session_root.exists()
     assert probe.temp_media_artifact_count == 1
-    assert probe.temp_media_artifact_bytes == len(b"stream lifecycle reusable cache image")
+    assert probe.temp_media_artifact_bytes == len(
+        b"stream lifecycle reusable cache image"
+    )
     assert probe.temp_media_cleanup_failure_count == 0
     assert stats.active_requests == 0
     assert stats.active_multimodal_requests == 0
@@ -382,7 +476,10 @@ def test_vlm_abort_cleans_temp_media_and_releases_request_state() -> None:
     registry = inference_service._registry
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
     stream = inference_service.Generate(
-        image_request(model_handle=model_handle, request_id="vlm-abort-cleanup"),
+        bind_backend_identity(
+            inference_service,
+            image_request(model_handle=model_handle, request_id="vlm-abort-cleanup"),
+        ),
         context=None,
     )
 
@@ -393,7 +490,9 @@ def test_vlm_abort_cleans_temp_media_and_releases_request_state() -> None:
     )
     remaining_events = list(stream)
     completed = completed_event(remaining_events)
-    stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
     probe = registry.vlm_runtime.last_probe_snapshot()
 
     assert first_event.HasField("token_delta")
@@ -403,5 +502,7 @@ def test_vlm_abort_cleans_temp_media_and_releases_request_state() -> None:
     assert stats.active_requests == 0
     assert stats.active_multimodal_requests == 0
     assert probe.temp_media_artifact_count == 1
-    assert probe.temp_media_artifact_bytes == len(b"stream lifecycle reusable cache image")
+    assert probe.temp_media_artifact_bytes == len(
+        b"stream lifecycle reusable cache image"
+    )
     assert probe.temp_media_cleanup_failure_count == 0

@@ -135,8 +135,23 @@ def run_prefill_memory_guard_probe(stack: LiveMelixStack) -> dict[str, object]:
         runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
         inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
 
+        model = WorkerModelCatalog.dev_text_model()
+        health = runtime_stub.Handshake(
+            runtime_pb2.HandshakeRequest(protocol_version="v1"),
+            timeout=5,
+        )
+        assert health.worker_instance_id
+        backend_identity = common_pb2.BackendModelIdentity(
+            requested_model_id=model.model_id,
+            requested_adapter_id=model.ext.get("melix.adapter_set_hash", ""),
+            route_generation=1,
+            worker_instance_id=health.worker_instance_id,
+        )
         load_response = runtime_stub.LoadModel(
-            runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+            runtime_pb2.LoadModelRequest(
+                model=model,
+                backend_identity=backend_identity,
+            ),
             timeout=5,
         )
         assert load_response.ok is True
@@ -147,6 +162,7 @@ def run_prefill_memory_guard_probe(stack: LiveMelixStack) -> dict[str, object]:
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id="integration-prefill-guard"),
                     model_handle=load_response.model_handle,
+                    backend_identity=backend_identity,
                 ),
                 messages=[
                     common_pb2.ChatMessage(

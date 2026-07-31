@@ -3948,8 +3948,7 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_WORKER_FAMILY": "vision",
         ])
 
-        var request = Melix_Worker_V1_LoadModelRequest()
-        request.model.modelID = "melix-dev-text"
+        let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
 
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.loadModel(
@@ -3970,6 +3969,314 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(response.error.details["model_id"], "melix-dev-text")
         XCTAssertEqual(response.error.details["worker_family_candidates"], "vision")
         XCTAssertEqual(response.error.details["reason"], "worker_family_mismatch")
+    }
+
+    func testBackendIdentityMismatchRejectsSwiftInferenceBeforeRuntimeOutput() async throws {
+        let backend = FakeRuntimeBackend(generatedChunks: ["must-not-escape"])
+        let services = makeServices(backend: backend)
+        var loadRequest = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
+        loadRequest.model.ext["melix.adapter_set_hash"] = "adapter-alpha"
+        loadRequest.backendIdentity.requestedModelID = "melix-dev-text"
+        loadRequest.backendIdentity.requestedAdapterID = "adapter-alpha"
+        loadRequest.backendIdentity.routeGeneration = 7
+        let loaded = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.loadModel(
+                request: loadRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        XCTAssertTrue(loaded.ok, loaded.error.message)
+
+        var execution = Melix_Worker_V1_ExecutionMetadata()
+        execution.id.requestID = "identity-mismatch"
+        execution.modelHandle = loaded.modelHandle
+        execution.backendIdentity = makeBackendIdentity(
+            modelID: "wrong-model",
+            adapterID: "wrong-adapter",
+            routeGeneration: 6
+        )
+
+        var generate = Melix_Worker_V1_GenerateRequest()
+        generate.execution = execution
+        generate.messages = [makeUserMessage("must not run")]
+        let generateWriter = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.generate(
+                request: generate,
+                response: RPCWriter(wrapping: generateWriter),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let generateEvents = await generateWriter.snapshot()
+        XCTAssertEqual(generateEvents.count, 1)
+        XCTAssertEqual(generateEvents.first?.error.error.code, "model_identity_mismatch")
+
+        var prefill = Melix_Worker_V1_PrefillRequest()
+        prefill.execution = execution
+        prefill.messages = [makeUserMessage("must not prefill")]
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefill,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        XCTAssertFalse(prefillResponse.ok)
+        XCTAssertEqual(prefillResponse.error.code, "model_identity_mismatch")
+        let prefillExecutions = await backend.prefillExecutions()
+        XCTAssertTrue(prefillExecutions.isEmpty)
+
+        var decode = Melix_Worker_V1_DecodeRequest()
+        decode.execution = execution
+        decode.decodeHandle = "stale"
+        let decodeWriter = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: decode,
+                response: RPCWriter(wrapping: decodeWriter),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let decodeEvents = await decodeWriter.snapshot()
+        XCTAssertEqual(decodeEvents.count, 1)
+        XCTAssertEqual(decodeEvents.first?.error.error.code, "model_identity_mismatch")
+
+        let listed = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.listLoadedModels(
+                request: Melix_Worker_V1_ListLoadedModelsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.ListLoadedModels.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        XCTAssertEqual(listed.loadedModels.first?.backendIdentity, loadRequest.backendIdentity)
+
+        let stats = await services.registry.runtimeStats()
+        XCTAssertEqual(stats.modelIdentityMismatchCount, 3)
+        XCTAssertEqual(stats.lastModelIdentityMismatch.requestedModelID, "wrong-model")
+        XCTAssertEqual(stats.lastModelIdentityMismatch.loadedModelID, "melix-dev-text")
+        XCTAssertEqual(stats.lastModelIdentityMismatch.requestedRouteGeneration, 6)
+        XCTAssertEqual(stats.lastModelIdentityMismatch.loadedRouteGeneration, 7)
+        XCTAssertEqual(
+            stats.lastModelIdentityMismatch.mismatchReason,
+            "model_id,adapter_id,route_generation"
+        )
+    }
+
+    func testBackendIdentityMissingIsTypedForSwiftIdentityBoundLoads() async throws {
+        let services = makeServices()
+        var loadRequest = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
+        loadRequest.backendIdentity.requestedModelID = "melix-dev-text"
+        loadRequest.backendIdentity.routeGeneration = 1
+        let loaded = try await services.registry.loadModel(
+            loadRequest.model,
+            backendIdentity: loadRequest.backendIdentity
+        )
+        var request = Melix_Worker_V1_PrefillRequest()
+        request.execution.id.requestID = "identity-missing"
+        request.execution.modelHandle = loaded.handle
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error.code, "model_identity_missing")
+        XCTAssertFalse(response.error.retriable)
+        XCTAssertEqual(response.error.backendIdentityMismatch.mismatchReason, "identity_missing")
+    }
+
+    func testCompleteBackendIdentityWithUnknownHandleIsRetriableBeforeSwiftRuntimeOutput() async throws {
+        let backend = FakeRuntimeBackend(generatedChunks: ["must-not-escape"])
+        let services = makeServices(backend: backend)
+        var request = Melix_Worker_V1_GenerateRequest()
+        request.execution.id.requestID = "identity-restart"
+        request.execution.modelHandle = "stale-before-worker-restart"
+        request.execution.backendIdentity = makeBackendIdentity(
+            modelID: "melix-dev-text",
+            adapterID: "adapter-alpha",
+            routeGeneration: 9
+        )
+        request.messages = [makeUserMessage("must not run")]
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.generate(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let events = await writer.snapshot()
+        let error = try XCTUnwrap(events.first?.error.error)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(error.code, "model_identity_mismatch")
+        XCTAssertTrue(error.retriable)
+        XCTAssertEqual(error.backendIdentityMismatch.mismatchReason, "model_handle_missing")
+        XCTAssertEqual(error.backendIdentityMismatch.requestedModelID, "melix-dev-text")
+        XCTAssertEqual(error.backendIdentityMismatch.loadedModelID, "")
+        XCTAssertEqual(error.backendIdentityMismatch.requestedRouteGeneration, 9)
+        XCTAssertEqual(error.backendIdentityMismatch.loadedRouteGeneration, 0)
+        let stats = await services.registry.runtimeStats()
+        XCTAssertEqual(stats.modelIdentityMismatchCount, 1)
+    }
+
+    func testLoadedIdentityUsesResolvedSwiftModelAndAdapterInsteadOfClaimedLoadIdentity() async throws {
+        let backend = FakeRuntimeBackend(generatedChunks: ["must-not-escape"])
+        let services = makeServices(backend: backend)
+        var loadRequest = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
+        loadRequest.model.ext["melix.adapter_set_hash"] = "adapter-alpha"
+        loadRequest.backendIdentity = makeBackendIdentity(
+            modelID: "wrong-model",
+            adapterID: "wrong-adapter",
+            routeGeneration: 11
+        )
+        let loaded = try await services.registry.loadModel(
+            loadRequest.model,
+            backendIdentity: loadRequest.backendIdentity
+        )
+        var request = Melix_Worker_V1_GenerateRequest()
+        request.execution.id.requestID = "identity-load-claim"
+        request.execution.modelHandle = loaded.handle
+        request.execution.backendIdentity = loadRequest.backendIdentity
+        request.messages = [makeUserMessage("must not run")]
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.generate(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let events = await writer.snapshot()
+        let error = try XCTUnwrap(events.first?.error.error)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(error.code, "model_identity_mismatch")
+        XCTAssertEqual(error.backendIdentityMismatch.loadedModelID, "melix-dev-text")
+        XCTAssertEqual(error.backendIdentityMismatch.loadedAdapterID, "adapter-alpha")
+        XCTAssertEqual(error.backendIdentityMismatch.loadedRouteGeneration, 11)
+    }
+
+    func testBackendIdentityRejectsWorkerInstanceMismatchBeforeSwiftRuntimeOutput() async throws {
+        let services = makeServices()
+        let bound = makeBackendIdentity(
+            modelID: "melix-dev-text",
+            adapterID: "adapter-alpha",
+            routeGeneration: 7
+        )
+        var model = makeModelSpec(modelID: "melix-dev-text")
+        model.ext["melix.adapter_set_hash"] = "adapter-alpha"
+        let loaded = try await services.registry.loadModel(model, backendIdentity: bound)
+        let requested = makeBackendIdentity(
+            modelID: "melix-dev-text",
+            adapterID: "adapter-alpha",
+            routeGeneration: 7,
+            workerInstanceID: "replacement-worker"
+        )
+
+        let error = await services.registry.validateBackendIdentity(
+            modelHandle: loaded.handle,
+            requested: requested
+        )
+
+        XCTAssertEqual(error?.code, "model_identity_mismatch")
+        XCTAssertEqual(error?.backendIdentityMismatch.mismatchReason, "worker_instance_id")
+        XCTAssertEqual(
+            error?.backendIdentityMismatch.requestedWorkerInstanceID,
+            "replacement-worker"
+        )
+        XCTAssertEqual(
+            error?.backendIdentityMismatch.loadedWorkerInstanceID,
+            "swift-text-worker-001"
+        )
+    }
+
+    func testBackendIdentityDiagnosticsPreservePublicIDsAndRedactLocalPaths() async throws {
+        let services = makeServices()
+        var model = makeModelSpec(modelID: "/Users/operator/private/model")
+        model.ext["melix.adapter_set_hash"] = "file:///Users/operator/private/adapter"
+        let bound = makeBackendIdentity(
+            modelID: model.modelID,
+            adapterID: model.ext["melix.adapter_set_hash"] ?? "",
+            routeGeneration: 4
+        )
+        let loaded = try await services.registry.loadModel(
+            model,
+            backendIdentity: bound
+        )
+        let requested = makeBackendIdentity(
+            modelID: "public-catalog/model",
+            adapterID: "~/private/adapter",
+            routeGeneration: 3
+        )
+
+        let error = await services.registry.validateBackendIdentity(
+            modelHandle: loaded.handle,
+            requested: requested
+        )
+        let receipt = await services.registry.runtimeStats().lastModelIdentityMismatch
+
+        XCTAssertEqual(error?.code, "model_identity_mismatch")
+        XCTAssertEqual(receipt.requestedModelID, "public-catalog/model")
+        XCTAssertEqual(receipt.loadedModelID, "[local-path-redacted]")
+        XCTAssertEqual(receipt.requestedAdapterID, "[local-path-redacted]")
+        XCTAssertEqual(receipt.loadedAdapterID, "[local-path-redacted]")
+        XCTAssertEqual(receipt.mismatchReason, "model_id,adapter_id,route_generation")
+
+        for localPath in ["../private/model", "FILE:///private/model", "\\\\server\\share\\model"] {
+            let pathError = await services.registry.validateBackendIdentity(
+                modelHandle: loaded.handle,
+                requested: makeBackendIdentity(
+                    modelID: localPath,
+                    adapterID: "public-adapter",
+                    routeGeneration: 3
+                )
+            )
+            let pathReceipt = await services.registry.runtimeStats().lastModelIdentityMismatch
+            XCTAssertEqual(pathError?.code, "model_identity_mismatch")
+            XCTAssertEqual(pathReceipt.requestedModelID, "[local-path-redacted]")
+        }
     }
 
     func testRuntimeRegistryVisionWorkerAcceptsVideoOnlyNativeRoute() async throws {
@@ -4010,8 +4317,7 @@ final class WorkerScaffoldTests: XCTestCase {
             ],
             backend: FakeRuntimeBackend(generatedChunks: ["vision"])
         )
-        var loadRequest = Melix_Worker_V1_LoadModelRequest()
-        loadRequest.model.modelID = "melix-dev-vlm"
+        let loadRequest = makeIdentityBoundLoadRequest(modelID: "melix-dev-vlm")
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
             try await services.runtime.loadModel(
                 request: loadRequest,
@@ -4027,7 +4333,11 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var request = Melix_Worker_V1_GenerateRequest()
         request.execution.id.requestID = "req-vision-payload-receipt"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(
+            &request.execution,
+            toModelHandle: loadResponse.modelHandle,
+            workerInstanceID: "swift-vision-worker-001"
+        )
         request.messages = [
             makeVisionMessage(
                 prompt: "receipt",
@@ -4714,8 +5024,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             request.memoryBudgetBytes = 4_096
             return try await services.runtime.loadModel(
                 request: request,
@@ -4872,8 +5181,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -4918,8 +5226,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             request.diskStreamingMode = .diskStreamingRequireDisk
             return try await services.runtime.loadModel(
                 request: request,
@@ -4950,8 +5257,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             request.memoryBudgetBytes = 4_500
             return try await services.runtime.loadModel(
                 request: request,
@@ -4986,8 +5292,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             request.memoryBudgetBytes = 4_500
             return try await services.runtime.loadModel(
                 request: request,
@@ -5201,8 +5506,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let failedLoad = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5347,8 +5651,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5363,7 +5666,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-success"
-            request.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
             request.returnDecodeHandle = true
             request.prefillStepSize = 32
             request.resumeHint = "tool-follow-up"
@@ -5415,8 +5718,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5432,7 +5734,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-preferred-block-size"
-            request.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
             request.execution.cacheHints.preferredBlockSize = 32
             request.returnDecodeHandle = true
             request.prefillStepSize = 32
@@ -5462,8 +5764,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5478,7 +5779,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-accelerated"
-            request.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
             request.execution.acceleration.mode = .acceleratedPrefill
             request.execution.acceleration.prefillHint = "json-schema"
             request.returnDecodeHandle = true
@@ -5512,8 +5813,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5528,7 +5828,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-active-kv"
-            request.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
             request.execution.acceleration.mode = .activeKvQuantized
             request.returnDecodeHandle = true
             request.messages = [makeUserMessage("cache quantized")]
@@ -5561,8 +5861,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5577,7 +5876,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-sparse"
-            request.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
             request.execution.acceleration.mode = .sparsePrefill
             request.returnDecodeHandle = true
             request.messages = [
@@ -5611,8 +5910,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5628,7 +5926,7 @@ final class WorkerScaffoldTests: XCTestCase {
             try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-prefill-busy"
-                request.execution.modelHandle = loadResponse.modelHandle
+                bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
                 request.returnDecodeHandle = true
                 request.messages = [makeUserMessage("slow prefill")]
                 return try await services.inference.prefill(
@@ -5685,8 +5983,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5702,7 +5999,7 @@ final class WorkerScaffoldTests: XCTestCase {
             try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-prefill-abort"
-                request.execution.modelHandle = loadResponse.modelHandle
+                bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
                 request.returnDecodeHandle = true
                 request.messages = [makeUserMessage("abort slow prefill before context registration")]
                 return try await services.inference.prefill(
@@ -5757,13 +6054,13 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(statsAfter.stats.activeRequests, 0)
     }
 
-    func testPrefillReturnsNotFoundForUnknownModelHandle() async throws {
+    func testPrefillReturnsRetriableIdentityMismatchForUnknownBoundModelHandle() async throws {
         let services = makeServices()
 
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-missing"
-            request.execution.modelHandle = "missing-handle"
+            bindBackendIdentity(&request.execution, toModelHandle: "missing-handle")
             request.returnDecodeHandle = true
             request.messages = [makeUserMessage("missing")]
             return try await services.inference.prefill(
@@ -5778,7 +6075,11 @@ final class WorkerScaffoldTests: XCTestCase {
         }
 
         XCTAssertFalse(response.ok)
-        XCTAssertEqual(response.error.code, "not_found")
+        XCTAssertEqual(response.error.code, "model_identity_mismatch")
+        XCTAssertTrue(response.error.retriable)
+        XCTAssertEqual(response.error.backendIdentityMismatch.mismatchReason, "model_handle_missing")
+        XCTAssertEqual(response.error.backendIdentityMismatch.loadedModelID, "")
+        XCTAssertEqual(response.error.backendIdentityMismatch.loadedRouteGeneration, 0)
     }
 
     func testPrefillReturnsRuntimeErrorForBackendFailureWithoutRequestID() async throws {
@@ -5788,8 +6089,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5803,7 +6103,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
-            request.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
             request.returnDecodeHandle = true
             request.messages = [makeUserMessage("prefill error")]
             return try await services.inference.prefill(
@@ -5830,8 +6130,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5846,7 +6145,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-context-limit-rpc"
-            request.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
             request.returnDecodeHandle = true
             request.execution.acceleration.mode = .baseline
             request.messages = [makeUserMessage(repeatingTokenPrompt(count: 8_193))]
@@ -5880,8 +6179,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5896,7 +6194,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-memory-guard-rpc"
-            request.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
             request.returnDecodeHandle = true
             request.execution.acceleration.mode = .baseline
             request.messages = [makeUserMessage(repeatingTokenPrompt(count: 2))]
@@ -5931,8 +6229,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5947,7 +6244,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let response = try await withTestServerContextRPCCancellationHandle { handle in
             var request = Melix_Worker_V1_PrefillRequest()
             request.execution.id.requestID = "req-prefill-quadratic-guard-rpc"
-            request.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
             request.returnDecodeHandle = true
             request.execution.acceleration.mode = .baseline
             request.messages = [makeUserMessage(repeatingTokenPrompt(count: 5))]
@@ -5978,8 +6275,7 @@ final class WorkerScaffoldTests: XCTestCase {
             residentMemorySamples: [100, 2_148]
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5994,7 +6290,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_GenerateRequest()
         request.execution.id.requestID = "req-generate-success"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.returnUsage = true
         var message = Melix_Worker_V1_ChatMessage()
         message.role = "user"
@@ -6038,8 +6334,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -6054,7 +6349,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_GenerateRequest()
         request.execution.id.requestID = "req-generate-length"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.ext["melix.harmony"] = "true"
         request.execution.ext["melix.tool_parser.mode"] = "gemma"
         request.messages = [makeUserMessage("Keep thinking until the output limit.")]
@@ -6087,8 +6382,7 @@ final class WorkerScaffoldTests: XCTestCase {
             ])
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            var request = makeIdentityBoundLoadRequest(modelID: "unsloth/gemma-4-E4B-it-MLX-8bit")
             request.model.modelPath = "unsloth/gemma-4-E4B-it-MLX-8bit"
             request.model.parserMode = "gemma"
             request.model.ext["melix.tool_parser.mode"] = "gemma"
@@ -6108,7 +6402,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_GenerateRequest()
         request.execution.id.requestID = "req-stored-gemma-parser-generate"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.reasoning.enabled = true
         request.messages = [makeUserMessage("Think and answer.")]
 
@@ -6154,8 +6448,7 @@ final class WorkerScaffoldTests: XCTestCase {
             ])
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -6170,7 +6463,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_GenerateRequest()
         request.execution.id.requestID = "req-harmony-generate"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.ext["melix.harmony"] = "true"
         request.returnUsage = true
         var message = Melix_Worker_V1_ChatMessage()
@@ -6239,8 +6532,7 @@ final class WorkerScaffoldTests: XCTestCase {
             ])
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -6255,7 +6547,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_GenerateRequest()
         request.execution.id.requestID = "req-gemma-channel-generate"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.scope.parserMode = "gemma"
         request.execution.scope.toolParserMode = "gemma"
         request.execution.ext["melix.tool_parser.mode"] = "gemma"
@@ -6318,8 +6610,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            var request = makeIdentityBoundLoadRequest(modelID: "unsloth/gemma-4-E4B-it-MLX-8bit")
             request.model.modelPath = "unsloth/gemma-4-E4B-it-MLX-8bit"
             request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
@@ -6335,7 +6626,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-gemma-cadence-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         var message = Melix_Worker_V1_ChatMessage()
         message.role = "user"
@@ -6359,7 +6650,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-gemma-cadence"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.decodeHandle = prefillResponse.decodeHandle
         request.maxOutputTokens = 6
         request.returnUsage = true
@@ -6407,8 +6698,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -6422,7 +6712,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-non-gemma-cadence-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         var message = Melix_Worker_V1_ChatMessage()
         message.role = "user"
@@ -6446,7 +6736,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-non-gemma-cadence"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.decodeHandle = prefillResponse.decodeHandle
         request.maxOutputTokens = 6
         request.returnUsage = true
@@ -6494,8 +6784,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            var request = makeIdentityBoundLoadRequest(modelID: "unsloth/gemma-4-E4B-it-MLX-8bit")
             request.model.modelPath = "unsloth/gemma-4-E4B-it-MLX-8bit"
             request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
@@ -6511,7 +6800,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-gemma-reasoning-cadence-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         var message = Melix_Worker_V1_ChatMessage()
         message.role = "user"
@@ -6535,7 +6824,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-gemma-reasoning-cadence"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.decodeHandle = prefillResponse.decodeHandle
         request.maxOutputTokens = 4
         request.returnUsage = true
@@ -6579,8 +6868,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            var request = makeIdentityBoundLoadRequest(modelID: "unsloth/gemma-4-E4B-it-MLX-8bit")
             request.model.modelPath = "unsloth/gemma-4-E4B-it-MLX-8bit"
             request.model.parserMode = "gemma"
             request.model.requestRoutes = [makeTextRequestRoute()]
@@ -6597,7 +6885,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-stored-gemma-parser-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.execution.scope.parserMode = "gemma"
         prefillRequest.execution.reasoning.enabled = true
         prefillRequest.returnDecodeHandle = true
@@ -6623,7 +6911,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-stored-gemma-parser-decode"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.reasoning.enabled = true
         request.decodeHandle = prefillResponse.decodeHandle
         request.maxOutputTokens = 3
@@ -6661,12 +6949,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorded.last?.completed.assistantText, "answer\n")
     }
 
-    func testGenerateReturnsNotFoundErrorEventForUnknownModelHandle() async throws {
+    func testGenerateReturnsRetriableIdentityMismatchForUnknownBoundModelHandle() async throws {
         let services = makeServices()
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_GenerateRequest()
         request.execution.id.requestID = "req-generate-missing"
-        request.execution.modelHandle = "missing-model-handle"
+        bindBackendIdentity(&request.execution, toModelHandle: "missing-model-handle")
 
         try await withTestServerContextRPCCancellationHandle { handle in
             try await services.inference.generate(
@@ -6686,7 +6974,14 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorded[0].requestID, "req-generate-missing")
         XCTAssertEqual(recorded[0].executionKind, "generate")
         XCTAssertTrue(matches(recorded[0].payload, .error))
-        XCTAssertEqual(recorded[0].error.error.code, "not_found")
+        XCTAssertEqual(recorded[0].error.error.code, "model_identity_mismatch")
+        XCTAssertTrue(recorded[0].error.error.retriable)
+        XCTAssertEqual(
+            recorded[0].error.error.backendIdentityMismatch.mismatchReason,
+            "model_handle_missing"
+        )
+        XCTAssertEqual(recorded[0].error.error.backendIdentityMismatch.loadedModelID, "")
+        XCTAssertEqual(recorded[0].error.error.backendIdentityMismatch.loadedRouteGeneration, 0)
     }
 
     func testAbortCancelsActiveGenerationAndReportsCancelledCompletion() async throws {
@@ -6699,8 +6994,7 @@ final class WorkerScaffoldTests: XCTestCase {
             residentMemorySamples: [100, 2_148]
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -6714,7 +7008,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var generateRequest = Melix_Worker_V1_GenerateRequest()
         generateRequest.execution.id.requestID = "req-generate-abort"
-        generateRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&generateRequest.execution, toModelHandle: loadResponse.modelHandle)
         var message = Melix_Worker_V1_ChatMessage()
         message.role = "user"
         var part = Melix_Worker_V1_MessagePart()
@@ -6773,8 +7067,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -6788,7 +7081,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-decode-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("decode rpc")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -6806,7 +7099,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-decode"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.scheduling.lane = "text.decode.batch"
         request.decodeHandle = prefillResponse.decodeHandle
         request.maxOutputTokens = 1
@@ -6853,8 +7146,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: DeterministicTextBackend(tokenDelayNanos: 0)
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -6868,13 +7160,13 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
         prefillRequest1.execution.id.requestID = "req-batch-decode-1"
-        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest1.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest1.returnDecodeHandle = true
         prefillRequest1.messages = [makeUserMessage("batch decode alpha")]
 
         var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
         prefillRequest2.execution.id.requestID = "req-batch-decode-2"
-        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest2.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest2.returnDecodeHandle = true
         prefillRequest2.messages = [makeUserMessage("batch decode beta")]
 
@@ -6907,7 +7199,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request1 = Melix_Worker_V1_DecodeRequest()
         request1.execution.id.requestID = "req-batch-decode-1"
-        request1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request1.execution, toModelHandle: loadResponse.modelHandle)
         request1.execution.scheduling.lane = "text.decode.batch"
         request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -6921,7 +7213,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request2 = Melix_Worker_V1_DecodeRequest()
         request2.execution.id.requestID = "req-batch-decode-2"
-        request2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request2.execution, toModelHandle: loadResponse.modelHandle)
         request2.execution.scheduling.lane = "text.decode.batch"
         request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7011,8 +7303,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: DeterministicTextBackend(tokenDelayNanos: 0)
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7026,13 +7317,13 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
         prefillRequest1.execution.id.requestID = "req-batch-mixed-sampler-1"
-        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest1.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest1.returnDecodeHandle = true
         prefillRequest1.messages = [makeUserMessage("batch mixed sampler alpha")]
 
         var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
         prefillRequest2.execution.id.requestID = "req-batch-mixed-sampler-2"
-        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest2.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest2.returnDecodeHandle = true
         prefillRequest2.messages = [makeUserMessage("batch mixed sampler beta")]
 
@@ -7074,7 +7365,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request1 = Melix_Worker_V1_DecodeRequest()
         request1.execution.id.requestID = "req-batch-mixed-sampler-1"
-        request1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request1.execution, toModelHandle: loadResponse.modelHandle)
         request1.execution.scheduling.lane = "text.decode.batch"
         request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7088,7 +7379,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request2 = Melix_Worker_V1_DecodeRequest()
         request2.execution.id.requestID = "req-batch-mixed-sampler-2"
-        request2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request2.execution, toModelHandle: loadResponse.modelHandle)
         request2.execution.scheduling.lane = "text.decode.batch"
         request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7153,8 +7444,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: DecodeBatchFallbackReasonBackend(reason: "not_batchable:cache_signature_unsupported")
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7168,13 +7458,13 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
         prefillRequest1.execution.id.requestID = "req-batch-fallback-reason-1"
-        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest1.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest1.returnDecodeHandle = true
         prefillRequest1.messages = [makeUserMessage("batch fallback reason alpha")]
 
         var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
         prefillRequest2.execution.id.requestID = "req-batch-fallback-reason-2"
-        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest2.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest2.returnDecodeHandle = true
         prefillRequest2.messages = [makeUserMessage("batch fallback reason beta")]
 
@@ -7207,7 +7497,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request1 = Melix_Worker_V1_DecodeRequest()
         request1.execution.id.requestID = "req-batch-fallback-reason-1"
-        request1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request1.execution, toModelHandle: loadResponse.modelHandle)
         request1.execution.scheduling.lane = "text.decode.batch"
         request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7221,7 +7511,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request2 = Melix_Worker_V1_DecodeRequest()
         request2.execution.id.requestID = "req-batch-fallback-reason-2"
-        request2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request2.execution, toModelHandle: loadResponse.modelHandle)
         request2.execution.scheduling.lane = "text.decode.batch"
         request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7281,8 +7571,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: DeterministicTextBackend(tokenDelayNanos: 0)
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7296,13 +7585,13 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
         prefillRequest1.execution.id.requestID = "req-batch-window-1"
-        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest1.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest1.returnDecodeHandle = true
         prefillRequest1.messages = [makeUserMessage("batch window alpha")]
 
         var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
         prefillRequest2.execution.id.requestID = "req-batch-window-2"
-        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest2.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest2.returnDecodeHandle = true
         prefillRequest2.messages = [makeUserMessage("batch window beta")]
 
@@ -7335,7 +7624,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request1 = Melix_Worker_V1_DecodeRequest()
         request1.execution.id.requestID = "req-batch-window-1"
-        request1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request1.execution, toModelHandle: loadResponse.modelHandle)
         request1.execution.scheduling.lane = "text.decode.batch"
         request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7347,7 +7636,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request2 = Melix_Worker_V1_DecodeRequest()
         request2.execution.id.requestID = "req-batch-window-2"
-        request2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request2.execution, toModelHandle: loadResponse.modelHandle)
         request2.execution.scheduling.lane = "text.decode.batch"
         request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7407,8 +7696,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: DeterministicTextBackend(tokenDelayNanos: 40_000_000)
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7422,13 +7710,13 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
         prefillRequest1.execution.id.requestID = "req-batch-cancel-1"
-        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest1.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest1.returnDecodeHandle = true
         prefillRequest1.messages = [makeUserMessage("batch cancel alpha")]
 
         var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
         prefillRequest2.execution.id.requestID = "req-batch-cancel-2"
-        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest2.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest2.returnDecodeHandle = true
         prefillRequest2.messages = [makeUserMessage("batch cancel beta")]
 
@@ -7461,7 +7749,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request1 = Melix_Worker_V1_DecodeRequest()
         request1.execution.id.requestID = "req-batch-cancel-1"
-        request1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request1.execution, toModelHandle: loadResponse.modelHandle)
         request1.execution.scheduling.lane = "text.decode.batch"
         request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7476,7 +7764,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request2 = Melix_Worker_V1_DecodeRequest()
         request2.execution.id.requestID = "req-batch-cancel-2"
-        request2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request2.execution, toModelHandle: loadResponse.modelHandle)
         request2.execution.scheduling.lane = "text.decode.batch"
         request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7559,8 +7847,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: DeterministicTextBackend(tokenDelayNanos: 0)
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7574,13 +7861,13 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
         prefillRequest1.execution.id.requestID = "req-scheduler-cohort-1"
-        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest1.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest1.returnDecodeHandle = true
         prefillRequest1.messages = [makeUserMessage("scheduler cohort alpha")]
 
         var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
         prefillRequest2.execution.id.requestID = "req-scheduler-cohort-2"
-        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest2.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest2.returnDecodeHandle = true
         prefillRequest2.messages = [makeUserMessage("scheduler cohort beta")]
 
@@ -7613,7 +7900,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request1 = Melix_Worker_V1_DecodeRequest()
         request1.execution.id.requestID = "req-scheduler-cohort-1"
-        request1.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request1.execution, toModelHandle: loadResponse.modelHandle)
         request1.execution.scheduling.lane = "text.decode.batch"
         request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7628,7 +7915,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request2 = Melix_Worker_V1_DecodeRequest()
         request2.execution.id.requestID = "req-scheduler-cohort-2"
-        request2.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request2.execution, toModelHandle: loadResponse.modelHandle)
         request2.execution.scheduling.lane = "text.decode.batch"
         request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
@@ -7687,8 +7974,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(decodedChunks: ["one"])
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7702,7 +7988,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-unsupported-batch"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("unsupported batch")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -7720,7 +8006,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-unsupported-batch"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
         request.execution.ext["melix.gateway.completion_batch_size"] = "2"
@@ -7752,9 +8038,21 @@ final class WorkerScaffoldTests: XCTestCase {
 
     func testDecodeStreamingRpcReturnsStructuredNotFoundForMissingDecodeHandle() async throws {
         let services = makeServices()
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.loadModel(
+                request: makeIdentityBoundLoadRequest(modelID: "melix-dev-text"),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-missing-decode"
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.decodeHandle = "missing-decode"
 
         try await withTestServerContextRPCCancellationHandle { handle in
@@ -7781,8 +8079,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(decodedChunks: [])
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7796,7 +8093,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-stored-decode"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("summary only decode")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -7813,7 +8110,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.decodeHandle = prefillResponse.decodeHandle
         request.returnUsage = true
 
@@ -7846,8 +8143,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(decodeError: FakeRuntimeBackendError.decodeFailed)
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7861,7 +8157,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-runtime-error-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("runtime error decode")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -7879,7 +8175,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-runtime-error"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.decodeHandle = prefillResponse.decodeHandle
 
         try await withTestServerContextRPCCancellationHandle { handle in
@@ -7909,8 +8205,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(decodedChunks: ["fallback"])
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7924,7 +8219,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-fallback-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.execution.acceleration.mode = .speculativeDecode
         prefillRequest.execution.acceleration.allowBaselineFallback = true
         prefillRequest.returnDecodeHandle = true
@@ -7944,7 +8239,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-fallback-decode"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.acceleration.mode = .speculativeDecode
         request.execution.acceleration.allowBaselineFallback = true
         request.decodeHandle = prefillResponse.decodeHandle
@@ -7980,8 +8275,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(decodedChunks: ["unused"])
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -7995,7 +8289,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-no-fallback-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("no fallback decode")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -8013,7 +8307,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-no-fallback-decode"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.acceleration.mode = .speculativeDecode
         request.execution.acceleration.allowBaselineFallback = false
         request.decodeHandle = prefillResponse.decodeHandle
@@ -8046,8 +8340,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: backend
         )
         let targetLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -8059,8 +8352,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
         _ = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text-draft"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text-draft")
             request.model.tokenizerHash = "tok-dev"
             request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
@@ -8076,7 +8368,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-live-spec-prefill"
-        prefillRequest.execution.modelHandle = targetLoadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: targetLoadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("live speculative decode")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -8094,7 +8386,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-live-spec-decode"
-        request.execution.modelHandle = targetLoadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: targetLoadResponse.modelHandle)
         request.execution.acceleration.mode = .speculativeDecode
         request.execution.acceleration.allowBaselineFallback = false
         request.execution.acceleration.draftModelID = "melix-dev-text-draft"
@@ -8132,8 +8424,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(decodedChunks: ["unused"])
         )
         let targetLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             request.model.tokenizerHash = "tok-target"
             return try await services.runtime.loadModel(
                 request: request,
@@ -8146,8 +8437,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
         _ = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text-draft"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text-draft")
             request.model.tokenizerHash = "tok-draft"
             request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
@@ -8163,7 +8453,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-tokenizer-prefill"
-        prefillRequest.execution.modelHandle = targetLoadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: targetLoadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("tokenizer mismatch")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -8181,7 +8471,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-tokenizer-decode"
-        request.execution.modelHandle = targetLoadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: targetLoadResponse.modelHandle)
         request.execution.acceleration.mode = .speculativeDecode
         request.execution.acceleration.allowBaselineFallback = false
         request.execution.acceleration.draftModelID = "melix-dev-text-draft"
@@ -8216,8 +8506,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: backend
         )
         let targetLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             request.model.tokenizerHash = "tok-shared"
             return try await services.runtime.loadModel(
                 request: request,
@@ -8230,8 +8519,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
         _ = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "z-lab/Qwen3.5-27B-DFlash"
+            var request = makeIdentityBoundLoadRequest(modelID: "z-lab/Qwen3.5-27B-DFlash")
             request.model.ext["melix.draft.runtime_kind"] = "dflash"
             request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
@@ -8247,7 +8535,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-dflash-prefill"
-        prefillRequest.execution.modelHandle = targetLoadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: targetLoadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("dflash draft")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -8265,7 +8553,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-dflash-decode"
-        request.execution.modelHandle = targetLoadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: targetLoadResponse.modelHandle)
         request.execution.acceleration.mode = .speculativeDecode
         request.execution.acceleration.allowBaselineFallback = false
         request.execution.acceleration.draftModelID = "z-lab/Qwen3.5-27B-DFlash"
@@ -8299,8 +8587,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: FakeRuntimeBackend(decodedChunks: ["unused"])
         )
         let targetLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             request.model.tokenizerHash = "tok-shared"
             return try await services.runtime.loadModel(
                 request: request,
@@ -8313,8 +8600,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
         _ = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text-draft"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text-draft")
             request.model.tokenizerHash = "tok-shared"
             request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
@@ -8330,7 +8616,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-sampling-prefill"
-        prefillRequest.execution.modelHandle = targetLoadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: targetLoadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("non greedy speculative decode")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -8348,7 +8634,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-sampling-decode"
-        request.execution.modelHandle = targetLoadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: targetLoadResponse.modelHandle)
         request.execution.acceleration.mode = .speculativeDecode
         request.execution.acceleration.allowBaselineFallback = false
         request.execution.acceleration.draftModelID = "melix-dev-text-draft"
@@ -8384,8 +8670,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -8399,7 +8684,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-decode-cancel-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("cancel decode")]
         let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -8417,7 +8702,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-decode-cancel"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.decodeHandle = prefillResponse.decodeHandle
         request.returnUsage = true
 
@@ -8467,8 +8752,7 @@ final class WorkerScaffoldTests: XCTestCase {
             backend: DeterministicTextBackend(tokenDelayNanos: 1_000_000)
         )
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -8482,7 +8766,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-spec-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.execution.acceleration.mode = .speculativeDecode
         prefillRequest.execution.acceleration.allowBaselineFallback = false
         prefillRequest.returnDecodeHandle = true
@@ -8502,7 +8786,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-spec-decode"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.execution.acceleration.mode = .speculativeDecode
         request.execution.acceleration.allowBaselineFallback = false
         request.execution.acceleration.draftModelID = "melix-dev-text-draft"
@@ -8541,8 +8825,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -8556,7 +8839,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-active-kv-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.execution.acceleration.mode = .activeKvQuantized
         prefillRequest.execution.acceleration.activeKvQuantProfile = "q8"
         prefillRequest.returnDecodeHandle = true
@@ -8577,7 +8860,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-active-kv-decode"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.decodeHandle = prefillResponse.decodeHandle
 
         try await withTestServerContextRPCCancellationHandle { handle in
@@ -8658,8 +8941,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -8673,7 +8955,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefillRequest = Melix_Worker_V1_PrefillRequest()
         prefillRequest.execution.id.requestID = "req-active-kv-probe-prefill"
-        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefillRequest.execution, toModelHandle: loadResponse.modelHandle)
         prefillRequest.execution.acceleration.mode = .activeKvQuantized
         prefillRequest.returnDecodeHandle = true
         prefillRequest.messages = [makeUserMessage("active kv probe")]
@@ -8693,7 +8975,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
         var request = Melix_Worker_V1_DecodeRequest()
         request.execution.id.requestID = "req-active-kv-probe-decode"
-        request.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
         request.decodeHandle = prefillResponse.decodeHandle
 
         try await withTestServerContextRPCCancellationHandle { handle in
@@ -8830,8 +9112,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await services.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -8846,7 +9127,7 @@ final class WorkerScaffoldTests: XCTestCase {
             let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-cache-prefill"
-                request.execution.modelHandle = loadResponse.modelHandle
+                bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
                 request.execution.cacheHints.allowL2 = true
                 request.execution.cacheHints.persistL2 = true
                 request.returnDecodeHandle = true
@@ -8863,7 +9144,6 @@ final class WorkerScaffoldTests: XCTestCase {
                     )
                 )
             }
-
             let cacheResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.cache.getCacheStats(
                     request: Melix_Worker_V1_GetCacheStatsRequest(),
@@ -8919,7 +9199,6 @@ final class WorkerScaffoldTests: XCTestCase {
                     )
                 )
             }
-
             let postSaveCacheResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 try await services.cache.getCacheStats(
                     request: Melix_Worker_V1_GetCacheStatsRequest(),
@@ -9008,8 +9287,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let initialLoad = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await initialServices.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9024,7 +9302,7 @@ final class WorkerScaffoldTests: XCTestCase {
             let initialPrefill = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-cold-tier-seed"
-                request.execution.modelHandle = initialLoad.modelHandle
+                bindBackendIdentity(&request.execution, toModelHandle: initialLoad.modelHandle)
                 request.execution.cacheHints.allowL2 = true
                 request.execution.cacheHints.persistL2 = true
                 request.returnDecodeHandle = true
@@ -9059,8 +9337,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let restartedLoad = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await restartedServices.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9075,7 +9352,7 @@ final class WorkerScaffoldTests: XCTestCase {
             let restartedPrefill = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-cold-tier-reuse"
-                request.execution.modelHandle = restartedLoad.modelHandle
+                bindBackendIdentity(&request.execution, toModelHandle: restartedLoad.modelHandle)
                 request.execution.cacheHints.allowL2 = true
                 request.execution.cacheHints.persistL2 = true
                 request.returnDecodeHandle = true
@@ -9127,8 +9404,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await services.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9143,7 +9419,7 @@ final class WorkerScaffoldTests: XCTestCase {
             _ = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-hybrid-cache-mode"
-                request.execution.modelHandle = loadResponse.modelHandle
+                bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
                 request.execution.cacheHints.allowL2 = true
                 request.execution.cacheHints.persistL2 = true
                 request.execution.cacheHints.cacheMode = .hybrid
@@ -9191,8 +9467,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await initialServices.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9207,7 +9482,7 @@ final class WorkerScaffoldTests: XCTestCase {
             let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-restart-prefill"
-                request.execution.modelHandle = loadResponse.modelHandle
+                bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
                 request.execution.reasoning.enabled = true
                 request.execution.reasoning.mode = "enabled"
                 request.execution.reasoning.effort = "high"
@@ -9228,7 +9503,6 @@ final class WorkerScaffoldTests: XCTestCase {
                     )
                 )
             }
-
             let saveResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
                 request.requestID = "req-restart-prefill"
@@ -9254,8 +9528,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let restartedLoadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await restartedServices.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9286,7 +9559,7 @@ final class WorkerScaffoldTests: XCTestCase {
             try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_DecodeRequest()
                 request.execution.id.requestID = "req-restart-decode"
-                request.execution.modelHandle = restartedLoadResponse.modelHandle
+                bindBackendIdentity(&request.execution, toModelHandle: restartedLoadResponse.modelHandle)
                 request.decodeHandle = restoreResponse.decodeHandle
                 request.returnUsage = true
                 try await restartedServices.inference.decode(
@@ -9397,8 +9670,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await services.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9412,7 +9684,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var initialPrefill = Melix_Worker_V1_PrefillRequest()
             initialPrefill.execution.id.requestID = "req-restore-source"
-            initialPrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&initialPrefill.execution, toModelHandle: loadResponse.modelHandle)
             initialPrefill.execution.cacheHints.allowL2 = true
             initialPrefill.execution.cacheHints.persistL2 = true
             initialPrefill.returnDecodeHandle = true
@@ -9447,7 +9719,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var restorePrefill = Melix_Worker_V1_PrefillRequest()
             restorePrefill.execution.id.requestID = "req-restore-target"
-            restorePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&restorePrefill.execution, toModelHandle: loadResponse.modelHandle)
             restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
             restorePrefill.execution.cacheHints.cacheMode = .rotating
             restorePrefill.returnDecodeHandle = true
@@ -9487,8 +9759,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await services.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9505,7 +9776,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var sourcePrefill = Melix_Worker_V1_PrefillRequest()
             sourcePrefill.execution.id.requestID = "req-partial-source"
-            sourcePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&sourcePrefill.execution, toModelHandle: loadResponse.modelHandle)
             sourcePrefill.execution.cacheHints.allowL2 = true
             sourcePrefill.execution.cacheHints.persistL2 = true
             sourcePrefill.returnDecodeHandle = true
@@ -9540,7 +9811,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var restorePrefill = Melix_Worker_V1_PrefillRequest()
             restorePrefill.execution.id.requestID = "req-partial-target"
-            restorePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&restorePrefill.execution, toModelHandle: loadResponse.modelHandle)
             restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
             restorePrefill.execution.cacheHints.cachePolicy = "hybrid"
             restorePrefill.prefillStepSize = 16
@@ -9585,8 +9856,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await services.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9600,7 +9870,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var sourcePrefill = Melix_Worker_V1_PrefillRequest()
             sourcePrefill.execution.id.requestID = "req-cold-fallback-source"
-            sourcePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&sourcePrefill.execution, toModelHandle: loadResponse.modelHandle)
             sourcePrefill.execution.cacheHints.allowL2 = true
             sourcePrefill.execution.cacheHints.persistL2 = true
             sourcePrefill.returnDecodeHandle = true
@@ -9635,7 +9905,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var restorePrefill = Melix_Worker_V1_PrefillRequest()
             restorePrefill.execution.id.requestID = "req-cold-fallback-target"
-            restorePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&restorePrefill.execution, toModelHandle: loadResponse.modelHandle)
             restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
             restorePrefill.returnDecodeHandle = true
             restorePrefill.messages = [makeUserMessage("totally different prompt with no shared prefix")]
@@ -9682,8 +9952,7 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await services.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9697,7 +9966,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var sourcePrefill = Melix_Worker_V1_PrefillRequest()
             sourcePrefill.execution.id.requestID = "req-recovery-source"
-            sourcePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&sourcePrefill.execution, toModelHandle: loadResponse.modelHandle)
             sourcePrefill.execution.cacheHints.allowL2 = true
             sourcePrefill.execution.cacheHints.persistL2 = true
             sourcePrefill.returnDecodeHandle = true
@@ -9732,7 +10001,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var restorePrefill = Melix_Worker_V1_PrefillRequest()
             restorePrefill.execution.id.requestID = "req-recovery-decode"
-            restorePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&restorePrefill.execution, toModelHandle: loadResponse.modelHandle)
             restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
             restorePrefill.returnDecodeHandle = true
             let restorePrefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
@@ -9750,7 +10019,7 @@ final class WorkerScaffoldTests: XCTestCase {
             let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
             var decodeRequest = Melix_Worker_V1_DecodeRequest()
             decodeRequest.execution.id.requestID = "req-recovery-decode"
-            decodeRequest.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&decodeRequest.execution, toModelHandle: loadResponse.modelHandle)
             decodeRequest.execution.cacheHints.saveBoundarySnapshot = true
             decodeRequest.decodeHandle = restorePrefillResponse.decodeHandle
             decodeRequest.returnUsage = true
@@ -9855,8 +10124,7 @@ final class WorkerScaffoldTests: XCTestCase {
                 backend: DeterministicTextBackend(tokenDelayNanos: 0)
             )
             let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await initialServices.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9871,7 +10139,7 @@ final class WorkerScaffoldTests: XCTestCase {
             let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-precondition-prefill"
-                request.execution.modelHandle = loadResponse.modelHandle
+                bindBackendIdentity(&request.execution, toModelHandle: loadResponse.modelHandle)
                 request.execution.cacheHints.allowL2 = true
                 request.execution.cacheHints.persistL2 = true
                 request.returnDecodeHandle = true
@@ -9944,9 +10212,9 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             let initialLoad = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 request.model.ext["melix.adapter_set_hash"] = "adapter-alpha"
+                request.backendIdentity.requestedAdapterID = "adapter-alpha"
                 return try await initialServices.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -9957,11 +10225,16 @@ final class WorkerScaffoldTests: XCTestCase {
                     )
                 )
             }
+            let initialIdentity = await initialServices.registry
+                .listLoadedModelSummaries()
+                .first?
+                .backendIdentity
 
             let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_PrefillRequest()
                 request.execution.id.requestID = "req-adapter-snapshot"
                 request.execution.modelHandle = initialLoad.modelHandle
+                request.execution.backendIdentity = try XCTUnwrap(initialIdentity)
                 request.execution.cacheHints.allowL2 = true
                 request.execution.cacheHints.persistL2 = true
                 request.returnDecodeHandle = true
@@ -9976,6 +10249,7 @@ final class WorkerScaffoldTests: XCTestCase {
                     )
                 )
             }
+            XCTAssertTrue(prefillResponse.ok, prefillResponse.error.message)
 
             let saveResponse = try await withTestServerContextRPCCancellationHandle { handle in
                 var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
@@ -9992,6 +10266,8 @@ final class WorkerScaffoldTests: XCTestCase {
                     )
                 )
             }
+            XCTAssertTrue(saveResponse.ok, saveResponse.error.message)
+            XCTAssertFalse(saveResponse.snapshotID.isEmpty)
 
             let restartedServices = makeServices(
                 environment: environment,
@@ -9999,9 +10275,9 @@ final class WorkerScaffoldTests: XCTestCase {
             )
 
             _ = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 request.model.ext["melix.adapter_set_hash"] = "adapter-beta"
+                request.backendIdentity.requestedAdapterID = "adapter-beta"
                 return try await restartedServices.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -10742,8 +11018,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             // Load the test model.
             let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-                var request = Melix_Worker_V1_LoadModelRequest()
-                request.model.modelID = "melix-dev-text"
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
                 return try await services.runtime.loadModel(
                     request: request,
                     context: ServerContext(
@@ -10758,7 +11033,7 @@ final class WorkerScaffoldTests: XCTestCase {
             // Initial cold prefill — drives the fallback path.
             var initialPrefill = Melix_Worker_V1_PrefillRequest()
             initialPrefill.execution.id.requestID = "req-taxonomy-source"
-            initialPrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&initialPrefill.execution, toModelHandle: loadResponse.modelHandle)
             initialPrefill.execution.cacheHints.allowL2 = true
             initialPrefill.execution.cacheHints.persistL2 = true
             initialPrefill.returnDecodeHandle = true
@@ -10803,7 +11078,7 @@ final class WorkerScaffoldTests: XCTestCase {
             let beforeBadRestore = await services.registry.cacheOwnershipSnapshot()
             var badRestorePrefill = Melix_Worker_V1_PrefillRequest()
             badRestorePrefill.execution.id.requestID = "req-taxonomy-bad"
-            badRestorePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&badRestorePrefill.execution, toModelHandle: loadResponse.modelHandle)
             badRestorePrefill.execution.cacheHints.restoreSnapshotID = "snapshot-does-not-exist"
             badRestorePrefill.returnDecodeHandle = true
             do {
@@ -10835,7 +11110,7 @@ final class WorkerScaffoldTests: XCTestCase {
             // walked-back restore plan (`restorePlan.partial == false`).
             var exactRestorePrefill = Melix_Worker_V1_PrefillRequest()
             exactRestorePrefill.execution.id.requestID = "req-taxonomy-exact"
-            exactRestorePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&exactRestorePrefill.execution, toModelHandle: loadResponse.modelHandle)
             exactRestorePrefill.execution.cacheHints.restoreSnapshotID = saved.snapshotID
             exactRestorePrefill.returnDecodeHandle = true
             // Same messages as the initial prefill → restorePlan.partial must be false.
@@ -10868,7 +11143,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var partialSourcePrefill = Melix_Worker_V1_PrefillRequest()
             partialSourcePrefill.execution.id.requestID = "req-partial-source"
-            partialSourcePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&partialSourcePrefill.execution, toModelHandle: loadResponse.modelHandle)
             partialSourcePrefill.execution.cacheHints.allowL2 = true
             partialSourcePrefill.execution.cacheHints.persistL2 = true
             partialSourcePrefill.returnDecodeHandle = true
@@ -10903,7 +11178,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
             var partialRestorePrefill = Melix_Worker_V1_PrefillRequest()
             partialRestorePrefill.execution.id.requestID = "req-partial-target"
-            partialRestorePrefill.execution.modelHandle = loadResponse.modelHandle
+            bindBackendIdentity(&partialRestorePrefill.execution, toModelHandle: loadResponse.modelHandle)
             partialRestorePrefill.execution.cacheHints.restoreSnapshotID = partialSavedSnapshot.snapshotID
             partialRestorePrefill.execution.cacheHints.cachePolicy = "hybrid"
             partialRestorePrefill.prefillStepSize = 16
@@ -13226,8 +13501,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -13242,7 +13516,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let prompt = (1...24).map { "token\($0)" }.joined(separator: " ")
         var prefill = Melix_Worker_V1_PrefillRequest()
         prefill.execution.id.requestID = "req-chunked-prefill"
-        prefill.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefill.execution, toModelHandle: loadResponse.modelHandle)
         prefill.prefillStepSize = 16
         prefill.returnDecodeHandle = true
         prefill.messages = [makeUserMessage(prompt)]
@@ -13271,8 +13545,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -13287,7 +13560,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let prompt = (1...24).map { "token\($0)" }.joined(separator: " ")
         var prefill = Melix_Worker_V1_PrefillRequest()
         prefill.execution.id.requestID = "req-text-window-prefill"
-        prefill.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefill.execution, toModelHandle: loadResponse.modelHandle)
         prefill.prefillStepSize = 512
         prefill.returnDecodeHandle = true
         prefill.messages = [makeUserMessage(prompt)]
@@ -13317,8 +13590,7 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
-            var request = Melix_Worker_V1_LoadModelRequest()
-            request.model.modelID = "melix-dev-text"
+            var request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
             request.model.maxContext = 1024
             return try await services.runtime.loadModel(
                 request: request,
@@ -13333,7 +13605,7 @@ final class WorkerScaffoldTests: XCTestCase {
 
         var prefill = Melix_Worker_V1_PrefillRequest()
         prefill.execution.id.requestID = "req-vision-window-prefill"
-        prefill.execution.modelHandle = loadResponse.modelHandle
+        bindBackendIdentity(&prefill.execution, toModelHandle: loadResponse.modelHandle)
         prefill.prefillStepSize = 16
         prefill.returnDecodeHandle = false
         prefill.messages = [makeVisionBearingMessage("describe this image")]
@@ -14231,6 +14503,46 @@ private func makeModelSpec(modelID: String) -> Melix_Worker_V1_ModelSpec {
     model.modelPath = modelID
     model.requestRoutes = [makeTextRequestRoute()]
     return model
+}
+
+@available(macOS 15.0, *)
+private func makeBackendIdentity(
+    modelID: String,
+    adapterID: String = "",
+    routeGeneration: UInt64 = 1,
+    workerInstanceID: String = "swift-text-worker-001"
+) -> Melix_Worker_V1_BackendModelIdentity {
+    var identity = Melix_Worker_V1_BackendModelIdentity()
+    identity.requestedModelID = modelID
+    identity.requestedAdapterID = adapterID
+    identity.routeGeneration = routeGeneration
+    identity.workerInstanceID = workerInstanceID
+    return identity
+}
+
+@available(macOS 15.0, *)
+private func makeIdentityBoundLoadRequest(modelID: String) -> Melix_Worker_V1_LoadModelRequest {
+    var request = Melix_Worker_V1_LoadModelRequest()
+    request.model.modelID = modelID
+    request.backendIdentity = makeBackendIdentity(modelID: modelID)
+    return request
+}
+
+@available(macOS 15.0, *)
+private func bindBackendIdentity(
+    _ execution: inout Melix_Worker_V1_ExecutionMetadata,
+    toModelHandle modelHandle: String,
+    workerInstanceID: String = "swift-text-worker-001"
+) {
+    let handleComponents = modelHandle.components(separatedBy: "::")
+    execution.modelHandle = modelHandle
+    execution.backendIdentity = makeBackendIdentity(
+        modelID: handleComponents.first ?? modelHandle,
+        adapterID: handleComponents.count >= 4 && handleComponents[1] == "adapter"
+            ? handleComponents[2]
+            : "",
+        workerInstanceID: workerInstanceID
+    )
 }
 
 @available(macOS 15.0, *)

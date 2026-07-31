@@ -83,7 +83,9 @@ Add one shared worker-protocol message with:
 - `requested_adapter_id`: the active adapter identity, using the model's
   `melix.adapter_set_hash` when present and the empty string for no adapter;
 - `route_generation`: a positive generation owned by the control plane for one
-  model and worker route binding.
+  model and worker route binding;
+- `worker_instance_id`: the exact backend-owned identity returned by the
+  selected route's health handshake.
 
 `LoadModelRequest` carries the binding identity used to create backend-owned
 loaded state. Every inference request carries the requested identity. Generate,
@@ -94,14 +96,20 @@ must come only from `make proto`.
 ### Backend-owned loaded identity
 
 Python `LoadedModel` and Swift `LoadedModelRecord` retain a normalized immutable
-loaded identity captured at load time. The worker compares the request envelope
-against this record at the RPC service boundary before acquiring a runtime
-lease, preprocessing media, tokenizing, decoding, or invoking any model code.
+loaded identity captured at load time. Model and adapter identifiers come from
+the worker's resolved `ModelSpec`; only the positive route generation comes
+from the control-plane binding, while the worker instance comes from the running
+backend itself. The worker therefore cannot relabel a resolved model by copying
+inconsistent identifiers from the load envelope. It compares
+the inference request against this record at the RPC service boundary before
+acquiring a runtime lease, preprocessing media, tokenizing, decoding, or
+invoking any model code.
 
-All three components must match exactly. A missing or zero request identity is
-a typed `model_identity_missing` contract failure. A different model, adapter,
-or generation is a typed `model_identity_mismatch` with no token, audio, image,
-embedding, rank, transcription, tool, usage, or completed payload.
+All four components must match exactly. A missing or zero request identity is a
+typed `model_identity_missing` contract failure. A different model, adapter,
+generation, or worker instance is a typed `model_identity_mismatch` with no
+token, audio, image, embedding, rank, transcription, tool, usage, or completed
+payload.
 
 ### Route generations and invalidation
 
@@ -110,11 +118,14 @@ model/route binding. A load attempt reserves the current generation; successful
 load records the handle and generation atomically. Explicit unload, failed
 load, missing-handle validation, and identity mismatch invalidate the matching
 binding and advance the generation. A stale completion may not publish a handle
-after a newer invalidation or explicit unload.
+after a newer invalidation or explicit unload. Recovery uses the invalidation
+receipt generation as a compare-and-swap precondition for reload reservation,
+so unload in that interval cannot reopen the route.
 
 All inference request builders obtain one immutable binding receipt containing
-model ID, adapter ID, route kind, handle, and generation. They stamp the worker
-request from that receipt instead of assigning `model_handle` independently.
+model ID, adapter ID, route kind, handle, generation, and worker instance. They
+stamp the worker request from that receipt instead of assigning `model_handle`
+independently.
 
 ### Replay-safe recovery
 
@@ -122,7 +133,7 @@ A shared control-plane dispatch coordinator classifies both worker error
 payloads and transport failures. It may perform at most one recovery attempt
 when all of the following are true:
 
-- no semantic response event, header-equivalent stream acceptance, token,
+- no backend response event, header-equivalent stream acceptance, token,
   audio chunk, image artifact, embedding/rank/transcription response, usage
   payload, completed tool action, or completion has been exposed;
 - the failure is an identity mismatch or a transport connect, read, write,
@@ -130,14 +141,18 @@ when all of the following are true:
 - the original binding is still the catalog's active generation;
 - the model has not entered explicit unload, eviction, or replacement state.
 
+Image generation and editing permit recovery only for a typed identity mismatch;
+ambiguous transport failures are not replay safe for those artifact operations.
+
 Recovery invalidates only the failed generation, performs a fresh route
 admission and model-ready decision, and stamps a strictly newer generation.
 Concurrent callers for the same model/route share one recovery task. Explicit
 unload or replacement advances the generation and wins over any in-flight
 recovery completion.
 
-After a first semantic delta or completed tool action, failure produces a typed
-`partial_stream_failure` and never replays. Provisional downstream state closes
+After a first backend event or completed tool action, failure produces a typed
+`partial_stream_failure` and never replays. The HTTP gateway reads the first
+event before opening response headers. Provisional downstream state closes
 through the existing stream terminal error path. A completed tool action is
 never emitted twice.
 
@@ -149,38 +164,61 @@ not translated into success.
 
 Worker runtime stats expose cumulative mismatch count plus the last requested
 and loaded model IDs, requested and loaded adapter IDs, requested and loaded
-route generations, and mismatch reason. The control plane projects mismatch and
-retry-decision counters into production metrics and records the last mismatch
-receipt for diagnostics.
+route generations, requested and loaded worker instances, and mismatch reason.
+The control plane projects mismatch and retry-decision counters into production
+metrics and records the last mismatch receipt for diagnostics.
 
 Diagnostic string fields pass through one bounded redactor. Absolute paths,
-home-relative paths, and URI-like local paths become deterministic redacted
-identifiers. Raw model paths, adapter manifest paths, socket paths, prompts,
-tool arguments, audio, images, and generated output are never recorded.
+relative local paths, UNC paths, and case-insensitive local file URIs become
+deterministic redacted identifiers. Raw model paths, adapter manifest paths,
+socket paths, prompts, tool arguments, audio, images, and generated output are
+never recorded.
 
 ## Acceptance Checklist
 
-- [ ] `LoadModelRequest` and every production inference RPC carry the shared identity message.
-- [ ] Control-plane stamping preserves the admitted model ID instead of any rewritten `model_path`.
-- [ ] Adapter-backed and adapter-free loads preserve distinct loaded identities.
-- [ ] Route generations are positive, monotonic per model/route, and atomically bound to handles.
-- [ ] Python and Swift workers reject missing identity before runtime work.
-- [ ] Python and Swift workers reject model, adapter, and generation mismatches with typed errors and no output.
-- [ ] Text, image-conditioned generation, video-conditioned generation, embedding, ranking, transcription, speech, image generation, and image editing mismatch fixtures fail closed.
-- [ ] Phase-aware Prefill and Decode enforce identity; tool-adjacent Generate output uses the same guard.
-- [ ] Port/socket reuse and unload/reload fixtures cannot return output from the wrong loaded identity.
-- [ ] Mismatch invalidates only the stale binding and a successful retry uses a newer generation plus matching loaded identity.
-- [ ] Connect, read, write, protocol, and timeout failures before response open receive at most one fresh dispatch retry.
-- [ ] Failure after first delta returns `partial_stream_failure` without replay.
-- [ ] Failure after a completed tool action returns `partial_stream_failure`; the tool completion appears exactly once.
-- [ ] Concurrent stale callers coalesce one recovery decision/load for a model/route.
-- [ ] Explicit unload or model replacement wins over in-flight recovery and stale recovery cannot republish a handle.
-- [ ] Exhausted recovery returns a typed unavailable error, never silent model fallback.
-- [ ] Runtime and control-plane diagnostics expose bounded mismatch/retry evidence with sensitive paths redacted.
-- [ ] Changed-scope automated coverage is at least 95 percent.
-- [ ] The scoped performance probe reports no unexplained request-boundary regression.
+- [x] `LoadModelRequest` and every production inference RPC carry the shared identity message.
+- [x] Control-plane stamping preserves the admitted model ID instead of any rewritten `model_path`.
+- [x] Adapter-backed and adapter-free loads preserve distinct loaded identities.
+- [x] Route generations are positive, monotonic per model/route, and atomically bound to handles.
+- [x] Python and Swift workers reject missing identity before runtime work.
+- [x] Python and Swift workers reject model, adapter, and generation mismatches with typed errors and no output.
+- [x] Text, image-conditioned generation, video-conditioned generation, embedding, ranking, transcription, speech, image generation, and image editing mismatch fixtures fail closed.
+- [x] Phase-aware Prefill and Decode enforce identity; tool-adjacent Generate output uses the same guard.
+- [x] Port/socket reuse and unload/reload fixtures cannot return output from the wrong loaded identity.
+- [x] Mismatch invalidates only the stale binding and a successful retry uses a newer generation plus matching loaded identity.
+- [x] Connect, read, write, protocol, and timeout failures before response open receive at most one fresh dispatch retry.
+- [x] Failure after first delta returns `partial_stream_failure` without replay.
+- [x] Failure after a completed tool action returns `partial_stream_failure`; the tool completion appears exactly once.
+- [x] Concurrent stale callers coalesce one recovery decision/load for a model/route.
+- [x] Explicit unload or model replacement wins over in-flight recovery and stale recovery cannot republish a handle.
+- [x] Exhausted recovery returns a typed unavailable error, never silent model fallback.
+- [x] Runtime and control-plane diagnostics expose bounded mismatch/retry evidence with sensitive paths redacted.
+- [x] Changed-scope automated coverage is at least 95 percent.
+- [x] The scoped performance probe reports no unexplained request-boundary regression.
 
 ## TDD Delivery Slices
+
+## Review Corrections
+
+The implementation review adds four required correction slices before this
+plan can be accepted:
+
+1. Bind each route receipt to the backend-owned worker instance identity from
+   `HandshakeResponse`, reject missing instance identity, and make Python
+   handshakes publish their worker family and instance ID.
+2. Treat the first backend response event as the streaming response-open
+   boundary. The HTTP gateway must not return streaming headers before that
+   boundary, and image artifact RPCs may recover from typed identity mismatch
+   only, not ambiguous transport failures.
+3. Keep healthy route residencies available while another route loads, retire
+   a failed residency only when worker introspection proves the handle still
+   belongs to the failed identity, and unload stale preload completions.
+4. Remove inference-service test helpers that silently add identity, extend
+   local-path redaction, and register both Python and Swift changed-line
+   coverage for this scope.
+
+These corrections are part of issue #2945 rather than deferred cleanup because
+they protect the same fail-closed and replay-safety guarantees.
 
 ### Slice 1: Protocol and worker guards
 
@@ -225,13 +263,16 @@ boundary guards without model execution and reports:
 
 Success metrics:
 
-- matched request-boundary p95 overhead is at most `0.05 ms` in the synthetic
+- matched request-boundary p95 regression uses an absolute `0.05 ms` threshold
+  in the synthetic
   worker guard and at most `1.0 ms` for control-plane identity stamping plus
   retry classification;
 - mismatch fixtures produce exactly one mismatch count and zero output;
 - every request has at most one retry decision;
 - concurrent stale callers produce exactly one fresh binding;
 - duplicate completed tool count remains zero;
+- mismatch-path latency is informational because a base checkout without the
+  identity guard uses a compatibility fallback rather than the same operation;
 - no direct scoped probe regression is unexplained.
 
 The production observability mode is `minimal`: execution reuses counters and a
@@ -257,6 +298,93 @@ Before handoff, install the versioned hook and run its commit gate on the final
 branch so `make swift-test`, `make py-test`, `make integration-test`, changed-
 scope coverage, and the scoped performance report are captured under
 `.runtime/pre-commit-performance/`.
+
+## Implementation Evidence
+
+The delivered request identity is the four-part tuple of admitted model ID,
+adapter ID, positive route generation, and backend-owned worker instance ID.
+The control plane obtains the worker instance from the health handshake, binds
+the tuple atomically to the catalog route, and stamps every production
+inference RPC. Python and Swift workers compare the request tuple with immutable
+load-time state before runtime work or output.
+
+Recovery is centralized around one versioned route invalidation and one fresh
+dispatch. Streaming responses do not open until the first backend event is
+available. Identity mismatch and eligible pre-open transport failures can
+recover once, while image artifact transport failures, post-delta failures, and
+post-tool-completion failures never replay. Concurrent callers share the same
+recovery task, and explicit unload remains authoritative.
+
+The implementation also records bounded mismatch and retry diagnostics. The
+redactor covers absolute and relative paths, case-insensitive local file URIs,
+and UNC paths without retaining prompts, media, tool arguments, or generated
+content.
+
+## Metrics Report
+
+Changed-line coverage measured on 2026-07-31:
+
+- Python backend identity scope: `100.00%` (`38/38`).
+- Swift control-plane scope: `95.12%` (`1326/1394`).
+- Swift text-worker scope: `98.55%` (`204/207`).
+
+The control-plane coverage command excludes `SiblingFileAdvisoryLockTests`, an
+unrelated timing-sensitive suite under instrumentation. The normal full Swift
+gate includes that suite and passed.
+
+The registered `backend-model-identity-boundary` performance probe passed with
+no regression or verification failure. Matched worker-boundary p95 was
+`0.0003817125 ms` against the `0.05 ms` absolute threshold, and control-plane
+stamping plus recovery classification p95 was `0.0016627085 ms` against the
+`1.0 ms` threshold. The probe observed `140000` mismatch checks, zero output
+before mismatch, three allowed retries, two suppressed retries, one exhausted
+retry, one coalesced caller, two fresh bindings across the scripted scenarios,
+and zero duplicate completed tools.
+
+The existing direct probes whose shared test modules gained explicit backend
+identity fixtures also passed their snapshot coverage replay. Worker registry
+coverage was `99.38%` (`159/160`), vision-family coverage was `98.06%`
+(`101/103`), integration helper coverage was `100.00%` (`21/21`), and the
+affected image, audio, rerank, and embedding probes reported `100.00%`.
+
+The full 148-probe pre-commit run at
+`.runtime/pre-commit-performance/20260731-092846-4c0c3d2f/report` had zero
+verification failures. Three direct microbenchmark alerts were analyzed before
+the final rerun:
+
+- The deterministic image-edit runtime and probe were unchanged. Five paired
+  reruns measured `12.242545 ms` for base and `12.172520 ms` for head, so the
+  one-run `11.16%` alert was not reproducible.
+- Swift binary resolution itself improved from `14.442075 ms` to `13.974417
+  ms`, with identical candidate and allocation counts. Its alert came from
+  variance in the separate legacy comparator that made the relative speedup
+  less negative.
+- The worker-registry alert exposed an avoidable second lock and empty receipt
+  copy in `runtime_stats()`. Folding the mismatch receipt into the existing
+  snapshot reduced request-stats latency from the alerted `0.002335 ms` to
+  `0.001840 ms`, below the `0.001934 ms` base measurement. The combined
+  load/stats/unload delta also fell below the probe's `0.001 ms` absolute
+  threshold. The remaining loaded-summary cost is the required identity field
+  and remained below its percentage threshold.
+
+If the final full-matrix rerun needs the analyzed-regression override because
+of another threshold-edge sample, the override applies only to these measured
+microbenchmark effects. It does not waive tests, changed-line coverage, probe
+execution, identity correctness counters, or any verification failure.
+
+## Verification Results
+
+The final 2026-07-31 repository gates completed successfully:
+
+- `make bootstrap`
+- `make proto`
+- `make proto-check`
+- `make swift-test` (`295` text-worker, `589` control-plane core, and `878`
+  menu-bar tests passed, together with the remaining Swift package suites)
+- `make py-test` (`5411` passed, `14` skipped)
+- `make integration-test` (`124` passed, `1` skipped)
+
+The focused backend identity integration selection also passed all seven tests.
 
 ## Known Boundaries
 

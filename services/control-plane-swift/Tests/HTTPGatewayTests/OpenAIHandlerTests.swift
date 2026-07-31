@@ -265,6 +265,7 @@ struct OpenAIHandlerTests {
 
     @Test("health diagnostics includes local server security receipt")
     func healthDiagnosticsIncludesLocalServerSecurityReceipt() async throws {
+        await BackendIdentityRecoveryDiagnostics.shared.resetForTesting()
         let runtimeStats = nativeAccelerationRuntimeStats()
         let textClient = ScriptedWorkerClient(events: [])
         let vlmClient = ScriptedWorkerClient(
@@ -298,6 +299,7 @@ struct OpenAIHandlerTests {
         )
         let payload = try await jsonPayload(from: response.body)
         let receipt = try #require(payload["local_server_security"] as? [String: Any])
+        let backendModelIdentity = try #require(payload["backend_model_identity"] as? [String: Any])
         let nativeAcceleration = try #require(payload["native_acceleration"] as? [String: Any])
         let forwardCounts = try #require(nativeAcceleration["forward_counts"] as? [String: Any])
         let timings = try #require(nativeAcceleration["timings"] as? [String: Any])
@@ -308,6 +310,10 @@ struct OpenAIHandlerTests {
         #expect(receipt["bind_host"] as? String == "127.0.0.1")
         #expect(receipt["browser_cors_policy"] as? String == "explicit_allowlist")
         #expect((receipt["allowed_origins"] as? [String]) == ["http://localhost:5173"])
+        #expect(backendModelIdentity["mismatch_count"] as? Int != nil)
+        #expect(backendModelIdentity["retry_allowed_count"] as? Int != nil)
+        #expect(backendModelIdentity["retry_suppressed_count"] as? Int != nil)
+        #expect(backendModelIdentity["retry_exhausted_count"] as? Int != nil)
         #expect(nativeAcceleration["schema_version"] as? String == "melix.native_acceleration.status.v1")
         #expect(nativeAcceleration["runtime_active"] as? Bool == true)
         #expect(nativeAcceleration["status"] as? String == "admitted")
@@ -9100,16 +9106,15 @@ struct OpenAIHandlerTests {
         let request = try #require(await workerClient.lastGenerateRequest)
         let metrics = await metricsStore.snapshot()
 
-        #expect(response.statusCode == 200)
+        #expect(response.statusCode == 500)
         #expect(request.execution.ext["melix.structured_output.mode"] == "json_schema")
         #expect(request.execution.ext["melix.structured_output.schema_name"] == "answer_contract")
         #expect(request.execution.ext["melix.structured_output.strict"] == "true")
         #expect(request.execution.acceleration.prefillHint == "json-schema")
         #expect(metrics.values["http.structured_output_request_count", default: 0] == 1)
         #expect(metrics.values["http.structured_output_validation_failure_count", default: 0] == 1)
-        #expect(payload.contains("event: error"))
         #expect(payload.contains("\"code\":\"schema_validation_failed\""))
-        #expect(!payload.contains("event: response.completed"))
+        #expect(!payload.contains("event:"))
     }
 
     @Test("responses structured output requests record validation pass metrics before final framing")
@@ -10720,8 +10725,8 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["audio.speech_output_bytes", default: -1] == Double(envelopeBytes.count + pcmChunk.count))
     }
 
-    @Test("POST /v1/audio/speech propagates streaming worker error events")
-    func postAudioSpeechStreamingPropagatesWorkerErrorEvents() async throws {
+    @Test("POST /v1/audio/speech returns a pre-response streaming worker error")
+    func postAudioSpeechStreamingReturnsPreResponseWorkerError() async throws {
         let textClient = ScriptedWorkerClient(events: [])
         let audioClient = ScriptedPhaseFiveWorkerClient()
         await audioClient.setSpeakStreamEvents([
@@ -10760,11 +10765,11 @@ struct OpenAIHandlerTests {
         let response = try await handler.handle(
             HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
         )
+        let payload = try await collectBody(response.body)
 
-        #expect(response.statusCode == 200)
-        await #expect(throws: WorkerClientError.requestFailed(code: "runtime_error", message: "stream failed")) {
-            _ = try await collectBodyData(response.body)
-        }
+        #expect(response.statusCode == 500)
+        #expect(payload.contains("\"code\":\"runtime_error\""))
+        #expect(payload.contains("\"message\":\"stream failed\""))
     }
 
     @Test("POST /v1/audio/speech records fallback streaming metrics when finish is absent")
@@ -10830,8 +10835,8 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["audio.speech_first_audio_latency_ms", default: -1] > 0)
     }
 
-    @Test("POST /v1/audio/speech propagates thrown streaming failures")
-    func postAudioSpeechStreamingPropagatesThrownFailures() async throws {
+    @Test("POST /v1/audio/speech returns exhausted pre-response streaming failures")
+    func postAudioSpeechStreamingReturnsExhaustedPreResponseFailure() async throws {
         let textClient = ScriptedWorkerClient(events: [])
         let audioClient = ScriptedPhaseFiveWorkerClient()
         await audioClient.setSpeakStreamFailure(WorkerClientError.unavailable)
@@ -10862,10 +10867,413 @@ struct OpenAIHandlerTests {
         let response = try await handler.handle(
             HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
         )
+        let payload = try await collectBody(response.body)
 
-        await #expect(throws: WorkerClientError.unavailable) {
-            _ = try await collectBodyData(response.body)
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"backend_route_recovery_exhausted\""))
+        #expect(payload.contains("could not be recovered before response output began"))
+    }
+
+    @Test("POST /v1/audio/speech retries a pre-response failure with a fresh identity")
+    func postAudioSpeechStreamingRetriesBeforeSemanticOutput() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let audioBytes = Data([0x01, 0x02, 0x03, 0x04])
+        await audioClient.setSpeakStreamEvents([
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .audioChunk
+                event.audioBytes = audioBytes
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .finish
+                event.finish.audioBytes = UInt64(audioBytes.count)
+                event.finish.audioChunkCount = 1
+                return event
+            }(),
+        ])
+        await audioClient.setSpeakStreamFailureThenSuccess()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(
+            seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()]
+        )
+        _ = await catalog.loadModel(
+            id: "melix-dev-speech",
+            dispatchHandle: "melix-dev-speech::python"
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: audioClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "recover stream",
+              "stream": true
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+        let loadRequest = try #require(await audioClient.lastLoadModelRequest)
+
+        #expect(payload == audioBytes)
+        #expect(await audioClient.speakStreamCallCount == 2)
+        #expect(loadRequest.backendIdentity.routeGeneration > 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_allowed_count"
+        ) == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_fresh_binding_count"
+        ) == 1)
+    }
+
+    @Test("POST /v1/audio/speech never replays after semantic audio output")
+    func postAudioSpeechStreamingNeverReplaysAfterSemanticOutput() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let audioBytes = Data([0x05, 0x06, 0x07, 0x08])
+        await audioClient.setSpeakStreamEvents([
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .audioChunk
+                event.audioBytes = audioBytes
+                return event
+            }(),
+        ])
+        await audioClient.setSpeakStreamSemanticOutputThenFailure()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(
+            seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()]
+        )
+        _ = await catalog.loadModel(
+            id: "melix-dev-speech",
+            dispatchHandle: "melix-dev-speech::python"
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: audioClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "partial stream",
+              "stream": true
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        var observed = Data()
+        do {
+            guard case .stream(let stream) = response.body else {
+                Issue.record("Expected streaming speech response body.")
+                return
+            }
+            for try await chunk in stream {
+                observed.append(chunk)
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == .requestFailed(
+                code: "partial_stream_failure",
+                message: "The backend stream failed after response output began and was not replayed."
+            ))
         }
+
+        #expect(observed == audioBytes)
+        #expect(await audioClient.speakStreamCallCount == 1)
+        #expect(await audioClient.lastLoadModelRequest == nil)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
+    }
+
+    @Test("POST /v1/audio/speech retries an identity mismatch event before output")
+    func postAudioSpeechStreamingRetriesIdentityMismatchEventBeforeOutput() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let audioBytes = Data([0x09, 0x0a])
+        await audioClient.setSpeakStreamEvents([
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .audioChunk
+                event.audioBytes = audioBytes
+                return event
+            }(),
+        ])
+        await audioClient.setSpeakStreamIdentityMismatchThenSuccess()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(
+            seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()]
+        )
+        _ = await catalog.loadModel(
+            id: "melix-dev-speech",
+            dispatchHandle: "melix-dev-speech::python"
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: audioClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let body = try #require(
+            #"{"model":"melix-dev-speech","input":"recover mismatch","stream":true}"#
+                .data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+
+        #expect(payload == audioBytes)
+        #expect(await audioClient.speakStreamCallCount == 2)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_mismatch_count"
+        ) == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_allowed_count"
+        ) == 1)
+    }
+
+    @Test("POST /v1/audio/speech exhausts repeated identity mismatch events")
+    func postAudioSpeechStreamingExhaustsRepeatedIdentityMismatchEvents() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakStreamEvents([speechIdentityMismatchEvent()])
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(
+            seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()]
+        )
+        _ = await catalog.loadModel(
+            id: "melix-dev-speech",
+            dispatchHandle: "melix-dev-speech::python"
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: audioClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let body = try #require(
+            #"{"model":"melix-dev-speech","input":"repeat mismatch","stream":true}"#
+                .data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"backend_route_recovery_exhausted\""))
+        #expect(await audioClient.speakStreamCallCount == 2)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_exhausted_count"
+        ) == 1)
+    }
+
+    @Test("POST /v1/audio/speech reports exhausted recovery when identity mismatch reload fails")
+    func postAudioSpeechStreamingReportsExhaustedRecoveryWhenMismatchReloadFails() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakStreamIdentityMismatchThenSuccess()
+        await audioClient.setLoadModelFailure(WorkerClientError.unavailable)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(
+            seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()]
+        )
+        _ = await catalog.loadModel(
+            id: "melix-dev-speech",
+            dispatchHandle: "melix-dev-speech::python"
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: audioClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let body = try #require(
+            #"{"model":"melix-dev-speech","input":"reload mismatch","stream":true}"#
+                .data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"backend_route_recovery_exhausted\""))
+        #expect(await audioClient.speakStreamCallCount == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_exhausted_count"
+        ) == 1)
+    }
+
+    @Test("POST /v1/audio/speech reports exhausted recovery when transport reload fails")
+    func postAudioSpeechStreamingReportsExhaustedRecoveryWhenTransportReloadFails() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        await audioClient.setSpeakStreamFailureThenSuccess()
+        await audioClient.setLoadModelFailure(WorkerClientError.unavailable)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(
+            seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()]
+        )
+        _ = await catalog.loadModel(
+            id: "melix-dev-speech",
+            dispatchHandle: "melix-dev-speech::python"
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: audioClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let body = try #require(
+            #"{"model":"melix-dev-speech","input":"reload transport","stream":true}"#
+                .data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 503)
+        #expect(payload.contains("\"code\":\"backend_route_recovery_exhausted\""))
+        #expect(await audioClient.speakStreamCallCount == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_exhausted_count"
+        ) == 1)
+    }
+
+    @Test("POST /v1/audio/speech suppresses replay after audio then mismatch event")
+    func postAudioSpeechStreamingSuppressesReplayAfterAudioThenMismatchEvent() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let audioBytes = Data([0x0b, 0x0c])
+        await audioClient.setSpeakStreamEvents([
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .audioChunk
+                event.audioBytes = audioBytes
+                return event
+            }(),
+            speechIdentityMismatchEvent(),
+        ])
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(
+            seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()]
+        )
+        _ = await catalog.loadModel(
+            id: "melix-dev-speech",
+            dispatchHandle: "melix-dev-speech::python"
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: audioClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore
+        )
+        let body = try #require(
+            #"{"model":"melix-dev-speech","input":"partial mismatch","stream":true}"#
+                .data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        var observed = Data()
+        do {
+            guard case .stream(let stream) = response.body else {
+                Issue.record("Expected streaming speech response body.")
+                return
+            }
+            for try await chunk in stream {
+                observed.append(chunk)
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
+
+        #expect(observed == audioBytes)
+        #expect(await audioClient.speakStreamCallCount == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
     }
 
     @Test("POST /v1/audio/speech rejects out-of-range streaming cadence before dispatch")
@@ -11738,6 +12146,66 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["images.job_latency_ms", default: -1] == 48)
         #expect(metrics.values["images.artifact_publish_ms", default: -1] == 2.5)
         #expect(metrics.values["images.peak_memory_bytes", default: -1] == 65536)
+    }
+
+    @Test("image generation retries one typed identity mismatch before creating output")
+    func imageGenerationRetriesTypedIdentityMismatch() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        await imageClient.setImageGenerateResponse({
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.images = [Data("generated-image".utf8)]
+            response.job.requestID = "image-identity-retry"
+            response.job.jobID = "image-identity-retry::image-generate"
+            response.job.modelHandle = "melix-dev-image::python"
+            response.job.operation = "image_generate"
+            response.job.state = .imageJobCompleted
+            response.job.progress.stage = "completed"
+            response.job.progress.pct = 1
+            response.job.artifacts = [makeWorkerArtifact(
+                jobID: "image-identity-retry::image-generate",
+                role: .imageArtifactGenerated
+            )]
+            return response
+        }())
+        await imageClient.setImageGenerateIdentityMismatchThenSuccess()
+
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: imageClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry,
+            metricsStore: metricsStore,
+            imageJobReadModel: ImageJobReadModel()
+        )
+        let body = try #require(
+            #"{"id":"image-identity-retry","model":"melix-dev-image","prompt":"fresh route"}"#
+                .data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/generations", headers: [:], body: body)
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(await imageClient.imageGenerateCallCount == 2)
+        #expect(await imageClient.lastLoadModelRequest != nil)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_mismatch_count"
+        ) == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_allowed_count"
+        ) == 1)
     }
 
     @Test("POST /v1/images/edits routes to the image worker and returns JSON")
@@ -12931,7 +13399,7 @@ struct OpenAIHandlerTests {
         #expect(completedPayload.contains("\"role\":\"generated\""))
     }
 
-    @Test("image edit returns worker_unavailable when the worker throws after admission")
+    @Test("image edit does not replay an ambiguous unavailable failure")
     func imageEditReturnsWorkerUnavailableWhenWorkerThrowsAfterAdmission() async throws {
         let textClient = ScriptedWorkerClient(events: [])
         let imageClient = ScriptedPhaseFiveWorkerClient()
@@ -12973,9 +13441,10 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"code\":\"worker_unavailable\""))
         #expect(failedJob.state == .imageJobFailed)
         #expect(failedJob.error.code == "worker_unavailable")
+        #expect(await imageClient.lastLoadModelRequest == nil)
     }
 
-    @Test("image generate returns deadline_exceeded when the worker exceeds the creative timeout")
+    @Test("image generate does not replay an ambiguous timeout")
     func imageGenerateReturnsDeadlineExceededWhenWorkerTimesOut() async throws {
         let textClient = ScriptedWorkerClient(events: [])
         let imageClient = ScriptedPhaseFiveWorkerClient()
@@ -13017,12 +13486,12 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 504)
         #expect(payload.contains("\"code\":\"deadline_exceeded\""))
-        #expect(payload.contains("600-second creative workflow deadline"))
         #expect(failedJob.state == .imageJobFailed)
         #expect(failedJob.error.code == "deadline_exceeded")
         #expect(failedJob.progress.stage == "timed_out")
         #expect(failedJob.timeoutSeconds == 600)
         #expect(failedJob.recipe.prompt == "timeout")
+        #expect(await imageClient.lastLoadModelRequest == nil)
     }
 
     @Test("image generate maps unknown deadline failures into deadline_exceeded")
@@ -14071,6 +14540,73 @@ struct OpenAIHandlerTests {
         #expect(await workerClient.lastDecodeRequest == nil)
     }
 
+    @Test("stream chat maps typed worker failure before first response event to JSON")
+    func streamChatMapsTypedWorkerFailureBeforeFirstResponseEventToJSON() async throws {
+        let workerClient = PreResponseFailureWorkerClient(
+            failure: WorkerClientError.requestFailed(code: "invalid_argument", message: "bad stream request")
+        )
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-pre-response-typed-failure" })
+        )
+        let body = try #require(
+            #"{"model":"melix-dev-text","stream":true,"messages":[{"role":"user","content":"Fail"}]}"#
+                .data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(response.headers["content-type"] == "application/json")
+        #expect(error["code"] as? String == "invalid_argument")
+        #expect(error["message"] as? String == "bad stream request")
+        if case .stream = response.body {
+            Issue.record("A failure before the first response event must not return an SSE body.")
+        }
+    }
+
+    @Test("stream chat maps unknown failure before first response event to worker unavailable JSON")
+    func streamChatMapsUnknownFailureBeforeFirstResponseEventToWorkerUnavailableJSON() async throws {
+        let workerClient = PreResponseFailureWorkerClient(
+            failure: OpenAIHandlerTestError(description: "stream failed before first event")
+        )
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-pre-response-unknown-failure" })
+        )
+        let body = try #require(
+            #"{"model":"melix-dev-text","stream":true,"messages":[{"role":"user","content":"Fail"}]}"#
+                .data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 503)
+        #expect(response.headers["content-type"] == "application/json")
+        #expect(error["code"] as? String == "worker_unavailable")
+        if case .stream = response.body {
+            Issue.record("A failure before the first response event must not return an SSE body.")
+        }
+    }
+
     @Test("stream chat rejects over-budget prompts before first SSE data chunk")
     func streamChatRejectsOverBudgetPromptsBeforeFirstSSEDataChunk() async throws {
         let workerClient = ScriptedWorkerClient(events: [])
@@ -14677,9 +15213,16 @@ struct OpenAIHandlerTests {
             """.data(using: .utf8)
         )
 
-        let first = try await handler.handle(
-            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
-        )
+        let firstTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("first queued request reached the worker") {
+            await workerClient.generatedRequestIDs == ["req-1"]
+        }
+        await workerClient.emitPrefillStarted(requestID: "req-1")
+        let first = try await firstTask.value
         let secondTask = Task {
             try await handler.handle(
                 HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
@@ -14691,6 +15234,10 @@ struct OpenAIHandlerTests {
 
         #expect(try await coordinator.cancel(requestID: "req-1"))
 
+        try await waitForOpenAIHandlerCondition("second queued request reached the worker") {
+            await workerClient.generatedRequestIDs == ["req-1", "req-2"]
+        }
+        await workerClient.emitPrefillStarted(requestID: "req-2")
         let second = try await secondTask.value
         #expect(await workerClient.generatedRequestIDs == ["req-1", "req-2"])
         #expect(try await coordinator.cancel(requestID: "req-2"))
@@ -14723,9 +15270,16 @@ struct OpenAIHandlerTests {
             """.data(using: .utf8)
         )
 
-        let first = try await handler.handle(
-            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
-        )
+        let firstTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("duplicate request reached the worker") {
+            await workerClient.generatedRequestIDs == ["req-duplicate"]
+        }
+        await workerClient.emitPrefillStarted(requestID: "req-duplicate")
+        let first = try await firstTask.value
         let second = try await handler.handle(
             HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
         )
@@ -14785,10 +15339,23 @@ struct OpenAIHandlerTests {
             """.data(using: .utf8)
         )
 
-        let first = try await handler.handle(
-            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: firstBody)
-        )
-        let firstChunk = try await collectFirstStreamChunk(first.body)
+        var firstTask: Task<HTTPResponse, Error>? = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: firstBody)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("resumable request reached the worker") {
+            await workerClient.generatedRequestIDs == ["req-http-resume"]
+        }
+        await workerClient.emitPrefillStarted(requestID: "req-http-resume")
+        var firstResponse: HTTPResponse? = try await #require(firstTask).value
+        firstTask = nil
+        let firstStatusCode = try #require(firstResponse?.statusCode)
+        let firstChunk = try await collectFirstStreamChunk(try #require(firstResponse?.body))
+        firstResponse = nil
+        try await waitForOpenAIHandlerCondition("first stream consumer detached") {
+            !(await coordinator.testingExecutionHubHasConsumers(requestID: "req-http-resume"))
+        }
 
         let secondBody = try #require(
             """
@@ -14803,14 +15370,20 @@ struct OpenAIHandlerTests {
             """.data(using: .utf8)
         )
 
-        let second = try await handler.handle(
-            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: secondBody)
-        )
+        let secondTask = Task {
+            try await handler.handle(
+                HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: secondBody)
+            )
+        }
+        try await waitForOpenAIHandlerCondition("resumed stream consumer attached") {
+            await coordinator.testingExecutionHubHasConsumers(requestID: "req-http-resume")
+        }
         await workerClient.emitToken(requestID: "req-http-resume", text: "resumed")
         await workerClient.finish(requestID: "req-http-resume", assistantText: "resumed")
+        let second = try await secondTask.value
         let secondPayload = try await collectBody(second.body)
 
-        #expect(first.statusCode == 200)
+        #expect(firstStatusCode == 200)
         #expect(firstChunk.contains(": keepalive"))
         #expect(second.statusCode == 200)
         #expect(secondPayload.contains("mlx-community\\/gemma-4-31b-it-4bit"))
@@ -15115,7 +15688,8 @@ private actor ScriptedWorkerUnloadGate {
 private actor ScriptedWorkerClient:
     WorkerRoutingClient,
     PhaseAwareWorkerClientProtocol,
-    RuntimeIntrospectingWorkerClientProtocol
+    RuntimeIntrospectingWorkerClientProtocol,
+    BackendHealthIdentifyingWorkerClientProtocol
 {
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private let streamFailure: Error?
@@ -15169,6 +15743,12 @@ private actor ScriptedWorkerClient:
 
     func canDispatchRequests() async -> Bool {
         true
+    }
+
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerInstanceID = "scripted-worker"
+        return response
     }
 
     func generate(
@@ -15260,11 +15840,73 @@ private actor ScriptedWorkerClient:
     }
 }
 
+private actor PreResponseFailureWorkerClient:
+    WorkerRoutingClient,
+    BackendHealthIdentifyingWorkerClientProtocol
+{
+    private let failure: Error
+
+    init(failure: Error) {
+        self.failure = failure
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerInstanceID = "pre-response-failure-worker"
+        return response
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        let failure = self.failure
+        return AsyncThrowingStream { continuation in
+            continuation.finish(throwing: failure)
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "\(request.model.modelID)::pre-response-failure"
+        return response
+    }
+
+    func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        _ = request
+        var response = Melix_Worker_V1_UnloadModelResponse()
+        response.ok = true
+        return response
+    }
+}
+
 private actor ScriptedPhaseFiveWorkerClient:
     WorkerRoutingClient,
     NonTextInferenceWorkerClientProtocol,
-    RuntimeIntrospectingWorkerClientProtocol
+    RuntimeIntrospectingWorkerClientProtocol,
+    BackendHealthIdentifyingWorkerClientProtocol
 {
+    private enum SpeakStreamMode: Equatable {
+        case fixed
+        case failureThenSuccess
+        case identityMismatchThenSuccess
+        case semanticOutputThenFailure
+    }
+
     private(set) var lastEmbedRequest: Melix_Worker_V1_EmbedRequest?
     private(set) var lastRerankRequest: Melix_Worker_V1_RerankRequest?
     private(set) var lastTranscribeRequest: Melix_Worker_V1_TranscribeRequest?
@@ -15278,10 +15920,15 @@ private actor ScriptedPhaseFiveWorkerClient:
     private var speakResponse = Melix_Worker_V1_SpeakResponse()
     private var speakStreamEvents: [Melix_Worker_V1_SpeakStreamEvent] = []
     private var speakStreamFailure: Error?
+    private var speakStreamMode: SpeakStreamMode = .fixed
+    private(set) var speakStreamCallCount = 0
     private var imageGenerateResponse = Melix_Worker_V1_ImageGenerateResponse()
     private var imageEditResponse = Melix_Worker_V1_ImageEditResponse()
+    private var imageGenerateIdentityMismatchThenSuccess = false
+    private(set) var imageGenerateCallCount = 0
     private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
     private var loadModelResponseOverride: Melix_Worker_V1_LoadModelResponse?
+    private var loadModelFailure: Error?
     private var thrownFailure: Error?
 
     func setEmbedResponse(_ response: Melix_Worker_V1_EmbedResponse) {
@@ -15308,8 +15955,24 @@ private actor ScriptedPhaseFiveWorkerClient:
         speakStreamFailure = failure
     }
 
+    func setSpeakStreamFailureThenSuccess() {
+        speakStreamMode = .failureThenSuccess
+    }
+
+    func setSpeakStreamIdentityMismatchThenSuccess() {
+        speakStreamMode = .identityMismatchThenSuccess
+    }
+
+    func setSpeakStreamSemanticOutputThenFailure() {
+        speakStreamMode = .semanticOutputThenFailure
+    }
+
     func setImageGenerateResponse(_ response: Melix_Worker_V1_ImageGenerateResponse) {
         imageGenerateResponse = response
+    }
+
+    func setImageGenerateIdentityMismatchThenSuccess() {
+        imageGenerateIdentityMismatchThenSuccess = true
     }
 
     func setImageEditResponse(_ response: Melix_Worker_V1_ImageEditResponse) {
@@ -15324,12 +15987,22 @@ private actor ScriptedPhaseFiveWorkerClient:
         loadModelResponseOverride = response
     }
 
+    func setLoadModelFailure(_ failure: Error?) {
+        loadModelFailure = failure
+    }
+
     func setThrownFailure(_ failure: Error?) {
         thrownFailure = failure
     }
 
     func canDispatchRequests() async -> Bool {
         true
+    }
+
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerInstanceID = "scripted-phase-five-worker"
+        return response
     }
 
     func generate(
@@ -15348,6 +16021,9 @@ private actor ScriptedPhaseFiveWorkerClient:
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
         lastLoadModelRequest = request
+        if let loadModelFailure {
+            throw loadModelFailure
+        }
         if let loadModelResponseOverride {
             return loadModelResponseOverride
         }
@@ -15404,13 +16080,27 @@ private actor ScriptedPhaseFiveWorkerClient:
             throw thrownFailure
         }
         lastSpeakRequest = request
+        speakStreamCallCount += 1
+        let callIndex = speakStreamCallCount
         let events = speakStreamEvents
         let failure = speakStreamFailure
+        let mode = speakStreamMode
         return AsyncThrowingStream { continuation in
+            if mode == .failureThenSuccess, callIndex == 1 {
+                continuation.finish(throwing: WorkerClientError.unavailable)
+                return
+            }
+            if mode == .identityMismatchThenSuccess, callIndex == 1 {
+                continuation.yield(speechIdentityMismatchEvent())
+                continuation.finish()
+                return
+            }
             for event in events {
                 continuation.yield(event)
             }
-            if let failure {
+            if mode == .semanticOutputThenFailure {
+                continuation.finish(throwing: WorkerClientError.unavailable)
+            } else if let failure {
                 continuation.finish(throwing: failure)
             } else {
                 continuation.finish()
@@ -15421,10 +16111,23 @@ private actor ScriptedPhaseFiveWorkerClient:
     func imageGenerate(
         request: Melix_Worker_V1_ImageGenerateRequest
     ) async throws -> Melix_Worker_V1_ImageGenerateResponse {
+        imageGenerateCallCount += 1
         if let thrownFailure {
             throw thrownFailure
         }
         lastImageGenerateRequest = request
+        if imageGenerateIdentityMismatchThenSuccess, imageGenerateCallCount == 1 {
+            var response = Melix_Worker_V1_ImageGenerateResponse()
+            response.error = {
+                var status = Melix_Worker_V1_ErrorStatus()
+                status.code = "model_identity_mismatch"
+                status.message = "The image worker loaded a different backend model."
+                status.backendIdentityMismatch.requestedModelID = request.backendIdentity.requestedModelID
+                status.backendIdentityMismatch.loadedModelID = "other-image-model"
+                return status
+            }()
+            return response
+        }
         return imageGenerateResponse
     }
 
@@ -15766,12 +16469,21 @@ private actor UnavailableWorkerClient: WorkerRoutingClient {
     }
 }
 
-private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
+private actor BlockingOpenAIWorkerClient:
+    WorkerRoutingClient,
+    BackendHealthIdentifyingWorkerClientProtocol
+{
     private(set) var generatedRequestIDs: [String] = []
     private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
 
     func canDispatchRequests() async -> Bool {
         true
+    }
+
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerInstanceID = "blocking-openai-worker"
+        return response
     }
 
     func generate(
@@ -15806,6 +16518,16 @@ private actor BlockingOpenAIWorkerClient: WorkerRoutingClient {
         event.requestID = requestID
         event.tokenDelta = Melix_Worker_V1_TokenDelta()
         event.tokenDelta.text = text
+        continuation.yield(event)
+    }
+
+    func emitPrefillStarted(requestID: String) {
+        guard let continuation = continuations[requestID] else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.prefillStarted = Melix_Worker_V1_PrefillStarted()
         continuation.yield(event)
     }
 
@@ -15889,6 +16611,20 @@ private func collectBodyData(_ body: HTTPBody) async throws -> Data {
         }
         return data
     }
+}
+
+private func speechIdentityMismatchEvent() -> Melix_Worker_V1_SpeakStreamEvent {
+    var event = Melix_Worker_V1_SpeakStreamEvent()
+    event.kind = .error
+    event.error.code = "model_identity_mismatch"
+    event.error.message = "The speech worker loaded a different backend model."
+    event.error.retriable = true
+    event.error.backendIdentityMismatch.requestedModelID = "melix-dev-speech"
+    event.error.backendIdentityMismatch.loadedModelID = "other-speech-model"
+    event.error.backendIdentityMismatch.requestedRouteGeneration = 1
+    event.error.backendIdentityMismatch.loadedRouteGeneration = 1
+    event.error.backendIdentityMismatch.mismatchReason = "model_id"
+    return event
 }
 
 private func collectFirstStreamChunk(_ body: HTTPBody) async throws -> String {

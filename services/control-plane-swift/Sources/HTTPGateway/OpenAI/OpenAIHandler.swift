@@ -1349,6 +1349,7 @@ button.primary:active {
         let routes = await healthRoutes()
         let models = await modelCatalog.listModels()
         let nativeAcceleration = await nativeAccelerationStatus()
+        let backendIdentity = await BackendIdentityRecoveryDiagnostics.shared.snapshot()
         let readyCount = models.filter { $0.state == .modelWarm || $0.state == .modelPinned }.count
         let status = routes.values.allSatisfy { $0 } ? "ok" : "degraded"
         let response = HealthDiagnosticsResponse(
@@ -1360,7 +1361,8 @@ button.primary:active {
                 .filter(ModelCatalogPresentation.isUserVisible)
                 .map(HealthDiagnosticsModelResponse.init(model:)),
             localServerSecurity: localServerSecurityPolicy.receipt,
-            nativeAcceleration: nativeAcceleration
+            nativeAcceleration: nativeAcceleration,
+            backendIdentity: backendIdentity
         )
         await metricsStore.set(
             Date().timeIntervalSince(startedAt) * 1000,
@@ -1865,7 +1867,8 @@ button.primary:active {
             requestID: execution.requestID,
             modelID: responseModelID,
             shape: shape,
-            options: SSEStreamWriter.StreamOptions(includeUsage: true)
+            options: SSEStreamWriter.StreamOptions(includeUsage: true),
+            onDisconnect: execution.onStreamDisconnect
         )
 
         return HTTPResponse(
@@ -1898,25 +1901,41 @@ button.primary:active {
         }
         let inputs = embeddingsRequest.normalizedInputs
 
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: embeddingsRequest.model) else {
-            return httpErrorResponse(for: .modelNotReady)
-        }
-        guard
-            let workerRegistry,
-            let workerClient = await routedWorkerClient(forModelID: embeddingsRequest.model, workerRegistry: workerRegistry),
-            let inferenceClient = workerClient as? any NonTextInferenceWorkerClientProtocol
-        else {
+        guard let workerRegistry else {
             return workerUnavailableResponse()
+        }
+        let routeKind = await routedWorkerKind(
+            forModelID: embeddingsRequest.model,
+            workerRegistry: workerRegistry,
+            fallback: .pythonEmbedding
+        )
+        guard let binding = await modelCatalog.backendRouteBinding(
+            for: embeddingsRequest.model,
+            routeKind: routeKind
+        ) else {
+            return httpErrorResponse(for: .modelNotReady)
         }
 
         var workerRequest = Melix_Worker_V1_EmbedRequest()
         workerRequest.id.requestID = UUID().uuidString
-        workerRequest.modelHandle = modelHandle
         workerRequest.inputs = inputs
+        BackendModelIdentityStamping.stamp(binding, on: &workerRequest)
 
         let startedAt = Date()
         do {
-            let response = try await inferenceClient.embed(request: workerRequest)
+            let response = try await performReplaySafeUnary(
+                binding: binding,
+                dispatch: { attemptBinding in
+                    var attempt = workerRequest
+                    BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                    guard let currentClient = await workerRegistry.client(for: attemptBinding.routeKind)
+                        as? any NonTextInferenceWorkerClientProtocol else {
+                        throw WorkerClientError.unavailable
+                    }
+                    return try await currentClient.embed(request: attempt)
+                },
+                errorStatus: \.error
+            )
             if !response.error.code.isEmpty {
                 return workerErrorResponse(response.error)
             }
@@ -1951,27 +1970,43 @@ button.primary:active {
             return validationFailure
         }
 
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: rerankRequest.model) else {
-            return httpErrorResponse(for: .modelNotReady)
-        }
-        guard
-            let workerRegistry,
-            let workerClient = await routedWorkerClient(forModelID: rerankRequest.model, workerRegistry: workerRegistry),
-            let inferenceClient = workerClient as? any NonTextInferenceWorkerClientProtocol
-        else {
+        guard let workerRegistry else {
             return workerUnavailableResponse()
+        }
+        let routeKind = await routedWorkerKind(
+            forModelID: rerankRequest.model,
+            workerRegistry: workerRegistry,
+            fallback: .pythonRerank
+        )
+        guard let binding = await modelCatalog.backendRouteBinding(
+            for: rerankRequest.model,
+            routeKind: routeKind
+        ) else {
+            return httpErrorResponse(for: .modelNotReady)
         }
 
         var workerRequest = Melix_Worker_V1_RerankRequest()
         workerRequest.id.requestID = UUID().uuidString
-        workerRequest.modelHandle = modelHandle
         workerRequest.query = rerankRequest.query
         workerRequest.documents = rerankRequest.documents
         workerRequest.topK = rerankRequest.topK
+        BackendModelIdentityStamping.stamp(binding, on: &workerRequest)
 
         let startedAt = Date()
         do {
-            let response = try await inferenceClient.rerank(request: workerRequest)
+            let response = try await performReplaySafeUnary(
+                binding: binding,
+                dispatch: { attemptBinding in
+                    var attempt = workerRequest
+                    BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                    guard let currentClient = await workerRegistry.client(for: attemptBinding.routeKind)
+                        as? any NonTextInferenceWorkerClientProtocol else {
+                        throw WorkerClientError.unavailable
+                    }
+                    return try await currentClient.rerank(request: attempt)
+                },
+                errorStatus: \.error
+            )
             if !response.error.code.isEmpty {
                 return workerErrorResponse(response.error)
             }
@@ -2036,9 +2071,9 @@ button.primary:active {
             return preflightFailure
         }
 
-        let modelHandle: String
+        let binding: ModelCatalog.BackendRouteBinding
         do {
-            modelHandle = try await ensureAudioModelReady(
+            binding = try await ensureAudioModelReady(
                 modelID: transcriptionRequest.model,
                 loadReason: "lazy_audio_transcription_load",
                 metricsPrefix: "audio_transcription"
@@ -2054,11 +2089,7 @@ button.primary:active {
         } catch {
             return workerUnavailableResponse()
         }
-        guard
-            let workerRegistry,
-            let workerClient = await routedWorkerClient(forModelID: transcriptionRequest.model, workerRegistry: workerRegistry),
-            let inferenceClient = workerClient as? any NonTextInferenceWorkerClientProtocol
-        else {
+        guard let workerRegistry else {
             return workerUnavailableResponse()
         }
         let routeKind = await routedWorkerKind(
@@ -2066,10 +2097,16 @@ button.primary:active {
             workerRegistry: workerRegistry,
             fallback: .pythonTranscription
         )
+        guard let workerClient = await routedWorkerClient(
+            forModelID: transcriptionRequest.model,
+            workerRegistry: workerRegistry
+        ) else {
+            return workerUnavailableResponse()
+        }
 
         var workerRequest = Melix_Worker_V1_TranscribeRequest()
         workerRequest.id.requestID = UUID().uuidString
-        workerRequest.modelHandle = modelHandle
+        BackendModelIdentityStamping.stamp(binding, on: &workerRequest)
         workerRequest.format = audioReference.format ?? ""
         workerRequest.task = transcriptionRequest.task ?? "transcribe"
         workerRequest.language = transcriptionRequest.language ?? ""
@@ -2095,7 +2132,19 @@ button.primary:active {
         let startedAt = Date()
         await beginMultimodalRequest(requestID: workerRequest.id.requestID, routeKind: routeKind)
         do {
-            let response = try await inferenceClient.transcribe(request: workerRequest)
+            let response = try await performReplaySafeUnary(
+                binding: binding,
+                dispatch: { attemptBinding in
+                    var attempt = workerRequest
+                    BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                    guard let currentClient = await workerRegistry.client(for: attemptBinding.routeKind)
+                        as? any NonTextInferenceWorkerClientProtocol else {
+                        throw WorkerClientError.unavailable
+                    }
+                    return try await currentClient.transcribe(request: attempt)
+                },
+                errorStatus: \.error
+            )
             if !response.error.code.isEmpty {
                 await finishMultimodalRequest(
                     requestID: workerRequest.id.requestID,
@@ -2163,9 +2212,9 @@ button.primary:active {
             speechContext = value
         }
 
-        let modelHandle: String
+        let binding: ModelCatalog.BackendRouteBinding
         do {
-            modelHandle = try await ensureAudioModelReady(
+            binding = try await ensureAudioModelReady(
                 modelID: speechRequest.model,
                 loadReason: "lazy_audio_speech_load",
                 metricsPrefix: "audio_speech"
@@ -2184,7 +2233,7 @@ button.primary:active {
         guard
             let workerRegistry,
             let workerClient = await routedWorkerClient(forModelID: speechRequest.model, workerRegistry: workerRegistry),
-            let inferenceClient = workerClient as? any NonTextInferenceWorkerClientProtocol
+            workerClient is any NonTextInferenceWorkerClientProtocol
         else {
             return workerUnavailableResponse()
         }
@@ -2196,7 +2245,7 @@ button.primary:active {
 
         var workerRequest = Melix_Worker_V1_SpeakRequest()
         workerRequest.id.requestID = UUID().uuidString
-        workerRequest.modelHandle = modelHandle
+        BackendModelIdentityStamping.stamp(binding, on: &workerRequest)
         workerRequest.input = speechRequest.input
         workerRequest.voice = speechRequest.voice ?? ""
         workerRequest.format = requestedFormat
@@ -2221,7 +2270,45 @@ button.primary:active {
         await beginMultimodalRequest(requestID: workerRequest.id.requestID, routeKind: routeKind)
         do {
             if speechStreamingEnabled {
-                let stream = try await inferenceClient.speakStream(request: workerRequest)
+                let replayStream = replaySafeSpeechStream(
+                    binding: binding,
+                    request: workerRequest,
+                    workerRegistry: workerRegistry
+                )
+                var iterator = replayStream.makeAsyncIterator()
+                let stream: AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error>
+                do {
+                    if let firstEvent = try await iterator.next() {
+                        if firstEvent.kind == .error {
+                            await finishMultimodalRequest(
+                                requestID: workerRequest.id.requestID,
+                                routeKind: routeKind,
+                                phase: .requestFailed
+                            )
+                            return workerErrorResponse(firstEvent.error)
+                        }
+                        let state = FirstSpeechStreamEventReplayState(
+                            firstEvent: firstEvent,
+                            iterator: iterator
+                        )
+                        stream = AsyncThrowingStream(unfolding: { try await state.next() })
+                    } else {
+                        stream = AsyncThrowingStream(unfolding: { nil })
+                    }
+                } catch {
+                    await finishMultimodalRequest(
+                        requestID: workerRequest.id.requestID,
+                        routeKind: routeKind,
+                        phase: .requestFailed
+                    )
+                    if case let WorkerClientError.requestFailed(code, message) = error {
+                        var status = Melix_Worker_V1_ErrorStatus()
+                        status.code = code
+                        status.message = message
+                        return workerErrorResponse(status)
+                    }
+                    return workerUnavailableResponse()
+                }
                 return streamAudioSpeechResponse(
                     stream,
                     requestID: workerRequest.id.requestID,
@@ -2234,7 +2321,19 @@ button.primary:active {
                 )
             }
 
-            let response = try await inferenceClient.speak(request: workerRequest)
+            let response = try await performReplaySafeUnary(
+                binding: binding,
+                dispatch: { attemptBinding in
+                    var attempt = workerRequest
+                    BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                    guard let currentClient = await workerRegistry.client(for: attemptBinding.routeKind)
+                        as? any NonTextInferenceWorkerClientProtocol else {
+                        throw WorkerClientError.unavailable
+                    }
+                    return try await currentClient.speak(request: attempt)
+                },
+                errorStatus: \.error
+            )
             if !response.error.code.isEmpty {
                 await finishMultimodalRequest(
                     requestID: workerRequest.id.requestID,
@@ -2413,12 +2512,12 @@ button.primary:active {
         modelID: String,
         loadReason: String,
         metricsPrefix: String
-    ) async throws -> String {
+    ) async throws -> ModelCatalog.BackendRouteBinding {
         guard let selectedModel = await modelCatalog.model(id: modelID) else {
             throw OnDemandModelLoadError.modelNotReady
         }
         let hydratedModel = audioAssetManager.hydrate(selectedModel)
-        return try await OnDemandModelLoader.ensureModelReady(
+        return try await OnDemandModelLoader.ensureModelBindingReady(
             modelID: modelID,
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry,
@@ -2427,6 +2526,149 @@ button.primary:active {
             metricsPrefix: metricsPrefix,
             summaryOverride: hydratedModel
         )
+    }
+
+    private func performReplaySafeUnary<Response>(
+        binding: ModelCatalog.BackendRouteBinding,
+        mode: BackendRouteRecoveryMode = .identityAndTransport,
+        dispatch: @escaping (ModelCatalog.BackendRouteBinding) async throws -> Response,
+        errorStatus: (Response) -> Melix_Worker_V1_ErrorStatus
+    ) async throws -> Response {
+        guard let workerRegistry else {
+            throw WorkerClientError.unavailable
+        }
+        return try await BackendRouteRecovery.performReplaySafeUnary(
+            binding: binding,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            mode: mode,
+            dispatch: dispatch,
+            errorStatus: errorStatus
+        )
+    }
+
+    private func replaySafeSpeechStream(
+        binding: ModelCatalog.BackendRouteBinding,
+        request: Melix_Worker_V1_SpeakRequest,
+        workerRegistry: WorkerRegistry
+    ) -> AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                var attemptBinding = binding
+                for attemptIndex in 0...1 {
+                    var responseOpened = false
+                    do {
+                        var attempt = request
+                        BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                        guard let client = await workerRegistry.client(for: attemptBinding.routeKind)
+                            as? any NonTextInferenceWorkerClientProtocol else {
+                            throw WorkerClientError.unavailable
+                        }
+                        let stream = try await client.speakStream(request: attempt)
+                        var retryRequested = false
+                        for try await event in stream {
+                            if event.kind == .error {
+                                let recoverable = BackendRouteRecoveryClassifier.shouldRecover(
+                                    event.error
+                                )
+                                if recoverable {
+                                    await BackendRouteRecovery.recordMismatch(
+                                        event.error,
+                                        metricsStore: metricsStore
+                                    )
+                                }
+                                if responseOpened {
+                                    if recoverable {
+                                        await BackendRouteRecovery.recordRetrySuppressed(
+                                            metricsStore: metricsStore
+                                        )
+                                    }
+                                    throw BackendRouteRecovery.partialStreamFailure()
+                                }
+                                if recoverable, attemptIndex == 0 {
+                                    retryRequested = true
+                                    break
+                                }
+                                if recoverable {
+                                    await BackendRouteRecovery.recordRetryExhausted(
+                                        metricsStore: metricsStore
+                                    )
+                                    throw BackendRouteRecovery.recoveryExhaustedError()
+                                }
+                            }
+                            responseOpened = true
+                            continuation.yield(event)
+                        }
+                        if retryRequested {
+                            await BackendRouteRecovery.recordRetryAllowed(metricsStore: metricsStore)
+                            do {
+                                attemptBinding = try await BackendRouteRecovery.recoverBinding(
+                                    failedBinding: attemptBinding,
+                                    modelCatalog: modelCatalog,
+                                    workerRegistry: workerRegistry,
+                                    metricsStore: metricsStore
+                                )
+                            } catch {
+                                await BackendRouteRecovery.recordRetryExhausted(
+                                    metricsStore: metricsStore
+                                )
+                                continuation.finish(
+                                    throwing: BackendRouteRecovery.recoveryExhaustedError()
+                                )
+                                return
+                            }
+                            continue
+                        }
+                        continuation.finish()
+                        return
+                    } catch {
+                        if responseOpened {
+                            if BackendRouteRecoveryClassifier.shouldRecover(error) {
+                                await BackendRouteRecovery.recordRetrySuppressed(
+                                    metricsStore: metricsStore
+                                )
+                            }
+                            continuation.finish(
+                                throwing: BackendRouteRecovery.partialStreamFailure()
+                            )
+                            return
+                        }
+                        guard BackendRouteRecoveryClassifier.shouldRecover(error) else {
+                            continuation.finish(throwing: error)
+                            return
+                        }
+                        guard attemptIndex == 0 else {
+                            await BackendRouteRecovery.recordRetryExhausted(
+                                metricsStore: metricsStore
+                            )
+                            continuation.finish(
+                                throwing: BackendRouteRecovery.recoveryExhaustedError()
+                            )
+                            return
+                        }
+                        await BackendRouteRecovery.recordRetryAllowed(metricsStore: metricsStore)
+                        do {
+                            attemptBinding = try await BackendRouteRecovery.recoverBinding(
+                                failedBinding: attemptBinding,
+                                modelCatalog: modelCatalog,
+                                workerRegistry: workerRegistry,
+                                metricsStore: metricsStore
+                            )
+                        } catch {
+                            await BackendRouteRecovery.recordRetryExhausted(
+                                metricsStore: metricsStore
+                            )
+                            continuation.finish(
+                                throwing: BackendRouteRecovery.recoveryExhaustedError()
+                            )
+                            return
+                        }
+                    }
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     private func handleImageGenerations(_ request: HTTPRequest) async throws -> HTTPResponse {
@@ -2438,14 +2680,7 @@ button.primary:active {
             return validationFailure
         }
 
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: imageRequest.model) else {
-            return httpErrorResponse(for: .modelNotReady)
-        }
-        guard
-            let workerRegistry,
-            let workerClient = await routedWorkerClient(forModelID: imageRequest.model, workerRegistry: workerRegistry),
-            let inferenceClient = workerClient as? any NonTextInferenceWorkerClientProtocol
-        else {
+        guard let workerRegistry else {
             return workerUnavailableResponse()
         }
 
@@ -2454,12 +2689,24 @@ button.primary:active {
             workerRegistry: workerRegistry,
             fallback: .pythonImage
         )
+        guard let binding = await modelCatalog.backendRouteBinding(
+            for: imageRequest.model,
+            routeKind: routeKind
+        ) else {
+            return httpErrorResponse(for: .modelNotReady)
+        }
+        guard let workerClient = await routedWorkerClient(
+            forModelID: imageRequest.model,
+            workerRegistry: workerRegistry
+        ), workerClient is any NonTextInferenceWorkerClientProtocol else {
+            return workerUnavailableResponse()
+        }
         let requestID = imageRequest.requestID
         let jobID = "\(requestID)::image-generate"
 
         var workerRequest = Melix_Worker_V1_ImageGenerateRequest()
         workerRequest.id.requestID = requestID
-        workerRequest.modelHandle = modelHandle
+        BackendModelIdentityStamping.stamp(binding, on: &workerRequest)
         workerRequest.prompt = imageRequest.prompt
         workerRequest.size = imageRequest.size ?? "1024x1024"
         workerRequest.n = UInt32(max(1, imageRequest.n ?? 1))
@@ -2524,7 +2771,20 @@ button.primary:active {
 
         let startedAt = Date()
         do {
-            let response = try await inferenceClient.imageGenerate(request: workerRequest)
+            let response = try await performReplaySafeUnary(
+                binding: binding,
+                mode: .identityMismatchOnly,
+                dispatch: { attemptBinding in
+                    var attempt = workerRequest
+                    BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                    guard let currentClient = await workerRegistry.client(for: attemptBinding.routeKind)
+                        as? any NonTextInferenceWorkerClientProtocol else {
+                        throw WorkerClientError.unavailable
+                    }
+                    return try await currentClient.imageGenerate(request: attempt)
+                },
+                errorStatus: \.error
+            )
             let resolvedJobID = response.job.jobID.isEmpty ? jobID : response.job.jobID
             let artifacts = response.job.artifacts.map(imageArtifactRef(from:))
             await recordImageJobTerminalState(
@@ -2683,14 +2943,7 @@ button.primary:active {
             mode: resolvedEditMode
         )
 
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: imageRequest.model) else {
-            return httpErrorResponse(for: .modelNotReady)
-        }
-        guard
-            let workerRegistry,
-            let workerClient = await routedWorkerClient(forModelID: imageRequest.model, workerRegistry: workerRegistry),
-            let inferenceClient = workerClient as? any NonTextInferenceWorkerClientProtocol
-        else {
+        guard let workerRegistry else {
             return workerUnavailableResponse()
         }
 
@@ -2699,12 +2952,24 @@ button.primary:active {
             workerRegistry: workerRegistry,
             fallback: .pythonImage
         )
+        guard let binding = await modelCatalog.backendRouteBinding(
+            for: imageRequest.model,
+            routeKind: routeKind
+        ) else {
+            return httpErrorResponse(for: .modelNotReady)
+        }
+        guard let workerClient = await routedWorkerClient(
+            forModelID: imageRequest.model,
+            workerRegistry: workerRegistry
+        ), workerClient is any NonTextInferenceWorkerClientProtocol else {
+            return workerUnavailableResponse()
+        }
         let requestID = imageRequest.requestID
         let jobID = "\(requestID)::image-edit"
 
         var workerRequest = Melix_Worker_V1_ImageEditRequest()
         workerRequest.id.requestID = requestID
-        workerRequest.modelHandle = modelHandle
+        BackendModelIdentityStamping.stamp(binding, on: &workerRequest)
         workerRequest.prompt = resolvedPrompt
         workerRequest.image = imageBytes
         workerRequest.imageUri = resolvedImageURI
@@ -2789,7 +3054,20 @@ button.primary:active {
 
         let startedAt = Date()
         do {
-            let response = try await inferenceClient.imageEdit(request: workerRequest)
+            let response = try await performReplaySafeUnary(
+                binding: binding,
+                mode: .identityMismatchOnly,
+                dispatch: { attemptBinding in
+                    var attempt = workerRequest
+                    BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                    guard let currentClient = await workerRegistry.client(for: attemptBinding.routeKind)
+                        as? any NonTextInferenceWorkerClientProtocol else {
+                        throw WorkerClientError.unavailable
+                    }
+                    return try await currentClient.imageEdit(request: attempt)
+                },
+                errorStatus: \.error
+            )
             let resolvedJobID = response.job.jobID.isEmpty ? jobID : response.job.jobID
             let artifacts = response.job.artifacts.map(imageArtifactRef(from:))
             await recordImageJobTerminalState(
@@ -4528,31 +4806,29 @@ button.primary:active {
         await modelCatalog.beginRequest(modelID: translated.modelID)
         await scheduleIdleSweepIfNeeded(idleSweepRequest)
         let workerStream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
-        if shouldInspectFirstStreamEventForPreSSEAdmission(translated) {
-            var iterator = execution.stream.makeAsyncIterator()
-            do {
-                if let firstEvent = try await iterator.next() {
-                    if case .error(let error) = firstEvent.payload,
-                       isPreSSEAdmissionError(error.error) {
-                        await modelCatalog.finishRequest(modelID: translated.modelID)
-                        return workerErrorResponse(error.error)
-                    }
-                    let state = FirstStreamEventReplayState(firstEvent: firstEvent, iterator: iterator)
-                    workerStream = AsyncThrowingStream(unfolding: {
-                        try await state.next()
-                    })
-                } else {
-                    workerStream = AsyncThrowingStream(unfolding: { nil })
+        var iterator = execution.stream.makeAsyncIterator()
+        do {
+            if let firstEvent = try await iterator.next() {
+                if case .error(let error) = firstEvent.payload {
+                    await modelCatalog.finishRequest(modelID: translated.modelID)
+                    return workerErrorResponse(error.error)
                 }
-            } catch {
-                // This is still before SSE response construction, so first-pull
-                // worker/RPC failures remain JSON errors; later stream failures
-                // continue through SSEStreamWriter as event-stream frames.
-                await modelCatalog.finishRequest(modelID: translated.modelID)
-                return workerUnavailableResponse()
+                let state = FirstStreamEventReplayState(firstEvent: firstEvent, iterator: iterator)
+                workerStream = AsyncThrowingStream(unfolding: {
+                    try await state.next()
+                })
+            } else {
+                workerStream = AsyncThrowingStream(unfolding: { nil })
             }
-        } else {
-            workerStream = execution.stream
+        } catch {
+            await modelCatalog.finishRequest(modelID: translated.modelID)
+            if case let WorkerClientError.requestFailed(code, message) = error {
+                var status = Melix_Worker_V1_ErrorStatus()
+                status.code = code
+                status.message = message
+                return workerErrorResponse(status)
+            }
+            return workerUnavailableResponse()
         }
 
         let outputStream = Self.toolChoiceValidatedStream(
@@ -4573,7 +4849,8 @@ button.primary:active {
             ),
             onComplete: { [modelCatalog] in
                 await modelCatalog.finishRequest(modelID: translated.modelID)
-            }
+            },
+            onDisconnect: execution.onStreamDisconnect
         )
 
         return HTTPResponse(
@@ -4685,10 +4962,6 @@ button.primary:active {
         }
     }
 
-    private func shouldInspectFirstStreamEventForPreSSEAdmission(_ translated: TranslatedChatRequest) -> Bool {
-        normalizedMediaPartCount(from: translated.workerRequest.execution.ext) > 0
-    }
-
     // AsyncThrowingStream(unfolding:) serializes calls to the captured state, so
     // this unchecked Sendable wrapper keeps the replay state single-consumer.
     private final class FirstStreamEventReplayState: @unchecked Sendable {
@@ -4712,8 +4985,25 @@ button.primary:active {
         }
     }
 
-    private func isPreSSEAdmissionError(_ error: Melix_Worker_V1_ErrorStatus) -> Bool {
-        error.code == "multimodal_prefill_attention_budget_exceeded"
+    private final class FirstSpeechStreamEventReplayState: @unchecked Sendable {
+        private var firstEvent: Melix_Worker_V1_SpeakStreamEvent?
+        private var iterator: AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error>.Iterator
+
+        init(
+            firstEvent: Melix_Worker_V1_SpeakStreamEvent,
+            iterator: AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error>.Iterator
+        ) {
+            self.firstEvent = firstEvent
+            self.iterator = iterator
+        }
+
+        func next() async throws -> Melix_Worker_V1_SpeakStreamEvent? {
+            if let firstEvent {
+                self.firstEvent = nil
+                return firstEvent
+            }
+            return try await iterator.next()
+        }
     }
 
     private func encodedJSONResponse<T: Encodable>(_ payload: T, statusCode: Int = 200) throws -> HTTPResponse {
@@ -5552,7 +5842,7 @@ button.primary:active {
             statusCode = 503
         case "deadline_exceeded":
             statusCode = 504
-        case "unavailable", "worker_unavailable":
+        case "unavailable", "worker_unavailable", "backend_route_recovery_exhausted":
             statusCode = 503
         default:
             statusCode = 500
@@ -6799,6 +7089,7 @@ private struct HealthDiagnosticsResponse: Codable {
     let models: [HealthDiagnosticsModelResponse]
     let localServerSecurity: LocalServerSecurityReceipt
     let nativeAcceleration: NativeAccelerationStatusPayload
+    let backendIdentity: BackendIdentityRecoveryDiagnosticsSnapshot
 
     enum CodingKeys: String, CodingKey {
         case status
@@ -6808,6 +7099,7 @@ private struct HealthDiagnosticsResponse: Codable {
         case models
         case localServerSecurity = "local_server_security"
         case nativeAcceleration = "native_acceleration"
+        case backendIdentity = "backend_model_identity"
     }
 }
 

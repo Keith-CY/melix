@@ -2180,22 +2180,21 @@ public actor ControlPlaneService {
         guard resolvedModelID.isEmpty == false else {
             return errorResponse(for: request, code: "invalid_argument", message: "Image generate model is required.")
         }
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: resolvedModelID) else {
+        let routeKind = await workerRegistry?.route(forModelID: resolvedModelID) ?? .pythonImage
+        guard let binding = await modelCatalog.backendRouteBinding(
+            for: resolvedModelID,
+            routeKind: routeKind
+        ) else {
             return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
         }
-        guard
-            let workerRegistry,
-            let workerClient = await workerRegistry.client(forModelID: resolvedModelID) as? any NonTextInferenceWorkerClientProtocol
-        else {
+        guard let workerRegistry else {
             return errorResponse(for: request, code: "unavailable", message: "Image worker is unavailable.")
         }
-
-        let routeKind = await workerRegistry.route(forModelID: resolvedModelID) ?? .pythonImage
         let jobID = "\(request.requestID)::image-generate"
 
         var workerRequest = Melix_Worker_V1_ImageGenerateRequest()
         workerRequest.id.requestID = request.requestID
-        workerRequest.modelHandle = modelHandle
+        BackendModelIdentityStamping.stamp(binding, on: &workerRequest)
         workerRequest.prompt = command.prompt
         workerRequest.size = resolvedSize.isEmpty ? "1024x1024" : resolvedSize
         workerRequest.n = command.n == 0 ? 1 : command.n
@@ -2262,7 +2261,23 @@ public actor ControlPlaneService {
         await imageJobReadModel.recordRunning(jobID: jobID, workerID: routeKind.workerSourceID, pct: 0)
 
         do {
-            let workerResponse = try await workerClient.imageGenerate(request: workerRequest)
+            let workerResponse = try await BackendRouteRecovery.performReplaySafeUnary(
+                binding: binding,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore,
+                mode: .identityMismatchOnly,
+                dispatch: { attemptBinding in
+                    var attempt = workerRequest
+                    BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                    guard let currentClient = await workerRegistry.client(for: attemptBinding.routeKind)
+                        as? any NonTextInferenceWorkerClientProtocol else {
+                        throw WorkerClientError.unavailable
+                    }
+                    return try await currentClient.imageGenerate(request: attempt)
+                },
+                errorStatus: \.error
+            )
             let resolvedJobID = workerResponse.job.jobID.isEmpty ? jobID : workerResponse.job.jobID
             let artifacts = workerResponse.job.artifacts.map(imageArtifactRef(from:))
             await recordImageJobTerminalState(
@@ -2365,17 +2380,16 @@ public actor ControlPlaneService {
         guard resolvedModelID.isEmpty == false else {
             return errorResponse(for: request, code: "invalid_argument", message: "Image edit model is required.")
         }
-        guard let modelHandle = await modelCatalog.dispatchHandle(for: resolvedModelID) else {
+        let routeKind = await workerRegistry?.route(forModelID: resolvedModelID) ?? .pythonImage
+        guard let binding = await modelCatalog.backendRouteBinding(
+            for: resolvedModelID,
+            routeKind: routeKind
+        ) else {
             return errorResponse(for: request, code: "not_ready", message: "Image model is not loaded.")
         }
-        guard
-            let workerRegistry,
-            let workerClient = await workerRegistry.client(forModelID: resolvedModelID) as? any NonTextInferenceWorkerClientProtocol
-        else {
+        guard let workerRegistry else {
             return errorResponse(for: request, code: "unavailable", message: "Image worker is unavailable.")
         }
-
-        let routeKind = await workerRegistry.route(forModelID: resolvedModelID) ?? .pythonImage
         let jobID = "\(request.requestID)::image-edit"
         if (resolvedEditMode == .variation || resolvedEditMode == .iterate) && sourceArtifactID.isEmpty {
             return errorResponse(
@@ -2436,7 +2450,7 @@ public actor ControlPlaneService {
 
         var workerRequest = Melix_Worker_V1_ImageEditRequest()
         workerRequest.id.requestID = request.requestID
-        workerRequest.modelHandle = modelHandle
+        BackendModelIdentityStamping.stamp(binding, on: &workerRequest)
         workerRequest.prompt = resolvedPrompt
         workerRequest.image = resolvedImageData
         workerRequest.imageUri = resolvedImageURI
@@ -2517,7 +2531,23 @@ public actor ControlPlaneService {
         await imageJobReadModel.recordRunning(jobID: jobID, workerID: routeKind.workerSourceID, pct: 0)
 
         do {
-            let workerResponse = try await workerClient.imageEdit(request: workerRequest)
+            let workerResponse = try await BackendRouteRecovery.performReplaySafeUnary(
+                binding: binding,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry,
+                metricsStore: metricsStore,
+                mode: .identityMismatchOnly,
+                dispatch: { attemptBinding in
+                    var attempt = workerRequest
+                    BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                    guard let currentClient = await workerRegistry.client(for: attemptBinding.routeKind)
+                        as? any NonTextInferenceWorkerClientProtocol else {
+                        throw WorkerClientError.unavailable
+                    }
+                    return try await currentClient.imageEdit(request: attempt)
+                },
+                errorStatus: \.error
+            )
             let resolvedJobID = workerResponse.job.jobID.isEmpty ? jobID : workerResponse.job.jobID
             let artifacts = workerResponse.job.artifacts.map(imageArtifactRef(from:))
             await recordImageJobTerminalState(
@@ -4626,6 +4656,45 @@ public actor ControlPlaneService {
             Date().timeIntervalSince(trustStartedAt) * 1000,
             forKey: "control_plane.model_load_trust_resolution_ms"
         )
+        guard let healthClient = workerClient as? any BackendHealthIdentifyingWorkerClientProtocol,
+              let health = try? await healthClient.backendHealthIdentity() else {
+            var error = Melix_Controlplane_V1_ErrorStatus()
+            error.code = "worker_identity_unavailable"
+            error.message = "The selected worker did not publish a backend-owned instance identity."
+            let failedModel = await modelCatalog.recordLoadFailed(
+                id: modelID,
+                reason: "\(reason)_worker_identity_unavailable"
+            ) ?? catalogModel ?? Melix_Controlplane_V1_ModelSummary()
+            return ModelLoadOutcome(
+                model: hydrate(failedModel),
+                error: error
+            )
+        }
+        let workerInstanceID = health.workerInstanceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !workerInstanceID.isEmpty else {
+            var error = Melix_Controlplane_V1_ErrorStatus()
+            error.code = "worker_identity_unavailable"
+            error.message = "The selected worker published an empty backend instance identity."
+            let failedModel = await modelCatalog.recordLoadFailed(
+                id: modelID,
+                reason: "\(reason)_worker_identity_unavailable"
+            ) ?? catalogModel ?? Melix_Controlplane_V1_ModelSummary()
+            return ModelLoadOutcome(
+                model: hydrate(failedModel),
+                error: error
+            )
+        }
+        guard let reservation = await modelCatalog.beginBackendRouteLoad(
+            id: modelID,
+            routeKind: route,
+            workerInstanceID: workerInstanceID,
+            reason: reason
+        ) else {
+            return ModelLoadOutcome(
+                model: hydrate(catalogModel ?? Melix_Controlplane_V1_ModelSummary()),
+                error: nil
+            )
+        }
 
         var workerRequest = Melix_Worker_V1_LoadModelRequest()
         workerRequest.model = modelSpec
@@ -4634,6 +4703,7 @@ public actor ControlPlaneService {
         workerRequest.warmupAfterLoad = false
         workerRequest.diskStreamingMode = modelSpec.settings.diskStreamingMode
         workerRequest.loadTrust = ModelLoadTrustPolicyResolver.workerPolicy(from: loadTrustPolicy)
+        workerRequest.backendIdentity = reservation.identity
 
         do {
             let response = try await workerClient.loadModel(request: workerRequest)
@@ -4658,7 +4728,9 @@ public actor ControlPlaneService {
                     loadTrust: ModelLoadTrustPolicyResolver.receiptForLoadFailure(
                         response: response,
                         fallback: loadTrustPolicy
-                    )
+                    ),
+                    routeKind: route,
+                    expectedRouteGeneration: reservation.generation
                 ) ?? Melix_Controlplane_V1_ModelSummary()
                 return ModelLoadOutcome(model: hydrate(model), error: explicitError)
             }
@@ -4668,7 +4740,7 @@ public actor ControlPlaneService {
                     ? controlPlaneDiskStreamingMode(for: response.residency.effectiveDiskStreamingMode)
                     : .diskStreamingDisabled
             )
-            let model = await modelCatalog.recordLoadSucceeded(
+            guard let model = await modelCatalog.recordLoadSucceeded(
                 id: modelID,
                 dispatchHandle: response.modelHandle,
                 pinRequested: workerRequest.pinOnLoad,
@@ -4676,8 +4748,20 @@ public actor ControlPlaneService {
                 loadTrust: response.hasLoadTrust
                     ? ModelLoadTrustPolicyResolver.controlPlanePolicy(from: response.loadTrust, fallback: loadTrustPolicy)
                     : loadTrustPolicy,
-                reason: reason
-            ) ?? Melix_Controlplane_V1_ModelSummary()
+                reason: reason,
+                routeKind: route,
+                expectedRouteGeneration: reservation.generation,
+                workerInstanceID: reservation.workerInstanceID
+            ) else {
+                var unloadRequest = Melix_Worker_V1_UnloadModelRequest()
+                unloadRequest.modelHandle = response.modelHandle
+                unloadRequest.force = true
+                _ = try? await workerClient.unloadModel(request: unloadRequest)
+                return ModelLoadOutcome(
+                    model: hydrate(await modelCatalog.model(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()),
+                    error: nil
+                )
+            }
             return ModelLoadOutcome(model: hydrate(model), error: nil)
         } catch {
             _ = await serverSessionRuntimeStore.noteDiskStreamingSelection(
@@ -4687,7 +4771,9 @@ public actor ControlPlaneService {
             let model = await modelCatalog.recordLoadFailed(
                 id: modelID,
                 reason: "\(reason)_failed",
-                loadTrust: loadTrustPolicy
+                loadTrust: loadTrustPolicy,
+                routeKind: route,
+                expectedRouteGeneration: reservation.generation
             ) ?? Melix_Controlplane_V1_ModelSummary()
             return ModelLoadOutcome(model: hydrate(model), error: nil)
         }

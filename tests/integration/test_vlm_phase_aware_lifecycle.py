@@ -88,14 +88,37 @@ def test_abort_worker_request_with_retry_returns_false_after_deadline(
     assert sleeps == [0.02, 0.02]
 
 
-def _load_dev_vlm_model(runtime_stub: runtime_pb2_grpc.RuntimeServiceStub) -> str:
+def _backend_identity(
+    model: common_pb2.ModelSpec,
+    *,
+    worker_instance_id: str,
+    generation: int = 1,
+) -> common_pb2.BackendModelIdentity:
+    return common_pb2.BackendModelIdentity(
+        requested_model_id=model.model_id,
+        requested_adapter_id=model.ext.get("melix.adapter_set_hash", ""),
+        route_generation=generation,
+        worker_instance_id=worker_instance_id,
+    )
+
+
+def _load_dev_vlm_model(
+    runtime_stub: runtime_pb2_grpc.RuntimeServiceStub,
+) -> tuple[str, common_pb2.BackendModelIdentity]:
+    model = WorkerModelCatalog.dev_vlm_model()
+    health = runtime_stub.Handshake(
+        runtime_pb2.HandshakeRequest(protocol_version="v1"),
+        timeout=5,
+    )
+    assert health.worker_instance_id
+    identity = _backend_identity(model, worker_instance_id=health.worker_instance_id)
     load_response = runtime_stub.LoadModel(
-        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_vlm_model()),
+        runtime_pb2.LoadModelRequest(model=model, backend_identity=identity),
         timeout=5,
     )
     assert load_response.ok is True
     assert load_response.model_handle
-    return load_response.model_handle
+    return load_response.model_handle, identity
 
 
 def test_python_vlm_worker_supports_phase_aware_prefill_and_decode() -> None:
@@ -110,7 +133,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode() -> None:
         runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
         inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
 
-        model_handle = _load_dev_vlm_model(runtime_stub)
+        model_handle, backend_identity = _load_dev_vlm_model(runtime_stub)
 
         request_id = "integration-vlm-prefill"
         messages = [
@@ -136,6 +159,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode() -> None:
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
                     model_handle=model_handle,
+                    backend_identity=backend_identity,
                 ),
                 messages=messages,
                 return_decode_handle=True,
@@ -160,6 +184,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode() -> None:
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
                     model_handle=model_handle,
+                    backend_identity=backend_identity,
                 ),
                 decode_handle=prefill_response.decode_handle,
                 sampling=common_pb2.SamplingConfig(max_output_tokens=64),
@@ -217,8 +242,20 @@ def test_python_vlm_worker_applies_family_specific_prompt_defaults() -> None:
         model.ext["vision_supports_tool_calls"] = "false"
         model.ext["melix.multimodal_adapter_hash"] = "vision-family-paligemma-v1"
 
+        health = runtime_stub.Handshake(
+            runtime_pb2.HandshakeRequest(protocol_version="v1"),
+            timeout=5,
+        )
+        assert health.worker_instance_id
+        backend_identity = _backend_identity(
+            model,
+            worker_instance_id=health.worker_instance_id,
+        )
         load_response = runtime_stub.LoadModel(
-            runtime_pb2.LoadModelRequest(model=model),
+            runtime_pb2.LoadModelRequest(
+                model=model,
+                backend_identity=backend_identity,
+            ),
             timeout=5,
         )
         assert load_response.ok is True
@@ -230,6 +267,7 @@ def test_python_vlm_worker_applies_family_specific_prompt_defaults() -> None:
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
                     model_handle=load_response.model_handle,
+                    backend_identity=backend_identity,
                 ),
                 messages=[
                     common_pb2.ChatMessage(
@@ -259,6 +297,7 @@ def test_python_vlm_worker_applies_family_specific_prompt_defaults() -> None:
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
                     model_handle=load_response.model_handle,
+                    backend_identity=backend_identity,
                 ),
                 decode_handle=prefill_response.decode_handle,
                 sampling=common_pb2.SamplingConfig(max_output_tokens=64),
@@ -292,7 +331,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode_for_video_req
         runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
         inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
 
-        model_handle = _load_dev_vlm_model(runtime_stub)
+        model_handle, backend_identity = _load_dev_vlm_model(runtime_stub)
 
         request_id = "integration-vlm-video-prefill"
         messages = [
@@ -322,6 +361,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode_for_video_req
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
                     model_handle=model_handle,
+                    backend_identity=backend_identity,
                 ),
                 messages=messages,
                 return_decode_handle=True,
@@ -338,6 +378,7 @@ def test_python_vlm_worker_supports_phase_aware_prefill_and_decode_for_video_req
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
                     model_handle=model_handle,
+                    backend_identity=backend_identity,
                 ),
                 decode_handle=prefill_response.decode_handle,
                 sampling=common_pb2.SamplingConfig(max_output_tokens=64),
@@ -383,7 +424,7 @@ def test_python_vlm_worker_records_temp_media_cleanup_metrics_for_generate() -> 
         channel = grpc.insecure_channel(f"unix://{stack.python_socket_path}")
         runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
         inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
-        model_handle = _load_dev_vlm_model(runtime_stub)
+        model_handle, backend_identity = _load_dev_vlm_model(runtime_stub)
 
         request_id = "integration-vlm-temp-media-success"
         events = list(
@@ -392,6 +433,7 @@ def test_python_vlm_worker_records_temp_media_cleanup_metrics_for_generate() -> 
                     execution=inference_pb2.ExecutionMetadata(
                         id=common_pb2.RequestIdentity(request_id=request_id),
                         model_handle=model_handle,
+                        backend_identity=backend_identity,
                     ),
                     messages=[
                         common_pb2.ChatMessage(
@@ -447,7 +489,7 @@ def test_python_vlm_worker_cleans_temp_media_on_cancelled_generate() -> None:
         channel = grpc.insecure_channel(f"unix://{stack.python_socket_path}")
         runtime_stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
         inference_stub = inference_pb2_grpc.InferenceServiceStub(channel)
-        model_handle = _load_dev_vlm_model(runtime_stub)
+        model_handle, backend_identity = _load_dev_vlm_model(runtime_stub)
 
         request_id = "integration-vlm-temp-media-cancel"
         response_stream = inference_stub.Generate(
@@ -455,6 +497,7 @@ def test_python_vlm_worker_cleans_temp_media_on_cancelled_generate() -> None:
                 execution=inference_pb2.ExecutionMetadata(
                     id=common_pb2.RequestIdentity(request_id=request_id),
                     model_handle=model_handle,
+                    backend_identity=backend_identity,
                 ),
                 messages=[
                     common_pb2.ChatMessage(

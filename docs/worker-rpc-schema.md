@@ -87,6 +87,39 @@ Core shared messages should include:
 - human-readable `message`
 - retriable flag
 - optional detail map
+- optional typed `BackendIdentityMismatchReceipt` for backend identity failures
+
+### BackendModelIdentity
+
+`BackendModelIdentity` binds one control-plane route generation to backend-owned
+loaded state. It contains the admitted public `requested_model_id`, the active
+`requested_adapter_id` (empty when no adapter is active), and a positive
+`route_generation`, plus the exact `worker_instance_id` published by the selected
+backend's health handshake.
+
+`LoadModelRequest` carries the control-plane binding identity. At load time the
+worker derives the loaded model and adapter identifiers from the resolved
+`ModelSpec` and combines them with the binding's route generation and its own
+configured worker instance identity. It does not trust a claimed load-time model,
+adapter, or worker identifier over the model and running backend it resolved.
+Every production inference request carries the requested identity:
+
+- `Generate`, `Prefill`, and `Decode` use `ExecutionMetadata.backend_identity`;
+- `Embed`, `Rerank`, `Transcribe`, `Speak`, `SpeakStream`, `ImageGenerate`, and
+  `ImageEdit` carry `backend_identity` directly.
+
+The worker compares all four identity fields with its immutable loaded record
+before runtime lease acquisition, media preprocessing, tokenization, or model
+execution. A missing identity or zero generation fails closed with
+`model_identity_missing`. A different model, adapter, route generation, or worker
+instance fails closed with `model_identity_mismatch`. Neither failure may emit
+output.
+
+`BackendIdentityMismatchReceipt` records requested and loaded identifiers,
+requested and loaded generations and worker instances, observation time, and a
+bounded mismatch reason. Worker diagnostics preserve public catalog identifiers
+but redact absolute, relative local, UNC, and case-insensitive local file URI
+paths.
 
 ### ModelSpec
 
@@ -687,6 +720,8 @@ Recommended intent:
 - `MODEL_KIND_UNSUPPORTED`
 - `MEMORY_BUDGET_EXCEEDED`
 - `WORKER_DRAINING`
+- `model_identity_missing`
+- `model_identity_mismatch`
 
 ### Generation and Cache
 
@@ -719,6 +754,15 @@ Recommended intent:
 - tool-call deltas fit naturally
 - SSE bridging is straightforward
 - cancellation maps cleanly to a single request
+
+Creating a stream object is not response output. The first backend event is the
+replay cutoff, including an admission or envelope event before a token, audio
+chunk, tool call, usage payload, or completion. A transport or identity failure
+before that cutoff may receive one fresh control-plane dispatch. A failure after
+the cutoff is terminal and must not replay completed tool work or any other
+output. Image generation and editing are stricter: only a typed identity
+mismatch before an artifact exists may trigger recovery, because an ambiguous
+transport failure could occur after the backend already committed side effects.
 
 ### Heartbeats
 

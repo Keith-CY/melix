@@ -74,6 +74,7 @@ class LoadedModel:
     runtime_kind: str
     residency: common_pb2.ResidencyInfo
     load_trust: common_pb2.ModelLoadTrustPolicy
+    backend_identity: common_pb2.BackendModelIdentity
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
 
@@ -137,6 +138,23 @@ def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> in
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _diagnostic_identity(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    lower = normalized.lower()
+    is_local_path = (
+        normalized.startswith(("/", "~/", "./", "../", "\\\\", ".\\", "..\\"))
+        or lower.startswith("file:")
+        or (len(normalized) >= 3 and normalized[1:3] in {":\\", ":/"})
+    )
+    if is_local_path:
+        return "[local-path-redacted]"
+    if len(normalized) > 128:
+        return normalized[:125] + "..."
+    return normalized
 
 
 class RequestRuntimeLease:
@@ -369,6 +387,8 @@ class WorkerRegistry:
         self._last_image_peak_memory_bytes = 0
         self._last_model_load_trust_policy_resolution_ms = 0.0
         self._model_load_trust_blocked_count = 0
+        self._model_identity_mismatch_count = 0
+        self._last_model_identity_mismatch = common_pb2.BackendIdentityMismatchReceipt()
         self._default_text_load_trust_policy = default_not_applicable_load_trust_policy(
             runtime_kind="text",
             runtime=self.runtime,
@@ -418,6 +438,7 @@ class WorkerRegistry:
         memory_budget_bytes: int = 0,
         disk_streaming_mode: int = common_pb2.DISK_STREAMING_MODE_UNSPECIFIED,
         load_trust: common_pb2.ModelLoadTrustPolicy | None = None,
+        backend_identity: common_pb2.BackendModelIdentity | None = None,
     ) -> LoadedModel:
         resolved = self._resolved_model_spec(model_spec)
         has_settings = resolved.HasField("settings")
@@ -539,6 +560,10 @@ class WorkerRegistry:
                 runtime_kind=runtime_kind,
                 residency=residency,
                 load_trust=load_trust_policy,
+                backend_identity=self._resolved_backend_identity(
+                    resolved,
+                    backend_identity,
+                ),
             )
             self._loaded_models[handle] = loaded
             self._invalidate_loaded_model_order_locked()
@@ -770,6 +795,125 @@ class WorkerRegistry:
     def get_loaded_model(self, handle: str) -> LoadedModel | None:
         with self._lock:
             return self._loaded_models.get(handle)
+
+    def validate_backend_identity(
+        self,
+        handle: str,
+        requested: common_pb2.BackendModelIdentity | None,
+    ) -> common_pb2.ErrorStatus | None:
+        with self._lock:
+            loaded = self._loaded_models.get(handle)
+            request_missing = requested is None or not (
+                requested.requested_model_id.strip()
+                and requested.route_generation > 0
+                and requested.worker_instance_id.strip()
+            )
+            bound = (
+                loaded.backend_identity
+                if loaded is not None
+                else common_pb2.BackendModelIdentity()
+            )
+            if request_missing:
+                observed = common_pb2.BackendModelIdentity()
+                code = "model_identity_missing"
+            else:
+                observed = requested
+                code = "model_identity_mismatch"
+                if loaded is None:
+                    mismatch_reason = "model_handle_missing"
+                    receipt = self._record_model_identity_mismatch_locked(
+                        observed,
+                        bound,
+                        mismatch_reason=mismatch_reason,
+                    )
+                    return common_pb2.ErrorStatus(
+                        code=code,
+                        message="Backend model identity did not match the loaded residency.",
+                        retriable=True,
+                        details={
+                            "requested_route_generation": str(observed.route_generation),
+                            "loaded_route_generation": "0",
+                        },
+                        backend_identity_mismatch=receipt,
+                    )
+                if observed == bound:
+                    return None
+            mismatch_reason = self._backend_identity_mismatch_reason(
+                observed,
+                bound,
+                request_missing=request_missing,
+            )
+            receipt = self._record_model_identity_mismatch_locked(
+                observed,
+                bound,
+                mismatch_reason=mismatch_reason,
+            )
+
+        return common_pb2.ErrorStatus(
+            code=code,
+            message="Backend model identity did not match the loaded residency.",
+            retriable=code == "model_identity_mismatch",
+            details={
+                "requested_route_generation": str(observed.route_generation),
+                "loaded_route_generation": str(bound.route_generation),
+            },
+            backend_identity_mismatch=receipt,
+        )
+
+    def _resolved_backend_identity(
+        self,
+        model: common_pb2.ModelSpec,
+        requested: common_pb2.BackendModelIdentity | None,
+    ) -> common_pb2.BackendModelIdentity:
+        return common_pb2.BackendModelIdentity(
+            requested_model_id=model.model_id,
+            requested_adapter_id=model.ext.get("melix.adapter_set_hash", ""),
+            route_generation=requested.route_generation if requested is not None else 0,
+            worker_instance_id=self.worker_id,
+        )
+
+    def _record_model_identity_mismatch_locked(
+        self,
+        requested: common_pb2.BackendModelIdentity,
+        loaded: common_pb2.BackendModelIdentity,
+        *,
+        mismatch_reason: str,
+    ) -> common_pb2.BackendIdentityMismatchReceipt:
+        self._model_identity_mismatch_count += 1
+        receipt = common_pb2.BackendIdentityMismatchReceipt(
+            requested_model_id=_diagnostic_identity(requested.requested_model_id),
+            loaded_model_id=_diagnostic_identity(loaded.requested_model_id),
+            requested_adapter_id=_diagnostic_identity(requested.requested_adapter_id),
+            loaded_adapter_id=_diagnostic_identity(loaded.requested_adapter_id),
+            requested_route_generation=requested.route_generation,
+            loaded_route_generation=loaded.route_generation,
+            observed_at_unix_ms=int(time.time() * 1000),
+            mismatch_reason=mismatch_reason,
+            requested_worker_instance_id=_diagnostic_identity(requested.worker_instance_id),
+            loaded_worker_instance_id=_diagnostic_identity(loaded.worker_instance_id),
+        )
+        self._last_model_identity_mismatch = receipt
+        return receipt
+
+    @staticmethod
+    def _backend_identity_mismatch_reason(
+        requested: common_pb2.BackendModelIdentity,
+        loaded: common_pb2.BackendModelIdentity,
+        *,
+        request_missing: bool,
+    ) -> str:
+        if request_missing:
+            return "identity_missing"
+        mismatches = []
+        if requested.requested_model_id != loaded.requested_model_id:
+            mismatches.append("model_id")
+        if requested.requested_adapter_id != loaded.requested_adapter_id:
+            mismatches.append("adapter_id")
+        if requested.route_generation != loaded.route_generation:
+            mismatches.append("route_generation")
+        if requested.worker_instance_id != loaded.worker_instance_id:
+            mismatches.append("worker_instance_id")
+        return ",".join(mismatches) or "identity_mismatch"
 
     def list_loaded_models(self) -> list[str]:
         with self._lock:
@@ -1010,6 +1154,12 @@ class WorkerRegistry:
                 peak_allocation_bytes = 0
                 memory_headroom_bytes = self._memory_headroom_bytes
                 resident_bytes = model_resident_bytes + cache_resident_bytes + kv_cache_bytes
+                model_identity_mismatch_count = self._model_identity_mismatch_count
+                last_model_identity_mismatch = (
+                    self._last_model_identity_mismatch
+                    if model_identity_mismatch_count
+                    else None
+                )
                 has_probe_receipts = self._has_runtime_probe_receipts
                 if has_probe_receipts:
                     last_probe_kind = self._last_probe_kind
@@ -1137,6 +1287,9 @@ class WorkerRegistry:
         stats.kv_cache_bytes = kv_cache_bytes
         stats.peak_allocation_bytes = peak_allocation_bytes
         stats.memory_headroom_bytes = memory_headroom_bytes
+        if last_model_identity_mismatch is not None:
+            stats.model_identity_mismatch_count = model_identity_mismatch_count
+            stats.last_model_identity_mismatch.CopyFrom(last_model_identity_mismatch)
         return stats
 
     @staticmethod
@@ -1760,6 +1913,7 @@ class WorkerRegistry:
             summary.prompt_tps = loaded.prompt_tps
         if loaded.generation_tps != 0.0:
             summary.generation_tps = loaded.generation_tps
+        summary.backend_identity.CopyFrom(loaded.backend_identity)
         return summary
 
     @staticmethod

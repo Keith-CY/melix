@@ -36,6 +36,7 @@ message LoadModelRequest {
   bool warmup_after_load = 4;
   DiskStreamingMode disk_streaming_mode = 5;
   ModelLoadTrustPolicy load_trust = 6;
+  BackendModelIdentity backend_identity = 7;
 }
 
 message LoadModelResponse {
@@ -182,6 +183,8 @@ message RuntimeStats {
   double speculative_probe_target_verify_ms = 110;
   bool speculative_probe_autoregressive_fallback = 111;
   bool speculative_probe_sampling_matches_baseline = 112;
+  uint64 model_identity_mismatch_count = 113;
+  BackendIdentityMismatchReceipt last_model_identity_mismatch = 114;
 }
 
 message GetRuntimeStatsRequest {}
@@ -204,6 +207,7 @@ message LoadedModelSummary {
   uint64 estimated_resident_bytes = 4;
   double prompt_tps = 5;
   double generation_tps = 6;
+  BackendModelIdentity backend_identity = 7;
 }
 
 message DrainRequest {

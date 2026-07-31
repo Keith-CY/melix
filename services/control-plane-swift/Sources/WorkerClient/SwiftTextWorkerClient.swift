@@ -64,6 +64,7 @@ public struct SwiftTextWorkerClient:
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol,
     LoadedModelsIntrospectingWorkerClientProtocol,
+    BackendHealthIdentifyingWorkerClientProtocol,
     Sendable
 {
     private let socketPath: String
@@ -79,17 +80,16 @@ public struct SwiftTextWorkerClient:
     }
 
     public func canDispatchRequests() async -> Bool {
+        (try? await backendHealthIdentity()) != nil
+    }
+
+    public func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
         var request = Melix_Worker_V1_HandshakeRequest()
         request.protocolVersion = "melix.worker.v1"
         request.workerID = "control-plane"
         request.controlplaneInstanceID = "melix-control-plane"
 
-        do {
-            _ = try await runner.handshake(socketPath: socketPath, request: request)
-            return true
-        } catch {
-            return false
-        }
+        return try await runner.handshake(socketPath: socketPath, request: request)
     }
 
     public func loadModel(

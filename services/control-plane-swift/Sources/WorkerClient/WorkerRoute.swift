@@ -1,6 +1,6 @@
 import MelixControlPlaneProtocol
 
-public enum WorkerRouteKind: String, Sendable, Equatable {
+public enum WorkerRouteKind: String, Sendable, Equatable, Hashable {
     case swiftText = "swift_text"
     case swiftVision = "swift_vision"
     case pythonCompatibility = "python_compatibility"

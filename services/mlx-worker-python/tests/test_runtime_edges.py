@@ -10,13 +10,23 @@ from types import SimpleNamespace
 
 import pytest
 
-from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2, runtime_pb2
+from packages.protocol.python.worker.v1 import (
+    common_pb2,
+    inference_pb2,
+    maintenance_pb2,
+    runtime_pb2,
+)
 
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.grpc_server import (
     BootstrapMetricsExporter,
-    WorkerInferenceService,
+    WorkerInferenceService as ProductionWorkerInferenceService,
     WorkerMaintenanceService,
-    WorkerRuntimeService,
+    WorkerRuntimeService as ProductionWorkerRuntimeService,
     _deterministic_benchmark_fetch_json,
     _default_melix_home,
     _elapsed_milliseconds_from_origin,
@@ -37,7 +47,13 @@ from worker.engine.request_state import RequestState
 from worker.registry import LoadedModel, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_delay import configured_delay_ms
-from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, NativeMTPBatchTimings, RuntimeTokenEvent, RuntimeUnavailableError
+from worker.runtime.mlx_text_runtime import (
+    AutoMLXBackend,
+    MLXTextRuntime,
+    NativeMTPBatchTimings,
+    RuntimeTokenEvent,
+    RuntimeUnavailableError,
+)
 
 
 class FakeBackend:
@@ -178,25 +194,45 @@ class FakeBenchmarkHFDatasetFetcher:
                         },
                     ]
                 }
-            return {"splits": [{"dataset": dataset, "config": "default", "split": "train_sft"}]}
+            return {
+                "splits": [
+                    {"dataset": dataset, "config": "default", "split": "train_sft"}
+                ]
+            }
 
         if dataset == "databricks/databricks-dolly-15k":
             if endpoint == "rows":
                 return {
                     "rows": [
-                        {"row": {"instruction": "List two colors.", "response": "Red and blue."}},
-                        {"row": {"instruction": "List two animals.", "response": "Cat and dog."}},
+                        {
+                            "row": {
+                                "instruction": "List two colors.",
+                                "response": "Red and blue.",
+                            }
+                        },
+                        {
+                            "row": {
+                                "instruction": "List two animals.",
+                                "response": "Cat and dog.",
+                            }
+                        },
                     ]
                 }
-            return {"splits": [{"dataset": dataset, "config": "default", "split": "train"}]}
+            return {
+                "splits": [{"dataset": dataset, "config": "default", "split": "train"}]
+            }
 
-        raise AssertionError(f"Unexpected benchmark fetch: endpoint={endpoint} dataset={dataset}")
+        raise AssertionError(
+            f"Unexpected benchmark fetch: endpoint={endpoint} dataset={dataset}"
+        )
 
 
 def test_fake_benchmark_hf_dataset_fetcher_covers_supported_and_error_paths() -> None:
     fetcher = FakeBenchmarkHFDatasetFetcher()
 
-    assert fetcher("rows", {"dataset": "HuggingFaceH4/ultrachat_200k", "offset": "1"}) == {"rows": []}
+    assert fetcher(
+        "rows", {"dataset": "HuggingFaceH4/ultrachat_200k", "offset": "1"}
+    ) == {"rows": []}
     assert fetcher("splits", {"dataset": "HuggingFaceH4/ultrachat_200k"}) == {
         "splits": [
             {
@@ -258,9 +294,13 @@ def test_worker_registry_request_counter_updates_use_direct_multimodal_membershi
 
     def fail_helper(runtime_kind: str) -> bool:  # pragma: no cover - regression guard
         _ = runtime_kind
-        raise AssertionError("request counter updates should use direct multimodal membership")
+        raise AssertionError(
+            "request counter updates should use direct multimodal membership"
+        )
 
-    monkeypatch.setattr(WorkerRegistry, "_is_multimodal_request_kind", staticmethod(fail_helper))
+    monkeypatch.setattr(
+        WorkerRegistry, "_is_multimodal_request_kind", staticmethod(fail_helper)
+    )
 
     registry.start_request("ocr-request", runtime_kind="ocr")
     registry.start_request("text-request", runtime_kind="text")
@@ -291,11 +331,15 @@ def test_worker_registry_capabilities_advertise_vlm_cooperative_text_step() -> N
     )
 
 
-def test_worker_registry_sparse_model_request_fast_path_preserves_semantics(tmp_path: Path) -> None:
+def test_worker_registry_sparse_model_request_fast_path_preserves_semantics(
+    tmp_path: Path,
+) -> None:
     sparse = common_pb2.ModelSpec(model_id="melix-dev-text")
     empty = common_pb2.ModelSpec()
     full = WorkerModelCatalog.dev_text_model()
-    with_path = common_pb2.ModelSpec(model_id="melix-dev-text", model_path="/models/dev")
+    with_path = common_pb2.ModelSpec(
+        model_id="melix-dev-text", model_path="/models/dev"
+    )
 
     assert WorkerRegistry._is_sparse_model_request(sparse) is True
     assert WorkerRegistry._is_sparse_model_request(empty) is True
@@ -329,15 +373,23 @@ def test_worker_registry_sparse_model_request_fast_path_preserves_semantics(tmp_
             runtime_mode=common_pb2.RUNTIME_MODE_FUSED_DERIVED_MODEL,
         ),
     ]
-    assert all(not WorkerRegistry._is_sparse_model_request(variant) for variant in non_sparse_variants)
+    assert all(
+        not WorkerRegistry._is_sparse_model_request(variant)
+        for variant in non_sparse_variants
+    )
 
     registry = build_registry()
     loaded = registry.load_model(sparse)
 
     assert loaded.spec.model_id == "melix-dev-text"
     assert loaded.spec.model_path == WorkerModelCatalog.dev_text_model().model_path
-    assert loaded.runtime_model["model_path"] == WorkerModelCatalog.dev_text_model().model_path
-    assert loaded.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+    assert (
+        loaded.runtime_model["model_path"]
+        == WorkerModelCatalog.dev_text_model().model_path
+    )
+    assert (
+        loaded.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+    )
     assert loaded.load_trust.loader_family == "fake-mlx"
 
     request_policy = common_pb2.ModelLoadTrustPolicy(
@@ -346,21 +398,38 @@ def test_worker_registry_sparse_model_request_fast_path_preserves_semantics(tmp_
     requested = registry.load_model(full, load_trust=request_policy)
     settings_model = common_pb2.ModelSpec()
     settings_model.CopyFrom(full)
-    settings_model.settings.load_trust_mode = common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    settings_model.settings.load_trust_mode = (
+        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    )
     settings_loaded = registry.load_model(settings_model)
     routed_model = common_pb2.ModelSpec()
     routed_model.CopyFrom(full)
     routed_model.route_class = common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
     routed_loaded = registry.load_model(routed_model)
 
-    assert requested.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
-    assert requested.load_trust.requested_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
-    assert settings_loaded.load_trust.requested_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
-    assert routed_loaded.load_trust.route_class == common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
+    assert (
+        requested.load_trust.effective_mode
+        == common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+    )
+    assert (
+        requested.load_trust.requested_mode
+        == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    )
+    assert (
+        settings_loaded.load_trust.requested_mode
+        == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    )
+    assert (
+        routed_loaded.load_trust.route_class
+        == common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
+    )
 
     applicable_registry = build_registry(backend=ApplicableBackend())
     trusted = applicable_registry.load_model(full, load_trust=request_policy)
-    assert trusted.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    assert (
+        trusted.load_trust.effective_mode
+        == common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+    )
     assert trusted.runtime_model["model_id"] == "melix-dev-text"
 
     custom_loader_dir = tmp_path / "custom-loader-model"
@@ -388,7 +457,9 @@ def load_default_model(runtime_service: WorkerRuntimeService) -> str:
 def test_runtime_service_handles_failures_and_state_transitions() -> None:
     assert registry_module._non_negative_int("invalid") == 0
 
-    failing_registry, failing_runtime_service, _ = build_services(backend=FailingBackend())
+    failing_registry, failing_runtime_service, _ = build_services(
+        backend=FailingBackend()
+    )
     _ = failing_registry
 
     failed = failing_runtime_service.LoadModel(
@@ -401,7 +472,9 @@ def test_runtime_service_handles_failures_and_state_transitions() -> None:
     registry, runtime_service, _ = build_services()
     model_handle = load_default_model(runtime_service)
 
-    stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None)
+    stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    )
     assert stats.stats.worker_state == "idle"
     assert stats.stats.resident_bytes == 4096
     assert stats.stats.model_resident_bytes == 4096
@@ -415,7 +488,9 @@ def test_runtime_service_handles_failures_and_state_transitions() -> None:
         context=None,
     )
     assert drained.ok is True
-    draining_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None)
+    draining_stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    )
     assert draining_stats.stats.worker_state == "draining"
 
     active_model_handle = load_default_model(runtime_service)
@@ -428,7 +503,9 @@ def test_runtime_service_handles_failures_and_state_transitions() -> None:
         runtime_kind="text",
     ):
         pending = runtime_service.UnloadModel(
-            runtime_pb2.UnloadModelRequest(model_handle=active_model_handle, force=True),
+            runtime_pb2.UnloadModelRequest(
+                model_handle=active_model_handle, force=True
+            ),
             context=None,
         )
 
@@ -477,7 +554,9 @@ def test_runtime_service_handles_failures_and_state_transitions() -> None:
     assert registry.list_loaded_models() == []
 
 
-def test_runtime_service_rejects_model_loads_that_exceed_process_budget_and_reports_headroom() -> None:
+def test_runtime_service_rejects_model_loads_that_exceed_process_budget_and_reports_headroom() -> (
+    None
+):
     registry = build_registry(
         process_memory_budget_bytes=4_500,
         memory_headroom_bytes=1_024,
@@ -491,7 +570,10 @@ def test_runtime_service_rejects_model_loads_that_exceed_process_budget_and_repo
 
     assert rejected.ok is False
     assert rejected.error.code == "memory_budget_exceeded"
-    assert rejected.error.message == "Projected resident memory would exceed the process budget."
+    assert (
+        rejected.error.message
+        == "Projected resident memory would exceed the process budget."
+    )
     assert rejected.error.details == {
         "budget_bytes": "4500",
         "headroom_bytes": "1024",
@@ -500,7 +582,9 @@ def test_runtime_service_rejects_model_loads_that_exceed_process_budget_and_repo
     }
     assert registry.list_loaded_models() == []
 
-    stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None)
+    stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    )
     assert stats.stats.memory_headroom_bytes == 1024
     assert stats.stats.resident_bytes == 0
 
@@ -547,7 +631,6 @@ def test_worker_registry_reserves_resident_bytes_across_concurrent_loads() -> No
     assert registry.unload_model(first.handle) is True
 
 
-
 def test_worker_registry_releases_reserved_bytes_when_load_fails() -> None:
     registry = build_registry(backend=FailingBackend())
 
@@ -559,14 +642,15 @@ def test_worker_registry_releases_reserved_bytes_when_load_fails() -> None:
     assert registry.list_loaded_models() == []
 
 
-
 def test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes() -> None:
     registry = build_registry()
     first = registry.load_model(WorkerModelCatalog.dev_text_model())
 
     class ValuesFailDict(dict):
         def values(self):
-            raise AssertionError("loaded model resident bytes should not rescan dict values")
+            raise AssertionError(
+                "loaded model resident bytes should not rescan dict values"
+            )
 
     registry._loaded_models = ValuesFailDict(registry._loaded_models)
 
@@ -574,7 +658,10 @@ def test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes() ->
     stats = registry.runtime_stats()
 
     assert second.handle != first.handle
-    assert stats.model_resident_bytes == first.estimated_resident_bytes + second.estimated_resident_bytes
+    assert (
+        stats.model_resident_bytes
+        == first.estimated_resident_bytes + second.estimated_resident_bytes
+    )
     assert registry.unload_model(first.handle) is True
     assert registry.unload_model(second.handle) is True
     assert registry.unload_model("missing-handle") is False
@@ -605,11 +692,17 @@ def test_worker_registry_avoids_rescanning_loaded_models_for_resident_bytes() ->
     assert closing_registry.unload_model(closing_loaded.handle) is False
 
     applicable_registry = build_registry(backend=ApplicableBackend())
-    applicable_loaded = applicable_registry.load_model(WorkerModelCatalog.dev_text_model())
+    applicable_loaded = applicable_registry.load_model(
+        WorkerModelCatalog.dev_text_model()
+    )
     applicable_stats = applicable_registry.runtime_stats()
 
-    assert applicable_loaded.load_trust.effective_mode == common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
+    assert (
+        applicable_loaded.load_trust.effective_mode
+        == common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
+    )
     assert applicable_stats.last_model_load_trust_policy_resolution_ms >= 0.0
+
 
 def test_worker_registry_closes_runtime_model_on_unload() -> None:
     class ClosingRuntime:
@@ -638,7 +731,9 @@ def test_worker_registry_closes_runtime_model_on_unload() -> None:
     assert registry.unload_model(loaded.handle) is False
 
 
-def test_worker_registry_reuses_sorted_handles_across_listing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_registry_reuses_sorted_handles_across_listing_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     registry = build_registry()
     for _ in range(3):
         registry.load_model(WorkerModelCatalog.dev_text_model())
@@ -743,7 +838,10 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
         assert receipt.released_at == ""
         assert receipt.unloaded_at == ""
         assert registry.get_loaded_model(leased_model.handle) is leased_model
-        assert registry.runtime_stats().model_resident_bytes == leased_model.estimated_resident_bytes
+        assert (
+            registry.runtime_stats().model_resident_bytes
+            == leased_model.estimated_resident_bytes
+        )
 
     completed = registry.pending_unload_receipt(leased_model.handle)
     assert completed is not None
@@ -814,7 +912,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
         transcription_runtime=StubAudioRuntime("deterministic-transcription"),
         model_catalog=WorkerModelCatalog(),
     )
-    audio_loaded = audio_registry.load_model(WorkerModelCatalog.dev_transcription_model())
+    audio_loaded = audio_registry.load_model(
+        WorkerModelCatalog.dev_transcription_model()
+    )
     audio_stats = audio_registry.runtime_stats()
     assert audio_loaded.runtime_model.load_latency_ms == 12.5
     assert audio_stats.last_audio_model_load_latency_ms == 12.5
@@ -937,7 +1037,9 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert registry.pending_unload_receipt(retained_receipt_handles[2]) is None
 
     vision_state = registry.start_request("req-vision", runtime_kind="ocr")
-    transcription_state = registry.start_request("req-transcription", runtime_kind="transcription")
+    transcription_state = registry.start_request(
+        "req-transcription", runtime_kind="transcription"
+    )
     speech_state = registry.start_request("req-speech", runtime_kind="speech")
     registry.set_request_phase("req-vision", "prefill")
     registry.set_request_phase("req-transcription", "decode")
@@ -1303,7 +1405,10 @@ def test_runtime_stats_request_counters_stay_consistent_without_request_scan() -
 
     live_vlm_runtime = LiveMLXVLMRuntime()
     registry = build_registry(mlx_vlm_runtime=live_vlm_runtime)
-    assert live_vlm_runtime.estimate_resident_bytes(WorkerModelCatalog.dev_vlm_model()) == 4096
+    assert (
+        live_vlm_runtime.estimate_resident_bytes(WorkerModelCatalog.dev_vlm_model())
+        == 4096
+    )
 
     registry.start_request("req-reused", runtime_kind="ocr")
     registry.set_request_phase("req-reused", "prefill")
@@ -1339,7 +1444,9 @@ def test_runtime_stats_request_counters_stay_consistent_without_request_scan() -
     assert live_vlm_probe_calls == 2
 
 
-def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backend_configuration() -> None:
+def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backend_configuration() -> (
+    None
+):
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=FakeBackend()),
         transcription_runtime=StubAudioRuntime("deterministic-transcription"),
@@ -1349,8 +1456,12 @@ def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backe
         model_catalog=WorkerModelCatalog(),
     )
 
-    _, deterministic_transcription = registry._runtime_for_model(WorkerModelCatalog.dev_transcription_model())
-    _, deterministic_speech = registry._runtime_for_model(WorkerModelCatalog.dev_speech_model())
+    _, deterministic_transcription = registry._runtime_for_model(
+        WorkerModelCatalog.dev_transcription_model()
+    )
+    _, deterministic_speech = registry._runtime_for_model(
+        WorkerModelCatalog.dev_speech_model()
+    )
     _, whisper = registry._runtime_for_model(WorkerModelCatalog.mlx_whisper_model())
     _, parakeet = registry._runtime_for_model(WorkerModelCatalog.mlx_parakeet_model())
     _, kokoro = registry._runtime_for_model(WorkerModelCatalog.mlx_kokoro_model())
@@ -1369,7 +1480,9 @@ def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backe
     assert kokoro.runtime_name == "mlx-audio-tts"
     assert qwen3_tts.runtime_name == "mlx-audio-tts"
 
-    with pytest.raises(RuntimeError, match="requires an explicit melix.audio.backend_id"):
+    with pytest.raises(
+        RuntimeError, match="requires an explicit melix.audio.backend_id"
+    ):
         registry._runtime_for_model(missing_backend)
 
 
@@ -1406,7 +1519,11 @@ def test_registry_runtime_stats_include_vlm_cache_bytes_after_generation() -> No
         return_usage=True,
     )
 
-    list(inference_service.Generate(request, context=None))
+    list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     cache_stats = registry.cache_stats_response()
     runtime_stats = registry.runtime_stats()
@@ -1447,16 +1564,45 @@ def test_text_generate_completed_metrics_include_native_mtp_batch_stats() -> Non
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
-    assert completed.parser_metrics["text_batch_generator_speculative_cycle_count_total"] == "4"
-    assert completed.parser_metrics["text_batch_generator_speculative_accepted_count_total"] == "3"
-    assert completed.parser_metrics["text_batch_generator_speculative_rejected_count_total"] == "1"
-    assert completed.parser_metrics["text_batch_generator_speculative_backbone_ms_total"] == "210.5"
-    assert completed.parser_metrics["text_batch_generator_speculative_mtp_head_ms_total"] == "20.25"
-    assert completed.parser_metrics["text_batch_generator_speculative_sample_ms_total"] == "3.75"
-    assert completed.parser_metrics["text_batch_generator_speculative_cache_ops_ms_total"] == "5.5"
+    assert (
+        completed.parser_metrics["text_batch_generator_speculative_cycle_count_total"]
+        == "4"
+    )
+    assert (
+        completed.parser_metrics[
+            "text_batch_generator_speculative_accepted_count_total"
+        ]
+        == "3"
+    )
+    assert (
+        completed.parser_metrics[
+            "text_batch_generator_speculative_rejected_count_total"
+        ]
+        == "1"
+    )
+    assert (
+        completed.parser_metrics["text_batch_generator_speculative_backbone_ms_total"]
+        == "210.5"
+    )
+    assert (
+        completed.parser_metrics["text_batch_generator_speculative_mtp_head_ms_total"]
+        == "20.25"
+    )
+    assert (
+        completed.parser_metrics["text_batch_generator_speculative_sample_ms_total"]
+        == "3.75"
+    )
+    assert (
+        completed.parser_metrics["text_batch_generator_speculative_cache_ops_ms_total"]
+        == "5.5"
+    )
     assert completed.parser_metrics["text_batch_generator_insert_ms"] == "1.25"
     assert completed.parser_metrics["text_batch_generator_prepare_ms"] == "2.5"
     assert completed.parser_metrics["text_batch_generator_prompt_encode_ms"] == "0.75"
@@ -1499,7 +1645,9 @@ def test_registry_runtime_stats_include_audio_load_and_fallback_probes() -> None
     assert stats.last_language_fallback_count == 2
 
 
-def test_runtime_service_maps_real_audio_load_failures_to_unavailable_and_runtime_error() -> None:
+def test_runtime_service_maps_real_audio_load_failures_to_unavailable_and_runtime_error() -> (
+    None
+):
     unavailable_registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=FakeBackend()),
         transcription_runtime=StubAudioRuntime("deterministic-transcription"),
@@ -1517,10 +1665,13 @@ def test_runtime_service_maps_real_audio_load_failures_to_unavailable_and_runtim
     assert unavailable.ok is False
     assert unavailable.error.code == "unavailable"
     assert "unavailable" in unavailable.error.message
-    assert unavailable_service.GetRuntimeStats(
-        runtime_pb2.GetRuntimeStatsRequest(),
-        context=None,
-    ).stats.last_audio_backend_unavailable_count == 1
+    assert (
+        unavailable_service.GetRuntimeStats(
+            runtime_pb2.GetRuntimeStatsRequest(),
+            context=None,
+        ).stats.last_audio_backend_unavailable_count
+        == 1
+    )
 
     failing_registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=FakeBackend()),
@@ -1541,17 +1692,30 @@ def test_runtime_service_maps_real_audio_load_failures_to_unavailable_and_runtim
     assert "failed to load model" in failed.error.message
 
 
-def test_deterministic_multimodal_delay_prefers_specific_keys_and_shared_fallback() -> None:
+def test_deterministic_multimodal_delay_prefers_specific_keys_and_shared_fallback() -> (
+    None
+):
     assert configured_delay_ms("transcription", {}) == 0.0
-    assert configured_delay_ms("transcription", {"MELIX_DETERMINISTIC_MULTIMODAL_DELAY_MS": "25"}) == 25.0
-    assert configured_delay_ms(
-        "transcription",
-        {
-            "MELIX_DETERMINISTIC_MULTIMODAL_DELAY_MS": "25",
-            "MELIX_DETERMINISTIC_TRANSCRIPTION_DELAY_MS": "150",
-        },
-    ) == 150.0
-    assert configured_delay_ms("ocr", {"MELIX_DETERMINISTIC_OCR_DELAY_MS": "invalid"}) == 0.0
+    assert (
+        configured_delay_ms(
+            "transcription", {"MELIX_DETERMINISTIC_MULTIMODAL_DELAY_MS": "25"}
+        )
+        == 25.0
+    )
+    assert (
+        configured_delay_ms(
+            "transcription",
+            {
+                "MELIX_DETERMINISTIC_MULTIMODAL_DELAY_MS": "25",
+                "MELIX_DETERMINISTIC_TRANSCRIPTION_DELAY_MS": "150",
+            },
+        )
+        == 150.0
+    )
+    assert (
+        configured_delay_ms("ocr", {"MELIX_DETERMINISTIC_OCR_DELAY_MS": "invalid"})
+        == 0.0
+    )
 
 
 def test_runtime_wrapper_and_unavailable_backend_paths() -> None:
@@ -1598,31 +1762,38 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
 
     missing_model_events = list(
         inference_service.Generate(
-            inference_pb2.GenerateRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="req-missing-model"),
-                    model_handle="missing-handle",
-                )
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id="req-missing-model"),
+                        model_handle="missing-handle",
+                    )
+                ),
+                source_handle=model_handle,
             ),
             context=None,
         )
     )
-    assert missing_model_events[0].error.error.code == "not_found"
+    assert missing_model_events[0].error.error.code == "model_identity_mismatch"
 
     runtime_error_events = list(
         inference_service.Generate(
-            inference_pb2.GenerateRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="req-runtime-error"),
-                    model_handle=model_handle,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id="req-runtime-error"),
+                        model_handle=model_handle,
+                    ),
+                    messages=[
+                        common_pb2.ChatMessage(
+                            role="user",
+                            parts=[common_pb2.MessagePart(text="explode")],
+                        )
+                    ],
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=4),
                 ),
-                messages=[
-                    common_pb2.ChatMessage(
-                        role="user",
-                        parts=[common_pb2.MessagePart(text="explode")],
-                    )
-                ],
-                sampling=common_pb2.SamplingConfig(max_output_tokens=4),
             ),
             context=None,
         )
@@ -1631,11 +1802,14 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
 
     decode_events = list(
         inference_service.Decode(
-            inference_pb2.DecodeRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="req-decode"),
-                    model_handle=model_handle,
-                )
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.DecodeRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id="req-decode"),
+                        model_handle=model_handle,
+                    )
+                ),
             ),
             context=None,
         )
@@ -1656,10 +1830,13 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
     assert embed_model.ok is True
 
     embed = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="req-embed"),
-            model_handle=embed_model.model_handle,
-            inputs=["one", "two"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="req-embed"),
+                model_handle=embed_model.model_handle,
+                inputs=["one", "two"],
+            ),
         ),
         context=None,
     )
@@ -1670,32 +1847,51 @@ def test_inference_service_covers_error_and_unimplemented_paths() -> None:
     assert rerank_model.ok is True
 
     rerank = inference_service.Rerank(
-        inference_pb2.RerankRequest(
-            id=common_pb2.RequestIdentity(request_id="req-rerank"),
-            model_handle=rerank_model.model_handle,
-            query="swift runtime worker",
-            documents=["swift runtime worker", "image generation", "embedding vector"],
-            top_k=2,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.RerankRequest(
+                id=common_pb2.RequestIdentity(request_id="req-rerank"),
+                model_handle=rerank_model.model_handle,
+                query="swift runtime worker",
+                documents=[
+                    "swift runtime worker",
+                    "image generation",
+                    "embedding vector",
+                ],
+                top_k=2,
+            ),
         ),
         context=None,
     )
-    transcribe = inference_service.Transcribe(inference_pb2.TranscribeRequest(), context=None)
-    speak = inference_service.Speak(inference_pb2.SpeakRequest(), context=None)
-    image_generate = inference_service.ImageGenerate(inference_pb2.ImageGenerateRequest(), context=None)
-    image_edit = inference_service.ImageEdit(inference_pb2.ImageEditRequest(), context=None)
+    transcribe = inference_service.Transcribe(
+        bind_backend_identity(inference_service, inference_pb2.TranscribeRequest()),
+        context=None,
+    )
+    speak = inference_service.Speak(
+        bind_backend_identity(inference_service, inference_pb2.SpeakRequest()),
+        context=None,
+    )
+    image_generate = inference_service.ImageGenerate(
+        bind_backend_identity(inference_service, inference_pb2.ImageGenerateRequest()),
+        context=None,
+    )
+    image_edit = inference_service.ImageEdit(
+        bind_backend_identity(inference_service, inference_pb2.ImageEditRequest()),
+        context=None,
+    )
 
     assert embed.error.code == ""
     assert len(embed.embeddings) == 2
     assert rerank.error.code == ""
     assert len(rerank.items) == 2
-    assert transcribe.error.code == "not_found"
-    assert speak.error.code == "not_found"
-    assert image_generate.error.code == "not_found"
-    assert image_edit.error.code == "not_found"
-    assert image_generate.job.state == common_pb2.IMAGE_JOB_FAILED
-    assert image_generate.job.operation == "image_generate"
-    assert image_edit.job.state == common_pb2.IMAGE_JOB_FAILED
-    assert image_edit.job.operation == "image_edit"
+    assert transcribe.error.code == "model_identity_missing"
+    assert speak.error.code == "model_identity_missing"
+    assert image_generate.error.code == "model_identity_missing"
+    assert image_edit.error.code == "model_identity_missing"
+    assert image_generate.job.state == common_pb2.IMAGE_JOB_STATE_UNSPECIFIED
+    assert image_generate.job.operation == ""
+    assert image_edit.job.state == common_pb2.IMAGE_JOB_STATE_UNSPECIFIED
+    assert image_edit.job.operation == ""
 
 
 def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
@@ -1720,7 +1916,9 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
         def stop(self, grace: int) -> None:
             seen_build["stopped"] = grace
 
-    monkeypatch.setattr("worker.grpc_server.grpc.server", lambda executor: FakeBoundServer())
+    monkeypatch.setattr(
+        "worker.grpc_server.grpc.server", lambda executor: FakeBoundServer()
+    )
     metrics_path = tmp_path / "python-worker-metrics.json"
     exporter = BootstrapMetricsExporter(str(metrics_path))
     server, runtime_service, inference_service = build_server(
@@ -1730,16 +1928,16 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     )
     server.stop(0)
 
-    assert isinstance(runtime_service, WorkerRuntimeService)
-    assert isinstance(inference_service, WorkerInferenceService)
+    assert isinstance(runtime_service, ProductionWorkerRuntimeService)
+    assert isinstance(inference_service, ProductionWorkerInferenceService)
     assert seen_build == {
         "handlers": 4,
-                "registered_services": [
-                    ("melix.worker.v1.RuntimeService", 8),
-                    ("melix.worker.v1.InferenceService", 11),
-                    ("melix.worker.v1.MaintenanceService", maintenance_method_count),
-                    ("melix.worker.v1.CacheService", 6),
-                ],
+        "registered_services": [
+            ("melix.worker.v1.RuntimeService", 8),
+            ("melix.worker.v1.InferenceService", 11),
+            ("melix.worker.v1.MaintenanceService", maintenance_method_count),
+            ("melix.worker.v1.CacheService", 6),
+        ],
         "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",
         "stopped": 0,
     }
@@ -1778,7 +1976,9 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
             1_080_000_000,
         ]
     )
-    monkeypatch.setattr("worker.grpc_server.time.perf_counter_ns", lambda: next(perf_counter_values))
+    monkeypatch.setattr(
+        "worker.grpc_server.time.perf_counter_ns", lambda: next(perf_counter_values)
+    )
     monkeypatch.setenv("MELIX_PYTHON_WORKER_METRICS_PATH", str(metrics_path))
     monkeypatch.setenv("MELIX_PYTHON_WORKER_STARTUP_T0_NS", "900000000")
     monkeypatch.setattr(
@@ -1802,7 +2002,9 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     assert main_metrics["python_worker.bootstrap_ms"] == 80
 
 
-def test_bootstrap_metrics_exporter_writes_atomically(monkeypatch, tmp_path: Path) -> None:
+def test_bootstrap_metrics_exporter_writes_atomically(
+    monkeypatch, tmp_path: Path
+) -> None:
     metrics_path = tmp_path / "python-worker-metrics.json"
     seen: dict[str, str] = {}
     original_replace = os.replace
@@ -1819,7 +2021,12 @@ def test_bootstrap_metrics_exporter_writes_atomically(monkeypatch, tmp_path: Pat
 
     assert seen["destination"] == os.fspath(metrics_path)
     assert Path(seen["source"]).parent == metrics_path.parent
-    assert json.loads(metrics_path.read_text(encoding="utf-8"))["values"]["python_worker.bootstrap_ms"] == 42
+    assert (
+        json.loads(metrics_path.read_text(encoding="utf-8"))["values"][
+            "python_worker.bootstrap_ms"
+        ]
+        == 42
+    )
 
 
 def test_bootstrap_metrics_exporter_is_noop_without_export_path() -> None:
@@ -1835,7 +2042,9 @@ def test_build_registry_for_backend_uses_deterministic_runtime() -> None:
     assert registry.rerank_runtime.runtime_name == "deterministic-rerank"
 
 
-def test_build_registry_for_backend_reads_process_memory_budget_env(monkeypatch) -> None:
+def test_build_registry_for_backend_reads_process_memory_budget_env(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("MELIX_PYTHON_WORKER_PROCESS_MEMORY_BUDGET_BYTES", "8192")
     monkeypatch.setenv("MELIX_PYTHON_WORKER_MODEL_LOAD_HEADROOM_BYTES", "512")
 
@@ -1852,8 +2061,12 @@ def test_build_maintenance_service_uses_deterministic_lora_runner() -> None:
         backend_mode="deterministic",
     )
 
-    assert isinstance(service._core._lora_training_pipeline._runner, DeterministicLoRARunner)
-    assert isinstance(service._core._adapter_activation_pipeline._runner, DeterministicLoRARunner)
+    assert isinstance(
+        service._core._lora_training_pipeline._runner, DeterministicLoRARunner
+    )
+    assert isinstance(
+        service._core._adapter_activation_pipeline._runner, DeterministicLoRARunner
+    )
     suite = service._core._benchmark_suite_catalog.resolve_suite(
         "smoke",
         jobs_root=Path("/tmp/melix-test-maintenance"),
@@ -1871,8 +2084,12 @@ def test_build_maintenance_service_keeps_default_lora_runner_for_auto_backend() 
         backend_mode="auto",
     )
 
-    assert not isinstance(service._core._lora_training_pipeline._runner, DeterministicLoRARunner)
-    assert not isinstance(service._core._adapter_activation_pipeline._runner, DeterministicLoRARunner)
+    assert not isinstance(
+        service._core._lora_training_pipeline._runner, DeterministicLoRARunner
+    )
+    assert not isinstance(
+        service._core._adapter_activation_pipeline._runner, DeterministicLoRARunner
+    )
 
 
 def _deterministic_training_config() -> LoRATrainingConfig:
@@ -1915,7 +2132,9 @@ def _deterministic_training_config() -> LoRATrainingConfig:
     )
 
 
-def test_deterministic_lora_runner_train_native_writes_adapter_artifacts(tmp_path: Path) -> None:
+def test_deterministic_lora_runner_train_native_writes_adapter_artifacts(
+    tmp_path: Path,
+) -> None:
     runner = DeterministicLoRARunner()
     request = TrainingRequest(
         job_id="job-1",
@@ -1939,11 +2158,15 @@ def test_deterministic_lora_runner_train_native_writes_adapter_artifacts(tmp_pat
     assert result.execution_backend == "native"
 
 
-def test_deterministic_lora_runner_activate_native_copies_runtime_bundle(tmp_path: Path) -> None:
+def test_deterministic_lora_runner_activate_native_copies_runtime_bundle(
+    tmp_path: Path,
+) -> None:
     runner = DeterministicLoRARunner()
     source_root = tmp_path / "base-model"
     source_root.mkdir(parents=True, exist_ok=True)
-    (source_root / "config.json").write_text('{"model_type":"llama"}\n', encoding="utf-8")
+    (source_root / "config.json").write_text(
+        '{"model_type":"llama"}\n', encoding="utf-8"
+    )
     (source_root / "tokenizer.json").write_text('{"version":"1.0"}\n', encoding="utf-8")
     (source_root / "model.safetensors").write_bytes(b"base-model")
 
@@ -1959,9 +2182,15 @@ def test_deterministic_lora_runner_activate_native_copies_runtime_bundle(tmp_pat
 
     result = runner.activate_native(request)
 
-    assert (result.derived_model_dir / "config.json").read_text(encoding="utf-8") == '{"model_type":"llama"}\n'
-    assert (result.derived_model_dir / "tokenizer.json").read_text(encoding="utf-8") == '{"version":"1.0"}\n'
-    assert (result.derived_model_dir / "model.safetensors").read_bytes() == b"base-model"
+    assert (result.derived_model_dir / "config.json").read_text(
+        encoding="utf-8"
+    ) == '{"model_type":"llama"}\n'
+    assert (result.derived_model_dir / "tokenizer.json").read_text(
+        encoding="utf-8"
+    ) == '{"version":"1.0"}\n'
+    assert (
+        result.derived_model_dir / "model.safetensors"
+    ).read_bytes() == b"base-model"
     assert json.loads(result.manifest_path.read_text(encoding="utf-8")) == {
         "schema_version": "melix.derived_text_model.v1"
     }
@@ -1989,8 +2218,12 @@ def test_deterministic_lora_runner_activate_native_writes_fallback_bundle_when_s
     assert (result.derived_model_dir / "config.json").read_text(encoding="utf-8") == (
         '{"model_type":"melix-deterministic"}\n'
     )
-    assert (result.derived_model_dir / "tokenizer.json").read_text(encoding="utf-8") == '{"version":"1.0"}\n'
-    assert (result.derived_model_dir / "model.safetensors").read_bytes() == b"melix-deterministic-model"
+    assert (result.derived_model_dir / "tokenizer.json").read_text(
+        encoding="utf-8"
+    ) == '{"version":"1.0"}\n'
+    assert (
+        result.derived_model_dir / "model.safetensors"
+    ).read_bytes() == b"melix-deterministic-model"
 
 
 def test_deterministic_benchmark_fetch_json_returns_ultrachat_rows_and_splits() -> None:
@@ -2021,7 +2254,9 @@ def test_deterministic_benchmark_fetch_json_returns_dolly_rows_and_splits() -> N
     assert splits["splits"][0]["split"] == "train"
 
 
-def test_deterministic_benchmark_fetch_json_returns_image_rows_and_empty_offsets() -> None:
+def test_deterministic_benchmark_fetch_json_returns_image_rows_and_empty_offsets() -> (
+    None
+):
     rows = _deterministic_benchmark_fetch_json(
         "rows",
         {"dataset": "huggingface/documentation-images", "offset": "0"},
@@ -2031,16 +2266,24 @@ def test_deterministic_benchmark_fetch_json_returns_image_rows_and_empty_offsets
         {"dataset": "huggingface/documentation-images", "offset": "4"},
     )
 
-    assert rows["rows"][0]["row"]["image"]["src"] == "https://example.com/doc-image-1.jpg"
+    assert (
+        rows["rows"][0]["row"]["image"]["src"] == "https://example.com/doc-image-1.jpg"
+    )
     assert offset_rows == {"rows": []}
 
 
 def test_deterministic_benchmark_fetch_json_rejects_unknown_datasets() -> None:
-    with pytest.raises(AssertionError, match="Unexpected deterministic benchmark fetch"):
-        _deterministic_benchmark_fetch_json("rows", {"dataset": "unknown/demo", "offset": "0"})
+    with pytest.raises(
+        AssertionError, match="Unexpected deterministic benchmark fetch"
+    ):
+        _deterministic_benchmark_fetch_json(
+            "rows", {"dataset": "unknown/demo", "offset": "0"}
+        )
 
 
-def test_build_server_normalizes_relative_socket_path(monkeypatch, tmp_path: Path) -> None:
+def test_build_server_normalizes_relative_socket_path(
+    monkeypatch, tmp_path: Path
+) -> None:
     registry = build_registry()
     seen: dict[str, object] = {}
 
@@ -2058,7 +2301,9 @@ def test_build_server_normalizes_relative_socket_path(monkeypatch, tmp_path: Pat
             return 1
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("worker.grpc_server.grpc.server", lambda executor: FakeBoundServer())
+    monkeypatch.setattr(
+        "worker.grpc_server.grpc.server", lambda executor: FakeBoundServer()
+    )
 
     build_server("relative-worker.sock", registry=registry)
 
@@ -2080,14 +2325,18 @@ def test_build_server_removes_existing_socket_file(monkeypatch, tmp_path: Path) 
         def add_insecure_port(self, address: str) -> int:
             return 1
 
-    monkeypatch.setattr("worker.grpc_server.grpc.server", lambda executor: FakeBoundServer())
+    monkeypatch.setattr(
+        "worker.grpc_server.grpc.server", lambda executor: FakeBoundServer()
+    )
 
     build_server(os.fspath(socket_path), registry=registry)
 
     assert not socket_path.exists()
 
 
-def test_build_server_routes_tooling_roots_from_environment(monkeypatch, tmp_path: Path) -> None:
+def test_build_server_routes_tooling_roots_from_environment(
+    monkeypatch, tmp_path: Path
+) -> None:
     registry = build_registry()
     seen: dict[str, object] = {}
 
@@ -2102,15 +2351,24 @@ def test_build_server_routes_tooling_roots_from_environment(monkeypatch, tmp_pat
             return 1
 
     class FakeMaintenanceService:
-        def __init__(self, registry, jobs_root=None, evaluation_jobs_root=None, **kwargs) -> None:
+        def __init__(
+            self, registry, jobs_root=None, evaluation_jobs_root=None, **kwargs
+        ) -> None:
             seen["jobs_root"] = jobs_root
             seen["evaluation_jobs_root"] = evaluation_jobs_root
 
     monkeypatch.setenv("MELIX_MODEL_OPS_JOBS_ROOT", os.fspath(tmp_path / "ops"))
     monkeypatch.setenv("MELIX_EVALUATION_JOBS_ROOT", os.fspath(tmp_path / "ops/evals"))
-    monkeypatch.setattr("worker.grpc_server.grpc.server", lambda executor: FakeBoundServer())
-    monkeypatch.setattr("worker.grpc_server.WorkerMaintenanceService", FakeMaintenanceService)
-    monkeypatch.setattr("worker.grpc_server.maintenance_pb2_grpc.add_MaintenanceServiceServicer_to_server", lambda servicer, server: None)
+    monkeypatch.setattr(
+        "worker.grpc_server.grpc.server", lambda executor: FakeBoundServer()
+    )
+    monkeypatch.setattr(
+        "worker.grpc_server.WorkerMaintenanceService", FakeMaintenanceService
+    )
+    monkeypatch.setattr(
+        "worker.grpc_server.maintenance_pb2_grpc.add_MaintenanceServiceServicer_to_server",
+        lambda servicer, server: None,
+    )
 
     build_server(os.fspath(tmp_path / "worker.sock"), registry=registry)
 
@@ -2118,14 +2376,18 @@ def test_build_server_routes_tooling_roots_from_environment(monkeypatch, tmp_pat
     assert seen["evaluation_jobs_root"] == (tmp_path / "ops/evals").resolve()
 
 
-def test_default_melix_home_ignores_blank_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_default_melix_home_ignores_blank_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("HOME", os.fspath(tmp_path / "user-home"))
     monkeypatch.setenv("MELIX_HOME", " ")
 
     assert _default_melix_home() == (tmp_path / "user-home/.melix").resolve()
 
 
-def test_maintenance_service_defaults_jobs_under_melix_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_maintenance_service_defaults_jobs_under_melix_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     melix_home = tmp_path / "melix-home"
     monkeypatch.setenv("MELIX_HOME", os.fspath(melix_home))
 
@@ -2158,7 +2420,9 @@ def test_maintenance_service_keeps_doctor_and_bench_structured(tmp_path: Path) -
     )
     bench_events = list(
         service.RunBench(
-            maintenance_pb2.RunBenchRequest(model_handle="melix-dev-text::1", suites=["smoke", "latency"]),
+            maintenance_pb2.RunBenchRequest(
+                model_handle="melix-dev-text::1", suites=["smoke", "latency"]
+            ),
             context=None,
         )
     )
@@ -2168,8 +2432,14 @@ def test_maintenance_service_keeps_doctor_and_bench_structured(tmp_path: Path) -
     assert "## Cache" in doctor.report_markdown
     assert "## Memory" in doctor.report_markdown
     assert bench_events[0].started.job_id == "model-ops-0001"
-    assert any(event.HasField("metric") and event.metric.name == "bench.smoke.ttft_ms" for event in bench_events)
-    assert any(event.HasField("metric") and event.metric.name == "bench.latency.p50_ms" for event in bench_events)
+    assert any(
+        event.HasField("metric") and event.metric.name == "bench.smoke.ttft_ms"
+        for event in bench_events
+    )
+    assert any(
+        event.HasField("metric") and event.metric.name == "bench.latency.p50_ms"
+        for event in bench_events
+    )
     assert bench_events[-1].completed.report_path.endswith("bench-report.md")
 
 

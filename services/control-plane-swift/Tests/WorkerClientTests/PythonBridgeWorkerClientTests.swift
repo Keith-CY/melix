@@ -1292,6 +1292,38 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::bridge")
     }
 
+    @Test("bootstrap preload fails closed without a backend health identity")
+    func bootstrapPreloadFailsClosedWithoutBackendHealthIdentity() async throws {
+        let catalog = ModelCatalog()
+
+        let preloaded = try await BootstrapWorkerPreparation.preloadDevTextModel(
+            workerClient: NullWorkerClient(),
+            modelCatalog: catalog
+        )
+
+        #expect(!preloaded)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
+    @Test("bootstrap preload fails closed for an empty backend health identity")
+    func bootstrapPreloadFailsClosedForEmptyBackendHealthIdentity() async throws {
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .handshake,
+            line: bridgeMessageLine(message: try Melix_Worker_V1_HandshakeResponse().serializedData())
+        )
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let catalog = ModelCatalog()
+
+        let preloaded = try await BootstrapWorkerPreparation.preloadDevTextModel(
+            workerClient: client,
+            modelCatalog: catalog
+        )
+
+        #expect(!preloaded)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
     @Test("bootstrap worker preparation carries adapter-set hash into worker model specs")
     func bootstrapWorkerPreparationCarriesAdapterSetHashIntoWorkerModelSpecs() throws {
         var summary = ModelCatalog.devTextModel()
@@ -2081,6 +2113,11 @@ private actor ScriptedBridgeRunner: WorkerBridgeRunning {
             lines.removeFirst()
             unary[command.kind] = lines
             return line
+        }
+        if command.kind == .handshake {
+            var response = Melix_Worker_V1_HandshakeResponse()
+            response.workerInstanceID = "scripted-python-worker"
+            return bridgeMessageLine(message: try response.serializedData())
         }
         return bridgeErrorLine(code: "missing_fixture", message: "No unary fixture.")
     }
