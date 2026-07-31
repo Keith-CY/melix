@@ -83,6 +83,12 @@ Out-of-range or unparseable values fall back to the default rather than failing
 the request — this is a performance path, and a bad knob must never turn into a
 failed generation. `min_ngram` is clamped to `max_ngram`.
 
+Keys beginning with `_melix.` are dropped when the policy ext is forwarded. That
+prefix is the engine's own routing namespace (session id, model id, block size,
+kv-quant profile), and several of those keys are only set when the request
+carries the corresponding field — so forwarding them would let a policy knob
+populate the unset ones and steer prefix-cache routing.
+
 ## Matching semantics
 
 The n-gram index maps each n-gram to its **earliest** end position. Earliest
