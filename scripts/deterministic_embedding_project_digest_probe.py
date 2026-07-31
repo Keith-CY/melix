@@ -33,9 +33,11 @@ def main() -> int:
 
     dimensions = 4097
     default_dimensions = 8
+    single_dimensions = 1
     zero_dimensions = 0
     vector_count = 500
     default_vector_count = 5000
+    single_dimension_vector_count = 50000
     zero_dimension_vector_count = 50000
     sample_count = int(
         os.environ.get(
@@ -47,6 +49,10 @@ def main() -> int:
     default_seed_texts = [
         f"bert::default projection row {index % 251}::{index}" for index in range(default_vector_count)
     ]
+    single_dimension_seed_texts = [
+        f"bert::single dimension row {index % 251}::{index}"
+        for index in range(single_dimension_vector_count)
+    ]
     zero_dimension_seed_texts = [
         f"bert::zero dimension row {index % 251}::{index}"
         for index in range(zero_dimension_vector_count)
@@ -55,10 +61,13 @@ def main() -> int:
     peak_samples: list[float] = []
     default_elapsed_samples: list[float] = []
     default_peak_samples: list[float] = []
+    single_dimension_elapsed_samples: list[float] = []
+    single_dimension_peak_samples: list[float] = []
     zero_dimension_elapsed_samples: list[float] = []
     zero_dimension_peak_samples: list[float] = []
     checksum = 0.0
     default_checksum = 0.0
+    single_dimension_checksum = 0.0
     zero_dimension_checksum = 0.0
 
     for _ in range(sample_count):
@@ -92,6 +101,20 @@ def main() -> int:
 
         gc.collect()
         tracemalloc.start()
+        single_dimension_started = time.perf_counter()
+        for seed_text in single_dimension_seed_texts:
+            vector = backend._project_digest(seed_text, single_dimensions)
+            if len(vector) != single_dimensions:  # pragma: no cover - defensive probe contract guard
+                raise AssertionError(f"unexpected single-dimension vector length: {len(vector)}")
+            single_dimension_checksum += vector[0]
+        single_dimension_elapsed_ms = (time.perf_counter() - single_dimension_started) * 1000.0
+        _, single_dimension_peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        single_dimension_elapsed_samples.append(single_dimension_elapsed_ms)
+        single_dimension_peak_samples.append(float(single_dimension_peak_bytes))
+
+        gc.collect()
+        tracemalloc.start()
         zero_dimension_started = time.perf_counter()
         for seed_text in zero_dimension_seed_texts:
             vector = backend._project_digest(seed_text, zero_dimensions)
@@ -115,6 +138,14 @@ def main() -> int:
             sum(default_peak_samples) / len(default_peak_samples),
             6,
         ),
+        "single_dimension_elapsed_ms_mean": round(
+            sum(single_dimension_elapsed_samples) / len(single_dimension_elapsed_samples),
+            6,
+        ),
+        "single_dimension_peak_bytes_mean": round(
+            sum(single_dimension_peak_samples) / len(single_dimension_peak_samples),
+            6,
+        ),
         "zero_dimension_elapsed_ms_mean": round(
             sum(zero_dimension_elapsed_samples) / len(zero_dimension_elapsed_samples),
             6,
@@ -126,12 +157,15 @@ def main() -> int:
         "sample_count": float(sample_count),
         "vector_count": float(vector_count),
         "default_dimension_vector_count": float(default_vector_count),
+        "single_dimension_vector_count": float(single_dimension_vector_count),
         "zero_dimension_vector_count": float(zero_dimension_vector_count),
         "dimensions": float(dimensions),
         "default_dimensions": float(default_dimensions),
+        "single_dimensions": float(single_dimensions),
         "zero_dimensions": float(zero_dimensions),
         "checksum": round(checksum, 6),
         "default_dimension_checksum": round(default_checksum, 6),
+        "single_dimension_checksum": round(single_dimension_checksum, 6),
         "zero_dimension_checksum": round(zero_dimension_checksum, 6),
     }
     print(json.dumps(payload, sort_keys=True))

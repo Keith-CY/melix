@@ -21,6 +21,7 @@ from worker.runtime.embedding_backends import (
     EmbeddingBackendDescriptor,
     EmbeddingFamilyDescriptor,
 )
+from worker.runtime import embedding_backends as embedding_backends_module
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
@@ -150,6 +151,38 @@ def test_project_digest_zero_dimensions_skips_digest_projection() -> None:
 
     assert len(backend._project_digest("bert::positive dimensions", 1, _sha256=counting_sha256)) == 1
     assert digest_calls == 1
+
+
+def test_project_digest_single_dimension_skips_expanded_projection() -> None:
+    backend = BERTEmbeddingBackend()
+
+    def fail_expanded_projection(base_values: list[float], dimensions: int) -> list[float]:  # pragma: no cover
+        raise AssertionError(f"unexpected expanded projection for {dimensions}: {base_values!r}")
+
+    backend._project_digest_expanded = fail_expanded_projection  # type: ignore[method-assign]
+
+    positive = backend._project_digest(
+        "bert::single-positive",
+        1,
+        _sha256=lambda payload=b"": hashlib.sha256(payload),
+    )
+    assert positive in ([-1.0], [1.0])
+
+    zero = backend._project_digest(
+        "bert::single-zero",
+        1,
+        _sha256=lambda payload=b"": hashlib.sha256(payload),
+        _round=round,
+    )
+    assert zero in ([-1.0], [1.0])
+
+
+def test_project_digest_single_dimension_preserves_zero_norm(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = BERTEmbeddingBackend()
+    monkeypatch.setattr(embedding_backends_module, "_UNPACK_DIGEST_UINT32", lambda digest: (1,) * 8)
+    monkeypatch.setattr(embedding_backends_module, "_DIGEST_UINT32_SCALE", 1.0)
+
+    assert backend._project_digest("bert::single-zero-norm", 1) == [0.0]
 
 
 def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
