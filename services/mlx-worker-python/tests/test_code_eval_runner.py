@@ -700,9 +700,11 @@ def test_read_limited_stdio_handles_open_race(
     def fake_open(path, flags, *args, **kwargs):
         raise FileNotFoundError(str(path))
 
-    monkeypatch.setattr(code_eval_runner.os, "open", fake_open)
-
-    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("", 0)
+    assert code_eval_runner._read_limited_stdio(
+        output_path,
+        4,
+        _os_open=fake_open,
+    ) == ("", 0)
 
 
 def test_read_limited_stdio_ignores_close_errors(
@@ -714,9 +716,11 @@ def test_read_limited_stdio_ignores_close_errors(
     def fake_close(fd: int) -> None:
         raise OSError("close failed")
 
-    monkeypatch.setattr(code_eval_runner.os, "close", fake_close)
-
-    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
+    assert code_eval_runner._read_limited_stdio(
+        output_path,
+        4,
+        _os_close=fake_close,
+    ) == ("cdef", 16)
 
 
 def test_read_limited_stdio_reads_oversized_tail_without_lseek(
@@ -729,6 +733,36 @@ def test_read_limited_stdio_reads_oversized_tail_without_lseek(
         raise AssertionError("oversized stdio tail reads should use positional pread")
 
     monkeypatch.setattr(code_eval_runner.os, "lseek", fail_lseek)
+
+    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
+
+
+def test_read_limited_stdio_reuses_cached_os_bindings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "output.txt"
+    output_path.write_text("0123456789abcdef", encoding="utf-8")
+
+    def fail_open(*args: object, **kwargs: object) -> int:  # pragma: no cover - sentinel
+        raise AssertionError("stdio reads should use cached os.open binding")
+
+    def fail_fstat(*args: object, **kwargs: object) -> object:  # pragma: no cover - sentinel
+        raise AssertionError("stdio reads should use cached os.fstat binding")
+
+    def fail_pread(*args: object, **kwargs: object) -> bytes:  # pragma: no cover - sentinel
+        raise AssertionError("stdio reads should use cached os.pread binding")
+
+    def fail_read(*args: object, **kwargs: object) -> bytes:  # pragma: no cover - sentinel
+        raise AssertionError("stdio reads should use cached os.read binding")
+
+    def fail_close(*args: object, **kwargs: object) -> None:  # pragma: no cover - sentinel
+        raise AssertionError("stdio reads should use cached os.close binding")
+
+    monkeypatch.setattr(code_eval_runner.os, "open", fail_open)
+    monkeypatch.setattr(code_eval_runner.os, "fstat", fail_fstat)
+    monkeypatch.setattr(code_eval_runner.os, "pread", fail_pread)
+    monkeypatch.setattr(code_eval_runner.os, "read", fail_read)
+    monkeypatch.setattr(code_eval_runner.os, "close", fail_close)
 
     assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
 

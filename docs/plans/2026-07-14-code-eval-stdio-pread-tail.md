@@ -43,3 +43,26 @@ tight local A/B for the touched tail-read primitive measured `lseek+read` at
 21.506 ms mean and `pread` at 19.827 ms mean over seven 5,000-iteration samples
 on the same oversized file. The PR-scoped performance workflow remains the
 authoritative CI validation for this registered probe.
+
+## 2026-07-31 follow-up slice: cached stdio OS bindings
+
+This follow-up keeps the same registered probe, `code-eval-stdio-tail-single-stat`,
+and narrows the runtime change to `_read_limited_stdio()` only. The stdio tail
+reader now binds `open`, `fstat`, `pread`, `read`, and `close` through import-time
+cached defaults so the hot loop avoids repeated module attribute lookups while
+preserving the existing one-`fstat` size accounting and positional oversized-tail
+read behavior.
+
+The probe registry was extended to include the stdio race/error and cached-binding
+regression tests in both its focused test and coverage commands, so changed-scope
+coverage remains measurable for the modified test seam.
+
+Local Linux registered probe result after the change:
+
+```json
+{"base_elapsed_ms_mean":32.51279601827264,"head_elapsed_ms_mean":28.549984749406576,"base_sandbox_profile_elapsed_ms_mean":36.166047025471926,"head_sandbox_profile_elapsed_ms_mean":37.46284982189536,"stdio_stat_calls_mean":6000.0,"changed_scope_coverage":100.0}
+```
+
+The stdio-tail metric improved by 3.963 ms in this local run; sandbox profile
+noise is unchanged by this slice and stayed within the registered 5 percent
+warning threshold. GitHub Actions PR-scoped performance remains the merge gate.
