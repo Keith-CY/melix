@@ -18,7 +18,14 @@ struct TextDecodeEngine: Sendable {
             : request.execution.scheduling.lane
 
         do {
-            let session = try await registry.beginDecode(decodeHandle: request.decodeHandle)
+            let session = try await registry.beginDecode(
+                decodeHandle: request.decodeHandle,
+                requestID: request.execution.id.requestID,
+                modelHandle: request.execution.modelHandle,
+                requestedBackendIdentity: request.execution.hasBackendIdentity
+                    ? request.execution.backendIdentity
+                    : nil
+            )
             let requestID = effectiveRequestID(request: request, storedRequestID: session.prefill.requestID)
             let abortHandle = requestID.isEmpty ? nil : abortRegistry.register(requestID)
 
@@ -26,7 +33,7 @@ struct TextDecodeEngine: Sendable {
                 if !requestID.isEmpty {
                     abortRegistry.remove(requestID)
                 }
-                Task { await registry.finishDecode() }
+                Task { await registry.finishDecode(modelHandle: session.loadedModel.handle) }
             }
 
             var sampling = request.sampling
@@ -389,6 +396,12 @@ struct TextDecodeEngine: Sendable {
                 rollbackCount: dflashRollbackCount,
                 targetHiddenLayers: dflashTargetHiddenLayers
             )
+        } catch let error as WorkerBackendIdentityValidationError {
+            metrics.increment("swift_text.rpc_error_count")
+            try await response.write(makeDecodeIdentityErrorExecuteEvent(
+                requestID: request.execution.id.requestID,
+                error: error.status
+            ))
         } catch let error as WorkerRuntimeRegistryError where error == .unknownDecodeHandle {
             metrics.increment("swift_text.rpc_error_count")
             try await response.write(makeDecodeErrorExecuteEvent(
@@ -939,6 +952,21 @@ private func makeDecodeErrorExecuteEvent(
     status.message = message
     status.retriable = false
     errorEvent.error = status
+    event.error = errorEvent
+    return event
+}
+
+private func makeDecodeIdentityErrorExecuteEvent(
+    requestID: String,
+    error: Melix_Worker_V1_ErrorStatus
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.executionKind = "decode"
+    event.seq = 1
+    event.phase = .executionFailed
+    var errorEvent = Melix_Worker_V1_ErrorEvent()
+    errorEvent.error = error
     event.error = errorEvent
     return event
 }

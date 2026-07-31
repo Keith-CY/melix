@@ -119,6 +119,26 @@ struct RequestCoordinatorTests {
         #expect(await workerClient.loadCallCount == 0)
     }
 
+    @Test("a completed backend stream drops trailing events")
+    func completedBackendStreamDropsTrailingEvents() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .completedThenToken)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let events = try await recoveredCoordinatorEvents(
+            coordinator: coordinator,
+            requestID: "req-terminal-cutoff"
+        )
+
+        #expect(events.filter { if case .completed = $0.payload { true } else { false } }.count == 1)
+        #expect(events.allSatisfy { if case .tokenDelta = $0.payload { false } else { true } })
+    }
+
     @Test("backend stream creation without semantic output remains replay safe")
     func backendStreamCreationWithoutSemanticOutputRemainsReplaySafe() async throws {
         let workerClient = BackendIdentityRecoveryWorkerClient(script: .streamFailureThenSuccess)
@@ -1473,7 +1493,10 @@ struct RequestCoordinatorTests {
 
         #expect(queuedOrAdmitted?.lane == "multimodal.vision.background")
 
-        #expect(await visionClient.generatedRequestIDs == ["req-vlm-background"])
+        let generatedRequestIDs = await waitForGeneratedRequestIDs(count: 1, attempts: 50) {
+            await visionClient.generatedRequestIDs
+        }
+        #expect(generatedRequestIDs == ["req-vlm-background"])
         #expect(try await coordinator.cancel(requestID: "req-vlm-background"))
         let consumer = Task {
             do {
@@ -7685,6 +7708,7 @@ private actor BackendIdentityRecoveryWorkerClient:
         case emptyThenSuccess
         case alwaysEmpty
         case tokenThenEnd
+        case completedThenToken
     }
 
     private let script: Script
@@ -7780,6 +7804,10 @@ private actor BackendIdentityRecoveryWorkerClient:
                 continuation.yield(Self.admissionEvent(requestID: request.execution.id.requestID))
                 continuation.finish(throwing: WorkerClientError.unavailable)
             case .tokenThenEnd:
+                continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
+                continuation.finish()
+            case .completedThenToken:
+                continuation.yield(Self.completedEvent(requestID: request.execution.id.requestID))
                 continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
                 continuation.finish()
             case .emptyThenSuccess:

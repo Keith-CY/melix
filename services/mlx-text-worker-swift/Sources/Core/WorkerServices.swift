@@ -168,6 +168,19 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
             )
             response.resolvedCapabilities = await registry.capabilities()
             return response
+        } catch WorkerRuntimeRegistryError.workerInstanceMismatch {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
+            metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
+
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.error = makeErrorStatus(
+                code: "worker_instance_mismatch",
+                message: "The load reservation belongs to a different worker process."
+            )
+            response.error.retriable = true
+            response.resolvedCapabilities = await registry.capabilities()
+            return response
         } catch {
             metrics.increment("swift_text.rpc_error_count")
             metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
@@ -365,19 +378,6 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         response: GRPCCore.RPCWriter<Melix_Worker_V1_ExecuteEvent>,
         context: GRPCCore.ServerContext
     ) async throws {
-        if let error = await registry.validateBackendIdentity(
-            modelHandle: request.execution.modelHandle,
-            requested: request.execution.hasBackendIdentity ? request.execution.backendIdentity : nil
-        ) {
-            try await response.write(
-                makeBackendIdentityErrorExecuteEvent(
-                    requestID: request.execution.id.requestID,
-                    executionKind: "decode",
-                    error: error
-                )
-            )
-            return
-        }
         try await decodeEngine.runDecode(request: request, response: response)
     }
 
@@ -646,7 +646,8 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         let startedAt = Date()
         do {
             let response = try await registry.restoreBoundarySnapshot(
-                snapshotID: resolvedRestoreSnapshotID(from: request)
+                snapshotID: resolvedRestoreSnapshotID(from: request),
+                requestID: request.requestID
             )
             metrics.recordMilliseconds(
                 "swift_text.cache_snapshot_restore_ms",

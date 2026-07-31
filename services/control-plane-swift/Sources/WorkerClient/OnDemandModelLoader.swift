@@ -366,6 +366,7 @@ enum OnDemandModelLoader {
         ) != nil else {
             var unloadRequest = Melix_Worker_V1_UnloadModelRequest()
             unloadRequest.modelHandle = response.modelHandle
+            unloadRequest.expectedBackendIdentity = reservation.identity
             _ = try? await workerClient.unloadModel(request: unloadRequest)
             throw OnDemandModelLoadError.workerUnavailable
         }

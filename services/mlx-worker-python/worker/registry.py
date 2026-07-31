@@ -80,6 +80,13 @@ class LoadedModel:
     generation_tps: float = 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class DecodeSessionBinding:
+    request_id: str
+    model_handle: str
+    backend_identity: common_pb2.BackendModelIdentity
+
+
 @dataclass
 class ModelUnloadReceipt:
     model_handle: str
@@ -258,6 +265,15 @@ class DiskStreamingUnsupported(Exception):
         }
 
 
+@dataclass
+class WorkerInstanceMismatch(Exception):
+    requested_worker_instance_id: str
+    current_worker_instance_id: str
+
+    def __str__(self) -> str:
+        return "The load reservation belongs to a different worker process."
+
+
 class WorkerRegistry:
     def __init__(
         self,
@@ -315,6 +331,8 @@ class WorkerRegistry:
         self._requests: dict[str, RequestState] = {}
         self._request_model_handles: dict[str, str] = {}
         self._request_lease_tokens: dict[str, object] = {}
+        self._decode_session_bindings: dict[str, DecodeSessionBinding] = {}
+        self._request_decode_handles: dict[str, str] = {}
         self._active_model_lease_counts: dict[str, int] = {}
         self._pending_unload_receipts: dict[str, ModelUnloadReceipt] = {}
         self._completed_unload_receipt_limit = _COMPLETED_UNLOAD_RECEIPT_LIMIT
@@ -449,6 +467,15 @@ class WorkerRegistry:
         load_trust: common_pb2.ModelLoadTrustPolicy | None = None,
         backend_identity: common_pb2.BackendModelIdentity | None = None,
     ) -> LoadedModel:
+        if (
+            backend_identity is not None
+            and backend_identity.worker_instance_id
+            and backend_identity.worker_instance_id != self.worker_instance_id
+        ):
+            raise WorkerInstanceMismatch(
+                requested_worker_instance_id=backend_identity.worker_instance_id,
+                current_worker_instance_id=self.worker_instance_id,
+            )
         resolved = self._resolved_model_spec(model_spec)
         has_settings = resolved.HasField("settings")
         if disk_streaming_mode != common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
@@ -829,61 +856,110 @@ class WorkerRegistry:
         requested: common_pb2.BackendModelIdentity | None,
     ) -> common_pb2.ErrorStatus | None:
         with self._lock:
-            loaded = self._loaded_models.get(handle)
-            request_missing = requested is None or not (
-                requested.requested_model_id.strip()
-                and requested.route_generation > 0
-                and requested.worker_instance_id.strip()
+            return self._validate_backend_identity_locked(handle, requested)
+
+    def bind_decode_session(
+        self,
+        *,
+        request_id: str,
+        decode_handle: str,
+        loaded_model: LoadedModel,
+    ) -> None:
+        backend_identity = common_pb2.BackendModelIdentity()
+        backend_identity.CopyFrom(loaded_model.backend_identity)
+        with self._lock:
+            if self._request_model_handles.get(request_id) != loaded_model.handle:
+                raise RuntimeError("Prefill request lease no longer owns the loaded model.")
+            self._remove_decode_session_binding_locked(request_id)
+            self._decode_session_bindings[decode_handle] = DecodeSessionBinding(
+                request_id=request_id,
+                model_handle=loaded_model.handle,
+                backend_identity=backend_identity,
             )
-            bound = (
-                loaded.backend_identity
-                if loaded is not None
-                else common_pb2.BackendModelIdentity()
+            self._request_decode_handles[request_id] = decode_handle
+
+    def validate_decode_backend_identity(
+        self,
+        *,
+        request_id: str,
+        decode_handle: str,
+        model_handle: str,
+        requested: common_pb2.BackendModelIdentity | None,
+    ) -> common_pb2.ErrorStatus | None:
+        with self._lock:
+            binding = self._decode_session_bindings.get(decode_handle)
+            if binding is None:
+                return self._validate_backend_identity_locked(model_handle, requested)
+            forced_mismatch_reason: str | None = None
+            if binding.request_id != request_id:
+                forced_mismatch_reason = "decode_request_id_mismatch"
+            elif binding.model_handle != model_handle:
+                forced_mismatch_reason = "decode_model_handle_mismatch"
+            return self._validate_backend_identity_locked(
+                binding.model_handle,
+                requested,
+                forced_mismatch_reason=forced_mismatch_reason,
+                requested_model_handle=model_handle,
+                bound_identity=binding.backend_identity,
             )
-            if request_missing:
-                observed = common_pb2.BackendModelIdentity()
-                code = "model_identity_missing"
-            else:
-                observed = requested
-                code = "model_identity_mismatch"
-                if loaded is None:
-                    mismatch_reason = "model_handle_missing"
-                    receipt = self._record_model_identity_mismatch_locked(
-                        observed,
-                        bound,
-                        mismatch_reason=mismatch_reason,
-                    )
-                    return common_pb2.ErrorStatus(
-                        code=code,
-                        message="Backend model identity did not match the loaded residency.",
-                        retriable=True,
-                        details={
-                            "requested_route_generation": str(observed.route_generation),
-                            "loaded_route_generation": "0",
-                        },
-                        backend_identity_mismatch=receipt,
-                    )
-                if observed == bound:
-                    return None
-            mismatch_reason = self._backend_identity_mismatch_reason(
+
+    def _validate_backend_identity_locked(
+        self,
+        handle: str,
+        requested: common_pb2.BackendModelIdentity | None,
+        *,
+        forced_mismatch_reason: str | None = None,
+        requested_model_handle: str | None = None,
+        bound_identity: common_pb2.BackendModelIdentity | None = None,
+    ) -> common_pb2.ErrorStatus | None:
+        loaded = self._loaded_models.get(handle)
+        request_missing = requested is None or not (
+            requested.requested_model_id.strip()
+            and requested.route_generation > 0
+            and requested.worker_instance_id.strip()
+        )
+        bound = (
+            bound_identity
+            if bound_identity is not None
+            else loaded.backend_identity
+            if loaded is not None
+            else common_pb2.BackendModelIdentity()
+        )
+        if request_missing:
+            observed = common_pb2.BackendModelIdentity()
+            code = "model_identity_missing"
+        else:
+            observed = requested
+            code = "model_identity_mismatch"
+            if loaded is not None and observed == bound and forced_mismatch_reason is None:
+                return None
+        mismatch_reason = forced_mismatch_reason or (
+            "model_handle_missing"
+            if loaded is None
+            else self._backend_identity_mismatch_reason(
                 observed,
                 bound,
                 request_missing=request_missing,
             )
-            receipt = self._record_model_identity_mismatch_locked(
-                observed,
-                bound,
-                mismatch_reason=mismatch_reason,
-            )
+        )
+        receipt = self._record_model_identity_mismatch_locked(
+            observed,
+            bound,
+            mismatch_reason=mismatch_reason,
+        )
+        details = {
+            "requested_route_generation": str(observed.route_generation),
+            "loaded_route_generation": str(bound.route_generation),
+        }
+        if requested_model_handle is not None:
+            details["requested_model_handle"] = requested_model_handle
+            details["loaded_model_handle"] = handle
 
         return common_pb2.ErrorStatus(
             code=code,
             message="Backend model identity did not match the loaded residency.",
             retriable=code == "model_identity_mismatch",
-            details={
-                "requested_route_generation": str(observed.route_generation),
-                "loaded_route_generation": str(bound.route_generation),
-            },
+            details=details,
             backend_identity_mismatch=receipt,
         )
 
@@ -988,6 +1064,7 @@ class WorkerRegistry:
             existing = self._requests.get(request_id)
             if existing is not None:
                 self._remove_request_from_counters(existing)
+                self._remove_decode_session_binding_locked(request_id)
                 old_handle = self._request_model_handles.pop(request_id, None)
                 self._request_lease_tokens.pop(request_id, None)
                 if old_handle is not None:
@@ -1045,6 +1122,7 @@ class WorkerRegistry:
             existing = self._requests.get(request_id)
             if existing is not None:
                 self._remove_request_from_counters(existing)
+                self._remove_decode_session_binding_locked(request_id)
                 old_handle = self._request_model_handles.pop(request_id, None)
                 self._request_lease_tokens.pop(request_id, None)
                 if old_handle is not None:
@@ -1071,6 +1149,7 @@ class WorkerRegistry:
             state = self._requests.pop(request_id, None)
             if state is not None:
                 self._remove_request_from_counters(state)
+            self._remove_decode_session_binding_locked(request_id)
             self._request_model_handles.pop(request_id, None)
             self._request_lease_tokens.pop(request_id, None)
             self._decrement_model_lease_count_locked(handle)
@@ -1132,12 +1211,21 @@ class WorkerRegistry:
             state = self._requests.pop(request_id, None)
             if state is not None:
                 self._remove_request_from_counters(state)
+            self._remove_decode_session_binding_locked(request_id)
             handle = self._request_model_handles.pop(request_id, None)
             self._request_lease_tokens.pop(request_id, None)
             if handle is not None:
                 self._decrement_model_lease_count_locked(handle)
                 loaded_to_close = self._complete_pending_unload_if_unleased_locked(handle)
         self._close_loaded_model(loaded_to_close)
+
+    def _remove_decode_session_binding_locked(self, request_id: str) -> None:
+        decode_handle = self._request_decode_handles.pop(request_id, None)
+        if decode_handle is None:
+            return
+        binding = self._decode_session_bindings.get(decode_handle)
+        if binding is not None and binding.request_id == request_id:
+            self._decode_session_bindings.pop(decode_handle, None)
 
     def abort_request(self, request_id: str) -> bool:
         with self._lock:

@@ -2308,6 +2308,8 @@ def test_backend_model_identity_probe_script_emits_metrics(
     assert probe.coverage_command == "bash scripts/backend_model_identity_coverage.sh"
     coverage_script = (REPO_ROOT / "scripts/backend_model_identity_coverage.sh").read_text()
     assert coverage_script.count("swift_changed_line_coverage.py") == 2
+    assert coverage_script.count("python_changed_line_coverage.py") == 1
+    assert '--diff-from "${diff_from}"' in coverage_script
     assert "--enable-code-coverage" in coverage_script
     assert "services/control-plane-swift" in coverage_script
     assert "services/mlx-text-worker-swift" in coverage_script

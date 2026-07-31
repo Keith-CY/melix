@@ -63,6 +63,11 @@ private struct WorkerModelUnloadAttempt: Sendable {
     let task: Task<Void, Never>
 }
 
+private struct PendingModelUnload: Sendable {
+    let force: Bool
+    let expectedBackendIdentity: Melix_Worker_V1_BackendModelIdentity?
+}
+
 enum WorkerModelUnloadResult: Equatable {
     case unloaded
     case notFound
@@ -108,6 +113,10 @@ struct WorkerPrefillResult: Sendable {
 struct WorkerDecodeSession: @unchecked Sendable {
     let loadedModel: LoadedModelRecord
     let prefill: StoredPrefillContext
+}
+
+struct WorkerBackendIdentityValidationError: Error {
+    let status: Melix_Worker_V1_ErrorStatus
 }
 
 struct WorkerDecodeBatchItem: @unchecked Sendable {
@@ -187,6 +196,8 @@ actor WorkerRuntimeRegistry {
     // sticky and require the protocol's explicit force bit for destructive unload.
     private var sharedModelHandles: Set<String>
     private var activeRequests: UInt64
+    private var activeRequestCountsByModelHandle: [String: UInt64]
+    private var pendingModelUnloads: [String: PendingModelUnload]
     private var activePrefills: UInt64
     private var activeDecodes: UInt64
     private var draining: Bool
@@ -222,6 +233,8 @@ actor WorkerRuntimeRegistry {
         self.modelUnloadsInFlight = [:]
         self.sharedModelHandles = []
         self.activeRequests = 0
+        self.activeRequestCountsByModelHandle = [:]
+        self.pendingModelUnloads = [:]
         self.activePrefills = 0
         self.activeDecodes = 0
         self.draining = false
@@ -282,6 +295,11 @@ actor WorkerRuntimeRegistry {
         diskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified,
         backendIdentity: Melix_Worker_V1_BackendModelIdentity? = nil
     ) async throws -> LoadedModelRecord {
+        if let backendIdentity,
+           !backendIdentity.workerInstanceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           backendIdentity.workerInstanceID != configuration.workerInstanceID {
+            throw WorkerRuntimeRegistryError.workerInstanceMismatch
+        }
         let resolved = modelCatalog.get(requested.modelID).map { catalogModel in
             mergeModelSpec(requested, fallback: catalogModel)
         } ?? requested
@@ -447,13 +465,20 @@ actor WorkerRuntimeRegistry {
            expectedBackendIdentity != removed.backendIdentity {
             return .identityMismatch
         }
-        if activeRequests > 0 {
+        if activeRequestCountsByModelHandle[handle, default: 0] > 0 {
+            let existing = pendingModelUnloads[handle]
+            pendingModelUnloads[handle] = PendingModelUnload(
+                force: force || existing?.force == true,
+                expectedBackendIdentity: existing?.expectedBackendIdentity
+                    ?? expectedBackendIdentity
+            )
             return .activeRequests
         }
         if !force, sharedModelHandles.contains(handle) {
             return .sharedResidency
         }
         loadedModels.removeValue(forKey: handle)
+        pendingModelUnloads.removeValue(forKey: handle)
         let residencyKey = residencyKeysByLoadedModelHandle.removeValue(forKey: handle)
             ?? WorkerModelResidencyKey(removed.spec, backendIdentity: removed.backendIdentity)
         loadedModelHandlesByResidencyKey.removeValue(forKey: residencyKey)
@@ -536,13 +561,30 @@ actor WorkerRuntimeRegistry {
         loadedModels[handle]
     }
 
-    func startRequest() {
+    func startRequest(modelHandle: String) {
         activeRequests += 1
+        activeRequestCountsByModelHandle[modelHandle, default: 0] += 1
     }
 
-    func finishRequest() {
+    func finishRequest(modelHandle: String) {
         if activeRequests > 0 {
             activeRequests -= 1
+        }
+        let activeCount = activeRequestCountsByModelHandle[modelHandle, default: 0]
+        if activeCount > 1 {
+            activeRequestCountsByModelHandle[modelHandle] = activeCount - 1
+            return
+        }
+        activeRequestCountsByModelHandle.removeValue(forKey: modelHandle)
+        guard let pending = pendingModelUnloads.removeValue(forKey: modelHandle) else {
+            return
+        }
+        Task {
+            _ = await self.unloadModel(
+                modelHandle,
+                force: pending.force,
+                expectedBackendIdentity: pending.expectedBackendIdentity
+            )
         }
     }
 
@@ -566,14 +608,26 @@ actor WorkerRuntimeRegistry {
         modelHandle: String,
         requested: Melix_Worker_V1_BackendModelIdentity?
     ) -> Melix_Worker_V1_ErrorStatus? {
+        backendIdentityError(modelHandle: modelHandle, requested: requested)
+    }
+
+    private func backendIdentityError(
+        modelHandle: String,
+        requested: Melix_Worker_V1_BackendModelIdentity?,
+        forcedMismatchReason: String? = nil,
+        requestedModelHandle: String? = nil,
+        boundIdentity: Melix_Worker_V1_BackendModelIdentity? = nil
+    ) -> Melix_Worker_V1_ErrorStatus? {
         let requestMissing = requested == nil
             || requested?.requestedModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
             || requested?.routeGeneration == 0
             || requested?.workerInstanceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
         let loaded = loadedModels[modelHandle]
-        let bound = loaded?.backendIdentity ?? Melix_Worker_V1_BackendModelIdentity()
+        let bound = boundIdentity
+            ?? loaded?.backendIdentity
+            ?? Melix_Worker_V1_BackendModelIdentity()
         let observed = requested ?? Melix_Worker_V1_BackendModelIdentity()
-        if !requestMissing, loaded != nil, observed == bound {
+        if forcedMismatchReason == nil, !requestMissing, loaded != nil, observed == bound {
             return nil
         }
 
@@ -588,13 +642,13 @@ actor WorkerRuntimeRegistry {
         receipt.observedAtUnixMs = Int64(Date().timeIntervalSince1970 * 1_000)
         receipt.requestedWorkerInstanceID = diagnosticBackendIdentity(observed.workerInstanceID)
         receipt.loadedWorkerInstanceID = diagnosticBackendIdentity(bound.workerInstanceID)
-        receipt.mismatchReason = loaded == nil
+        receipt.mismatchReason = forcedMismatchReason ?? (loaded == nil
             ? "model_handle_missing"
             : backendIdentityMismatchReason(
                 requested: observed,
                 loaded: bound,
                 requestMissing: requestMissing
-            )
+            ))
         lastModelIdentityMismatch = receipt
 
         var status = Melix_Worker_V1_ErrorStatus()
@@ -605,6 +659,10 @@ actor WorkerRuntimeRegistry {
             "requested_route_generation": String(observed.routeGeneration),
             "loaded_route_generation": String(bound.routeGeneration),
         ]
+        if let requestedModelHandle {
+            status.details["requested_model_handle"] = requestedModelHandle
+            status.details["loaded_model_handle"] = modelHandle
+        }
         status.backendIdentityMismatch = receipt
         return status
     }
@@ -708,6 +766,15 @@ actor WorkerRuntimeRegistry {
         guard let loaded = loadedModels[modelHandle] else {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
+        startRequest(modelHandle: modelHandle)
+        activePrefills += 1
+        defer {
+            finishRequest(modelHandle: modelHandle)
+            if activePrefills > 0 {
+                activePrefills -= 1
+            }
+        }
+
         var effectiveExecution = execution
         if effectiveExecution.cacheHints.cacheMode == .unspecified,
            loaded.spec.settings.cacheMode != .unspecified {
@@ -727,17 +794,6 @@ actor WorkerRuntimeRegistry {
             acceleration: resolvedAcceleration
         )
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
-
-        activeRequests += 1
-        activePrefills += 1
-        defer {
-            if activeRequests > 0 {
-                activeRequests -= 1
-            }
-            if activePrefills > 0 {
-                activePrefills -= 1
-            }
-        }
 
         if !effectiveExecution.cacheHints.restoreSnapshotID.isEmpty {
             let restored: BoundarySnapshotRecord
@@ -948,16 +1004,48 @@ actor WorkerRuntimeRegistry {
         prefillContexts.count
     }
 
-    func beginDecode(decodeHandle: String) throws -> WorkerDecodeSession {
+    func beginDecode(
+        decodeHandle: String,
+        requestID: String,
+        modelHandle: String,
+        requestedBackendIdentity: Melix_Worker_V1_BackendModelIdentity?
+    ) throws -> WorkerDecodeSession {
+        if let status = backendIdentityError(
+            modelHandle: modelHandle,
+            requested: requestedBackendIdentity,
+            requestedModelHandle: modelHandle
+        ) {
+            throw WorkerBackendIdentityValidationError(status: status)
+        }
         guard let stored = prefillContexts[decodeHandle] else {
             throw WorkerRuntimeRegistryError.unknownDecodeHandle
         }
         guard let loaded = loadedModels[stored.modelHandle] else {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
+        let forcedMismatchReason: String?
+        if stored.requestID != requestID {
+            forcedMismatchReason = "decode_request_id_mismatch"
+        } else if stored.modelHandle != modelHandle {
+            forcedMismatchReason = "decode_model_handle_mismatch"
+        } else {
+            forcedMismatchReason = nil
+        }
+        let storedBackendIdentity = stored.execution.hasBackendIdentity
+            ? stored.execution.backendIdentity
+            : loaded.backendIdentity
+        if let status = backendIdentityError(
+            modelHandle: stored.modelHandle,
+            requested: requestedBackendIdentity,
+            forcedMismatchReason: forcedMismatchReason,
+            requestedModelHandle: modelHandle,
+            boundIdentity: storedBackendIdentity
+        ) {
+            throw WorkerBackendIdentityValidationError(status: status)
+        }
 
         prefillContexts.removeValue(forKey: decodeHandle)
-        activeRequests += 1
+        startRequest(modelHandle: stored.modelHandle)
         activeDecodes += 1
 
         return WorkerDecodeSession(
@@ -966,10 +1054,8 @@ actor WorkerRuntimeRegistry {
         )
     }
 
-    func finishDecode() {
-        if activeRequests > 0 {
-            activeRequests -= 1
-        }
+    func finishDecode(modelHandle: String) {
+        finishRequest(modelHandle: modelHandle)
         if activeDecodes > 0 {
             activeDecodes -= 1
         }
@@ -1237,15 +1323,16 @@ actor WorkerRuntimeRegistry {
     }
 
     func restoreBoundarySnapshot(
-        snapshotID: String
+        snapshotID: String,
+        requestID: String
     ) async throws -> Melix_Worker_V1_RestoreBoundarySnapshotResponse {
         let restored = try await loadBoundarySnapshotRecord(snapshotID: snapshotID)
         let loaded = try loadedModelForBoundarySnapshot(restored)
         var execution = restored.execution ?? Melix_Worker_V1_ExecutionMetadata()
         execution.modelHandle = loaded.handle
-        if execution.id.requestID.isEmpty {
-            execution.id.requestID = restored.snapshot.requestID
-        }
+        execution.backendIdentity = loaded.backendIdentity
+        let effectiveRequestID = requestID.isEmpty ? restored.snapshot.requestID : requestID
+        execution.id.requestID = effectiveRequestID
 
         let runtimePrefill = try await runtime.prefill(
             model: loaded.runtimeModel,
@@ -1263,7 +1350,7 @@ actor WorkerRuntimeRegistry {
         prefillContexts[decodeHandle] = StoredPrefillContext(
             decodeHandle: decodeHandle,
             modelHandle: loaded.handle,
-            requestID: restored.snapshot.requestID,
+            requestID: effectiveRequestID,
             execution: execution,
             promptTokens: runtimePrefill.promptTokens,
             messages: restored.messages,
@@ -1564,6 +1651,7 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
         workerFamily: Melix_Worker_V1_WorkerFamily,
         reason: String
     )
+    case workerInstanceMismatch
 
     var errorDescription: String? {
         switch self {
@@ -1589,6 +1677,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return "Prefill request exceeds the configured quadratic fallback threshold."
         case .requestRouteUnsupported:
             return "Worker defensive validation rejected the request route declaration."
+        case .workerInstanceMismatch:
+            return "The load reservation belongs to a different worker process."
         }
     }
 
@@ -1650,6 +1740,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return "not_found"
         case .requestRouteUnsupported:
             return "request_route_unsupported"
+        case .workerInstanceMismatch:
+            return "failed_precondition"
         case .snapshotModelNotLoaded, .snapshotScopeMismatch:
             return "failed_precondition"
         case .diskStreamingUnsupported:
@@ -1667,7 +1759,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
              (.unknownDecodeHandle, .unknownDecodeHandle),
              (.unknownSnapshotID, .unknownSnapshotID),
              (.snapshotModelNotLoaded, .snapshotModelNotLoaded),
-             (.snapshotScopeMismatch, .snapshotScopeMismatch):
+             (.snapshotScopeMismatch, .snapshotScopeMismatch),
+             (.workerInstanceMismatch, .workerInstanceMismatch):
             return true
         case let (
             .diskStreamingUnsupported(requestedMode: lhsMode, modelID: lhsModelID),

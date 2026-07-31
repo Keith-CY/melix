@@ -1181,6 +1181,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: textModel,
+            route: .swiftText,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -1199,6 +1200,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: embeddingModel,
+            route: .pythonEmbedding,
             memoryBudgetBytes: memoryBudgetBytes
         )
         let rerankModel = await catalogAwareModelSpec(
@@ -1210,6 +1212,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: rerankModel,
+            route: .pythonRerank,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -1233,6 +1236,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: ocrModel,
+            route: .pythonOCR,
             memoryBudgetBytes: memoryBudgetBytes
         )
         let vlmModel = await catalogAwareModelSpec(
@@ -1244,6 +1248,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: vlmModel,
+            route: .pythonVLM,
             memoryBudgetBytes: memoryBudgetBytes
         )
         let transcriptionModel = await catalogAwareModelSpec(
@@ -1255,6 +1260,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: transcriptionModel,
+            route: .pythonTranscription,
             memoryBudgetBytes: memoryBudgetBytes
         )
         let speechModel = await catalogAwareModelSpec(
@@ -1266,6 +1272,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: speechModel,
+            route: .pythonSpeech,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -1289,6 +1296,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: imageModel,
+            route: .pythonImage,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -1298,9 +1306,10 @@ public enum BootstrapWorkerPreparation {
         workerClient: any WorkerRoutingClient,
         modelCatalog: ModelCatalog,
         model: Melix_Worker_V1_ModelSpec,
+        route: WorkerRouteKind,
         memoryBudgetBytes: UInt64
     ) async throws -> Bool {
-        guard let route = preloadRouteKind(for: model),
+        guard let route = preloadRouteKind(for: model, workerRoute: route),
               let healthClient = workerClient as? any BackendHealthIdentifyingWorkerClientProtocol,
               let health = try? await healthClient.backendHealthIdentity() else {
             return false
@@ -1360,6 +1369,7 @@ public enum BootstrapWorkerPreparation {
         ) != nil else {
             var unload = Melix_Worker_V1_UnloadModelRequest()
             unload.modelHandle = response.modelHandle
+            unload.expectedBackendIdentity = reservation.identity
             _ = try? await workerClient.unloadModel(request: unload)
             return false
         }
@@ -1367,17 +1377,12 @@ public enum BootstrapWorkerPreparation {
     }
 
     private static func preloadRouteKind(
-        for model: Melix_Worker_V1_ModelSpec
+        for model: Melix_Worker_V1_ModelSpec,
+        workerRoute: WorkerRouteKind
     ) -> WorkerRouteKind? {
-        guard !model.requestRoutes.isEmpty,
-              let controlPlaneRouteClass = Melix_Controlplane_V1_WorkerRouteClass(
-                rawValue: model.routeClass.rawValue
-              ),
-              let route = WorkerRouteKind(routeClass: controlPlaneRouteClass),
-              model.requestRoutes.contains(where: { preloadDeclaration($0, supports: route) }) else {
-            return nil
-        }
-        return route
+        model.requestRoutes.contains { preloadDeclaration($0, supports: workerRoute) }
+            ? workerRoute
+            : nil
     }
 
     private static func preloadDeclaration(

@@ -1245,153 +1245,40 @@ public actor RequestCoordinator {
         cacheRouteEligible: Bool,
         prefillLane: String
     ) -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                var attemptBinding = initialBinding
-                for attemptIndex in 0...1 {
-                    var responseOpened = false
-                    var terminalEventObserved = false
-                    do {
-                        guard let client = await workerRegistry.client(for: routeKind) else {
-                            throw WorkerClientError.unavailable
-                        }
-                        var attempt = request
-                        BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
-                        let stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
-                        if cacheRouteEligible,
-                           let phaseAwareClient = client as? any PhaseAwareWorkerClientProtocol,
-                           shouldUsePhaseAwareExecution(for: attempt) {
-                            stream = makePhaseAwareUpstream(
-                                client: phaseAwareClient,
-                                request: attempt,
-                                modelID: attemptBinding.modelID,
-                                prefillLane: prefillLane
-                            )
-                        } else {
-                            stream = try await client.generate(request: attempt)
-                        }
-
-                        var retryRequested = false
-                        for try await event in stream {
-                            if case .error(let errorEvent) = event.payload {
-                                terminalEventObserved = true
-                                let recoverable = BackendRouteRecoveryClassifier.shouldRecover(
-                                    errorEvent.error
-                                )
-                                if recoverable {
-                                    await BackendRouteRecovery.recordMismatch(
-                                        errorEvent.error,
-                                        metricsStore: metricsStore
-                                    )
-                                }
-                                if responseOpened {
-                                    if recoverable {
-                                        await BackendRouteRecovery.recordRetrySuppressed(
-                                            metricsStore: metricsStore
-                                        )
-                                    }
-                                    throw BackendRouteRecovery.partialStreamFailure()
-                                }
-                                if recoverable, attemptIndex == 0 {
-                                    retryRequested = true
-                                    break
-                                }
-                                if recoverable {
-                                    await BackendRouteRecovery.recordRetryExhausted(
-                                        metricsStore: metricsStore
-                                    )
-                                    throw BackendRouteRecovery.recoveryExhaustedError()
-                                }
-                            }
-                            if case .completed = event.payload {
-                                terminalEventObserved = true
-                            }
-
-                            responseOpened = true
-                            continuation.yield(event)
-                        }
-
-                        if retryRequested {
-                            await BackendRouteRecovery.recordRetryAllowed(metricsStore: metricsStore)
-                            do {
-                                attemptBinding = try await BackendRouteRecovery.recoverBinding(
-                                    failedBinding: attemptBinding,
-                                    modelCatalog: modelCatalog,
-                                    workerRegistry: workerRegistry,
-                                    metricsStore: metricsStore
-                                )
-                            } catch {
-                                await BackendRouteRecovery.recordRetryExhausted(
-                                    metricsStore: metricsStore
-                                )
-                                continuation.finish(
-                                    throwing: BackendRouteRecovery.recoveryExhaustedError()
-                                )
-                                return
-                            }
-                            continue
-                        }
-                        if !responseOpened {
-                            throw WorkerClientError.unavailable
-                        }
-                        if !terminalEventObserved {
-                            await BackendRouteRecovery.recordRetrySuppressed(
-                                metricsStore: metricsStore
-                            )
-                            continuation.finish(
-                                throwing: BackendRouteRecovery.partialStreamFailure()
-                            )
-                            return
-                        }
-                        continuation.finish()
-                        return
-                    } catch {
-                        if responseOpened {
-                            if BackendRouteRecoveryClassifier.shouldRecover(error) {
-                                await BackendRouteRecovery.recordRetrySuppressed(
-                                    metricsStore: metricsStore
-                                )
-                            }
-                            continuation.finish(
-                                throwing: BackendRouteRecovery.partialStreamFailure()
-                            )
-                            return
-                        }
-                        guard BackendRouteRecoveryClassifier.shouldRecover(error) else {
-                            continuation.finish(throwing: error)
-                            return
-                        }
-                        guard attemptIndex == 0 else {
-                            await BackendRouteRecovery.recordRetryExhausted(
-                                metricsStore: metricsStore
-                            )
-                            continuation.finish(
-                                throwing: BackendRouteRecovery.recoveryExhaustedError()
-                            )
-                            return
-                        }
-                        await BackendRouteRecovery.recordRetryAllowed(metricsStore: metricsStore)
-                        do {
-                            attemptBinding = try await BackendRouteRecovery.recoverBinding(
-                                failedBinding: attemptBinding,
-                                modelCatalog: modelCatalog,
-                                workerRegistry: workerRegistry,
-                                metricsStore: metricsStore
-                            )
-                        } catch {
-                            await BackendRouteRecovery.recordRetryExhausted(
-                                metricsStore: metricsStore
-                            )
-                            continuation.finish(
-                                throwing: BackendRouteRecovery.recoveryExhaustedError()
-                            )
-                            return
-                        }
-                    }
+        BackendRouteRecovery.performReplaySafeStream(
+            binding: initialBinding,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            dispatch: { attemptBinding in
+                guard let client = await self.workerRegistry.client(for: routeKind) else {
+                    throw WorkerClientError.unavailable
+                }
+                var attempt = request
+                BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                if cacheRouteEligible,
+                   let phaseAwareClient = client as? any PhaseAwareWorkerClientProtocol,
+                   await self.shouldUsePhaseAwareExecution(for: attempt) {
+                    return await self.makePhaseAwareUpstream(
+                        client: phaseAwareClient,
+                        request: attempt,
+                        modelID: attemptBinding.modelID,
+                        prefillLane: prefillLane
+                    )
+                }
+                return try await client.generate(request: attempt)
+            },
+            classify: { event in
+                switch event.payload {
+                case .error(let errorEvent):
+                    return .error(errorEvent.error)
+                case .completed:
+                    return .terminal
+                default:
+                    return .output
                 }
             }
-            continuation.onTermination = { _ in task.cancel() }
-        }
+        )
     }
 
     private func isSemanticStreamEvent(_ event: Melix_Worker_V1_ExecuteEvent) -> Bool {

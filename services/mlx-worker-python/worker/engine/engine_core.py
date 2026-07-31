@@ -873,6 +873,11 @@ class EngineCore:
             if _runtime_prefill_accepts_step_size(runtime, runtime.prefill):
                 prefill_kwargs["prefill_step_size"] = request.prefill_step_size
             session = runtime.prefill(**prefill_kwargs)
+            self._registry.bind_decode_session(
+                request_id=request_id,
+                decode_handle=session.decode_handle,
+                loaded_model=loaded_model,
+            )
             response = inference_pb2.PrefillResponse(
                 ok=True,
                 decode_handle=session.decode_handle if request.return_decode_handle else "",

@@ -101,10 +101,14 @@ the same executable on the same socket therefore produces a new instance
 identity even when handles and route generations later collide.
 
 `LoadModelRequest` carries the control-plane binding identity. At load time the
-worker derives the loaded model and adapter identifiers from the resolved
-`ModelSpec` and combines them with the binding's route generation and its own
-boot instance identity. It does not trust a claimed load-time model,
-adapter, or worker identifier over the model and running backend it resolved.
+worker first verifies that a non-empty claimed `worker_instance_id` exactly
+matches its current boot instance. A mismatch returns the retriable
+`worker_instance_mismatch` error before model resolution or runtime loading, so
+a health-to-load race across a worker restart cannot publish a stale binding.
+The worker then derives the loaded model and adapter identifiers from the
+resolved `ModelSpec` and combines them with the binding's route generation and
+its verified boot instance identity. It does not trust a claimed load-time
+model or adapter identifier over the model and running backend it resolved.
 Every production inference request carries the requested identity:
 
 - `Generate`, `Prefill`, and `Decode` use `ExecutionMetadata.backend_identity`;
@@ -118,12 +122,45 @@ execution. A missing identity or zero generation fails closed with
 instance fails closed with `model_identity_mismatch`. Neither failure may emit
 output.
 
+Phase-aware execution additionally binds every returned decode handle to the
+prefill request ID, model handle, and backend identity that created it. `Decode`
+must compare its execution metadata with that stored binding before consuming the
+prefill context, acquiring the decode lease, or emitting a decode event. A valid
+identity for another loaded residency does not authorize use of the stored
+context; cross-request, cross-handle, and cross-identity combinations fail closed
+with `model_identity_mismatch` and leave the original context available for its
+owner. `Prefill` and `Decode` are phases of one execution request and therefore
+carry the same `ExecutionMetadata.id.request_id`; `parent_request_id` describes
+lineage between separate execution requests and does not authorize a different
+request to consume a decode handle.
+
+`RestoreBoundarySnapshotRequest.request_id` declares the owner of the new decode
+handle created by an explicit restore. The restored execution metadata and
+handle use that request ID, so a resumed request can differ from the request that
+created the snapshot without leaving the restored handle unbound. An empty value
+falls back to the snapshot request ID for protocol compatibility. After the
+snapshot residency has been validated, restore also rebinds the execution's
+backend identity to the currently loaded residency. Persisted worker boot-epoch
+identity must not leak into the restored decode handle.
+
 `UnloadModelRequest.expected_backend_identity` provides an optional
 compare-and-unload guard. When present, the worker compares it with the loaded
 record inside the same registry critical section or actor operation that removes
 the residency. A mismatch returns `model_identity_mismatch` and leaves the
 current residency loaded. Callers must use this guard when retiring a stale
 residency after route recovery.
+
+Inference leases and pending unloads are tracked per model handle. A busy target
+returns the typed in-use result and records the compare-and-unload request for
+automatic retry after that handle's final lease ends. Requests using another
+handle do not block retirement of the target residency. The deferred retry
+retains the original `expected_backend_identity`, so handle reuse cannot remove
+a replacement residency. Identity-bound recovery retirement sets `force` so a
+failed residency marked shared is also removed after its final lease; ordinary
+operator unloads retain shared-residency protection unless they explicitly set
+the same flag. Pending requests merge monotonically: a later non-forced request
+cannot downgrade an already accepted forced retirement, and an identity guard
+cannot be discarded while the target remains busy.
 
 `BackendIdentityMismatchReceipt` records requested and loaded identifiers,
 requested and loaded generations and worker instances, observation time, and a

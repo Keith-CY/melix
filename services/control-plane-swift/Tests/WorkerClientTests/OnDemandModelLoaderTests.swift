@@ -8,6 +8,56 @@ import MelixWorkerProtocol
 
 @Suite("On-Demand Model Loader")
 struct OnDemandModelLoaderTests {
+    @Test("stale lazy load cleanup cannot unload a replacement reusing the handle")
+    func staleLazyLoadCleanupCannotUnloadReplacementReusingHandle() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let worker = LoaderTestingWorkerClient()
+        await worker.prepareStaleLoadCleanupRace()
+        let registry = WorkerRegistry(defaultTextClient: worker, modelCatalog: catalog)
+        let staleLoad = Task {
+            try await OnDemandModelLoader.ensureTextModelReady(
+                modelID: "melix-dev-text",
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: MetricsStore()
+            )
+        }
+
+        let staleRequest = await worker.waitForFirstLoadRequest()
+        let replacementReservation = try #require(await catalog.beginBackendRouteLoad(
+            id: "melix-dev-text",
+            routeKind: .swiftText,
+            workerInstanceID: worker.staleLoadCleanupWorkerInstanceID,
+            reason: "explicit_replacement"
+        ))
+        await worker.installReplacement(identity: replacementReservation.identity)
+        _ = try #require(await catalog.recordLoadSucceeded(
+            id: "melix-dev-text",
+            dispatchHandle: worker.staleLoadCleanupReusedHandle,
+            routeKind: .swiftText,
+            expectedRouteGeneration: replacementReservation.generation,
+            workerInstanceID: replacementReservation.workerInstanceID
+        ))
+
+        await worker.releaseFirstLoad()
+        await #expect(throws: OnDemandModelLoadError.workerUnavailable) {
+            _ = try await staleLoad.value
+        }
+
+        let cleanup = try #require(await worker.unloadRequests.first)
+        let replacement = try #require(await catalog.backendRouteBinding(
+            for: "melix-dev-text",
+            routeKind: .swiftText
+        ))
+        #expect(cleanup.modelHandle == worker.staleLoadCleanupReusedHandle)
+        #expect(!cleanup.force)
+        #expect(cleanup.expectedBackendIdentity == staleRequest.backendIdentity)
+        #expect(cleanup.expectedBackendIdentity != replacement.identity)
+        #expect(await worker.unloadResponseCodes == ["model_identity_mismatch"])
+        #expect(await worker.currentResidentIdentity() == replacement.identity)
+        #expect(replacement.generation == replacementReservation.generation)
+    }
+
     @Test("ready handles are reused without warm-path eviction planning")
     func readyHandlesAreReusedWithoutWarmPathEvictionPlanning() async throws {
         final class ClockBox: @unchecked Sendable {
@@ -1209,7 +1259,7 @@ private func makePinnedTextModel(id: String) -> Melix_Controlplane_V1_ModelSumma
 
 private struct OnDemandModelLoaderTestError: Error {}
 
-private protocol OnDemandTestWorkerHealth: BackendHealthIdentifyingWorkerClientProtocol {
+protocol OnDemandTestWorkerHealth: BackendHealthIdentifyingWorkerClientProtocol {
     func testWorkerInstanceID() async throws -> String
 }
 
@@ -1225,11 +1275,14 @@ extension OnDemandTestWorkerHealth {
     }
 }
 
-private actor LoaderTestingWorkerClient:
+actor LoaderTestingWorkerClient:
     WorkerRoutingClient,
     RuntimeIntrospectingWorkerClientProtocol,
     OnDemandTestWorkerHealth
 {
+    let staleLoadCleanupWorkerInstanceID = "stale-load-cleanup-worker"
+    let staleLoadCleanupReusedHandle = "melix-dev-text::reused"
+
     private var loadResponse = Melix_Worker_V1_LoadModelResponse()
     private var unloadResponse = Melix_Worker_V1_UnloadModelResponse()
     private var loadFailure: Error?
@@ -1237,10 +1290,25 @@ private actor LoaderTestingWorkerClient:
     private var healthWorkerInstanceID = String(reflecting: LoaderTestingWorkerClient.self)
     private var runtimeStatsResponse = Melix_Worker_V1_GetRuntimeStatsResponse()
     private var runtimeStatsFailure: Error?
+    private var staleLoadCleanupRaceEnabled = false
+    private var firstLoadRequest: Melix_Worker_V1_LoadModelRequest?
+    private var firstLoadRequestWaiters: [CheckedContinuation<Melix_Worker_V1_LoadModelRequest, Never>] = []
+    private var firstLoadRelease: CheckedContinuation<Void, Never>?
+    private var residentIdentity: Melix_Worker_V1_BackendModelIdentity?
 
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
     private(set) var unloadHandles: [String] = []
     private(set) var loadRequestCount = 0
+    private(set) var unloadRequests: [Melix_Worker_V1_UnloadModelRequest] = []
+    private(set) var unloadResponseCodes: [String] = []
+
+    func prepareStaleLoadCleanupRace() {
+        staleLoadCleanupRaceEnabled = true
+        healthWorkerInstanceID = staleLoadCleanupWorkerInstanceID
+        loadResponse.ok = true
+        loadResponse.modelHandle = staleLoadCleanupReusedHandle
+        loadResponse.residency.state = .warm
+    }
 
     func setLoadResponse(
         ok: Bool,
@@ -1318,6 +1386,15 @@ private actor LoaderTestingWorkerClient:
         if let loadFailure {
             throw loadFailure
         }
+        if staleLoadCleanupRaceEnabled {
+            firstLoadRequest = request
+            residentIdentity = request.backendIdentity
+            firstLoadRequestWaiters.forEach { $0.resume(returning: request) }
+            firstLoadRequestWaiters.removeAll()
+            await withCheckedContinuation { continuation in
+                firstLoadRelease = continuation
+            }
+        }
         return loadResponse
     }
 
@@ -1325,10 +1402,40 @@ private actor LoaderTestingWorkerClient:
         request: Melix_Worker_V1_UnloadModelRequest
     ) async throws -> Melix_Worker_V1_UnloadModelResponse {
         unloadHandles.append(request.modelHandle)
+        unloadRequests.append(request)
         if let unloadFailure {
             throw unloadFailure
         }
+        if staleLoadCleanupRaceEnabled,
+           (!request.hasExpectedBackendIdentity || request.expectedBackendIdentity != residentIdentity) {
+            var response = Melix_Worker_V1_UnloadModelResponse()
+            response.error.code = "model_identity_mismatch"
+            unloadResponseCodes.append(response.error.code)
+            return response
+        }
         return unloadResponse
+    }
+
+    func waitForFirstLoadRequest() async -> Melix_Worker_V1_LoadModelRequest {
+        if let firstLoadRequest {
+            return firstLoadRequest
+        }
+        return await withCheckedContinuation { continuation in
+            firstLoadRequestWaiters.append(continuation)
+        }
+    }
+
+    func installReplacement(identity: Melix_Worker_V1_BackendModelIdentity) {
+        residentIdentity = identity
+    }
+
+    func releaseFirstLoad() {
+        firstLoadRelease?.resume()
+        firstLoadRelease = nil
+    }
+
+    func currentResidentIdentity() -> Melix_Worker_V1_BackendModelIdentity? {
+        residentIdentity
     }
 
     func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {

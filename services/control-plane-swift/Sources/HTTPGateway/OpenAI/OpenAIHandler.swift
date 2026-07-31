@@ -2553,139 +2553,31 @@ button.primary:active {
         request: Melix_Worker_V1_SpeakRequest,
         workerRegistry: WorkerRegistry
     ) -> AsyncThrowingStream<Melix_Worker_V1_SpeakStreamEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                var attemptBinding = binding
-                for attemptIndex in 0...1 {
-                    var responseOpened = false
-                    var terminalEventObserved = false
-                    do {
-                        var attempt = request
-                        BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
-                        guard let client = await workerRegistry.client(for: attemptBinding.routeKind)
-                            as? any NonTextInferenceWorkerClientProtocol else {
-                            throw WorkerClientError.unavailable
-                        }
-                        let stream = try await client.speakStream(request: attempt)
-                        var retryRequested = false
-                        for try await event in stream {
-                            if event.kind == .error {
-                                terminalEventObserved = true
-                                let recoverable = BackendRouteRecoveryClassifier.shouldRecover(
-                                    event.error
-                                )
-                                if recoverable {
-                                    await BackendRouteRecovery.recordMismatch(
-                                        event.error,
-                                        metricsStore: metricsStore
-                                    )
-                                }
-                                if responseOpened {
-                                    if recoverable {
-                                        await BackendRouteRecovery.recordRetrySuppressed(
-                                            metricsStore: metricsStore
-                                        )
-                                    }
-                                    throw BackendRouteRecovery.partialStreamFailure()
-                                }
-                                if recoverable, attemptIndex == 0 {
-                                    retryRequested = true
-                                    break
-                                }
-                                if recoverable {
-                                    await BackendRouteRecovery.recordRetryExhausted(
-                                        metricsStore: metricsStore
-                                    )
-                                    throw BackendRouteRecovery.recoveryExhaustedError()
-                                }
-                            }
-                            if event.kind == .finish {
-                                terminalEventObserved = true
-                            }
-                            responseOpened = true
-                            continuation.yield(event)
-                        }
-                        if retryRequested {
-                            await BackendRouteRecovery.recordRetryAllowed(metricsStore: metricsStore)
-                            do {
-                                attemptBinding = try await BackendRouteRecovery.recoverBinding(
-                                    failedBinding: attemptBinding,
-                                    modelCatalog: modelCatalog,
-                                    workerRegistry: workerRegistry,
-                                    metricsStore: metricsStore
-                                )
-                            } catch {
-                                await BackendRouteRecovery.recordRetryExhausted(
-                                    metricsStore: metricsStore
-                                )
-                                continuation.finish(
-                                    throwing: BackendRouteRecovery.recoveryExhaustedError()
-                                )
-                                return
-                            }
-                            continue
-                        }
-                        if !responseOpened {
-                            throw WorkerClientError.unavailable
-                        }
-                        if !terminalEventObserved {
-                            await BackendRouteRecovery.recordRetrySuppressed(
-                                metricsStore: metricsStore
-                            )
-                            continuation.finish(
-                                throwing: BackendRouteRecovery.partialStreamFailure()
-                            )
-                            return
-                        }
-                        continuation.finish()
-                        return
-                    } catch {
-                        if responseOpened {
-                            if BackendRouteRecoveryClassifier.shouldRecover(error) {
-                                await BackendRouteRecovery.recordRetrySuppressed(
-                                    metricsStore: metricsStore
-                                )
-                            }
-                            continuation.finish(
-                                throwing: BackendRouteRecovery.partialStreamFailure()
-                            )
-                            return
-                        }
-                        guard BackendRouteRecoveryClassifier.shouldRecover(error) else {
-                            continuation.finish(throwing: error)
-                            return
-                        }
-                        guard attemptIndex == 0 else {
-                            await BackendRouteRecovery.recordRetryExhausted(
-                                metricsStore: metricsStore
-                            )
-                            continuation.finish(
-                                throwing: BackendRouteRecovery.recoveryExhaustedError()
-                            )
-                            return
-                        }
-                        await BackendRouteRecovery.recordRetryAllowed(metricsStore: metricsStore)
-                        do {
-                            attemptBinding = try await BackendRouteRecovery.recoverBinding(
-                                failedBinding: attemptBinding,
-                                modelCatalog: modelCatalog,
-                                workerRegistry: workerRegistry,
-                                metricsStore: metricsStore
-                            )
-                        } catch {
-                            await BackendRouteRecovery.recordRetryExhausted(
-                                metricsStore: metricsStore
-                            )
-                            continuation.finish(
-                                throwing: BackendRouteRecovery.recoveryExhaustedError()
-                            )
-                            return
-                        }
-                    }
+        BackendRouteRecovery.performReplaySafeStream(
+            binding: binding,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            dispatch: { attemptBinding in
+                var attempt = request
+                BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                guard let client = await workerRegistry.client(for: attemptBinding.routeKind)
+                    as? any NonTextInferenceWorkerClientProtocol else {
+                    throw WorkerClientError.unavailable
+                }
+                return try await client.speakStream(request: attempt)
+            },
+            classify: { event in
+                switch event.kind {
+                case .error:
+                    return .error(event.error)
+                case .finish:
+                    return .terminal
+                default:
+                    return .output
                 }
             }
-            continuation.onTermination = { _ in task.cancel() }
-        }
+        )
     }
 
     private func handleImageGenerations(_ request: HTTPRequest) async throws -> HTTPResponse {

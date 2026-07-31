@@ -1323,6 +1323,51 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::bridge")
     }
 
+    @Test("stale bootstrap load cleanup cannot unload a replacement reusing the handle")
+    func staleBootstrapLoadCleanupCannotUnloadReplacementReusingHandle() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let worker = LoaderTestingWorkerClient()
+        await worker.prepareStaleLoadCleanupRace()
+        let staleLoad = Task {
+            try await BootstrapWorkerPreparation.preloadDevTextModel(
+                workerClient: worker,
+                modelCatalog: catalog
+            )
+        }
+
+        let staleRequest = await worker.waitForFirstLoadRequest()
+        let replacementReservation = try #require(await catalog.beginBackendRouteLoad(
+            id: "melix-dev-text",
+            routeKind: .swiftText,
+            workerInstanceID: worker.staleLoadCleanupWorkerInstanceID,
+            reason: "explicit_replacement"
+        ))
+        await worker.installReplacement(identity: replacementReservation.identity)
+        _ = try #require(await catalog.recordLoadSucceeded(
+            id: "melix-dev-text",
+            dispatchHandle: worker.staleLoadCleanupReusedHandle,
+            routeKind: .swiftText,
+            expectedRouteGeneration: replacementReservation.generation,
+            workerInstanceID: replacementReservation.workerInstanceID
+        ))
+
+        await worker.releaseFirstLoad()
+        #expect(try await !staleLoad.value)
+
+        let cleanup = try #require(await worker.unloadRequests.first)
+        let replacement = try #require(await catalog.backendRouteBinding(
+            for: "melix-dev-text",
+            routeKind: .swiftText
+        ))
+        #expect(cleanup.modelHandle == worker.staleLoadCleanupReusedHandle)
+        #expect(!cleanup.force)
+        #expect(cleanup.expectedBackendIdentity == staleRequest.backendIdentity)
+        #expect(cleanup.expectedBackendIdentity != replacement.identity)
+        #expect(await worker.unloadResponseCodes == ["model_identity_mismatch"])
+        #expect(await worker.currentResidentIdentity() == replacement.identity)
+        #expect(replacement.generation == replacementReservation.generation)
+    }
+
     @Test("bootstrap preload uses structured route declarations over free-form metadata")
     func bootstrapPreloadUsesStructuredRouteDeclarations() async throws {
         var response = Melix_Worker_V1_LoadModelResponse()
@@ -1334,6 +1379,7 @@ struct PythonBridgeWorkerClientTests {
             line: bridgeMessageLine(message: try response.serializedData())
         )
         var model = ModelCatalog.devTextModel()
+        model.routeClass = .workerRoutePythonVlm
         model.settings.ext["melix.capability.route_kind"] = "python_vlm"
         let catalog = ModelCatalog(seedModels: [model])
         let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)

@@ -28,8 +28,11 @@ uv run --frozen --project services/mlx-worker-python coverage json \
   --data-file "${coverage_root}/.coverage" \
   -o "${python_coverage}"
 
-python3 scripts/changed_scope_coverage.py \
+UV_CACHE_DIR="${repo_root}/.uv-cache" uv run --python 3.12 python \
+  scripts/python_changed_line_coverage.py \
   --coverage-json "${python_coverage}" \
+  --diff-from "${diff_from}" \
+  services/mlx-worker-python/worker/engine/engine_core.py \
   services/mlx-worker-python/worker/grpc_server.py \
   services/mlx-worker-python/worker/registry.py \
   services/mlx-worker-python/tests/test_backend_model_identity.py \
@@ -62,7 +65,7 @@ UV_CACHE_DIR="${repo_root}/.uv-cache" uv run --python 3.12 python \
   services/control-plane-swift/Sources/WorkerClient/WorkerRoute.swift \
   services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift
 
-text_worker_identity_tests='WorkerScaffoldTests/(testBackendIdentity|testBoundarySnapshotRestoreSurvivesRestartAndPreservesExecutionMetadata|testCompleteBackendIdentity|testConfigurationDefaultsPreferDedicatedWorkerIdentity|testGenerateReturnsRetriableIdentityMismatch|testHandshakeReturnsExpectedRuntimeMetadata|testLoadedIdentityUsesResolvedSwiftModelAndAdapterInsteadOfClaimedLoadIdentity|testPrefillCanRestoreBoundarySnapshotsFromCacheHints|testPrefillReturnsDecodeHandleAndMetricsForLoadedModel|testPrefillReturnsRetriableIdentityMismatch|testRuntimeRegistryPromotesReusedResidencyToPinnedWithoutReloading|testRuntimeRegistryWaitsForForceUnloadBeforeReloadingSameResidency|testRuntimeUnloadComparesBackendIdentityAtomically|testSwiftTextModelFamilyIDRequiresGemmaIdentityMetadata|testVisionHandshakeReturnsVisionWorkerFamilyMetadata|testVisionPayloadReceiptIsWrittenAsynchronously)'
+text_worker_identity_tests='WorkerScaffoldTests/(testBackendIdentity|testBoundarySnapshotRestoreSurvivesRestartAndPreservesExecutionMetadata|testCompleteBackendIdentity|testConfigurationDefaultsPreferDedicatedWorkerIdentity|testDecodeRejectsUnownedOrCrossResidencyPrefillContext|testGenerateReturnsRetriableIdentityMismatch|testHandshakeReturnsExpectedRuntimeMetadata|testLoadedIdentityUsesResolvedSwiftModelAndAdapterInsteadOfClaimedLoadIdentity|testPrefillCanRestoreBoundarySnapshotsFromCacheHints|testPrefillReturnsDecodeHandleAndMetricsForLoadedModel|testPrefillReturnsRetriableIdentityMismatch|testRuntimeRegistryAllowsUnloadWhileAnotherModelIsActive|testRuntimeRegistryCompletesPendingForcedUnloadForSharedResidency|testRuntimeRegistryDefersTargetUnloadUntilItsLastRequestFinishes|testRuntimeRegistryPromotesReusedResidencyToPinnedWithoutReloading|testRuntimeRegistryWaitsForForceUnloadBeforeReloadingSameResidency|testRuntimeUnloadComparesBackendIdentityAtomically|testSwiftTextModelFamilyIDRequiresGemmaIdentityMetadata|testVisionHandshakeReturnsVisionWorkerFamilyMetadata|testVisionPayloadReceiptIsWrittenAsynchronously|testWorkerRuntimeRegistryErrorExposesPrefillGuardMetadataAndMappings|testWorkerServiceRejectsStaleLoadEpochBeforeRuntimeWork)'
 
 CLANG_MODULE_CACHE_PATH="${repo_root}/.build/ModuleCache.noindex/backend-model-identity-text-worker" \
 xcrun swift test \
@@ -76,6 +79,8 @@ UV_CACHE_DIR="${repo_root}/.uv-cache" uv run --python 3.12 python \
   --binary "${text_worker_bin_dir}/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests" \
   --profdata "${text_worker_bin_dir}/codecov/default.profdata" \
   --diff-from "${diff_from}" \
+  services/mlx-text-worker-swift/Sources/Core/Inference/TextDecodeEngine.swift \
+  services/mlx-text-worker-swift/Sources/Core/Inference/TextGenerationEngine.swift \
   services/mlx-text-worker-swift/Sources/Core/WorkerConfiguration.swift \
   services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift \
   services/mlx-text-worker-swift/Sources/Core/WorkerServices.swift

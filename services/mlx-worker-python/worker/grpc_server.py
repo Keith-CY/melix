@@ -48,7 +48,12 @@ from worker.productization.evaluation_final_result import (
     materialize_local_evaluation_dataset,
 )
 from worker.model_load_trust import ModelLoadTrustRejection
-from worker.registry import DiskStreamingUnsupported, MemoryBudgetExceeded, WorkerRegistry
+from worker.registry import (
+    DiskStreamingUnsupported,
+    MemoryBudgetExceeded,
+    WorkerInstanceMismatch,
+    WorkerRegistry,
+)
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError, AudioProcessorValidationError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
@@ -134,6 +139,15 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                 load_trust=request.load_trust if request.HasField("load_trust") else None,
                 backend_identity=(
                     request.backend_identity if request.HasField("backend_identity") else None
+                ),
+            )
+        except WorkerInstanceMismatch as exc:
+            return runtime_pb2.LoadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="worker_instance_mismatch",
+                    message=str(exc),
+                    retriable=True,
                 ),
             )
         except ModelLoadTrustRejection as exc:
@@ -314,7 +328,17 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         return self._engine.prefill(request)
 
     def Decode(self, request, context):
-        if error := self._execution_identity_error(request.execution):
+        requested = (
+            request.execution.backend_identity
+            if request.execution.HasField("backend_identity")
+            else None
+        )
+        if error := self._registry.validate_decode_backend_identity(
+            request_id=request.execution.id.request_id,
+            decode_handle=request.decode_handle,
+            model_handle=request.execution.model_handle,
+            requested=requested,
+        ):
             yield self._execute_error(request.execution.id.request_id, error)
             return
         yield from self._engine.decode(request)

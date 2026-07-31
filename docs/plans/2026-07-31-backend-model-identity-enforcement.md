@@ -250,6 +250,9 @@ first correction pass. The implementation is not accepted until it also:
 8. Removes the unrelated local-job probe reporting change from this branch and
    replaces the superseded performance evidence with a final current-main report
    plus complete analysis for every direct alert.
+9. Rebinds restored snapshot executions to the backend identity of the currently
+   validated loaded residency. A persisted worker boot epoch must not create a
+   decode handle that no request identity can consume after a worker restart.
 
 ### Slice 1: Protocol and worker guards
 
@@ -332,6 +335,42 @@ branch so `make swift-test`, `make py-test`, `make integration-test`, changed-
 scope coverage, and the scoped performance report are captured under
 `.runtime/pre-commit-performance/`.
 
+## Final Independent Review Corrections
+
+The final Standards and Spec reviews identified additional races and lifecycle
+gaps. The branch is not ready for remote review until it also:
+
+1. Atomically validates the worker epoch claimed by
+   `LoadModelRequest.backend_identity` before runtime load work begins. A worker
+   restart between health and load must reject the stale reservation, so every
+   successful load is proven to belong to the same worker epoch captured by the
+   control plane. Cleanup of a rejected or stale load completion can then
+   compare-and-unload with that proven reservation identity.
+2. Tracks Swift inference leases per model handle and records a pending unload
+   when the target handle is busy. Activity on another model must not block
+   retirement, and the target residency must be removed after its last lease is
+   released without relying on a second control-plane unload request.
+3. Moves text and speech replay-safe stream handling behind one typed state
+   machine. The first completed, finish, or non-recoverable error event is
+   terminal; trailing worker events are not exposed. Zero-event and
+   unterminated streams retain the existing fail-closed recovery policy.
+4. Resolves bootstrap preload only from structured request-route declarations.
+   Deprecated `route_class` cannot select or invalidate an otherwise valid
+   declaration. The bootstrap stage supplies its target worker route, while the
+   model must declare at least one compatible structured task for that route;
+   multiple tasks sharing one worker residency remain valid.
+5. Retains the three delayed stale-load/same-handle regression tests for lazy,
+   bootstrap, and explicit control-plane loads, proving cleanup uses the
+   worker-validated reservation identity.
+
+The performance evidence must continue to measure the registered identity
+boundary probe and cached loaded-model listing. The final pass additionally
+reports changed-line coverage for load-epoch validation, per-handle
+lease release, and the shared stream state machine. Load-epoch comparison,
+terminal classification, and per-handle lease accounting are constant-time
+boundary operations and must stay within the existing control-plane `1.0 ms`
+absolute budget; no new production debug mode is introduced.
+
 ## Implementation Evidence
 
 The delivered request identity is the four-part tuple of admitted model ID,
@@ -353,69 +392,40 @@ redactor covers absolute and relative paths, case-insensitive local file URIs,
 and UNC paths without retaining prompts, media, tool arguments, or generated
 content.
 
+Snapshot restore validates the persisted model identity against a current loaded
+residency, then rebinds the restored execution to that residency's current
+backend identity and the restore request owner before creating its decode
+context. This keeps explicit recovery usable across worker boot epochs without
+relaxing the decode guard.
+
 ## Metrics Report
 
 Final changed-line coverage against current `origin/main`:
 
-- Python backend identity scope: `96.90%` (`407/420`).
-- Swift control-plane scope: `95.72%` (`1431/1495`).
-- Swift text-worker scope: `98.68%` (`224/227`).
+- Python backend identity scope: `96.64%` (`575/595`).
+- Swift control-plane scope: `96.46%` (`1334/1383`).
+- Swift text-worker scope: `99.15%` (`348/351`).
 
 The control-plane coverage command excludes `SiblingFileAdvisoryLockTests`, an
 unrelated timing-sensitive suite under instrumentation. The normal full Swift
 gate includes that suite and passed.
 
-The registered `backend-model-identity-boundary` performance probe passed with
-no regression or verification failure. Matched worker-boundary p95 was
-`0.0004177396 ms` against the `0.05 ms` absolute threshold, and control-plane
-stamping plus recovery classification p95 was `0.001492042 ms` against the
-`1.0 ms` threshold. The probe observed `140000` mismatch checks, zero output
-before mismatch, three allowed retries, two suppressed retries, one exhausted
-retry, one coalesced caller, two fresh bindings across the scripted scenarios,
-and zero duplicate completed tools.
+The first current-snapshot pre-commit report at
+`.runtime/pre-commit-performance/20260731-212740-686de830/report` selected five
+direct probes and found no performance regression. It correctly blocked the
+commit because the structured-output probe's verification command did not
+cover the new Python prefill-session binding line. The registered command now
+includes the focused cross-residency decode-session test, which measures that
+line at `100%` changed-line coverage.
 
-The existing direct probes whose shared test modules gained explicit backend
-identity fixtures also passed their snapshot coverage replay. Worker registry
-coverage was `99.40%` (`167/168`), and the affected image, audio, rerank,
-embedding, vision-family, and integration helper probes all reported at least
-`98.00%` coverage.
-
-The final current-main 148-probe run at
-`.runtime/pre-commit-performance/20260731-161521-949e73db/report` completed with
-zero direct or context verification failures. Its aggregate status was
-`regression`: nine direct microbenchmarks sampled the head after the base during
-a multi-hour run and crossed relative thresholds. The production files for
-their hot loops were unchanged by this issue, while their shared fixture files
-gained explicit backend identity. Three alternating-order paired reruns of all
-nine alerted metrics produced the following evidence:
-
-- Rerank core averaged `462.150 ms` for base and `470.536 ms` for head
-  (`+1.81%`); the real request measurement in the full run was also within its
-  threshold.
-- Embedding projection averaged `9.357/9.320 ms` overall, `52.061/52.118 ms`
-  for default dimensions, and `207.341/208.750 ms` for one dimension. Embedding
-  core input-view work averaged `2098.247/2092.587 ms`.
-- OCR token scanning averaged `419.815/415.156 ms`, with identical `84.8` byte
-  peak allocation. Audio local-URI peak allocation was identical at `2521.6`
-  bytes.
-- Multimodal image URI preprocessing averaged `23.552/23.037 ms`; engine
-  fallback token accounting averaged `27.249/27.320 ms`; vision configuration
-  resolution averaged `3.858/3.937 ms`, with identical `40` byte peak
-  allocation.
-- Swift binary resolution had one base outlier; medians were `12.984 ms` for
-  base and `13.098 ms` for head, with identical candidate counts.
-
-Every alternating rerun delta was below the registered threshold and preserved
-the same checksums, counts, and allocation invariants. The only stable new cost
-was copying backend identity into a cached summary of 2,000 loaded models:
-`0.022398 -> 0.025260 ms` per listing in the full report. That required output
-remains below the explicit `0.005 ms` absolute budget and the worker registry
-probe status is `ok`.
-
-An analyzed-regression override may therefore acknowledge only the nine
-non-reproducible, out-of-scope microbenchmark alerts in that full-matrix sample.
-It does not waive tests, changed-line coverage, probe execution, identity
-correctness counters, or any verification failure.
+Changing the versioned performance registry intentionally forces the final
+pre-commit report to execute all `148` registered probes. The report for the
+exact committed snapshot is published at the stable local artifact path
+`.runtime/issue-2945-final-performance/report`; the pull request evidence also
+records its timestamped source directory and aggregate result. Verification
+failures are never eligible for an override. Any sampled regression must be
+analyzed and reproduced before using the repository's documented intentional
+regression override.
 
 ## Verification Results
 
@@ -424,9 +434,9 @@ The final 2026-07-31 repository gates completed successfully:
 - `make bootstrap`
 - `make proto`
 - `make proto-check`
-- `make swift-test` (`296` text-worker and `878` menu-bar tests passed,
+- `make swift-test` (`300` text-worker and `878` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
-- `make py-test` (`5478` passed, `14` skipped)
+- `make py-test` (`5480` passed, `14` skipped)
 - `make integration-test` (`124` passed, `1` skipped)
 
 The focused same-endpoint worker-restart integration test also passed.
@@ -443,3 +453,27 @@ The focused same-endpoint worker-restart integration test also passed.
   contract; it cannot be used as a public inference fallback.
 - Abort is request-scoped and carries no model output, so it remains keyed by
   request ID rather than backend model identity.
+
+## Independent Review Corrections
+
+The final independent specification review identified a phase-aware decode
+confusion case in both worker implementations: a decode handle created by
+residency A could be combined with a valid execution identity for residency B.
+The corrected design binds each decode context to its prefill request, model
+handle, and backend identity. Swift validates and acquires the decode lease in
+one registry actor operation. Python records the binding beside the request
+lease and validates it under the registry lock. Both paths reject cross-handle
+or cross-identity decode before consuming the context or emitting output, and
+their regression tests prove the original owner can still decode afterward.
+The phase-aware control-plane path copies one `ExecutionMetadata` value into
+both `Prefill` and `Decode`, so those RPCs retain one execution request ID.
+`parent_request_id` remains request-lineage metadata and cannot substitute for
+decode-handle ownership. Worker tests that exercised both phases were corrected
+to preserve this production contract.
+
+A later independent specification review found that snapshot restore preserved
+the previous process's worker instance ID even after validating the snapshot
+against a current residency. Restore now rebinds the complete execution backend
+identity to the selected loaded residency before runtime prefill and context
+creation. The restart regression uses distinct worker instance IDs and proves
+the new owner and current residency can consume the restored handle.

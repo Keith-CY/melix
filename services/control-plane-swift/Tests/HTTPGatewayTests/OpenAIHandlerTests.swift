@@ -10726,6 +10726,72 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["audio.speech_output_bytes", default: -1] == Double(envelopeBytes.count + pcmChunk.count))
     }
 
+    @Test("POST /v1/audio/speech drops chunks after the finish event")
+    func postAudioSpeechStreamingDropsChunksAfterFinish() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let audioClient = ScriptedPhaseFiveWorkerClient()
+        let acceptedChunk = Data([0x01, 0x02])
+        let trailingChunk = Data([0x03, 0x04])
+        await audioClient.setSpeakStreamEvents([
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .audioChunk
+                event.audioBytes = acceptedChunk
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .finish
+                event.finish.audioBytes = UInt64(acceptedChunk.count)
+                event.finish.audioChunkCount = 1
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .audioChunk
+                event.audioBytes = trailingChunk
+                return event
+            }(),
+        ])
+        let catalog = ModelCatalog(
+            seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()]
+        )
+        _ = await catalog.loadModel(
+            id: "melix-dev-speech",
+            dispatchHandle: "melix-dev-speech::python"
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: audioClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: registry
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "input": "terminal cutoff",
+              "stream": true
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
+        )
+        let payload = try await collectBodyData(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload == acceptedChunk)
+    }
+
     @Test("POST /v1/audio/speech returns a pre-response streaming worker error")
     func postAudioSpeechStreamingReturnsPreResponseWorkerError() async throws {
         let textClient = ScriptedWorkerClient(events: [])

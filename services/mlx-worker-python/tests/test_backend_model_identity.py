@@ -17,6 +17,11 @@ class PassiveTextBackend:
         return 1024
 
 
+class LoadMustNotRunBackend(PassiveTextBackend):
+    def load_model(self, model_spec):  # pragma: no cover - guarded before runtime dispatch.
+        raise AssertionError(f"runtime load dispatched for {model_spec.model_id}")
+
+
 class GuardOnlyRegistry:
     """Expose only the public identity guard and fail if runtime dispatch begins."""
 
@@ -26,6 +31,16 @@ class GuardOnlyRegistry:
 
     def validate_backend_identity(self, handle, requested):
         return self._registry.validate_backend_identity(handle, requested)
+
+    def validate_decode_backend_identity(
+        self, *, request_id, decode_handle, model_handle, requested
+    ):
+        return self._registry.validate_decode_backend_identity(
+            request_id=request_id,
+            decode_handle=decode_handle,
+            model_handle=model_handle,
+            requested=requested,
+        )
 
     def get_loaded_model(self, handle):
         self.runtime_dispatch_count += 1
@@ -89,6 +104,35 @@ def test_worker_instance_identity_is_unique_per_registry_boot() -> None:
     assert first.worker_instance_id != second.worker_instance_id
     assert first_health.worker_instance_id == first.worker_instance_id
     assert second_health.worker_instance_id == second.worker_instance_id
+
+
+def test_load_rejects_stale_worker_instance_before_runtime_work() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=LoadMustNotRunBackend()),
+        model_catalog=WorkerModelCatalog(),
+        worker_instance_id="current-worker-epoch",
+    )
+    service = WorkerRuntimeService(registry)
+    model = WorkerModelCatalog.dev_text_model()
+
+    response = service.LoadModel(
+        runtime_pb2.LoadModelRequest(
+            model=model,
+            backend_identity=_identity(
+                model.model_id,
+                worker_instance_id="stale-worker-epoch",
+            ),
+        ),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "worker_instance_mismatch"
+    assert response.error.retriable is True
+    assert service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    ).loaded_models == []
 
 
 def test_unload_compares_backend_identity_atomically() -> None:
@@ -314,6 +358,97 @@ def test_backend_identity_mismatch_rejects_every_python_inference_modality_befor
     assert receipt.loaded_worker_instance_id == "worker-text-001"
     assert receipt.mismatch_reason == "model_id,adapter_id,route_generation"
     assert guard_registry.runtime_dispatch_count == 0
+
+
+def test_decode_rejects_prefill_session_bound_to_another_python_residency() -> None:
+    registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=PassiveTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+        worker_instance_id="worker-text-001",
+    )
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+
+    def load_vlm(adapter_id: str, generation: int) -> tuple[str, common_pb2.BackendModelIdentity]:
+        model = WorkerModelCatalog.dev_vlm_model()
+        model.ext["melix.adapter_set_hash"] = adapter_id
+        identity = _identity(model.model_id, adapter_id=adapter_id, generation=generation)
+        response = runtime_service.LoadModel(
+            runtime_pb2.LoadModelRequest(model=model, backend_identity=identity),
+            context=None,
+        )
+        assert response.ok is True
+        return response.model_handle, identity
+
+    first_handle, first_identity = load_vlm("adapter-first", 11)
+    second_handle, second_identity = load_vlm("adapter-second", 12)
+    request_id = "decode-cross-residency"
+    prefill = inference_service.Prefill(
+        inference_pb2.PrefillRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id=request_id),
+                model_handle=first_handle,
+                backend_identity=first_identity,
+            ),
+            messages=[
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[
+                        common_pb2.MessagePart(text="Describe the image."),
+                        common_pb2.MessagePart(
+                            image_bytes=b"phase identity image",
+                            media=common_pb2.MediaMetadata(
+                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                mime_type="image/png",
+                                filename="phase-identity.png",
+                            ),
+                        ),
+                    ],
+                )
+            ],
+            return_decode_handle=True,
+        ),
+        context=None,
+    )
+    assert prefill.ok is True
+
+    rejected = list(
+        inference_service.Decode(
+            inference_pb2.DecodeRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id=request_id),
+                    model_handle=second_handle,
+                    backend_identity=second_identity,
+                ),
+                decode_handle=prefill.decode_handle,
+            ),
+            context=None,
+        )
+    )
+    assert len(rejected) == 1
+    error = rejected[0].error.error
+    assert error.code == "model_identity_mismatch"
+    assert error.retriable is True
+    assert error.backend_identity_mismatch.mismatch_reason == "decode_model_handle_mismatch"
+    assert error.details["requested_model_handle"] == second_handle
+    assert error.details["loaded_model_handle"] == first_handle
+
+    accepted = list(
+        inference_service.Decode(
+            inference_pb2.DecodeRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id=request_id),
+                    model_handle=first_handle,
+                    backend_identity=first_identity,
+                ),
+                decode_handle=prefill.decode_handle,
+            ),
+            context=None,
+        )
+    )
+    assert any(event.HasField("token_delta") for event in accepted)
+    assert accepted[-1].HasField("completed")
 
 
 def test_backend_identity_missing_is_typed_for_identity_bound_loads() -> None:

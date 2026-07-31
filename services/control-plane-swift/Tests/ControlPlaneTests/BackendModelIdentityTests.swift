@@ -599,6 +599,7 @@ struct BackendModelIdentityTests {
                 workerStillOwnsFailedResidency ? [failedBinding.handle] : []
             ))
             #expect(await worker.unloadRequests.count == 1)
+            #expect(await worker.unloadRequests.first?.force == true)
             #expect(await worker.unloadRequests.first?.expectedBackendIdentity == failedBinding.identity)
             #expect(await metrics.value(
                 forKey: workerStillOwnsFailedResidency

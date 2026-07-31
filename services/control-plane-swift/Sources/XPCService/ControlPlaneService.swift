@@ -4756,6 +4756,7 @@ public actor ControlPlaneService {
                 var unloadRequest = Melix_Worker_V1_UnloadModelRequest()
                 unloadRequest.modelHandle = response.modelHandle
                 unloadRequest.force = true
+                unloadRequest.expectedBackendIdentity = reservation.identity
                 _ = try? await workerClient.unloadModel(request: unloadRequest)
                 return ModelLoadOutcome(
                     model: hydrate(await modelCatalog.model(id: modelID) ?? Melix_Controlplane_V1_ModelSummary()),
