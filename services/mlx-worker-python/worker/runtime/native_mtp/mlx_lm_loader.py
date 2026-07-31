@@ -49,7 +49,7 @@ def _model_safetensor_files(model_path: Path) -> list[str]:
         with os.scandir(model_path) as entries:
             for entry in entries:
                 name = entry.name
-                if name[0] != "m" or not startswith(name, "model"):
+                if not startswith(name, "model"):
                     continue
                 if endswith(name, ".safetensors"):
                     append_weight_file(entry.path)
