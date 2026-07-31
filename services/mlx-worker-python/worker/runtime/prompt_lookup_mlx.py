@@ -93,6 +93,27 @@ class MLXPromptLookupStep:
         self._cached_tokens -= trim_tokens
         return True
 
+    def _cache_eval_targets(self) -> list[Any]:
+        """Collect the arrays that materialize this cache's KV state.
+
+        Older mlx-lm caches expose `.state`; newer `KVCache` layouts expose
+        `.keys`/`.values` and no `.state`. Passing a bare `getattr(layer,
+        "state", None)` list straight to `mx.eval` therefore hands it `None`
+        entries on those layouts, so the targets are collected the same way
+        `_prefill_prompt_cache` already does it in `mlx_text_runtime`.
+        """
+        targets: list[Any] = []
+        for layer in self._cache or ():
+            state = getattr(layer, "state", None)
+            if state is not None:
+                targets.append(state)
+                continue
+            for attr in ("keys", "values"):
+                value = getattr(layer, attr, None)
+                if value is not None:
+                    targets.append(value)
+        return targets
+
     def _prefill(self, mx: Any, tokens: list[int]) -> None:
         if not tokens:
             return
@@ -100,7 +121,9 @@ class MLXPromptLookupStep:
         for start in range(0, len(tokens), step):
             chunk = tokens[start : start + step]
             self._model(mx.array([chunk]), cache=self._cache)
-            mx.eval([getattr(layer, "state", None) for layer in self._cache])
+            eval_targets = self._cache_eval_targets()
+            if eval_targets:
+                mx.eval(eval_targets)
             self._cached_tokens += len(chunk)
 
     def _forward_argmax(self, mx: Any, inputs: list[int]) -> list[int]:

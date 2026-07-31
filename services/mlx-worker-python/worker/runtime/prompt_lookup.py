@@ -371,13 +371,18 @@ class PromptLookupDecoder:
         while remaining > 0:
             if should_stop is not None and should_stop():
                 return
+            # Read the pause state before `draft_budget()` consumes a cooldown
+            # tick: after the call the counter has already been decremented, so
+            # the final suppressed cycle of every cooldown would read as
+            # un-paused and go uncounted.
+            paused = gate.paused
             draft = index.propose(gate.draft_budget())
             predictions = [int(token) for token in step_fn(index.tokens, draft)]
             if not predictions:
                 return
             stats.cycle_count += 1
-            if not draft:
-                stats.paused_cycle_count += 1 if gate.paused else 0
+            if not draft and paused:
+                stats.paused_cycle_count += 1
 
             accepted = 0
             for draft_token, prediction in zip(draft, predictions):

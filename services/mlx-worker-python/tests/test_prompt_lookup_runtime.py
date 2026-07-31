@@ -466,6 +466,51 @@ def test_mlx_step_empty_context_returns_nothing(fake_mlx: _FakeCacheModule) -> N
     assert MLXPromptLookupStep(_FakeModel())(context=[], draft=[1]) == []
 
 
+class _FakeKVCacheLayer:
+    """Newer mlx-lm `KVCache` shape: `.keys`/`.values`, no `.state`."""
+
+    def __init__(self) -> None:
+        self.offset = 0
+
+    @property
+    def keys(self) -> str:
+        return f"keys@{self.offset}"
+
+    @property
+    def values(self) -> str:
+        return f"values@{self.offset}"
+
+
+def test_mlx_step_prefill_never_evals_none_for_stateless_cache_layers(
+    fake_mlx: _FakeCacheModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A cache layer without `.state` must not put `None` into the eval targets:
+    # real `mx.eval` rejects non-array inputs, so the permissive fake would hide
+    # a prefill that blows up on any newer-KVCache model.
+    fake_mlx.make_prompt_cache = lambda model: [_FakeKVCacheLayer()]  # type: ignore[assignment]
+    evaluated: list[Any] = []
+
+    def strict_eval(*args: Any, **kwargs: Any) -> None:
+        del kwargs
+        for arg in args:
+            targets = arg if isinstance(arg, list) else [arg]
+            for target in targets:
+                assert target is not None, "mx.eval received a None cache state"
+                evaluated.append(target)
+
+    monkeypatch.setattr(sys.modules["mlx.core"], "eval", strict_eval)
+
+    model = _FakeModel()
+    step = MLXPromptLookupStep(model, prefill_step_size=2)
+    # A 5-token context prefills 4 tokens (2 chunks) before the verify forward.
+    assert step(context=[1, 2, 3, 4, 5], draft=[6]) == [6, 7]
+    # Two prefill chunks, each evaluating the layer's keys and values. (The
+    # trailing entry is the verify forward's own argmax eval, not cache state.)
+    cache_targets = [target for target in evaluated if isinstance(target, str)]
+    assert cache_targets == ["keys@2", "values@2", "keys@4", "values@4"]
+
+
 def test_build_mlx_step_rejects_non_callable_model(fake_mlx: _FakeCacheModule) -> None:
     with pytest.raises(PromptLookupUnavailable):
         build_mlx_step(object())

@@ -1231,10 +1231,7 @@ class AutoMLXBackend:
         prompt_tokens = list(
             tokenizer.encode(
                 prompt,
-                add_special_tokens=(
-                    getattr(tokenizer, "bos_token", None) is None
-                    or not prompt.startswith(str(getattr(tokenizer, "bos_token", "") or ""))
-                ),
+                add_special_tokens=_prompt_encode_add_special_tokens(tokenizer, prompt),
             )
         )
         if not prompt_tokens:

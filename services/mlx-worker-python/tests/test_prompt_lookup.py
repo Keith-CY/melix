@@ -302,6 +302,27 @@ def test_churning_workload_trips_hysteresis_and_pauses_drafting() -> None:
     assert max(calls) <= config.max_draft_tokens + 1
 
 
+def test_paused_cycle_count_matches_every_suppressed_cycle() -> None:
+    # The stat must count each cooldown cycle exactly once. Reading the gate's
+    # pause state *after* draft_budget() consumed a tick undercounts the last
+    # suppressed cycle of every cooldown, which the >= assertions elsewhere in
+    # this file cannot catch.
+    prompt = [0, 1, 2, 3, 4, 0, 1]
+    config = _enabled_config(warmup_cycles=3, cooldown_cycles=5, min_accept_rate=0.9)
+    calls: list[int] = []
+
+    _accelerated_tokens, stats, _ = _accelerated(config, _churning_model(), prompt, 40, calls=calls)
+
+    assert stats.fallback_count >= 1
+    # Drafting resumed before the budget ran out, so every cooldown this run
+    # entered also finished — which pins the expected count exactly.
+    assert calls[-1] > 1
+    # Each pause suppresses exactly cooldown_cycles cycles. Reading the gate's
+    # pause state after draft_budget() consumed a tick loses the last one of
+    # every cooldown, which the `>=` bounds used elsewhere cannot see.
+    assert stats.paused_cycle_count == stats.fallback_count * config.cooldown_cycles
+
+
 def test_hysteresis_gate_pauses_for_cooldown_then_resumes() -> None:
     config = _enabled_config(warmup_cycles=2, cooldown_cycles=3, min_accept_rate=0.5)
     gate = _HysteresisGate(config)
