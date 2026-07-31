@@ -216,6 +216,22 @@ def test_payload_mlx_tag_detection_fast_paths_exact_membership(monkeypatch: pyte
     assert calls == 1
 
 
+def test_payload_exact_mlx_tag_detection_skips_card_metadata_lookup() -> None:
+    class ExactTagPayload(dict[str, object]):
+        def get(self, key: str, default: object = None) -> object:
+            if key == "cardData":
+                raise AssertionError(  # pragma: no cover - regression guard
+                    "exact top-level MLX tag should return before card metadata"
+                )
+            return super().get(key, default)
+
+    assert _payload_is_mlx_compatible(
+        ExactTagPayload(
+            {"id": "plain/model", "tags": ["Text-Generation", "MLX", object()]}
+        )
+    ) is True
+
+
 def test_payload_card_library_detection_skips_tag_scan_when_top_library_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

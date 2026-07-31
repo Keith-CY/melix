@@ -576,6 +576,9 @@ def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     repo_id = raw_repo_id if isinstance(raw_repo_id, str) else ""
     if repo_id and _repo_id_contains_mlx(repo_id):
         return True
+    tags = payload.get("tags")
+    if type(tags) is list and ("mlx" in tags or "MLX" in tags):
+        return True
     card_data = payload.get("cardData")
     if isinstance(card_data, dict):
         if not library_name:
@@ -585,7 +588,7 @@ def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
         card_tags = card_data.get("tags")
         if card_tags and _tag_payload_contains_mlx(card_tags):
             return True
-    if _tag_payload_contains_mlx(payload.get("tags")):
+    if _tag_payload_contains_mlx(tags):
         return True
     if not isinstance(card_data, dict):
         return False

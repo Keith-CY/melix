@@ -37,6 +37,17 @@ before the rarer lowercase/mixed-case alternatives. Behavior remains unchanged
 for all four case combinations; the slice only reduces average failed membership
 scans before the direct size-hint parser runs on common README metadata.
 
+## 2026-07-31 top-level tag exact-match follow-up
+
+This follow-up Python-only slice stays within
+`worker.model_ops.hub_catalog._payload_is_mlx_compatible()` and the same
+registered `hub-catalog-size-hint-regex-precompile` probe. Payloads whose
+top-level `tags` list contains an exact `mlx` or `MLX` atom now return before
+card metadata lookup. Mixed-case tags, list subclasses, card-level tags, and
+card `library_name` handling still use the existing compatibility path; the
+slice only avoids unnecessary card-data work for the already covered exact
+top-level tag fast path.
+
 ## Implementation plan
 
 1. Keep the regex fallback and the direct uppercase pipe marker path intact.
