@@ -177,6 +177,20 @@ def test_mlx_repo_id_detection_preserves_case_insensitive_matches() -> None:
     assert _repo_id_contains_mlx("owner/model-MLX-suffix") is True
 
 
+def test_mlx_repo_id_detection_skips_lowercase_copy_without_x() -> None:
+    class CountingRepoId(str):
+        lower_calls = 0
+
+        def lower(self) -> str:  # pragma: no cover - must not run in this fast path
+            type(self).lower_calls += 1
+            return super().lower()
+
+    repo_id = CountingRepoId("plain/model")
+
+    assert _repo_id_contains_mlx(repo_id) is False
+    assert CountingRepoId.lower_calls == 0
+
+
 def test_payload_mlx_tag_detection_preserves_exact_list_and_subclass_semantics() -> None:
     class TagList(list[str]):
         pass
