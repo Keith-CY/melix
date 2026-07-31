@@ -515,17 +515,42 @@ def _flat_stop_token_ids(stop_tokens: list[list[int]] | None) -> tuple[int, ...]
 
 
 def _is_greedy_sampling(sampling: Any) -> bool:
-    """True when the request asks for argmax decoding.
+    """True when the request provably decodes to the model's plain argmax.
 
-    Either a zero temperature or top_k == 1 collapses sampling onto the argmax,
-    which is the regime where prompt-lookup acceptance is output-identical.
+    Prompt lookup verifies drafts against an unmodified `mx.argmax`, so it may
+    only run when the standard path would emit that same argmax. The bar here is
+    deliberately "provable from a documented contract", not "probably equivalent":
+
+    - `temperature <= 0` is the one documented guarantee — mlx-lm's `make_sampler`
+      returns `lambda x: mx.argmax(x, axis=-1)` outright when `temp == 0`.
+    - `top_k == 1` with a non-zero temperature is *also* argmax under the pinned
+      mlx-lm, but only by an argument about the sampler chain's internal ordering
+      (top-k masking runs last, leaving one candidate for `categorical_sampling`).
+      That is upstream-owned ordering, not a contract, so it is excluded rather
+      than relied on.
+    - Any non-zero `frequency_penalty` / `presence_penalty` disqualifies the
+      request. Those never reach the pinned mlx-lm's `make_sampler` (it does not
+      declare them; penalties live in `make_logits_processors`), so today they
+      could not perturb the argmax. But `_sampler_penalty_kwargs` is *runtime
+      detected* from the sampler factory, so an mlx-lm bump that starts accepting
+      them — or an injected factory that does — would silently apply penalties on
+      the standard path while this path stayed unpenalized, breaking the
+      greedy-identity guarantee with no test to catch it. Gating costs only the
+      acceleration of penalized requests.
     """
     try:
         temperature = float(getattr(sampling, "temperature", 0.0) or 0.0)
-        top_k = int(getattr(sampling, "top_k", 0) or 0)
     except (TypeError, ValueError):
         return False
-    return temperature <= 0.0 or top_k == 1
+    if temperature > 0.0:
+        return False
+    for penalty_name in _SAMPLER_PENALTY_KWARG_NAMES:
+        try:
+            if float(getattr(sampling, penalty_name, 0.0) or 0.0) != 0.0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
 
 
 def _mlx_peak_memory_gb(mx: Any) -> float | None:

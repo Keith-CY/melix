@@ -60,12 +60,20 @@ class FakeDetokenizer:
         self.finalized = True
 
 
-def _sampling(temperature: float = 0.0, top_k: int = 1, max_output_tokens: int = 16):
+def _sampling(
+    temperature: float = 0.0,
+    top_k: int = 1,
+    max_output_tokens: int = 16,
+    frequency_penalty: float = 0.0,
+    presence_penalty: float = 0.0,
+):
     return common_pb2.SamplingConfig(
         temperature=temperature,
         top_p=1.0,
         top_k=top_k,
         max_output_tokens=max_output_tokens,
+        frequency_penalty=frequency_penalty,
+        presence_penalty=presence_penalty,
     )
 
 
@@ -107,10 +115,41 @@ def _passage_step(passage: Sequence[int], fallback: int = 7):
 # ---------------------------------------------------------------------------
 
 
-def test_greedy_sampling_detection() -> None:
+def test_greedy_sampling_requires_zero_temperature() -> None:
     assert _is_greedy_sampling(_sampling(temperature=0.0, top_k=0)) is True
-    assert _is_greedy_sampling(_sampling(temperature=0.7, top_k=1)) is True
     assert _is_greedy_sampling(_sampling(temperature=0.7, top_k=40)) is False
+    # top_k == 1 at a non-zero temperature is argmax only via the pinned
+    # mlx-lm's internal sampler-chain ordering, not a documented contract, so
+    # it is deliberately excluded from the greedy guarantee.
+    assert _is_greedy_sampling(_sampling(temperature=0.7, top_k=1)) is False
+
+
+def test_greedy_sampling_rejects_non_zero_penalties() -> None:
+    # Penalties do not reach the pinned mlx-lm's make_sampler, but the forwarding
+    # is runtime-detected from the sampler factory. If it ever starts applying
+    # them, the standard path would emit penalized tokens while prompt lookup
+    # verified against a plain argmax — so a penalized request must not qualify.
+    assert _is_greedy_sampling(_sampling(frequency_penalty=0.5)) is False
+    assert _is_greedy_sampling(_sampling(presence_penalty=0.5)) is False
+    assert _is_greedy_sampling(_sampling(frequency_penalty=0.0, presence_penalty=0.0)) is True
+
+
+def test_prompt_lookup_skipped_for_penalized_greedy_requests() -> None:
+    backend = _backend()
+    tokenizer = FakeTokenizer()
+    tokenizer.detokenizer = FakeDetokenizer()  # type: ignore[attr-defined]
+
+    assert (
+        backend._maybe_generate_prompt_lookup_tokens(
+            _loaded_model(tokenizer),
+            "abc",
+            config=PromptLookupConfig(enabled=True),
+            sampling=_sampling(temperature=0.0, frequency_penalty=1.2),
+            max_tokens=8,
+            cancel_event=Event(),
+        )
+        is None
+    )
 
 
 def test_flat_stop_token_ids_keeps_single_token_sequences() -> None:

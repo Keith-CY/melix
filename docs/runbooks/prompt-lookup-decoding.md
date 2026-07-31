@@ -40,11 +40,25 @@ forward pass. Every emitted token is therefore a prediction the target model
 made, so the token sequence is **identical to plain greedy decoding** — only the
 number of forward passes differs.
 
-Because of that, prompt lookup is **greedy-only**. Requests with a non-zero
-temperature and `top_k != 1` stay on the standard decode path: preserving a
-sampled output distribution requires the stochastic accept / residual-sampling
-rule, which this mode does not implement. Melix will not silently change a
-sampled request's distribution to gain throughput.
+Because of that, prompt lookup is **greedy-only**, and the bar for "greedy" is
+provability from a documented contract rather than likely equivalence. A request
+qualifies only when **both** hold:
+
+- `temperature <= 0` — mlx-lm's `make_sampler` documents that `temp == 0`
+  returns `mx.argmax` outright. A non-zero temperature with `top_k == 1` is also
+  argmax under the current pin, but only by an argument about the sampler
+  chain's internal ordering; that is upstream-owned, so it is excluded rather
+  than relied on.
+- `frequency_penalty` and `presence_penalty` are both zero — penalties do not
+  reach the pinned mlx-lm's `make_sampler` (they live in
+  `make_logits_processors`), but that forwarding is detected from the sampler
+  factory at runtime. An mlx-lm bump that started accepting them would otherwise
+  silently penalize the standard path while prompt lookup verified against a
+  plain argmax.
+
+Everything else — sampled requests, penalized requests, and structured-output
+requests — stays on the standard decode path. Melix will not silently change a
+request's output distribution to gain throughput.
 
 Structured-output requests (`response_format`) also stay on the standard path,
 since constraint enforcement lives in the sampler.
