@@ -2716,6 +2716,149 @@ struct RuntimeViewModelTests {
         #expect(await dedupeClient.recordedGatewayAccessApplyRequests.count == 1)
     }
 
+    @Test("provider target references keep local and remote identities distinct")
+    func providerTargetReferencesKeepKindsDistinct() throws {
+        let local = try #require(RuntimeProviderTargetReference(id: "local:shared"))
+        let remote = try #require(RuntimeProviderTargetReference(id: "remote:shared"))
+        let remoteWithColon = try #require(RuntimeProviderTargetReference(id: "remote:team:provider"))
+
+        #expect(local != remote)
+        #expect(local.kind == .localServer)
+        #expect(remote.kind == .remoteServer)
+        #expect(remoteWithColon.serverID == "team:provider")
+        #expect(RuntimeProviderTargetReference(id: "shared") == nil)
+        #expect(RuntimeProviderTargetReference(id: "other:shared") == nil)
+        #expect(RuntimeProviderTargetReference(id: "remote:   ") == nil)
+
+        var session = DesktopChatSessionState(
+            id: "remote-chat",
+            title: "Remote Chat",
+            providerTarget: remote
+        )
+        #expect(session.hasProviderBinding)
+        #expect(session.hasServerBinding == false)
+        #expect(session.serverSessionID == "")
+        session.serverSessionID = " local-provider "
+        #expect(session.providerTarget?.id == "local:local-provider")
+        #expect(session.hasServerBinding)
+        session.serverSessionID = " "
+        #expect(session.providerTarget == nil)
+        #expect(session.hasProviderBinding == false)
+    }
+
+    @Test("chat lists binds and submits through a remote provider target")
+    @MainActor
+    func chatSubmitsThroughRemoteProviderTarget() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "sub2api",
+                    title: "Remote DeepSeek",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://sub2api.example/v1",
+                    defaultModelID: "deepseek-v4",
+                    timeoutSeconds: 90,
+                    rateLimitPerMinute: 30,
+                    credentialRef: RemoteServerStore.credentialRef(for: "sub2api"),
+                    apiKeyHint: "sk-r...cret",
+                    healthStatus: "healthy"
+                ),
+            ],
+            apiKeys: ["sub2api": "sk-remote-secret"]
+        )
+        let viewModel = RuntimeViewModel(client: client, remoteServerStore: remoteStore)
+
+        viewModel.bindSelectedChatSessionToProvider(targetID: "remote:sub2api")
+        await viewModel.start()
+
+        let remoteTarget = try #require(
+            viewModel.chatProviderTargets.first { $0.id == "remote:sub2api" }
+        )
+        viewModel.bindSelectedChatSessionToProvider(targetID: remoteTarget.id)
+
+        #expect(viewModel.selectedChatSession?.providerTarget?.id == "remote:sub2api")
+        #expect(viewModel.selectedChatSession?.serverSessionID == "")
+        #expect(viewModel.selectedChatProviderTarget?.id == "remote:sub2api")
+
+        viewModel.bindSelectedChatSessionToProvider(targetID: " ")
+        #expect(viewModel.selectedChatSession?.providerTarget == nil)
+        #expect(viewModel.chatStatusText == "Choose Provider")
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: " ")
+        viewModel.bindSelectedChatSessionToProvider(targetID: remoteTarget.id)
+
+        viewModel.forkSelectedChatSession()
+        #expect(viewModel.selectedChatSession?.providerTarget?.id == "remote:sub2api")
+
+        let actionsBeforeSubmit = await client.recordedActions
+        viewModel.chatComposerText = "hello remote"
+        await viewModel.submitChatPrompt()
+
+        let request = try #require(await client.recordedChatRequests.last)
+        let remoteRequest = try #require(request.remoteTarget)
+        #expect(request.modelID == "deepseek-v4")
+        #expect(request.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
+        #expect(remoteRequest.serverID == "sub2api")
+        #expect(remoteRequest.providerKind == "openai-compatible")
+        #expect(remoteRequest.baseURL == "https://sub2api.example/v1")
+        #expect(remoteRequest.apiKey == "sk-remote-secret")
+        #expect(remoteRequest.modelID == "deepseek-v4")
+        #expect(remoteRequest.timeoutSeconds == 90)
+        #expect(remoteRequest.rateLimitPerMinute == 30)
+        let submitActions = Array((await client.recordedActions).dropFirst(actionsBeforeSubmit.count))
+        #expect(submitActions.contains("chat:deepseek-v4"))
+        #expect(submitActions.contains { $0.hasPrefix("load:") } == false)
+
+        remoteStore.servers = []
+        viewModel.reloadRemoteServers()
+        #expect(viewModel.selectedChatSession?.providerTarget == nil)
+        #expect(viewModel.chatStatusText == "Choose Provider")
+    }
+
+    @Test("remote chat keeps the draft and reports a missing credential before dispatch")
+    @MainActor
+    func remoteChatReportsMissingCredentialBeforeDispatch() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let remoteStore = FakeRemoteServerStore(servers: [
+            RemoteServer(
+                id: "gemini",
+                title: "Gemini",
+                providerPreset: .gemini,
+                providerKind: "gemini-generative-language",
+                baseURL: "https://generativelanguage.googleapis.com/v1beta",
+                defaultModelID: "gemini-2.5-flash",
+                timeoutSeconds: 120,
+                rateLimitPerMinute: 0,
+                credentialRef: RemoteServerStore.credentialRef(for: "gemini"),
+                apiKeyHint: "",
+                healthStatus: "unknown"
+            ),
+        ])
+        let viewModel = RuntimeViewModel(client: client, remoteServerStore: remoteStore)
+
+        await viewModel.start()
+        viewModel.bindSelectedChatSessionToProvider(targetID: "remote:gemini")
+        let transcriptBeforeSubmit = viewModel.chatTranscript
+        viewModel.chatComposerText = "keep this draft"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedChatRequests.isEmpty)
+        #expect(viewModel.chatComposerText == "keep this draft")
+        #expect(viewModel.chatTranscript == transcriptBeforeSubmit)
+        #expect(viewModel.chatStatusText == "Credential Required")
+        #expect(viewModel.lastError == "Remote Provider Gemini has no API key configured.")
+        #expect(viewModel.selectedSurface == .server)
+
+        remoteStore.loadError = .load
+        await viewModel.submitChatPrompt()
+        #expect(await client.recordedChatRequests.isEmpty)
+        #expect(viewModel.chatComposerText == "keep this draft")
+        #expect(viewModel.lastError == "Remote Provider credential load failed: load")
+        #expect(viewModel.selectedSurface == .server)
+    }
+
     @Test("chat requires an interactive server session before sending prompts")
     @MainActor
     func chatRequiresInteractiveServerSession() async throws {

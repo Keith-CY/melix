@@ -671,6 +671,23 @@ must all use that same ID; a non-default selection must never inherit the
 default Server Session's lifecycle or generation policy. An omitted or blank
 ID retains the legacy default Server Session behavior.
 
+Chat Provider identity is a type-qualified target reference. Local targets use
+`local:<server-session-id>` and Remote targets use `remote:<remote-provider-id>`.
+The Provider picker must enumerate both target kinds from the same Provider
+collection, and Chat session fork, restore, export, and invalidation behavior
+must preserve that qualified identity. Local and Remote Providers may therefore
+share an underlying ID without colliding.
+
+A Remote Provider binding is also execution-authoritative. Desktop Chat must
+resolve the selected Remote Provider at submit time, load its credential from
+the Remote Provider secret store only at that boundary, and populate the
+control-plane remote target with the selected provider kind, base URL, model,
+timeout, and rate limit. Remote credentials must not enter Chat session state,
+transcripts, logs, exports, or SwiftUI rendering. Remote submission must not
+run Local Provider lifecycle admission, local catalog refresh, managed-model
+cache checks, or model preload. Missing Remote Provider credentials block
+dispatch, preserve the draft, and direct the operator to Providers.
+
 User-facing Chat binding language must use Provider terms. Starter prompts,
 empty states, composer repair actions, diagnostics pickers, and selected-object
 labels should say provider, provider profile, or provider target. Use `runtime`
@@ -692,6 +709,11 @@ model ID remains available through the control tooltip and accessibility label;
 one activation opens a selectable detail popover with an explicit copy action.
 An 80-plus-character canonical ID must ellipsize only the readable name, never
 the quantization badge or the Chat title.
+
+The same identity treatment applies to Remote Providers. The header and
+Inspector show the Remote Provider title, model, endpoint, status, and remote
+trust context without presenting Local Provider start, pause, resume, wake,
+idle-timer, or managed-model repair controls.
 
 Model capabilities use the accepted Inline Glyph Cluster. Each capability is a
 28-point icon control with a status mark and a non-color unavailable treatment;

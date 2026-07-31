@@ -7769,7 +7769,7 @@ struct DesktopFoundationViewTests {
                 .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
             encoding: .utf8
         )
-        let pickerStart = try #require(source.range(of: #"Picker("Provider", selection: selectedServerBinding)"#))
+        let pickerStart = try #require(source.range(of: #"Picker("Provider", selection: selectedProviderBinding)"#))
         let pickerTail = source[pickerStart.lowerBound...]
         let pickerEnd = try #require(pickerTail.range(of: #".accessibilityLabel("Chat Provider")"#))
         let pickerImplementation = pickerTail[..<pickerEnd.upperBound]
@@ -8387,6 +8387,18 @@ struct DesktopFoundationViewTests {
             capabilities: [],
             isModelMissing: false
         )
+        let remoteProviderGate = DesktopChatComposerGate(
+            serverSession: nil,
+            remoteProviderIsSelected: true,
+            capabilities: [readyTextCapability],
+            isModelMissing: false
+        )
+        let invalidRemoteProviderGate = DesktopChatComposerGate(
+            serverSession: nil,
+            remoteProviderIsSelected: true,
+            capabilities: [invalidTextCapability],
+            isModelMissing: false
+        )
         let missingModelGate = DesktopChatComposerGate(
             serverSession: readySession,
             capabilities: [readyTextCapability],
@@ -8421,6 +8433,9 @@ struct DesktopFoundationViewTests {
 
         #expect(noProviderGate.repairState?.primaryActionTitle == "Choose Provider")
         #expect(noProviderGate.repairState?.secondaryActions.isEmpty == true)
+        #expect(remoteProviderGate.repairState == nil)
+        #expect(invalidRemoteProviderGate.repairState?.primaryActionTitle == "Run Capabilities Test")
+        #expect(invalidRemoteProviderGate.repairState?.secondaryActions == [.openProviders])
         #expect(missingModelGate.repairState?.primaryActionTitle == "Attach Model")
         #expect(offlineGate.repairState?.primaryActionTitle == "Start Provider")
         #expect(stoppingGate.repairState?.primaryActionTitle == "Open Providers")
@@ -9611,7 +9626,8 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(source.contains("DesktopChatServerPicker"))
-        #expect(source.contains("bindSelectedChatSessionToServer"))
+        #expect(source.contains("bindSelectedChatSessionToProvider"))
+        #expect(source.contains("viewModel.chatProviderTargets"))
         #expect(source.contains("DesktopChatModelIdentityButton"))
         #expect(source.contains("DesktopChatPrecisionInspector"))
         #expect(source.contains("DesktopChatCapabilityGlyphCluster"))
@@ -9954,6 +9970,54 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedChatServerSession?.modelID == modelID)
     }
 
+    @Test("remote chat renders provider identity and Inspector without local lifecycle controls")
+    @MainActor
+    func remoteChatRendersProviderIdentityAndInspector() async throws {
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: "remote-chat",
+                    title: "Remote Chat Provider",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://remote-chat.example/v1",
+                    defaultModelID: "remote-model-4bit",
+                    timeoutSeconds: 60,
+                    rateLimitPerMinute: 12,
+                    credentialRef: RemoteServerStore.credentialRef(for: "remote-chat"),
+                    apiKeyHint: "sk-r...chat",
+                    healthStatus: "healthy"
+                ),
+            ]
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: remoteStore
+        )
+        await viewModel.start()
+        viewModel.bindSelectedChatSessionToProvider(targetID: "remote:remote-chat")
+
+        let workspace = hostViewInWindow(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            ),
+            size: CGSize(width: 940, height: 620)
+        )
+        defer { workspace.window.close() }
+        let inspector = hostView(
+            DesktopChatSessionInspector(viewModel: viewModel),
+            size: CGSize(width: 300, height: 620)
+        )
+        settleHostedUI()
+
+        #expect(workspace.controller.view.subviews.isEmpty == false)
+        #expect(inspector.subviews.isEmpty == false)
+        #expect(viewModel.selectedChatProviderTarget?.kind == .remoteServer)
+        #expect(viewModel.selectedChatServerSession == nil)
+    }
+
     @Test("chat Variant A detail surfaces render directly for deterministic coverage")
     @MainActor
     func chatVariantADetailSurfacesRenderDirectlyForDeterministicCoverage() {
@@ -9975,6 +10039,29 @@ struct DesktopFoundationViewTests {
         modelButton.copyCanonicalID(to: pasteboard)
         #expect(pasteboard.clearCount == 1)
         #expect(pasteboard.string == modelID)
+
+        let remoteButton = DesktopChatModelIdentityButton(
+            providerTarget: RuntimeProviderTargetState(
+                id: "remote:detail-provider",
+                kind: .remoteServer,
+                title: "Remote Detail Provider",
+                detailText: "Remote Model • https://remote.example/v1",
+                badgeText: "Remote",
+                modelID: modelID,
+                modelName: "Gemma 4 31B IT",
+                endpointText: "https://remote.example/v1",
+                serverID: "detail-provider",
+                statusText: "healthy • openai-compatible",
+                loraActiveText: "",
+                accelerationModeText: "",
+                contextText: "Context unknown",
+                isRunning: true
+            )
+        )
+        let remoteDetails = hostView(remoteButton.modelDetails, size: CGSize(width: 308, height: 180))
+        #expect(remoteDetails.subviews.isEmpty == false)
+        #expect(remoteButton.providerTitle == "Remote Detail Provider")
+        #expect(remoteButton.trustText == "Remote provider")
 
         let readyCapability = DesktopChatCapabilityGlyphButton(
             capability: DesktopChatCapabilityRow(

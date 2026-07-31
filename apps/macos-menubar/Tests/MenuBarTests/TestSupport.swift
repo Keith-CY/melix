@@ -41,6 +41,7 @@ final class RecordingPasteboard: RuntimePasteboardWriting {
 final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
     enum StoreError: Error, Equatable {
         case list
+        case load
         case save
         case remove
     }
@@ -49,6 +50,7 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
     private(set) var removedIDs: [String] = []
     var servers: [RemoteServer]
     var listError: StoreError?
+    var loadError: StoreError?
     var saveError: StoreError?
     var removeError: StoreError?
     var apiKeys: [String: String]
@@ -66,6 +68,9 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
     }
 
     func loadAPIKey(remoteServerID: String) throws -> RemoteServerAPIKeyRecord? {
+        if let loadError {
+            throw loadError
+        }
         guard let apiKey = apiKeys[remoteServerID] else {
             return nil
         }

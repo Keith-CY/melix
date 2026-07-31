@@ -1667,7 +1667,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
 public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     public let id: String
     public var title: String
-    public var serverSessionID: String
+    public var providerTarget: RuntimeProviderTargetReference?
     public var branchID: String
     public var branchTitle: String
     public var transcript: [DesktopChatTranscriptEntry]
@@ -1682,7 +1682,8 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     public init(
         id: String,
         title: String,
-        serverSessionID: String,
+        providerTarget: RuntimeProviderTargetReference? = nil,
+        serverSessionID: String = "",
         branchID: String = "main",
         branchTitle: String = "Main",
         transcript: [DesktopChatTranscriptEntry] = [],
@@ -1696,7 +1697,8 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     ) {
         self.id = id
         self.title = title
-        self.serverSessionID = serverSessionID
+        self.providerTarget = providerTarget
+            ?? RuntimeProviderTargetReference(kind: .localServer, serverID: serverSessionID)
         self.branchID = branchID
         self.branchTitle = branchTitle
         self.transcript = transcript
@@ -1714,7 +1716,23 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     }
 
     public var hasServerBinding: Bool {
-        serverSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        providerTarget?.kind == .localServer
+    }
+
+    public var hasProviderBinding: Bool {
+        providerTarget != nil
+    }
+
+    public var serverSessionID: String {
+        get {
+            guard providerTarget?.kind == .localServer else {
+                return ""
+            }
+            return providerTarget?.serverID ?? ""
+        }
+        set {
+            providerTarget = RuntimeProviderTargetReference(kind: .localServer, serverID: newValue)
+        }
     }
 
     public var displayBranchTitle: String? {
