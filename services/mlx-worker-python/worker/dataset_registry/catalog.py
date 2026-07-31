@@ -599,8 +599,10 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
     readme_names = _README_NAMES
     is_supported_dataset_file_name = _is_supported_dataset_file_name
     make_path = Path
+    scan_dir = os.scandir
+    fspath = os.fspath
     try:
-        with os.scandir(os.fspath(directory)) as entries:
+        with scan_dir(fspath(directory)) as entries:
             for entry in entries:
                 name = entry.name
                 if name <= after or (best_name and name >= best_name):
