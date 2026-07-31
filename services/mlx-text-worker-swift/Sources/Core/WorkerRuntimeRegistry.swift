@@ -66,6 +66,7 @@ private struct WorkerModelUnloadAttempt: Sendable {
 enum WorkerModelUnloadResult: Equatable {
     case unloaded
     case notFound
+    case identityMismatch
     case activeRequests
     case sharedResidency
 }
@@ -300,7 +301,7 @@ actor WorkerRuntimeRegistry {
         let resolvedBackendIdentity = resolvedBackendModelIdentity(
             for: resolved,
             requested: backendIdentity,
-            workerInstanceID: configuration.workerID
+            workerInstanceID: configuration.workerInstanceID
         )
         let residencyKey = WorkerModelResidencyKey(
             resolved,
@@ -434,9 +435,17 @@ actor WorkerRuntimeRegistry {
         await unloadModel(handle, force: false) == .unloaded
     }
 
-    func unloadModel(_ handle: String, force: Bool) async -> WorkerModelUnloadResult {
+    func unloadModel(
+        _ handle: String,
+        force: Bool,
+        expectedBackendIdentity: Melix_Worker_V1_BackendModelIdentity? = nil
+    ) async -> WorkerModelUnloadResult {
         guard let removed = loadedModels[handle] else {
             return .notFound
+        }
+        if let expectedBackendIdentity,
+           expectedBackendIdentity != removed.backendIdentity {
+            return .identityMismatch
         }
         if activeRequests > 0 {
             return .activeRequests
@@ -1320,7 +1329,7 @@ actor WorkerRuntimeRegistry {
         let backendIdentity = resolvedBackendModelIdentity(
             for: restored.model,
             requested: restoredIdentity,
-            workerInstanceID: configuration.workerID
+            workerInstanceID: configuration.workerInstanceID
         )
         let residencyKey = WorkerModelResidencyKey(
             restored.model,

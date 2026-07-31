@@ -196,9 +196,20 @@ public nonisolated struct Melix_Worker_V1_UnloadModelRequest: Sendable {
 
   public var force: Bool = false
 
+  public var expectedBackendIdentity: Melix_Worker_V1_BackendModelIdentity {
+    get {_expectedBackendIdentity ?? Melix_Worker_V1_BackendModelIdentity()}
+    set {_expectedBackendIdentity = newValue}
+  }
+  /// Returns true if `expectedBackendIdentity` has been explicitly set.
+  public var hasExpectedBackendIdentity: Bool {self._expectedBackendIdentity != nil}
+  /// Clears the value of `expectedBackendIdentity`. Subsequent reads from it will return its default value.
+  public mutating func clearExpectedBackendIdentity() {self._expectedBackendIdentity = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _expectedBackendIdentity: Melix_Worker_V1_BackendModelIdentity? = nil
 }
 
 public nonisolated struct Melix_Worker_V1_UnloadModelResponse: Sendable {
@@ -1335,7 +1346,7 @@ nonisolated extension Melix_Worker_V1_LoadModelResponse: SwiftProtobuf.Message, 
 
 nonisolated extension Melix_Worker_V1_UnloadModelRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UnloadModelRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}force\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_handle\0\u{1}force\0\u{3}expected_backend_identity\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1345,24 +1356,33 @@ nonisolated extension Melix_Worker_V1_UnloadModelRequest: SwiftProtobuf.Message,
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.modelHandle) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.force) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._expectedBackendIdentity) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.modelHandle.isEmpty {
       try visitor.visitSingularStringField(value: self.modelHandle, fieldNumber: 1)
     }
     if self.force != false {
       try visitor.visitSingularBoolField(value: self.force, fieldNumber: 2)
     }
+    try { if let v = self._expectedBackendIdentity {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_UnloadModelRequest, rhs: Melix_Worker_V1_UnloadModelRequest) -> Bool {
     if lhs.modelHandle != rhs.modelHandle {return false}
     if lhs.force != rhs.force {return false}
+    if lhs._expectedBackendIdentity != rhs._expectedBackendIdentity {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

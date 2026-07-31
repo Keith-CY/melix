@@ -2377,7 +2377,8 @@
         "key": "loaded_model_listing_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 0.005
       },
       {
         "key": "loaded_model_listing_sort_calls_mean",

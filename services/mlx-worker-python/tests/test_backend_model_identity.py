@@ -51,6 +51,7 @@ def _services():
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=PassiveTextBackend()),
         model_catalog=WorkerModelCatalog(),
+        worker_instance_id="worker-text-001",
     )
     guard_registry = GuardOnlyRegistry(registry)
     return (
@@ -59,6 +60,75 @@ def _services():
         WorkerInferenceService(guard_registry),
         guard_registry,
     )
+
+
+def test_worker_instance_identity_is_unique_per_registry_boot() -> None:
+    first = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=PassiveTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+        worker_id="worker-text-stable",
+    )
+    second = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=PassiveTextBackend()),
+        model_catalog=WorkerModelCatalog(),
+        worker_id="worker-text-stable",
+    )
+
+    first_health = WorkerRuntimeService(first).Handshake(
+        runtime_pb2.HandshakeRequest(protocol_version="v1"),
+        context=None,
+    )
+    second_health = WorkerRuntimeService(second).Handshake(
+        runtime_pb2.HandshakeRequest(protocol_version="v1"),
+        context=None,
+    )
+
+    assert first.worker_id == second.worker_id == "worker-text-stable"
+    assert first.worker_instance_id
+    assert second.worker_instance_id
+    assert first.worker_instance_id != second.worker_instance_id
+    assert first_health.worker_instance_id == first.worker_instance_id
+    assert second_health.worker_instance_id == second.worker_instance_id
+
+
+def test_unload_compares_backend_identity_atomically() -> None:
+    registry, runtime_service, _, _ = _services()
+    handle = _load(runtime_service)
+    loaded = runtime_service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    ).loaded_models[0]
+    wrong = common_pb2.BackendModelIdentity()
+    wrong.CopyFrom(loaded.backend_identity)
+    wrong.route_generation += 1
+
+    rejected = runtime_service.UnloadModel(
+        runtime_pb2.UnloadModelRequest(
+            model_handle=handle,
+            expected_backend_identity=wrong,
+        ),
+        context=None,
+    )
+    still_loaded = runtime_service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    ).loaded_models
+    accepted = runtime_service.UnloadModel(
+        runtime_pb2.UnloadModelRequest(
+            model_handle=handle,
+            expected_backend_identity=loaded.backend_identity,
+        ),
+        context=None,
+    )
+
+    assert rejected.ok is False
+    assert rejected.error.code == "model_identity_mismatch"
+    assert len(still_loaded) == 1
+    assert accepted.ok is True
+    assert runtime_service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(),
+        context=None,
+    ).loaded_models == []
 
 
 def _load(runtime_service: WorkerRuntimeService) -> str:

@@ -35,7 +35,12 @@ class _PassiveTextBackend:
         return 1_024
 
 
-def _identity(model_id: str, adapter_id: str, generation: int):
+def _identity(
+    model_id: str,
+    adapter_id: str,
+    generation: int,
+    worker_instance_id: str,
+):
     identity_type = getattr(common_pb2, "BackendModelIdentity", None)
     if identity_type is None:
         return object()
@@ -43,7 +48,7 @@ def _identity(model_id: str, adapter_id: str, generation: int):
         requested_model_id=model_id,
         requested_adapter_id=adapter_id,
         route_generation=generation,
-        worker_instance_id="worker-text-001",
+        worker_instance_id=worker_instance_id,
     )
 
 
@@ -149,8 +154,14 @@ def main() -> int:
     )
     model = WorkerModelCatalog.dev_text_model()
     model.ext["melix.adapter_set_hash"] = "adapter-alpha"
-    matched = _identity(model.model_id, "adapter-alpha", 7)
-    mismatched = _identity("wrong-model", "wrong-adapter", 6)
+    worker_instance_id = getattr(registry, "worker_instance_id", None) or registry.worker_id
+    matched = _identity(
+        model.model_id,
+        "adapter-alpha",
+        7,
+        worker_instance_id,
+    )
+    mismatched = _identity("wrong-model", "wrong-adapter", 6, "wrong-worker-instance")
     identity_guard = getattr(registry, "validate_backend_identity", None)
     if identity_guard is None:
         loaded = registry.load_model(model)

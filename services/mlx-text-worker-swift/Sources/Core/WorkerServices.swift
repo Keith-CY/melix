@@ -74,7 +74,7 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
         response.protocolVersion = request.protocolVersion
         response.runtimeVersion = configuration.runtimeVersion
         response.workerFamily = configuration.workerFamily
-        response.workerInstanceID = configuration.workerID
+        response.workerInstanceID = configuration.workerInstanceID
         response.capabilities = await registry.capabilities()
         return response
     }
@@ -186,7 +186,13 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_UnloadModelResponse {
         let startedAt = Date()
-        let result = await registry.unloadModel(request.modelHandle, force: request.force)
+        let result = await registry.unloadModel(
+            request.modelHandle,
+            force: request.force,
+            expectedBackendIdentity: request.hasExpectedBackendIdentity
+                ? request.expectedBackendIdentity
+                : nil
+        )
         metrics.recordMilliseconds("swift_text.unload_model_ms", value: elapsedMilliseconds(since: startedAt))
         metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
 
@@ -196,6 +202,11 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
             response.ok = true
         case .notFound:
             response.error = makeErrorStatus(code: "not_found", message: "Unknown model handle.")
+        case .identityMismatch:
+            response.error = makeErrorStatus(
+                code: "model_identity_mismatch",
+                message: "The model residency no longer matches the unload request."
+            )
         case .activeRequests:
             response.error = makeErrorStatus(
                 code: "model_in_use",
@@ -889,7 +900,7 @@ private extension InferenceRPCService {
         let payload: [String: Any] = [
             "request_id": request.execution.id.requestID,
             "model_handle": request.execution.modelHandle,
-            "worker_instance_id": configuration.workerID,
+            "worker_instance_id": configuration.workerInstanceID,
             "worker_family": workerFamilyName(configuration.workerFamily),
             "media_parts": mediaParts,
         ]

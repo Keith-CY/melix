@@ -993,6 +993,37 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-rerank") == "melix-dev-rerank::bridge")
     }
 
+    @Test("phase-five preload rejects a route declaration for the wrong worker family")
+    func phaseFivePreloadRejectsWrongStructuredWorkerFamily() async throws {
+        var models = ModelCatalog.phaseFiveSeedModels()
+        let embeddingIndex = try #require(
+            models.firstIndex(where: { $0.modelID == "melix-dev-embed" })
+        )
+        models[embeddingIndex].requestRoutes[0].workerFamily = .text
+
+        var rerankLoadResponse = Melix_Worker_V1_LoadModelResponse()
+        rerankLoadResponse.ok = true
+        rerankLoadResponse.modelHandle = "melix-dev-rerank::bridge"
+        let runner = ScriptedBridgeRunner()
+        await runner.enqueueUnaryResponse(
+            .loadModel,
+            line: bridgeMessageLine(message: try rerankLoadResponse.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let catalog = ModelCatalog(seedModels: models)
+
+        try await BootstrapWorkerPreparation.preloadPhaseFivePythonModels(
+            workerClient: client,
+            modelCatalog: catalog
+        )
+
+        #expect(await catalog.dispatchHandle(for: "melix-dev-embed") == nil)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-rerank") == "melix-dev-rerank::bridge")
+        let loadRequests = try await runner.recordedLoadModelRequests()
+        #expect(loadRequests.map(\.model.modelID) == ["melix-dev-rerank"])
+    }
+
     @Test("phase-six preload writes multimodal handles into the model catalog")
     func phaseSixPreloadWritesMultimodalHandlesIntoTheModelCatalog() async throws {
         let runner = ScriptedBridgeRunner()
@@ -1290,6 +1321,56 @@ struct PythonBridgeWorkerClientTests {
 
         #expect(preloaded)
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::bridge")
+    }
+
+    @Test("bootstrap preload uses structured route declarations over free-form metadata")
+    func bootstrapPreloadUsesStructuredRouteDeclarations() async throws {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::structured"
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .loadModel,
+            line: bridgeMessageLine(message: try response.serializedData())
+        )
+        var model = ModelCatalog.devTextModel()
+        model.settings.ext["melix.capability.route_kind"] = "python_vlm"
+        let catalog = ModelCatalog(seedModels: [model])
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+
+        let preloaded = try await BootstrapWorkerPreparation.preloadDevTextModel(
+            workerClient: client,
+            modelCatalog: catalog
+        )
+
+        #expect(preloaded)
+        #expect(await catalog.backendRouteBinding(
+            for: model.modelID,
+            routeKind: .swiftText
+        )?.handle == "melix-dev-text::structured")
+        #expect(await catalog.backendRouteBinding(
+            for: model.modelID,
+            routeKind: .pythonVLM
+        ) == nil)
+    }
+
+    @Test("bootstrap preload rejects models without structured route declarations")
+    func bootstrapPreloadRejectsMissingStructuredRoutes() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.requestRoutes = []
+        model.settings.ext["melix.capability.route_kind"] = "swift_text"
+        let catalog = ModelCatalog(seedModels: [model])
+        let runner = ScriptedBridgeRunner()
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+
+        let preloaded = try await BootstrapWorkerPreparation.preloadDevTextModel(
+            workerClient: client,
+            modelCatalog: catalog
+        )
+
+        #expect(!preloaded)
+        #expect(await catalog.dispatchHandle(for: model.modelID) == nil)
+        #expect(try await runner.recordedLoadModelRequests().isEmpty)
     }
 
     @Test("bootstrap preload fails closed without a backend health identity")

@@ -95,12 +95,15 @@ Core shared messages should include:
 loaded state. It contains the admitted public `requested_model_id`, the active
 `requested_adapter_id` (empty when no adapter is active), and a positive
 `route_generation`, plus the exact `worker_instance_id` published by the selected
-backend's health handshake.
+backend's health handshake. `worker_instance_id` is generated once per worker
+process boot and is distinct from the stable configured worker name. Restarting
+the same executable on the same socket therefore produces a new instance
+identity even when handles and route generations later collide.
 
 `LoadModelRequest` carries the control-plane binding identity. At load time the
 worker derives the loaded model and adapter identifiers from the resolved
 `ModelSpec` and combines them with the binding's route generation and its own
-configured worker instance identity. It does not trust a claimed load-time model,
+boot instance identity. It does not trust a claimed load-time model,
 adapter, or worker identifier over the model and running backend it resolved.
 Every production inference request carries the requested identity:
 
@@ -114,6 +117,13 @@ execution. A missing identity or zero generation fails closed with
 `model_identity_missing`. A different model, adapter, route generation, or worker
 instance fails closed with `model_identity_mismatch`. Neither failure may emit
 output.
+
+`UnloadModelRequest.expected_backend_identity` provides an optional
+compare-and-unload guard. When present, the worker compares it with the loaded
+record inside the same registry critical section or actor operation that removes
+the residency. A mismatch returns `model_identity_mismatch` and leaves the
+current residency loaded. Callers must use this guard when retiring a stale
+residency after route recovery.
 
 `BackendIdentityMismatchReceipt` records requested and loaded identifiers,
 requested and loaded generations and worker instances, observation time, and a

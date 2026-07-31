@@ -121,7 +121,7 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
             runtime_version=self._registry.runtime.runtime_name,
             capabilities=self._registry.capabilities(),
             worker_family=common_pb2.WORKER_FAMILY_OMNI,
-            worker_instance_id=self._registry.worker_id,
+            worker_instance_id=self._registry.worker_instance_id,
         )
 
     def LoadModel(self, request, context):
@@ -221,6 +221,11 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
         receipt = self._registry.request_model_unload(
             request.model_handle,
             force=bool(request.force),
+            expected_backend_identity=(
+                request.expected_backend_identity
+                if request.HasField("expected_backend_identity")
+                else None
+            ),
         )
         if receipt.unloaded:
             return runtime_pb2.UnloadModelResponse(ok=True)
@@ -231,6 +236,16 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                     code="unload_pending",
                     message="Model unload is pending until active request leases are released.",
                     retriable=True,
+                    details=receipt.details,
+                ),
+            )
+        if receipt.identity_mismatch:
+            return runtime_pb2.UnloadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="model_identity_mismatch",
+                    message="The model residency no longer matches the unload request.",
+                    retriable=False,
                     details=receipt.details,
                 ),
             )

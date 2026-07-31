@@ -9,6 +9,7 @@ from threading import Event
 from threading import Lock
 import time
 from typing import Any
+from uuid import uuid4
 
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, runtime_pb2
 
@@ -86,6 +87,7 @@ class ModelUnloadReceipt:
     unloaded: bool
     pending_unload: bool
     abort_requested: bool = False
+    identity_mismatch: bool = False
     released_at: str = ""
     unloaded_at: str = ""
 
@@ -97,6 +99,7 @@ class ModelUnloadReceipt:
             "unloaded": _bool_text(self.unloaded),
             "pending_unload": _bool_text(self.pending_unload),
             "abort_requested": _bool_text(self.abort_requested),
+            "identity_mismatch": _bool_text(self.identity_mismatch),
             "released_at": self.released_at,
             "unloaded_at": self.unloaded_at,
         }
@@ -271,6 +274,7 @@ class WorkerRegistry:
         image_generation_runtime: DeterministicImageGenerationRuntime | None = None,
         model_catalog: WorkerModelCatalog | None = None,
         worker_id: str = "worker-text-001",
+        worker_instance_id: str | None = None,
         process_memory_budget_bytes: int = 0,
         memory_headroom_bytes: int = 0,
         mlx_executor: MLXRuntimeExecutor | None = None,
@@ -294,6 +298,11 @@ class WorkerRegistry:
         self.image_generation_runtime = image_generation_runtime or DeterministicImageGenerationRuntime()
         self.model_catalog = model_catalog or WorkerModelCatalog()
         self.worker_id = worker_id
+        self.worker_instance_id = (
+            worker_instance_id.strip()
+            if worker_instance_id is not None and worker_instance_id.strip()
+            else str(uuid4())
+        )
         self._process_memory_budget_bytes = max(0, process_memory_budget_bytes)
         self._memory_headroom_bytes = max(0, memory_headroom_bytes)
         self._lock = Lock()
@@ -643,7 +652,13 @@ class WorkerRegistry:
         self._close_loaded_model(loaded_to_close)
         return True
 
-    def request_model_unload(self, handle: str, *, force: bool = False) -> ModelUnloadReceipt:
+    def request_model_unload(
+        self,
+        handle: str,
+        *,
+        force: bool = False,
+        expected_backend_identity: common_pb2.BackendModelIdentity | None = None,
+    ) -> ModelUnloadReceipt:
         loaded_to_close: LoadedModel | None = None
         with self._lock:
             loaded = self._loaded_models.get(handle)
@@ -654,6 +669,18 @@ class WorkerRegistry:
                     unloaded=False,
                     pending_unload=False,
                     abort_requested=bool(force),
+                )
+            if (
+                expected_backend_identity is not None
+                and expected_backend_identity != loaded.backend_identity
+            ):
+                return ModelUnloadReceipt(
+                    model_handle=handle,
+                    found=True,
+                    unloaded=False,
+                    pending_unload=False,
+                    abort_requested=bool(force),
+                    identity_mismatch=True,
                 )
 
             active_lease_count = self._active_model_lease_counts.get(handle, 0)
@@ -869,7 +896,7 @@ class WorkerRegistry:
             requested_model_id=model.model_id,
             requested_adapter_id=model.ext.get("melix.adapter_set_hash", ""),
             route_generation=requested.route_generation if requested is not None else 0,
-            worker_instance_id=self.worker_id,
+            worker_instance_id=self.worker_instance_id,
         )
 
     def _record_model_identity_mismatch_locked(

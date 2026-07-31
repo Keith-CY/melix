@@ -30,7 +30,7 @@ class WorkerRuntimeService(ProductionWorkerRuntimeService):
                     "melix.adapter_set_hash", ""
                 ),
                 route_generation=self._next_test_route_generation,
-                worker_instance_id=self._registry.worker_id,
+                worker_instance_id=self._registry.worker_instance_id,
             )
         )
         self._next_test_route_generation += 1

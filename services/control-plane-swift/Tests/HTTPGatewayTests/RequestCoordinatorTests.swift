@@ -32,6 +32,93 @@ struct RequestCoordinatorTests {
         }
     }
 
+    @Test("a configured model catalog never dispatches without a backend binding")
+    func configuredCatalogRequiresBackendBinding() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .emptyThenSuccess)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(requestID: "req-missing-backend-binding")
+            )
+            Issue.record("Expected the missing backend binding to fail before dispatch.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .workerUnavailable)
+        }
+        #expect(await workerClient.generateCallCount == 0)
+    }
+
+    @Test("an empty backend stream receives one fresh dispatch")
+    func emptyBackendStreamRecoversBeforeResponse() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .emptyThenSuccess)
+        let metrics = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metrics,
+            modelCatalog: catalog
+        )
+
+        let events = try await recoveredCoordinatorEvents(
+            coordinator: coordinator,
+            requestID: "req-empty-stream-recovery"
+        )
+
+        #expect(events.contains { if case .completed = $0.payload { true } else { false } })
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metrics.value(forKey: "control_plane.backend_identity_retry_allowed_count") == 1)
+    }
+
+    @Test("repeated empty backend streams exhaust recovery")
+    func repeatedEmptyBackendStreamExhaustsRecovery() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .alwaysEmpty)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        await #expect(throws: BackendRouteRecovery.recoveryExhaustedError()) {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: coordinator,
+                requestID: "req-empty-stream-exhausted"
+            )
+        }
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+    }
+
+    @Test("a backend stream with output but no terminal event is partial")
+    func backendStreamWithoutTerminalIsPartial() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .tokenThenEnd)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        await #expect(throws: BackendRouteRecovery.partialStreamFailure()) {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: coordinator,
+                requestID: "req-stream-missing-terminal"
+            )
+        }
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+    }
+
     @Test("backend stream creation without semantic output remains replay safe")
     func backendStreamCreationWithoutSemanticOutputRemainsReplaySafe() async throws {
         let workerClient = BackendIdentityRecoveryWorkerClient(script: .streamFailureThenSuccess)
@@ -1343,6 +1430,11 @@ struct RequestCoordinatorTests {
         let schedulerReadModel = SchedulerReadModel()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::swift-vision")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-vlm",
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
@@ -1398,6 +1490,11 @@ struct RequestCoordinatorTests {
         let metricsStore = MetricsStore()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-vlm",
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
@@ -1550,6 +1647,11 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.capability.route_kind"] = WorkerRouteKind.pythonCompatibility.rawValue
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: "local-python-text", dispatchHandle: "local-python-text::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textWorkerClient,
             pythonCompatibilityClient: pythonCompatibilityClient,
@@ -1640,6 +1742,11 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "\(model.modelID)::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: textWorkerClient,
@@ -1708,6 +1815,11 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "\(model.modelID)::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let metricsStore = MetricsStore()
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
@@ -1774,6 +1886,11 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "\(model.modelID)::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let metricsStore = MetricsStore()
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
@@ -1825,6 +1942,11 @@ struct RequestCoordinatorTests {
         let workerClient = BlockingWorkerClient()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::swift-vision")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-vlm",
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
@@ -2183,6 +2305,11 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.text_only_step_cooperative"] = "true"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: workerClient,
@@ -2243,6 +2370,11 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: workerClient,
@@ -2302,6 +2434,11 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.text_only_step_cooperative"] = "true"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
@@ -5066,6 +5203,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
         textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5196,6 +5338,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
         textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5285,6 +5432,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.feature_guardrail.min_cache_budget_bytes"] = "1024"
         textModel.settings.ext["melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes"] = "1024"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5339,6 +5491,11 @@ struct RequestCoordinatorTests {
     func servingMemoryAdmissionUsesGatewayMaxConcurrentSequences() async throws {
         let workerClient = PhaseAwareWorkerClient()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-text",
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5386,6 +5543,11 @@ struct RequestCoordinatorTests {
     func servingMemoryAdmissionUsesSingleBatchWhenConcurrentProcessingIsDisabled() async throws {
         let workerClient = PhaseAwareWorkerClient()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-text",
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5435,6 +5597,11 @@ struct RequestCoordinatorTests {
         var textModel = ModelCatalog.devTextModel()
         textModel.maxContext = 131_072
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5484,6 +5651,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.serving.memory.available_bytes"] = "0"
         textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5536,6 +5708,11 @@ struct RequestCoordinatorTests {
         textModel.settings.memoryBudgetBytes = 1_073_741_824
         textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5588,6 +5765,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.serving.memory.available_bytes"] = "0"
         textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5638,6 +5820,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
         textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5676,6 +5863,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
         textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-text"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5714,6 +5906,11 @@ struct RequestCoordinatorTests {
         textModel.settings.defaultAccelerationMode = .baseline
         textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5748,6 +5945,11 @@ struct RequestCoordinatorTests {
     func modelAccelerationDefaultsOverrideGatewaySpeculativeExecutionDefaults() async throws {
         let workerClient = PhaseAwareWorkerClient()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-text",
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5837,6 +6039,16 @@ struct RequestCoordinatorTests {
         var vlmModel = ModelCatalog.devVLMModel()
         vlmModel.state = .modelWarm
         let catalog = ModelCatalog(seedModels: [vlmModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftText
+        )
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: workerClient,
@@ -5905,8 +6117,18 @@ struct RequestCoordinatorTests {
             let workerClient = PhaseAwareWorkerClient()
             var vlmModel = nativeSpeculativeVLMModel()
             vlmModel.state = .modelWarm
-            let catalog = ModelCatalog(seedModels: [vlmModel])
-            let coordinator = RequestCoordinator(
+        let catalog = ModelCatalog(seedModels: [vlmModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftText
+        )
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftVision
+        )
+        let coordinator = RequestCoordinator(
                 workerRegistry: WorkerRegistry(
                     defaultTextClient: workerClient,
                     visionClient: workerClient,
@@ -6001,6 +6223,16 @@ struct RequestCoordinatorTests {
         var vlmModel = nativeSpeculativeVLMModel()
         vlmModel.state = .modelWarm
         let catalog = ModelCatalog(seedModels: [vlmModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftText
+        )
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: workerClient,
@@ -6100,6 +6332,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-active-kv-v1"
         textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -6140,6 +6377,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-active-kv-v1"
         textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -6180,6 +6422,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-active-kv-v1"
         textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -7435,6 +7682,9 @@ private actor BackendIdentityRecoveryWorkerClient:
         case toolResultThenFailure
         case admissionThenFailure
         case alwaysStreamFailure
+        case emptyThenSuccess
+        case alwaysEmpty
+        case tokenThenEnd
     }
 
     private let script: Script
@@ -7466,6 +7716,9 @@ private actor BackendIdentityRecoveryWorkerClient:
         let script = self.script
         return AsyncThrowingStream { continuation in
             switch script {
+            case .emptyThenSuccess where callIndex == 1,
+                 .alwaysEmpty:
+                continuation.finish()
             case .streamFailureThenSuccess where callIndex == 1,
                  .alwaysStreamFailure:
                 continuation.finish(throwing: WorkerClientError.requestFailed(
@@ -7526,6 +7779,14 @@ private actor BackendIdentityRecoveryWorkerClient:
             case .admissionThenFailure:
                 continuation.yield(Self.admissionEvent(requestID: request.execution.id.requestID))
                 continuation.finish(throwing: WorkerClientError.unavailable)
+            case .tokenThenEnd:
+                continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
+                continuation.finish()
+            case .emptyThenSuccess:
+                Self.yieldSuccess(
+                    requestID: request.execution.id.requestID,
+                    continuation: continuation
+                )
             case .streamFailureThenSuccess:
                 Self.yieldSuccess(
                     requestID: request.execution.id.requestID,
@@ -7627,6 +7888,33 @@ private actor BackendIdentityRecoveryWorkerClient:
         event.completed.assistantText = "ok"
         event.completed.finishReason = "stop"
         return event
+    }
+}
+
+private func bindBackendRouteForCoordinatorTest(
+    _ catalog: ModelCatalog,
+    modelID: String,
+    routeKind: WorkerRouteKind
+) async {
+    guard let reservation = await catalog.beginBackendRouteLoad(
+        id: modelID,
+        routeKind: routeKind,
+        workerInstanceID: "coordinator-test-worker",
+        reason: "test_fixture"
+    ) else {
+        Issue.record("Could not reserve backend route \(routeKind.rawValue) for \(modelID).")
+        return
+    }
+    guard await catalog.recordLoadSucceeded(
+        id: modelID,
+        dispatchHandle: "\(modelID)::\(routeKind.rawValue)",
+        reason: "test_fixture",
+        routeKind: routeKind,
+        expectedRouteGeneration: reservation.generation,
+        workerInstanceID: reservation.workerInstanceID
+    ) != nil else {
+        Issue.record("Could not bind backend route \(routeKind.rawValue) for \(modelID).")
+        return
     }
 }
 

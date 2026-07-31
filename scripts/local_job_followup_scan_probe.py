@@ -217,14 +217,10 @@ def run_scalar_copy_probe(*, iterations: int = 200_000, samples: int = 5) -> dic
     ]
     baseline_mean = statistics.fmean(baseline_samples)
     optimized_mean = statistics.fmean(optimized_samples)
-    reported_baseline_mean = round(baseline_mean, 6)
-    reported_optimized_mean = round(optimized_mean, 6)
     return {
-        "scalar_copy_baseline_elapsed_ms_mean": reported_baseline_mean,
-        "scalar_copy_optimized_elapsed_ms_mean": reported_optimized_mean,
-        "scalar_copy_delta_ms": round(
-            reported_optimized_mean - reported_baseline_mean, 6
-        ),
+        "scalar_copy_baseline_elapsed_ms_mean": round(baseline_mean, 6),
+        "scalar_copy_optimized_elapsed_ms_mean": round(optimized_mean, 6),
+        "scalar_copy_delta_ms": round(optimized_mean - baseline_mean, 6),
         "scalar_copy_speedup": round(baseline_mean / optimized_mean, 6)
         if optimized_mean
         else 0.0,

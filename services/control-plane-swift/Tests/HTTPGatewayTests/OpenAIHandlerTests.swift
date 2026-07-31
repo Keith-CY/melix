@@ -5438,13 +5438,13 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 200)
         #expect(response.headers["content-type"] == "text/event-stream; charset=utf-8")
         #expect(payload.contains("event: error"), Comment(rawValue: payload))
-        #expect(payload.contains("\"code\":\"transport_error\""), Comment(rawValue: payload))
+        #expect(payload.contains("\"code\":\"partial_stream_failure\""), Comment(rawValue: payload))
         #expect(payload.contains("data: [DONE]"), Comment(rawValue: payload))
         #expect(await harness.vlmClient.lastPrefillRequest != nil)
     }
 
-    @Test("POST /v1/chat/completions preserves empty VLM stream completion after admission inspection")
-    func postChatCompletionsPreservesEmptyVLMStreamCompletionAfterAdmissionInspection() async throws {
+    @Test("POST /v1/chat/completions rejects a VLM decode stream without a terminal event")
+    func postChatCompletionsRejectsVLMDecodeStreamWithoutTerminalEvent() async throws {
         let requestID = "req-http-vlm-empty-stream-replay"
         let harness = makeGemma4VLMOpenAIHandler(
             requestID: requestID,
@@ -5467,8 +5467,9 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 200)
         #expect(response.headers["content-type"] == "text/event-stream; charset=utf-8")
-        #expect(payload.contains("\"id\":\"\(requestID)\""), Comment(rawValue: payload))
-        #expect(payload.contains("\"finish_reason\":\"stop\""), Comment(rawValue: payload))
+        #expect(payload.contains("event: error"), Comment(rawValue: payload))
+        #expect(payload.contains("\"request_id\":\"\(requestID)\""), Comment(rawValue: payload))
+        #expect(payload.contains("\"code\":\"partial_stream_failure\""), Comment(rawValue: payload))
         #expect(payload.contains("data: [DONE]"), Comment(rawValue: payload))
     }
 
@@ -10772,8 +10773,8 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"message\":\"stream failed\""))
     }
 
-    @Test("POST /v1/audio/speech records fallback streaming metrics when finish is absent")
-    func postAudioSpeechStreamingRecordsFallbackMetricsWhenFinishIsAbsent() async throws {
+    @Test("POST /v1/audio/speech treats a missing finish as a partial stream")
+    func postAudioSpeechStreamingRejectsMissingFinish() async throws {
         let textClient = ScriptedWorkerClient(events: [])
         let audioClient = ScriptedPhaseFiveWorkerClient()
         let envelopeBytes = progressiveWAVHeader(sampleRate: 24_000)
@@ -10822,17 +10823,26 @@ struct OpenAIHandlerTests {
         let response = try await handler.handle(
             HTTPRequest(method: .post, path: "/v1/audio/speech", headers: [:], body: body)
         )
-        let payload = try await collectBodyData(response.body)
-        let metrics = await metricsStore.snapshot()
+        var payload = Data()
+        do {
+            guard case .stream(let stream) = response.body else {
+                Issue.record("Expected streaming speech response body.")
+                return
+            }
+            for try await chunk in stream {
+                payload.append(chunk)
+            }
+            Issue.record("Expected a typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
         var expectedPayload = envelopeBytes
         expectedPayload.append(pcmChunk)
 
         #expect(payload == expectedPayload)
-        #expect(metrics.values["audio.speech_streaming_enabled", default: -1] == 1)
-        #expect(metrics.values["audio.speech_streaming_interval_ms", default: -1] == 40)
-        #expect(metrics.values["audio.speech_stream_chunk_count", default: -1] == 1)
-        #expect(metrics.values["audio.speech_output_bytes", default: -1] == Double(envelopeBytes.count + pcmChunk.count))
-        #expect(metrics.values["audio.speech_first_audio_latency_ms", default: -1] > 0)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
     }
 
     @Test("POST /v1/audio/speech returns exhausted pre-response streaming failures")
@@ -10874,8 +10884,8 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("could not be recovered before response output began"))
     }
 
-    @Test("POST /v1/audio/speech retries a pre-response failure with a fresh identity")
-    func postAudioSpeechStreamingRetriesBeforeSemanticOutput() async throws {
+    @Test("POST /v1/audio/speech retries an empty pre-response stream with a fresh identity")
+    func postAudioSpeechStreamingRetriesEmptyStreamBeforeSemanticOutput() async throws {
         let textClient = ScriptedWorkerClient(events: [])
         let audioClient = ScriptedPhaseFiveWorkerClient()
         let audioBytes = Data([0x01, 0x02, 0x03, 0x04])
@@ -10894,7 +10904,7 @@ struct OpenAIHandlerTests {
                 return event
             }(),
         ])
-        await audioClient.setSpeakStreamFailureThenSuccess()
+        await audioClient.setSpeakStreamEmptyThenSuccess()
         let metricsStore = MetricsStore()
         let catalog = ModelCatalog(
             seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devSpeechModel()]
@@ -11028,6 +11038,13 @@ struct OpenAIHandlerTests {
                 var event = Melix_Worker_V1_SpeakStreamEvent()
                 event.kind = .audioChunk
                 event.audioBytes = audioBytes
+                return event
+            }(),
+            {
+                var event = Melix_Worker_V1_SpeakStreamEvent()
+                event.kind = .finish
+                event.finish.audioBytes = UInt64(audioBytes.count)
+                event.finish.audioChunkCount = 1
                 return event
             }(),
         ])
@@ -15903,6 +15920,7 @@ private actor ScriptedPhaseFiveWorkerClient:
     private enum SpeakStreamMode: Equatable {
         case fixed
         case failureThenSuccess
+        case emptyThenSuccess
         case identityMismatchThenSuccess
         case semanticOutputThenFailure
     }
@@ -15957,6 +15975,10 @@ private actor ScriptedPhaseFiveWorkerClient:
 
     func setSpeakStreamFailureThenSuccess() {
         speakStreamMode = .failureThenSuccess
+    }
+
+    func setSpeakStreamEmptyThenSuccess() {
+        speakStreamMode = .emptyThenSuccess
     }
 
     func setSpeakStreamIdentityMismatchThenSuccess() {
@@ -16088,6 +16110,10 @@ private actor ScriptedPhaseFiveWorkerClient:
         return AsyncThrowingStream { continuation in
             if mode == .failureThenSuccess, callIndex == 1 {
                 continuation.finish(throwing: WorkerClientError.unavailable)
+                return
+            }
+            if mode == .emptyThenSuccess, callIndex == 1 {
+                continuation.finish()
                 return
             }
             if mode == .identityMismatchThenSuccess, callIndex == 1 {

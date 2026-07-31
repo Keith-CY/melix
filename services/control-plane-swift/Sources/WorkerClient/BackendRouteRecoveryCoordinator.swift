@@ -245,11 +245,6 @@ enum BackendRouteRecovery {
             )
             if invalidation != nil {
                 await metricsStore.increment("control_plane.backend_identity_recovery_count")
-            } else if let replacement = await modelCatalog.backendRouteBinding(
-                for: failedBinding.modelID,
-                routeKind: failedBinding.routeKind
-            ), replacement.generation > failedBinding.generation {
-                return replacement
             } else {
                 throw OnDemandModelLoadError.workerUnavailable
             }
@@ -288,8 +283,7 @@ enum BackendRouteRecovery {
         workerRegistry: WorkerRegistry,
         metricsStore: MetricsStore
     ) async {
-        guard let workerClient = await workerRegistry.client(for: failedBinding.routeKind),
-              let introspectingClient = workerClient as? any LoadedModelsIntrospectingWorkerClientProtocol else {
+        guard let workerClient = await workerRegistry.client(for: failedBinding.routeKind) else {
             await metricsStore.increment(
                 "control_plane.backend_identity_failed_residency_retire_skipped_count"
             )
@@ -297,26 +291,24 @@ enum BackendRouteRecovery {
         }
 
         do {
-            let loadedModels = try await introspectingClient.listLoadedModels()
-            guard loadedModels.loadedModels.contains(where: { loaded in
-                loaded.modelHandle == failedBinding.handle
-                    && loaded.hasBackendIdentity
-                    && loaded.backendIdentity == failedBinding.identity
-            }) else {
+            var request = Melix_Worker_V1_UnloadModelRequest()
+            request.modelHandle = failedBinding.handle
+            request.expectedBackendIdentity = failedBinding.identity
+            let response = try await workerClient.unloadModel(request: request)
+            if response.ok {
+                await metricsStore.increment(
+                    "control_plane.backend_identity_failed_residency_retire_count"
+                )
+            } else if response.error.code == "model_identity_mismatch"
+                || response.error.code == "not_found" {
                 await metricsStore.increment(
                     "control_plane.backend_identity_failed_residency_retire_skipped_count"
                 )
-                return
+            } else {
+                await metricsStore.increment(
+                    "control_plane.backend_identity_failed_residency_retire_failure_count"
+                )
             }
-
-            var request = Melix_Worker_V1_UnloadModelRequest()
-            request.modelHandle = failedBinding.handle
-            let response = try await workerClient.unloadModel(request: request)
-            await metricsStore.increment(
-                response.ok
-                    ? "control_plane.backend_identity_failed_residency_retire_count"
-                    : "control_plane.backend_identity_failed_residency_retire_failure_count"
-            )
         } catch {
             await metricsStore.increment(
                 "control_plane.backend_identity_failed_residency_retire_failure_count"

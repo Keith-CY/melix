@@ -805,11 +805,13 @@ public actor RequestCoordinator {
         let plan = try await resolvedSchedulingPlan(translatedRequest)
         var request = plan.translatedRequest
         var backendBinding: ModelCatalog.BackendRouteBinding?
-        if let modelCatalog,
-           let binding = await modelCatalog.backendRouteBinding(
+        if let modelCatalog {
+            guard let binding = await modelCatalog.backendRouteBinding(
                 for: request.modelID,
                 routeKind: plan.routeKind
-           ) {
+            ) else {
+                throw RequestCoordinatorError.workerUnavailable
+            }
             backendBinding = binding
             var stampedWorkerRequest = request.workerRequest
             BackendModelIdentityStamping.stamp(binding, on: &stampedWorkerRequest)
@@ -1248,6 +1250,7 @@ public actor RequestCoordinator {
                 var attemptBinding = initialBinding
                 for attemptIndex in 0...1 {
                     var responseOpened = false
+                    var terminalEventObserved = false
                     do {
                         guard let client = await workerRegistry.client(for: routeKind) else {
                             throw WorkerClientError.unavailable
@@ -1271,6 +1274,7 @@ public actor RequestCoordinator {
                         var retryRequested = false
                         for try await event in stream {
                             if case .error(let errorEvent) = event.payload {
+                                terminalEventObserved = true
                                 let recoverable = BackendRouteRecoveryClassifier.shouldRecover(
                                     errorEvent.error
                                 )
@@ -1299,6 +1303,9 @@ public actor RequestCoordinator {
                                     throw BackendRouteRecovery.recoveryExhaustedError()
                                 }
                             }
+                            if case .completed = event.payload {
+                                terminalEventObserved = true
+                            }
 
                             responseOpened = true
                             continuation.yield(event)
@@ -1323,6 +1330,18 @@ public actor RequestCoordinator {
                                 return
                             }
                             continue
+                        }
+                        if !responseOpened {
+                            throw WorkerClientError.unavailable
+                        }
+                        if !terminalEventObserved {
+                            await BackendRouteRecovery.recordRetrySuppressed(
+                                metricsStore: metricsStore
+                            )
+                            continuation.finish(
+                                throwing: BackendRouteRecovery.partialStreamFailure()
+                            )
+                            return
                         }
                         continuation.finish()
                         return

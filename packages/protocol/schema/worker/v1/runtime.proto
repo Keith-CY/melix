@@ -52,6 +52,7 @@ message LoadModelResponse {
 message UnloadModelRequest {
   string model_handle = 1;
   bool force = 2;
+  BackendModelIdentity expected_backend_identity = 3;
 }
 
 message UnloadModelResponse {

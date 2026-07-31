@@ -177,6 +177,9 @@ final class WorkerScaffoldTests: XCTestCase {
         )
 
         XCTAssertEqual(configuration.workerID, "swift-text-worker-001")
+        XCTAssertFalse(configuration.workerInstanceID.isEmpty)
+        XCTAssertFalse(matchingConfiguration.workerInstanceID.isEmpty)
+        XCTAssertNotEqual(configuration.workerInstanceID, matchingConfiguration.workerInstanceID)
         XCTAssertEqual(configuration.socketPath, "/var/run/melix/swift-text-worker.sock")
         XCTAssertEqual(configuration.backendMode, "swift")
         XCTAssertEqual(configuration.runtimeVersion, "melix-swift-text-worker/dev")
@@ -281,8 +284,9 @@ final class WorkerScaffoldTests: XCTestCase {
 
     func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
         let configuration = WorkerConfiguration.fromEnvironment([:])
+        let defaults = WorkerConfiguration(workerInstanceID: configuration.workerInstanceID)
 
-        XCTAssertEqual(configuration, WorkerConfiguration())
+        XCTAssertEqual(configuration, defaults)
     }
 
     func testConfigurationTreatsUnknownDisableFlagValuesAsFalse() {
@@ -810,7 +814,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(response.protocolVersion, "melix.worker.v1")
         XCTAssertEqual(response.runtimeVersion, "melix-swift-text-worker/dev")
         XCTAssertEqual(response.workerFamily, .text)
-        XCTAssertEqual(response.workerInstanceID, "swift-text-worker-001")
+        XCTAssertEqual(response.workerInstanceID, services.configuration.workerInstanceID)
         XCTAssertTrue(response.capabilities.cache.supportsPrefixCache)
         XCTAssertFalse(response.capabilities.cache.supportsPagedCache)
         XCTAssertEqual(response.capabilities.cache.kvQuantProfiles, ["turboquant-q4", "q4", "q8"])
@@ -852,7 +856,7 @@ final class WorkerScaffoldTests: XCTestCase {
         }
 
         XCTAssertEqual(response.workerFamily, .vision)
-        XCTAssertEqual(response.workerInstanceID, "swift-vision-worker-dev")
+        XCTAssertEqual(response.workerInstanceID, services.configuration.workerInstanceID)
         XCTAssertEqual(response.runtimeVersion, "melix-swift-vision-worker/dev")
     }
 
@@ -5168,6 +5172,78 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(sharedResponse.error.details["force_required"], "true")
         XCTAssertTrue(forcedResponse.ok)
         XCTAssertEqual(loadedModelCount, 0)
+    }
+
+    func testRuntimeUnloadComparesBackendIdentityAtomically() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend()
+        )
+        var loadRequest = Melix_Worker_V1_LoadModelRequest()
+        loadRequest.model.modelID = "melix-dev-text"
+        loadRequest.backendIdentity.requestedModelID = "melix-dev-text"
+        loadRequest.backendIdentity.routeGeneration = 7
+        loadRequest.backendIdentity.workerInstanceID = services.configuration.workerInstanceID
+        let loaded = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.loadModel(
+                request: loadRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let inventory = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.listLoadedModels(
+                request: Melix_Worker_V1_ListLoadedModelsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.ListLoadedModels.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        var wrongIdentity = try XCTUnwrap(inventory.loadedModels.first?.backendIdentity)
+        wrongIdentity.routeGeneration += 1
+        let rejected = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_UnloadModelRequest()
+            request.modelHandle = loaded.modelHandle
+            request.expectedBackendIdentity = wrongIdentity
+            return try await services.runtime.unloadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.UnloadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let countAfterRejectedUnload = await services.registry.loadedModelCount()
+        let accepted = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_UnloadModelRequest()
+            request.modelHandle = loaded.modelHandle
+            request.expectedBackendIdentity = inventory.loadedModels[0].backendIdentity
+            return try await services.runtime.unloadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.UnloadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let finalLoadedModelCount = await services.registry.loadedModelCount()
+
+        XCTAssertFalse(rejected.ok)
+        XCTAssertEqual(rejected.error.code, "model_identity_mismatch")
+        XCTAssertEqual(countAfterRejectedUnload, 1)
+        XCTAssertTrue(accepted.ok)
+        XCTAssertEqual(finalLoadedModelCount, 0)
     }
 
     func testRuntimeLifecycleRejectsModelLoadsThatExceedProcessBudgetAndReportsHeadroom() async throws {
@@ -13645,7 +13721,10 @@ private func makeServices(
     backend: some TextRuntimeBackend = FakeRuntimeBackend(),
     residentMemorySamples: [UInt64] = [0, 0]
 ) -> WorkerServices {
-    let configuration = WorkerConfiguration.fromEnvironment(environment)
+    var configuration = WorkerConfiguration.fromEnvironment(environment)
+    configuration.workerInstanceID = configuration.workerFamily == .vision
+        ? "swift-vision-worker-001"
+        : "swift-text-worker-001"
     let metrics = MetricsStore()
     let abortRegistry = AbortRegistry()
     let catalog = WorkerModelCatalog(environment: environment)

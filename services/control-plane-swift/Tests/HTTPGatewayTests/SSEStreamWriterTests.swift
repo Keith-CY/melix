@@ -415,6 +415,26 @@ struct SSEStreamWriterTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("SSE preserves typed worker stream failures")
+    func preservesTypedWorkerStreamFailures() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.finish(throwing: WorkerClientError.requestFailed(
+                code: "partial_stream_failure",
+                message: "The backend stream ended without a terminal event."
+            ))
+        }
+
+        let payload = try await collectChunks(
+            writer.encode(stream: stream, requestID: "req-partial", modelID: "melix-dev-text")
+        )
+
+        #expect(payload.contains("event: error"))
+        #expect(payload.contains("\"code\":\"partial_stream_failure\""))
+        #expect(payload.contains("The backend stream ended without a terminal event."))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
     @Test("chat completion streams drop untyped events instead of framing them")
     func dropsChatFallbackFrames() async throws {
         let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })

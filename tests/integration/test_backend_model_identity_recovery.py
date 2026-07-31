@@ -28,7 +28,7 @@ def _post_embedding(stack: LiveMelixStack, request_id: str) -> dict[str, object]
         return json.loads(response.read().decode("utf-8"))
 
 
-def _loaded_embedding_generation(socket_path: Path) -> tuple[int, int]:
+def _loaded_embedding_generation(socket_path: Path) -> tuple[int, int, str]:
     channel = grpc.insecure_channel(f"unix://{socket_path}")
     try:
         stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
@@ -40,7 +40,20 @@ def _loaded_embedding_generation(socket_path: Path) -> tuple[int, int]:
         generation = (
             embeddings[0].backend_identity.route_generation if embeddings else 0
         )
-        return len(embeddings), generation
+        handle = embeddings[0].model_handle if embeddings else ""
+        return len(embeddings), generation, handle
+    finally:
+        channel.close()
+
+
+def _worker_instance_id(socket_path: Path) -> str:
+    channel = grpc.insecure_channel(f"unix://{socket_path}")
+    try:
+        stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
+        return stub.Handshake(
+            runtime_pb2.HandshakeRequest(protocol_version="v1"),
+            timeout=5,
+        ).worker_instance_id
     finally:
         channel.close()
 
@@ -80,13 +93,16 @@ def test_python_worker_restart_recovers_stale_binding_once_on_same_uds() -> None
             stack.start_python_worker()
         stack.wait_for_models(["melix-dev-embed"])
         initial_payload = _post_embedding(stack, "identity-before-restart")
-        initial_count, initial_generation = _loaded_embedding_generation(
+        initial_count, initial_generation, initial_handle = _loaded_embedding_generation(
             stack.python_socket_path
         )
+        initial_worker_instance_id = _worker_instance_id(stack.python_socket_path)
         assert initial_payload["model"] == "melix-dev-embed"
         assert len(initial_payload["data"]) == 1
         assert initial_count == 1
         assert initial_generation > 0
+        assert initial_handle
+        assert initial_worker_instance_id
 
         old_worker = stack.python_worker
         assert old_worker is not None
@@ -104,10 +120,13 @@ def test_python_worker_restart_recovers_stale_binding_once_on_same_uds() -> None
         assert stack.python_socket_path == socket_path
         assert stack.python_worker is not None
         assert stack.python_worker.pid != old_pid
-        assert _loaded_embedding_generation(stack.python_socket_path) == (0, 0)
+        restarted_worker_instance_id = _worker_instance_id(stack.python_socket_path)
+        assert restarted_worker_instance_id
+        assert restarted_worker_instance_id != initial_worker_instance_id
+        assert _loaded_embedding_generation(stack.python_socket_path) == (0, 0, "")
 
         recovered_payload = _post_embedding(stack, "identity-after-restart")
-        recovered_count, recovered_generation = _loaded_embedding_generation(
+        recovered_count, recovered_generation, recovered_handle = _loaded_embedding_generation(
             stack.python_socket_path
         )
         metrics = _wait_for_recovery_metrics(stack.control_plane_metrics_path)
@@ -116,6 +135,7 @@ def test_python_worker_restart_recovers_stale_binding_once_on_same_uds() -> None
         assert len(recovered_payload["data"]) == 1
         assert recovered_count == 1
         assert recovered_generation > initial_generation
+        assert recovered_handle == initial_handle
         assert _worker_mismatch_count(stack.python_socket_path) == 1
         assert metrics["control_plane.backend_identity_retry_allowed_count"] == 1
         assert metrics.get("control_plane.backend_identity_retry_exhausted_count", 0) == 0

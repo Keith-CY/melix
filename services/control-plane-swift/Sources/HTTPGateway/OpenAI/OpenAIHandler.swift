@@ -2558,6 +2558,7 @@ button.primary:active {
                 var attemptBinding = binding
                 for attemptIndex in 0...1 {
                     var responseOpened = false
+                    var terminalEventObserved = false
                     do {
                         var attempt = request
                         BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
@@ -2569,6 +2570,7 @@ button.primary:active {
                         var retryRequested = false
                         for try await event in stream {
                             if event.kind == .error {
+                                terminalEventObserved = true
                                 let recoverable = BackendRouteRecoveryClassifier.shouldRecover(
                                     event.error
                                 )
@@ -2597,6 +2599,9 @@ button.primary:active {
                                     throw BackendRouteRecovery.recoveryExhaustedError()
                                 }
                             }
+                            if event.kind == .finish {
+                                terminalEventObserved = true
+                            }
                             responseOpened = true
                             continuation.yield(event)
                         }
@@ -2619,6 +2624,18 @@ button.primary:active {
                                 return
                             }
                             continue
+                        }
+                        if !responseOpened {
+                            throw WorkerClientError.unavailable
+                        }
+                        if !terminalEventObserved {
+                            await BackendRouteRecovery.recordRetrySuppressed(
+                                metricsStore: metricsStore
+                            )
+                            continuation.finish(
+                                throwing: BackendRouteRecovery.partialStreamFailure()
+                            )
+                            return
                         }
                         continuation.finish()
                         return

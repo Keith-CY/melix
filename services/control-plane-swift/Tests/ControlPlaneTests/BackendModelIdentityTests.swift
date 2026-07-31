@@ -206,6 +206,106 @@ struct BackendModelIdentityTests {
         #expect(await catalog.model(id: model.modelID)?.state == .modelEvicting)
     }
 
+    @Test(
+        "backend residency settings invalidate every route binding",
+        arguments: [
+            ("melix.model_path", "/models/replacement"),
+            ("melix.model_revision", "revision-replacement"),
+            ("melix.adapter_set_hash", "adapter-replacement"),
+        ]
+    )
+    func backendResidencySettingsInvalidateBindings(key: String, value: String) async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.ext[key] = "original"
+        let catalog = ModelCatalog(seedModels: [model])
+        let reservation = try #require(await catalog.beginBackendRouteLoad(
+            id: model.modelID,
+            routeKind: .swiftText,
+            workerInstanceID: "worker-before-settings"
+        ))
+        _ = await catalog.recordLoadSucceeded(
+            id: model.modelID,
+            dispatchHandle: "handle-before-settings",
+            routeKind: .swiftText,
+            expectedRouteGeneration: reservation.generation,
+            workerInstanceID: reservation.workerInstanceID
+        )
+
+        var replacement = model.settings
+        replacement.ext[key] = value
+        let updated = try #require(await catalog.updateSettings(id: model.modelID, settings: replacement))
+        let next = try #require(await catalog.beginBackendRouteLoad(
+            id: model.modelID,
+            routeKind: .swiftText,
+            workerInstanceID: "worker-after-settings"
+        ))
+
+        #expect(updated.state == .modelUnloaded)
+        #expect(await catalog.backendRouteBinding(for: model.modelID, routeKind: .swiftText) == nil)
+        #expect(next.generation > reservation.generation)
+    }
+
+    @Test("non-residency settings preserve the current backend binding")
+    func nonResidencySettingsPreserveBinding() async throws {
+        let model = ModelCatalog.devTextModel()
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "stable-handle")
+        let before = try #require(
+            await catalog.backendRouteBinding(for: model.modelID, routeKind: .swiftText)
+        )
+        var settings = model.settings
+        settings.alias = "Renamed model"
+
+        _ = await catalog.updateSettings(id: model.modelID, settings: settings)
+
+        #expect(await catalog.backendRouteBinding(for: model.modelID, routeKind: .swiftText) == before)
+    }
+
+    @Test("an explicit replacement wins against recovery of an older binding")
+    func explicitReplacementWinsRecoveryRace() async throws {
+        let model = ModelCatalog.devTextModel()
+        let catalog = ModelCatalog(seedModels: [model])
+        _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "failed-handle")
+        let failed = try #require(
+            await catalog.backendRouteBinding(for: model.modelID, routeKind: .swiftText)
+        )
+        #expect(await catalog.invalidateBackendRouteBinding(
+            for: model.modelID,
+            expected: failed,
+            reason: "explicit_replacement"
+        ))
+        let replacementReservation = try #require(await catalog.beginBackendRouteLoad(
+            id: model.modelID,
+            routeKind: .swiftText,
+            workerInstanceID: "replacement-worker"
+        ))
+        _ = await catalog.recordLoadSucceeded(
+            id: model.modelID,
+            dispatchHandle: "replacement-handle",
+            routeKind: .swiftText,
+            expectedRouteGeneration: replacementReservation.generation,
+            workerInstanceID: replacementReservation.workerInstanceID
+        )
+        let registry = WorkerRegistry(
+            defaultTextClient: RecoveryLoadFailureWorkerClient(),
+            modelCatalog: catalog
+        )
+
+        await #expect(throws: OnDemandModelLoadError.workerUnavailable) {
+            _ = try await BackendRouteRecovery.recoverBinding(
+                failedBinding: failed,
+                modelCatalog: catalog,
+                workerRegistry: registry,
+                metricsStore: MetricsStore(),
+                coordinator: BackendRouteRecoveryCoordinator()
+            )
+        }
+        #expect(await catalog.backendRouteBinding(
+            for: model.modelID,
+            routeKind: .swiftText
+        )?.handle == "replacement-handle")
+    }
+
     @Test("one binding stamps every production inference request shape")
     func stampsEveryInferenceRequestShape() {
         let binding = ModelCatalog.BackendRouteBinding(
@@ -498,6 +598,8 @@ struct BackendModelIdentityTests {
             #expect(await worker.unloadedHandles == (
                 workerStillOwnsFailedResidency ? [failedBinding.handle] : []
             ))
+            #expect(await worker.unloadRequests.count == 1)
+            #expect(await worker.unloadRequests.first?.expectedBackendIdentity == failedBinding.identity)
             #expect(await metrics.value(
                 forKey: workerStillOwnsFailedResidency
                     ? "control_plane.backend_identity_failed_residency_retire_count"
@@ -591,13 +693,13 @@ private actor RecoveryLoadFailureWorkerClient:
 
 private actor ResidencyRetirementWorkerClient:
     WorkerRoutingClient,
-    LoadedModelsIntrospectingWorkerClientProtocol,
     BackendHealthIdentifyingWorkerClientProtocol
 {
     private let healthWorkerID: String
     private let listedHandle: String
     private let listedIdentity: Melix_Worker_V1_BackendModelIdentity
     private(set) var unloadedHandles: [String] = []
+    private(set) var unloadRequests: [Melix_Worker_V1_UnloadModelRequest] = []
 
     init(
         healthWorkerID: String,
@@ -616,15 +718,6 @@ private actor ResidencyRetirementWorkerClient:
     func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
         var response = Melix_Worker_V1_HandshakeResponse()
         response.workerInstanceID = healthWorkerID
-        return response
-    }
-
-    func listLoadedModels() async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
-        var loaded = Melix_Worker_V1_LoadedModelSummary()
-        loaded.modelHandle = listedHandle
-        loaded.backendIdentity = listedIdentity
-        var response = Melix_Worker_V1_ListLoadedModelsResponse()
-        response.loadedModels = [loaded]
         return response
     }
 
@@ -647,9 +740,16 @@ private actor ResidencyRetirementWorkerClient:
     func unloadModel(
         request: Melix_Worker_V1_UnloadModelRequest
     ) async throws -> Melix_Worker_V1_UnloadModelResponse {
-        unloadedHandles.append(request.modelHandle)
+        unloadRequests.append(request)
         var response = Melix_Worker_V1_UnloadModelResponse()
-        response.ok = true
+        if request.modelHandle == listedHandle,
+           request.hasExpectedBackendIdentity,
+           request.expectedBackendIdentity == listedIdentity {
+            unloadedHandles.append(request.modelHandle)
+            response.ok = true
+        } else {
+            response.error.code = "model_identity_mismatch"
+        }
         return response
     }
 }

@@ -156,9 +156,17 @@ public struct SSEStreamWriter: Sendable {
                     }
                 } catch {
                     emittedDataFrame = true
-                    yieldDataFrame(
-                        errorFrame(requestID: requestID, code: "transport_error", message: error.localizedDescription)
-                    )
+                    if case let WorkerClientError.requestFailed(code, message) = error {
+                        yieldDataFrame(errorFrame(requestID: requestID, code: code, message: message))
+                    } else {
+                        yieldDataFrame(
+                            errorFrame(
+                                requestID: requestID,
+                                code: "transport_error",
+                                message: error.localizedDescription
+                            )
+                        )
+                    }
                 }
 
                 if !emittedDataFrame {

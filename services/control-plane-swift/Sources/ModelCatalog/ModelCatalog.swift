@@ -577,16 +577,46 @@ public actor ModelCatalog {
             return nil
         }
         let isLoaded = dispatchHandles[id] != nil
+        let backendResidencyChanged = Self.backendResidencySettingsChanged(
+            from: model.settings,
+            to: settings
+        )
         model.settings = settings
         model.loadTrust = ModelLoadTrustPolicyResolver.reloadAwarePolicy(
             current: model.loadTrust,
             settings: settings,
             isLoaded: isLoaded
         )
-        touchModel(id: id, transitionReason: "settings_updated")
+        if backendResidencyChanged, isLoaded {
+            advanceRouteGenerations(for: id)
+            removeDispatchHandles(for: id)
+            model.state = .modelUnloaded
+            model.pinned = false
+        }
+        touchModel(
+            id: id,
+            transitionReason: backendResidencyChanged && isLoaded
+                ? "settings_replacement"
+                : "settings_updated"
+        )
         model = synchronized(model)
         models[id] = model
         return model
+    }
+
+    private static func backendResidencySettingsChanged(
+        from current: Melix_Controlplane_V1_ModelSettings,
+        to replacement: Melix_Controlplane_V1_ModelSettings
+    ) -> Bool {
+        for key in [
+            "melix.model_path",
+            "melix.model_revision",
+            "melix.adapter_set_hash",
+            "melix.tokenizer_hash",
+        ] where current.ext[key] != replacement.ext[key] {
+            return true
+        }
+        return false
     }
 
     public func markModelUsed(id: String) -> Melix_Controlplane_V1_ModelSummary? {
@@ -1657,6 +1687,16 @@ public actor ModelCatalog {
         model.settings.ext["detected_identity_source"] = detected.source
         model.settings.ext["identity_override"] = identityOverride
         applyCapabilityAdapter(embeddingCapabilityAdapter(familyID: resolvedFamilyID), to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .embedText,
+                supportedModalities: [.text],
+                requiresAnyModality: [.text],
+                workerFamily: .retrieval,
+                modelFamilyTarget: "retrieval.\(resolvedFamilyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1718,6 +1758,16 @@ public actor ModelCatalog {
             model.settings.ext["rerank_yes_no_labels"] = resolvedYesNoLabels
         }
         applyCapabilityAdapter(rerankCapabilityAdapter(familyID: resolvedFamilyID), to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .rerankText,
+                supportedModalities: [.text],
+                requiresAnyModality: [.text],
+                workerFamily: .retrieval,
+                modelFamilyTarget: "retrieval.\(resolvedFamilyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 

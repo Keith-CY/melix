@@ -912,6 +912,9 @@ public enum BootstrapWorkerPreparation {
         }
         applyContextOverride(from: summary, to: &spec)
         applySettingsOverride(from: summary, to: &spec)
+        spec.routeClass = Melix_Worker_V1_WorkerRouteClass(
+            rawValue: summary.routeClass.rawValue
+        ) ?? .unspecified
         spec.requestRoutes = summary.requestRoutes.map(workerRouteDeclaration(from:))
         return spec
     }
@@ -1169,10 +1172,15 @@ public enum BootstrapWorkerPreparation {
         modelCatalog: ModelCatalog,
         memoryBudgetBytes: UInt64 = 0
     ) async throws -> Bool {
-        try await preloadModel(
+        let textModel = await catalogAwareModelSpec(
+            for: "melix-dev-text",
+            modelCatalog: modelCatalog,
+            fallback: devTextModel()
+        )
+        return try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devTextModel(),
+            model: textModel,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -1361,28 +1369,39 @@ public enum BootstrapWorkerPreparation {
     private static func preloadRouteKind(
         for model: Melix_Worker_V1_ModelSpec
     ) -> WorkerRouteKind? {
-        if let route = WorkerRouteKind(metadataIdentifier: model.ext["melix.capability.route_kind"]) {
-            return route
-        }
-        switch model.modelKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "text":
-            return .swiftText
-        case "embedding":
-            return .pythonEmbedding
-        case "rerank":
-            return .pythonRerank
-        case "ocr":
-            return .pythonOCR
-        case "vlm", "vision":
-            return .pythonVLM
-        case "transcription":
-            return .pythonTranscription
-        case "speech":
-            return .pythonSpeech
-        case "image":
-            return .pythonImage
-        default:
+        guard !model.requestRoutes.isEmpty,
+              let controlPlaneRouteClass = Melix_Controlplane_V1_WorkerRouteClass(
+                rawValue: model.routeClass.rawValue
+              ),
+              let route = WorkerRouteKind(routeClass: controlPlaneRouteClass),
+              model.requestRoutes.contains(where: { preloadDeclaration($0, supports: route) }) else {
             return nil
+        }
+        return route
+    }
+
+    private static func preloadDeclaration(
+        _ declaration: Melix_Worker_V1_RequestRouteDeclaration,
+        supports route: WorkerRouteKind
+    ) -> Bool {
+        switch route {
+        case .swiftText, .pythonCompatibility:
+            declaration.workerFamily == .text && declaration.task == .generateText
+        case .pythonEmbedding:
+            declaration.workerFamily == .retrieval && declaration.task == .embedText
+        case .pythonRerank:
+            declaration.workerFamily == .retrieval && declaration.task == .rerankText
+        case .pythonOCR, .pythonVLM, .swiftVision:
+            declaration.workerFamily == .vision && declaration.task == .generateMultimodal
+        case .pythonTranscription:
+            declaration.workerFamily == .audio && declaration.task == .transcribeAudio
+        case .pythonSpeech:
+            declaration.workerFamily == .audio && declaration.task == .speakText
+        case .pythonImage:
+            declaration.workerFamily == .image
+                && (declaration.task == .imageGenerate || declaration.task == .imageEdit)
+        case .pythonModelOperations:
+            false
         }
     }
 

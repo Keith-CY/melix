@@ -364,11 +364,17 @@ the matching route generation; a stale completion cannot republish a handle
 after a newer invalidation. Recovery reload reservation uses a generation
 compare-and-swap against the invalidation receipt. An explicit unload between
 invalidation and reservation advances the generation and prevents recovery
-from reopening the route.
+from reopening the route. Any explicit replacement that advances the binding
+also wins: recovery of the older binding fails closed instead of adopting the
+newer binding as its own result. Changes to backend residency inputs, including
+model path, revision, adapter-set hash, and tokenizer hash, invalidate every
+route binding for that model and require a fresh load.
 
 All inference entrypoints stamp the worker request from one binding receipt.
 They never derive the requested model identity from a rewritten local model
-path. A typed worker `model_identity_mismatch`, or a connect, read, write,
+path. When a `ModelCatalog` is configured, a route-specific binding is required;
+unstamped compatibility dispatch is available only when no catalog is present.
+A typed worker `model_identity_mismatch`, or a connect, read, write,
 protocol, or timeout failure before the first backend response event, may trigger
 one fresh route invalidation, admission, reload, and dispatch. Image generation
 and editing recover only from a typed identity mismatch, not an ambiguous
@@ -379,13 +385,17 @@ recoverable failure returns `backend_route_recovery_exhausted`.
 Once any backend stream event has been observed, including admission or envelope
 metadata, later failure returns `partial_stream_failure` and is never replayed.
 The HTTP gateway reads that first event before opening response headers. Stream
-object creation alone is not response output. Explicit unload or replacement
-advances the generation and wins over an in-flight recovery completion.
+object creation alone is not response output. A stream that ends without any
+event is a pre-response transport failure and may receive the single recovery
+attempt. A stream that emits output but ends without its required `completed`,
+`error`, or speech `finish` terminal event returns `partial_stream_failure`.
+Explicit unload or replacement advances the generation and wins over an
+in-flight recovery completion.
 
-Before reloading, recovery may retire the failed residency only when the same
-route's backend introspection still reports the exact failed handle and all four
-identity fields. A missing handle, changed worker instance, or introspection
-failure skips retirement so endpoint reuse cannot unload another residency.
+Before reloading, recovery sends a conditional unload with the failed handle and
+all four expected identity fields. The worker compares and removes atomically.
+A missing handle or changed identity skips retirement so endpoint reuse cannot
+unload another residency; there is no list-then-unload observation window.
 
 The request path does not currently own a worker process supervisor. Recovery
 therefore means fresh route rebind and model reload, not process respawn. The

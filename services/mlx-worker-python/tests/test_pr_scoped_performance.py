@@ -5269,6 +5269,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         metric.key: metric for metric in worker_registry_probe.metrics
     }
     assert worker_registry_metrics["elapsed_ms_mean"].warn_abs == 0.001
+    assert worker_registry_metrics["loaded_model_listing_elapsed_ms_mean"].warn_abs == 0.005
     assert worker_registry_metrics["request_stats_elapsed_ms_mean"].warn_abs == 0.001
 
     assert structured_output_probe is not None

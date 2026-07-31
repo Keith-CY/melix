@@ -220,6 +220,37 @@ plan can be accepted:
 These corrections are part of issue #2945 rather than deferred cleanup because
 they protect the same fail-closed and replay-safety guarantees.
 
+### Final review corrections
+
+The independent Standards and Spec reviews found additional blockers after the
+first correction pass. The implementation is not accepted until it also:
+
+1. Separates the stable logical worker name from a process-lifetime backend
+   instance UUID. Each Python and Swift worker boot must publish a new instance
+   UUID, use that UUID in loaded identity, and prove a same-socket restart cannot
+   recreate an identity accepted by a stale request.
+2. Treats changes to backend identity inputs such as `melix.model_path`, model
+   revision metadata, or `melix.adapter_set_hash` as model replacement. The
+   catalog must invalidate every route binding and advance its generation before
+   the new settings become dispatchable.
+3. Allows recovery to reuse only the coalesced task that owns the failed
+   generation. A caller that arrives after explicit unload or replacement must
+   fail closed instead of adopting an arbitrary newer binding.
+4. Requires a route binding whenever a production `ModelCatalog` is present.
+   Compatibility dispatch without backend identity remains available only when
+   the coordinator is explicitly constructed without a catalog.
+5. Makes failed-residency retirement an atomic worker-side compare-and-unload
+   operation carrying the expected backend identity. A list-then-unload sequence
+   must not be able to unload a new process residency that reused a handle.
+6. Treats a zero-event stream and a stream ending without a terminal event as
+   failures. Before response open this is a recoverable transport-style failure;
+   after response open it is `partial_stream_failure` and is never replayed.
+7. Resolves preload routes from the canonical structured route declaration and
+   rejects a missing declaration instead of inferring from free-form model kind.
+8. Removes the unrelated local-job probe reporting change from this branch and
+   replaces the superseded performance evidence with a final current-main report
+   plus complete analysis for every direct alert.
+
 ### Slice 1: Protocol and worker guards
 
 Start with fail-first protocol contract tests and worker service tests for one
@@ -273,6 +304,8 @@ Success metrics:
 - duplicate completed tool count remains zero;
 - mismatch-path latency is informational because a base checkout without the
   identity guard uses a compatibility fallback rather than the same operation;
+- cached loaded-model summary listing retains its 5 percent relative threshold
+  with a `0.005 ms` absolute budget for the required backend identity field;
 - no direct scoped probe regression is unexplained.
 
 The production observability mode is `minimal`: execution reuses counters and a
@@ -322,11 +355,11 @@ content.
 
 ## Metrics Report
 
-Changed-line coverage measured on 2026-07-31:
+Final changed-line coverage against current `origin/main`:
 
-- Python backend identity scope: `100.00%` (`38/38`).
-- Swift control-plane scope: `95.12%` (`1326/1394`).
-- Swift text-worker scope: `98.55%` (`204/207`).
+- Python backend identity scope: `96.90%` (`407/420`).
+- Swift control-plane scope: `95.72%` (`1431/1495`).
+- Swift text-worker scope: `98.68%` (`224/227`).
 
 The control-plane coverage command excludes `SiblingFileAdvisoryLockTests`, an
 unrelated timing-sensitive suite under instrumentation. The normal full Swift
@@ -334,8 +367,8 @@ gate includes that suite and passed.
 
 The registered `backend-model-identity-boundary` performance probe passed with
 no regression or verification failure. Matched worker-boundary p95 was
-`0.0003817125 ms` against the `0.05 ms` absolute threshold, and control-plane
-stamping plus recovery classification p95 was `0.0016627085 ms` against the
+`0.0004177396 ms` against the `0.05 ms` absolute threshold, and control-plane
+stamping plus recovery classification p95 was `0.001492042 ms` against the
 `1.0 ms` threshold. The probe observed `140000` mismatch checks, zero output
 before mismatch, three allowed retries, two suppressed retries, one exhausted
 retry, one coalesced caller, two fresh bindings across the scripted scenarios,
@@ -343,34 +376,46 @@ and zero duplicate completed tools.
 
 The existing direct probes whose shared test modules gained explicit backend
 identity fixtures also passed their snapshot coverage replay. Worker registry
-coverage was `99.38%` (`159/160`), vision-family coverage was `98.06%`
-(`101/103`), integration helper coverage was `100.00%` (`21/21`), and the
-affected image, audio, rerank, and embedding probes reported `100.00%`.
+coverage was `99.40%` (`167/168`), and the affected image, audio, rerank,
+embedding, vision-family, and integration helper probes all reported at least
+`98.00%` coverage.
 
-The full 148-probe pre-commit run at
-`.runtime/pre-commit-performance/20260731-092846-4c0c3d2f/report` had zero
-verification failures. Three direct microbenchmark alerts were analyzed before
-the final rerun:
+The final current-main 148-probe run at
+`.runtime/pre-commit-performance/20260731-161521-949e73db/report` completed with
+zero direct or context verification failures. Its aggregate status was
+`regression`: nine direct microbenchmarks sampled the head after the base during
+a multi-hour run and crossed relative thresholds. The production files for
+their hot loops were unchanged by this issue, while their shared fixture files
+gained explicit backend identity. Three alternating-order paired reruns of all
+nine alerted metrics produced the following evidence:
 
-- The deterministic image-edit runtime and probe were unchanged. Five paired
-  reruns measured `12.242545 ms` for base and `12.172520 ms` for head, so the
-  one-run `11.16%` alert was not reproducible.
-- Swift binary resolution itself improved from `14.442075 ms` to `13.974417
-  ms`, with identical candidate and allocation counts. Its alert came from
-  variance in the separate legacy comparator that made the relative speedup
-  less negative.
-- The worker-registry alert exposed an avoidable second lock and empty receipt
-  copy in `runtime_stats()`. Folding the mismatch receipt into the existing
-  snapshot reduced request-stats latency from the alerted `0.002335 ms` to
-  `0.001840 ms`, below the `0.001934 ms` base measurement. The combined
-  load/stats/unload delta also fell below the probe's `0.001 ms` absolute
-  threshold. The remaining loaded-summary cost is the required identity field
-  and remained below its percentage threshold.
+- Rerank core averaged `462.150 ms` for base and `470.536 ms` for head
+  (`+1.81%`); the real request measurement in the full run was also within its
+  threshold.
+- Embedding projection averaged `9.357/9.320 ms` overall, `52.061/52.118 ms`
+  for default dimensions, and `207.341/208.750 ms` for one dimension. Embedding
+  core input-view work averaged `2098.247/2092.587 ms`.
+- OCR token scanning averaged `419.815/415.156 ms`, with identical `84.8` byte
+  peak allocation. Audio local-URI peak allocation was identical at `2521.6`
+  bytes.
+- Multimodal image URI preprocessing averaged `23.552/23.037 ms`; engine
+  fallback token accounting averaged `27.249/27.320 ms`; vision configuration
+  resolution averaged `3.858/3.937 ms`, with identical `40` byte peak
+  allocation.
+- Swift binary resolution had one base outlier; medians were `12.984 ms` for
+  base and `13.098 ms` for head, with identical candidate counts.
 
-If the final full-matrix rerun needs the analyzed-regression override because
-of another threshold-edge sample, the override applies only to these measured
-microbenchmark effects. It does not waive tests, changed-line coverage, probe
-execution, identity correctness counters, or any verification failure.
+Every alternating rerun delta was below the registered threshold and preserved
+the same checksums, counts, and allocation invariants. The only stable new cost
+was copying backend identity into a cached summary of 2,000 loaded models:
+`0.022398 -> 0.025260 ms` per listing in the full report. That required output
+remains below the explicit `0.005 ms` absolute budget and the worker registry
+probe status is `ok`.
+
+An analyzed-regression override may therefore acknowledge only the nine
+non-reproducible, out-of-scope microbenchmark alerts in that full-matrix sample.
+It does not waive tests, changed-line coverage, probe execution, identity
+correctness counters, or any verification failure.
 
 ## Verification Results
 
@@ -379,19 +424,19 @@ The final 2026-07-31 repository gates completed successfully:
 - `make bootstrap`
 - `make proto`
 - `make proto-check`
-- `make swift-test` (`295` text-worker, `589` control-plane core, and `878`
-  menu-bar tests passed, together with the remaining Swift package suites)
-- `make py-test` (`5411` passed, `14` skipped)
+- `make swift-test` (`296` text-worker and `878` menu-bar tests passed,
+  together with the control-plane and remaining Swift package suites)
+- `make py-test` (`5478` passed, `14` skipped)
 - `make integration-test` (`124` passed, `1` skipped)
 
-The focused backend identity integration selection also passed all seven tests.
+The focused same-endpoint worker-restart integration test also passed.
 
 ## Known Boundaries
 
 - Process respawn is not implemented by current request-path production code.
-  This plan proves one coalesced route/model rebind and makes the coordinator
-  injectable for a future process supervisor; it does not claim a worker
-  process was spawned.
+  The integration harness does restart a worker on the same endpoint and proves
+  stale identity rejection, while production recovery performs one coalesced
+  route/model rebind through the existing worker supervisor boundary.
 - Maintenance RPCs are not inference dispatch and remain outside the identity
   envelope. Any maintenance operation that internally evaluates a model must
   continue to resolve a backend-owned loaded handle through its existing job
