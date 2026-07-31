@@ -30,6 +30,13 @@ The probe is extended to measure the model safetensor listing path directly agai
 
 2026-07-27 follow-up slice: `_extra_mtp_safetensor_file_paths()` no longer records top-level or nested `model*.safetensors` base-shard names in the duplicate sidecar set. Those names are always excluded from the sidecar return list, so skipping the set insertion preserves output semantics while reducing duplicate-set churn for native-MTP index maps with repeated base-model references.
 
+2026-07-31 follow-up slice: `_model_safetensor_files()` drops the leading
+`name[0] == "m"` guard and lets the single `model` prefix check own candidate
+filtering. The registered model-listing workload is dominated by `model*.bin`,
+`model*.safetensors`, and `mtp*.safetensors` names, so the extra first-character
+branch does not prune additional entries there and only adds Python loop work.
+The helper still preserves the historical `glob("model*.safetensors")` result.
+
 ## Verification plan
 
 ```bash
