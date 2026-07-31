@@ -74,6 +74,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 
 | Plan | What It Covers |
 |---|---|
+| [Remote Provider Chat Binding](plans/2026-08-01-remote-provider-chat-binding.md) | Unified Local/Remote Provider identity, selection, readiness, and dispatch for macOS Chat |
 | [Open Issue Completion Wave](plans/2026-07-30-open-issue-completion-wave.md) | Ordered completion, review, verification, and merge contract for the open issue queue captured on 2026-07-30 |
 | [Gemma 4 Cross-Surface Chat Routing Repair](plans/2026-07-18-gemma4-cross-surface-chat-routing.md) | Shared Gemma 4 text companion resolution and real CLI, HTTP, and macOS Chat acceptance |
 | [Runtime-Aware Export And Serving Verification Plan](plans/2026-06-21-runtime-aware-export-and-serving-verification.md) | M3 export target manifests, layout, retention, post-export smoke policy, diagnostics, waiver semantics, and serving evidence |
