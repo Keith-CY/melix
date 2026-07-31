@@ -16,6 +16,7 @@ _MODEL_WEIGHT_SUFFIXES = (".safetensors", ".npz", ".bin", ".gguf")
 _MODEL_WEIGHT_SUFFIX_LAST_CHARS = frozenset("sSzZnNfF")
 _MODEL_WEIGHT_PRIMARY_SUFFIX = ".safetensors"
 _MODEL_WEIGHT_SECONDARY_SUFFIXES = (".npz", ".bin", ".gguf")
+_S_ISREG = stat.S_ISREG
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,7 +224,7 @@ def _weight_dir_entry_file_size(entry: os.DirEntry[str]) -> int:
         return 0
     try:
         stat_result = entry.stat()
-        if not stat.S_ISREG(stat_result.st_mode):
+        if not _S_ISREG(stat_result.st_mode):
             return 0
         return stat_result.st_size
     except OSError:
