@@ -412,8 +412,30 @@ struct MelixCLIParserTests {
             "remote-server", "test",
             "--remote-server-id", "sub2api",
             "--model", "gemini-2.5-flash",
+            "--reasoning-effort", "none",
+            "--max-tokens", "128",
+            "--temperature", "0.2",
+            "--top-p", "0.9",
             "--json",
         ])
+        let testWithDefaultGenerationControls = try MelixCLIParser.parse([
+            "remote-server", "test",
+            "--remote-server-id", "sub2api",
+        ])
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "remote-server", "test",
+                "--remote-server-id", "sub2api",
+                "--max-tokens", "0",
+            ])
+        }
+        #expect(throws: MelixCLIError.self) {
+            _ = try MelixCLIParser.parse([
+                "remote-server", "test",
+                "--remote-server-id", "sub2api",
+                "--temperature", "nan",
+            ])
+        }
         let list = try MelixCLIParser.parse([
             "remote-server", "list",
             "--json",
@@ -441,6 +463,10 @@ struct MelixCLIParserTests {
             "--remote-server-id", "sub2api",
             "--model", "gemini-2.5-flash",
             "--message", "hello",
+            "--reasoning-effort", "none",
+            "--max-tokens", "128",
+            "--temperature", "0.2",
+            "--top-p", "0.9",
             "--json",
         ])
         let eval = try MelixCLIParser.parse([
@@ -476,6 +502,10 @@ struct MelixCLIParserTests {
         }
         guard case .remoteServerTest(let testOptions) = test else {
             Issue.record("Expected remoteServerTest command")
+            return
+        }
+        guard case .remoteServerTest(let defaultTestOptions) = testWithDefaultGenerationControls else {
+            Issue.record("Expected remoteServerTest command with default generation controls")
             return
         }
         guard case .remoteServerList(let listOptions) = list else {
@@ -521,7 +551,15 @@ struct MelixCLIParserTests {
 
         #expect(testOptions.remoteServerID == "sub2api")
         #expect(testOptions.remoteModelID == "gemini-2.5-flash")
+        #expect(testOptions.reasoningEffort == "none")
+        #expect(testOptions.maxTokens == 128)
+        #expect(testOptions.temperature == 0.2)
+        #expect(testOptions.topP == 0.9)
         #expect(testOptions.json)
+        #expect(defaultTestOptions.reasoningEffort.isEmpty)
+        #expect(defaultTestOptions.maxTokens == 0)
+        #expect(defaultTestOptions.temperature == nil)
+        #expect(defaultTestOptions.topP == nil)
 
         #expect(listOptions.json)
         #expect(updateOptions.remoteServerID == "sub2api")
@@ -541,6 +579,10 @@ struct MelixCLIParserTests {
         #expect(chatOptions.modelID == "")
         #expect(chatOptions.remoteServerID == "sub2api")
         #expect(chatOptions.remoteModelID == "gemini-2.5-flash")
+        #expect(chatOptions.reasoningEffort == "none")
+        #expect(chatOptions.maxTokens == 128)
+        #expect(chatOptions.temperature == 0.2)
+        #expect(chatOptions.topP == 0.9)
         #expect(chatOptions.message == "hello")
         #expect(chatOptions.json)
 
@@ -1004,6 +1046,10 @@ struct MelixCLIParserTests {
                 message: "Reply with OK",
                 systemPrompt: "Be concise.",
                 serverSessionID: "server-session-1",
+                reasoningEffort: "none",
+                maxTokens: 128,
+                temperature: 0.2,
+                topP: 0.9,
                 json: true
             )
         )
@@ -1017,9 +1063,38 @@ struct MelixCLIParserTests {
             "--message", "Reply with OK",
             "--system", "Be concise.",
             "--server-session-id", "server-session-1",
+            "--reasoning-effort", "none",
+            "--max-tokens", "128",
+            "--temperature", "0.2",
+            "--top-p", "0.9",
             "--json",
         ])
         #expect(try MelixCLIParser.parse(arguments) == command)
+
+        let remoteServerTestCommand = MelixCLICommand.remoteServerTest(
+            .init(
+                remoteServerID: "sub2api",
+                remoteModelID: "gemini-2.5-flash",
+                reasoningEffort: "none",
+                maxTokens: 128,
+                temperature: 0.2,
+                topP: 0.9,
+                json: true
+            )
+        )
+        let remoteServerTestArguments = try MelixCLICommandCodec.arguments(for: remoteServerTestCommand)
+        #expect(remoteServerTestArguments == [
+            "remote-server",
+            "test",
+            "--remote-server-id", "sub2api",
+            "--model", "gemini-2.5-flash",
+            "--reasoning-effort", "none",
+            "--max-tokens", "128",
+            "--temperature", "0.2",
+            "--top-p", "0.9",
+            "--json",
+        ])
+        #expect(try MelixCLIParser.parse(remoteServerTestArguments) == remoteServerTestCommand)
 
         let mergedManifestArguments = try MelixCLICommandCodec.arguments(
             for: .loraPublish(

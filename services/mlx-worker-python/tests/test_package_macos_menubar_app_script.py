@@ -141,6 +141,8 @@ def test_main_forwards_packaging_target_and_update_channel(
             str(tmp_path / "stable.json"),
             "--icon-source-path",
             str(tmp_path / "MelixAppIcon.icns"),
+            "--allow-insecure-http-host",
+            "192.0.2.10",
             "--json",
         ],
     )
@@ -153,6 +155,7 @@ def test_main_forwards_packaging_target_and_update_channel(
     assert seen["packaging_target_id"] == "macos_app_bundle_preview"
     assert seen["update_channel_path"] == str(tmp_path / "stable.json")
     assert seen["icon_source_path"] == str(tmp_path / "MelixAppIcon.icns")
+    assert seen["insecure_http_hosts"] == ["192.0.2.10"]
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["packaging_target_id"] == "macos_app_bundle_preview"

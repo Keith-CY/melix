@@ -7769,7 +7769,7 @@ struct DesktopFoundationViewTests {
                 .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
             encoding: .utf8
         )
-        let pickerStart = try #require(source.range(of: #"Picker("Provider", selection: selectedServerBinding)"#))
+        let pickerStart = try #require(source.range(of: #"Picker("Provider", selection: selectedProviderBinding)"#))
         let pickerTail = source[pickerStart.lowerBound...]
         let pickerEnd = try #require(pickerTail.range(of: #".accessibilityLabel("Chat Provider")"#))
         let pickerImplementation = pickerTail[..<pickerEnd.upperBound]
@@ -8418,6 +8418,43 @@ struct DesktopFoundationViewTests {
             capabilities: [readyTextCapability, degradedVisionCapability],
             isModelMissing: false
         )
+        let remoteTarget = RuntimeProviderTargetState(
+            id: "remote:lay2-deepseek-v4",
+            kind: .remoteServer,
+            title: "LAY2 DeepSeek V4",
+            detailText: "DeepSeek V4 Flash • http://192.0.2.10:50650/v1",
+            badgeText: "Remote",
+            modelID: "deepseek-v4-flash",
+            modelName: "DeepSeek V4 Flash",
+            endpointText: "http://192.0.2.10:50650/v1",
+            serverID: "lay2-deepseek-v4",
+            statusText: "Ready • openai-compatible",
+            loraActiveText: "",
+            accelerationModeText: "",
+            contextText: "Context unknown",
+            isRunning: true
+        )
+        let readyRemoteGate = DesktopChatComposerGate(
+            serverSession: nil,
+            providerTarget: remoteTarget,
+            isProviderReady: true,
+            capabilities: [readyTextCapability],
+            isModelMissing: false
+        )
+        let unavailableRemoteGate = DesktopChatComposerGate(
+            serverSession: nil,
+            providerTarget: remoteTarget,
+            isProviderReady: false,
+            capabilities: [invalidTextCapability],
+            isModelMissing: false
+        )
+        let invalidRemoteCapabilityGate = DesktopChatComposerGate(
+            serverSession: nil,
+            providerTarget: remoteTarget,
+            isProviderReady: true,
+            capabilities: [invalidTextCapability],
+            isModelMissing: false
+        )
 
         #expect(noProviderGate.repairState?.primaryActionTitle == "Choose Provider")
         #expect(noProviderGate.repairState?.secondaryActions.isEmpty == true)
@@ -8430,6 +8467,10 @@ struct DesktopFoundationViewTests {
         #expect(invalidCapabilityGate.repairState?.secondaryActions == [.openProviders])
         #expect(degradedGate.repairState == nil)
         #expect(degradedGate.isDegraded)
+        #expect(readyRemoteGate.repairState == nil)
+        #expect(unavailableRemoteGate.repairState?.primaryActionTitle == "Open Providers")
+        #expect(invalidRemoteCapabilityGate.repairState?.primaryActionTitle == "Run Capabilities Test")
+        #expect(invalidRemoteCapabilityGate.repairState?.secondaryActions == [.openProviders])
     }
 
     @Test("chat composer repair panel routes provider model and diagnostics actions")
@@ -9611,8 +9652,11 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(source.contains("DesktopChatServerPicker"))
-        #expect(source.contains("bindSelectedChatSessionToServer"))
+        #expect(source.contains("bindSelectedChatSessionToProvider"))
+        #expect(source.contains("viewModel.chatProviderTargets"))
+        #expect(source.contains("Section(\"Remote Providers\")"))
         #expect(source.contains("DesktopChatModelIdentityButton"))
+        #expect(source.contains("providerTarget.kind == .remoteServer"))
         #expect(source.contains("DesktopChatPrecisionInspector"))
         #expect(source.contains("DesktopChatCapabilityGlyphCluster"))
         #expect(source.contains("GroupBox(\"Model Capabilities\")") == false)
@@ -9760,6 +9804,94 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Open Command Center") == false)
         #expect(renderedTexts.contains("Open Providers") == false)
         #expect(renderedTexts.contains("Open Diagnostics") == false)
+    }
+
+    @Test("chat workspace and Precision Ledger render a remote Provider and credential readiness")
+    @MainActor
+    func chatWorkspaceAndPrecisionLedgerRenderRemoteProviderReadiness() async throws {
+        let remoteServerID = "lay2-deepseek-v4"
+        let remoteServer = RemoteServer(
+            id: remoteServerID,
+            title: "LAY2 DeepSeek V4",
+            providerPreset: .custom,
+            providerKind: "openai-compatible",
+            baseURL: "http://192.0.2.10:50650/v1",
+            defaultModelID: "deepseek-v4-flash",
+            timeoutSeconds: 120,
+            rateLimitPerMinute: 0,
+            toolSupportMode: .forceOff,
+            credentialRef: RemoteServerStore.credentialRef(for: remoteServerID),
+            apiKeyHint: "meli...auth",
+            healthStatus: "ready"
+        )
+        let readyViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: FakeRemoteServerStore(
+                servers: [remoteServer],
+                apiKeys: [remoteServerID: "melix-no-auth"]
+            )
+        )
+        await readyViewModel.start()
+        readyViewModel.bindSelectedChatSessionToProvider(
+            providerTargetID: "remote:\(remoteServerID)"
+        )
+
+        let readyInspector = hostView(
+            DesktopChatSessionInspector(viewModel: readyViewModel)
+                .frame(width: DesktopChatLayoutMetrics.inspectorIdealWidth, height: 430)
+        )
+        let readyTexts = renderedTextValues(in: readyInspector)
+        let hostedWorkspace = hostViewInWindow(
+            DesktopChatSessionWorkspace(
+                viewModel: readyViewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            ),
+            size: CGSize(width: 940, height: 620)
+        )
+        defer { hostedWorkspace.window.close() }
+        settleHostedUI()
+
+        #expect(readyViewModel.selectedChatProviderTarget?.kind == .remoteServer)
+        #expect(readyViewModel.isSelectedChatProviderReady)
+        #expect(readyTexts.contains("http://192.0.2.10:50650/v1"))
+        #expect(readyTexts.contains("Remote"))
+        #expect(readyTexts.contains("Credentials ready"))
+        #expect(hostedWorkspace.controller.view.subviews.isEmpty == false)
+
+        let unavailableViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: FakeRemoteServerStore(
+                servers: [
+                    RemoteServer(
+                        id: remoteServer.id,
+                        title: remoteServer.title,
+                        providerPreset: remoteServer.providerPreset,
+                        providerKind: remoteServer.providerKind,
+                        baseURL: remoteServer.baseURL,
+                        defaultModelID: remoteServer.defaultModelID,
+                        timeoutSeconds: remoteServer.timeoutSeconds,
+                        rateLimitPerMinute: remoteServer.rateLimitPerMinute,
+                        toolSupportMode: remoteServer.toolSupportMode,
+                        credentialRef: remoteServer.credentialRef,
+                        apiKeyHint: "",
+                        healthStatus: remoteServer.healthStatus
+                    ),
+                ]
+            )
+        )
+        await unavailableViewModel.start()
+        unavailableViewModel.bindSelectedChatSessionToProvider(
+            providerTargetID: "remote:\(remoteServerID)"
+        )
+        let unavailableInspector = hostView(
+            DesktopChatSessionInspector(viewModel: unavailableViewModel)
+                .frame(width: DesktopChatLayoutMetrics.inspectorIdealWidth, height: 430)
+        )
+        let unavailableTexts = renderedTextValues(in: unavailableInspector)
+
+        #expect(unavailableViewModel.isSelectedChatProviderReady == false)
+        #expect(unavailableTexts.contains("Credentials required"))
     }
 
     @Test("chat Precision Ledger covers lifecycle trust and recovery variants")
@@ -9969,8 +10101,20 @@ struct DesktopFoundationViewTests {
             )
         )
         let modelDetails = hostView(modelButton.modelDetails, size: CGSize(width: 308, height: 180))
+        let sharedAccessModelButton = DesktopChatModelIdentityButton(
+            serverSession: DesktopServerSessionState(
+                id: "shared-detail-provider",
+                title: "Shared Provider",
+                modelID: modelID,
+                sharedAccessState: .enabled,
+                lifecycle: .running,
+                powerState: .active
+            )
+        )
 
         #expect(modelDetails.subviews.isEmpty == false)
+        #expect(modelButton.providerTrustText == "Local trust")
+        #expect(sharedAccessModelButton.providerTrustText == "Shared access")
         let pasteboard = RecordingPasteboard()
         modelButton.copyCanonicalID(to: pasteboard)
         #expect(pasteboard.clearCount == 1)
@@ -10052,7 +10196,7 @@ struct DesktopFoundationViewTests {
         #expect(composerSource.contains(".disabled(canSubmit == false)"))
         #expect(source.contains(".accessibilityLabel(\"Thinking\")"))
         #expect(source.contains("Button(\"Clear Conversation\", role: .destructive"))
-        #expect(source.contains("DesktopChatModelIdentityButton(serverSession: serverSession)"))
+        #expect(source.contains("DesktopChatModelIdentityButton(providerTarget: providerTarget)"))
         #expect(source.contains("canonical ID \\(identity.canonicalID)"))
         #expect(composerSource.contains("statusText") == false)
         #expect(composerSource.contains("usageText") == false)

@@ -2959,34 +2959,7 @@ public final class RuntimeViewModel {
     public var providerTargets: [RuntimeProviderTargetState] {
         let localTargets = serverSessions.filter { session in
             Self.isHiddenPlaceholderModelID(session.modelID) == false
-        }.map { session in
-            let modelName = providerTargetModelName(for: session.modelID)
-            let endpoint = session.effectiveListenerLabel
-            let loraActive = providerTargetLoRAStatusText(for: session.modelID)
-            let accelerationMode = runtimeAccelerationModeDisplayText(from: session.servingDefaults.effectiveAccelerationMode)
-            let context = "Context \(session.servingDefaults.effectiveMaxTokens)"
-            return RuntimeProviderTargetState(
-                id: Self.providerTargetID(kind: .localServer, serverID: session.id),
-                kind: .localServer,
-                title: session.title.trimmingCharacters(in: .whitespacesAndNewlines),
-                detailText: "\(modelName) • \(endpoint)",
-                badgeText: RuntimeProviderTargetKind.localServer.badgeText,
-                modelID: session.modelID,
-                modelName: modelName,
-                endpointText: endpoint,
-                serverID: session.id,
-                statusText: [
-                    session.lifecycle.rawValue,
-                    loraActive,
-                    accelerationMode,
-                    context,
-                ].filter { $0.isEmpty == false }.joined(separator: " • "),
-                loraActiveText: loraActive,
-                accelerationModeText: accelerationMode,
-                contextText: context,
-                isRunning: session.lifecycle == .running
-            )
-        }
+        }.map { localProviderTargetState(for: $0) }
         let remoteTargets = remoteServers.map { server in
             let modelName = providerTargetModelName(for: server.defaultModelID)
             let endpoint = server.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3016,6 +2989,45 @@ public final class RuntimeViewModel {
             )
         }
         return localTargets + remoteTargets
+    }
+
+    public var chatProviderTargets: [RuntimeProviderTargetState] {
+        let localTargets = serverSessions.map { localProviderTargetState(for: $0) }
+        let remoteTargets = providerTargets.filter { $0.kind == .remoteServer }
+        return localTargets + remoteTargets
+    }
+
+    private func localProviderTargetState(
+        for session: DesktopServerSessionState
+    ) -> RuntimeProviderTargetState {
+        let modelName = providerTargetModelName(for: session.modelID)
+        let endpoint = session.effectiveListenerLabel
+        let loraActive = providerTargetLoRAStatusText(for: session.modelID)
+        let accelerationMode = runtimeAccelerationModeDisplayText(
+            from: session.servingDefaults.effectiveAccelerationMode
+        )
+        let context = "Context \(session.servingDefaults.effectiveMaxTokens)"
+        return RuntimeProviderTargetState(
+            id: Self.providerTargetID(kind: .localServer, serverID: session.id),
+            kind: .localServer,
+            title: session.title.trimmingCharacters(in: .whitespacesAndNewlines),
+            detailText: "\(modelName) • \(endpoint)",
+            badgeText: RuntimeProviderTargetKind.localServer.badgeText,
+            modelID: session.modelID,
+            modelName: modelName,
+            endpointText: endpoint,
+            serverID: session.id,
+            statusText: [
+                session.lifecycle.rawValue,
+                loraActive,
+                accelerationMode,
+                context,
+            ].filter { $0.isEmpty == false }.joined(separator: " • "),
+            loraActiveText: loraActive,
+            accelerationModeText: accelerationMode,
+            contextText: context,
+            isRunning: session.lifecycle == .running
+        )
     }
 
     public var modelHubProviderTargets: [RuntimeModelHubProviderTargetState] {
@@ -6746,7 +6758,7 @@ public final class RuntimeViewModel {
     }
 
     public func createChatSession() {
-        guard operatorStateRestored || serverSessions.isEmpty == false else {
+        guard operatorStateRestored || chatProviderTargets.isEmpty == false else {
             setLastError("Create a Provider before opening chat.")
             chatStatusText = "No Provider"
             selectedSurface = .server
@@ -6785,6 +6797,7 @@ public final class RuntimeViewModel {
             id: "chat-session-\(UUID().uuidString)",
             title: "\(source.title) Fork",
             serverSessionID: source.serverSessionID,
+            providerTargetID: source.providerTargetID,
             branchID: "branch-\(nextIndex)",
             branchTitle: "Branch \(nextIndex)",
             transcript: source.transcript,
@@ -6838,26 +6851,33 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
-    public func bindSelectedChatSessionToServer(serverSessionID: String) {
+    public func bindSelectedChatSessionToProvider(providerTargetID: String) {
         guard
             let selectedChatSession,
-            let serverSession = serverSession(id: serverSessionID)
+            let target = chatProviderTargets.first(where: { $0.id == providerTargetID })
         else {
             return
         }
-        if selectedChatSession.serverSessionID != serverSession.id {
+        if selectedChatSession.providerTargetID != target.id {
             invalidateActiveChatRequest(markCurrentSessionInterrupted: true)
         }
 
         replaceChatSession(id: selectedChatSession.id) { session in
-            session.serverSessionID = serverSession.id
+            session.providerTargetID = target.id
+            session.serverSessionID = target.kind == .localServer ? target.serverID : ""
             if session.statusText == "Choose Provider" || session.statusText == "Choose Server" || session.statusText == "No Provider" || session.statusText == "No Server Session" {
                 session.statusText = "Idle"
             }
             session.updatedAt = Date()
         }
-        selectedServerSessionID = serverSession.id
-        selectedChatModelID = serverSession.modelID
+        selectedProviderTargetID = target.id
+        switch target.kind {
+        case .localServer:
+            selectedServerSessionID = target.serverID
+        case .remoteServer:
+            selectedRemoteServerID = target.serverID
+        }
+        selectedChatModelID = target.modelID
         if selectedChatSessionID == selectedChatSession.id {
             chatStatusText = chatStatusText == "Choose Provider" || chatStatusText == "Choose Server" || chatStatusText == "No Provider" || chatStatusText == "No Server Session"
                 ? "Idle"
@@ -6867,6 +6887,15 @@ public final class RuntimeViewModel {
             loadChatSession(updatedSession)
         }
         notifyStateChanged()
+    }
+
+    public func bindSelectedChatSessionToServer(serverSessionID: String) {
+        bindSelectedChatSessionToProvider(
+            providerTargetID: Self.providerTargetID(
+                kind: .localServer,
+                serverID: serverSessionID
+            )
+        )
     }
 
     @discardableResult
@@ -6883,7 +6912,7 @@ public final class RuntimeViewModel {
         let payload = """
         # \(sanitizedRichText(session.title))
 
-        - Provider: \(session.serverSessionID)
+        - Provider: \(session.providerTargetID)
         - Branch: \(sanitizedRichText(session.branchTitle))
         - Status: \(sanitizedRichText(session.statusText))
 
@@ -6983,14 +7012,56 @@ public final class RuntimeViewModel {
         return chatSessions.first(where: { $0.id == selectedChatSessionID }) ?? chatSessions.first
     }
 
-    public var selectedChatServerSession: DesktopServerSessionState? {
-        guard
-            let selectedChatSession,
-            selectedChatSession.hasServerBinding
-        else {
+    public var selectedChatProviderTarget: RuntimeProviderTargetState? {
+        guard let selectedChatSession else {
             return nil
         }
-        return serverSession(id: selectedChatSession.serverSessionID)
+        let providerTargetID = selectedChatSession.providerTargetID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard providerTargetID.isEmpty == false else {
+            return nil
+        }
+        return chatProviderTargets.first(where: { $0.id == providerTargetID })
+    }
+
+    public var selectedChatServerSession: DesktopServerSessionState? {
+        guard let target = selectedChatProviderTarget, target.kind == .localServer else {
+            return nil
+        }
+        return serverSession(id: target.serverID)
+    }
+
+    public var selectedChatRemoteServer: RemoteServer? {
+        guard let target = selectedChatProviderTarget, target.kind == .remoteServer else {
+            return nil
+        }
+        return remoteServers.first(where: { $0.id == target.serverID })
+    }
+
+    public var isSelectedChatProviderReady: Bool {
+        guard let target = selectedChatProviderTarget else {
+            return false
+        }
+        switch target.kind {
+        case .localServer:
+            return selectedChatServerSession?.isInteractiveReady == true
+        case .remoteServer:
+            guard let server = selectedChatRemoteServer else {
+                return false
+            }
+            let hasConfiguration = [
+                server.id,
+                server.providerKind,
+                server.baseURL,
+                server.defaultModelID,
+            ].allSatisfy {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            }
+            let hasCredential = server.apiKeyHint
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty == false
+            return hasConfiguration && hasCredential
+        }
     }
 
     public var selectedAgentIntegrationExport: AgentIntegrationExport? {
@@ -8044,8 +8115,8 @@ public final class RuntimeViewModel {
         }
         let preflightGeneration = chatRequestGeneration
 
-        guard let serverSession = selectedChatServerSession else {
-            guard selectedChatSession != nil || serverSessions.isEmpty == false else {
+        guard let providerTarget = selectedChatProviderTarget else {
+            guard selectedChatSession != nil || chatProviderTargets.isEmpty == false else {
                 chatStatusText = "No Provider"
                 setLastError("Create a Provider before sending chat prompts.")
                 selectedSurface = .server
@@ -8064,16 +8135,54 @@ public final class RuntimeViewModel {
             notifyStateChanged()
             return
         }
-        guard serverSession.isInteractiveReady else {
-            chatStatusText = serverSession.lifecycle.rawValue
-            setLastError(chatSubmissionBlockedMessage(for: serverSession))
-            selectedSurface = .chat
-            notifyStateChanged()
-            return
+
+        let localServerSession: DesktopServerSessionState?
+        let remoteTarget: ControlPlaneChatRequest.RemoteTarget?
+        switch providerTarget.kind {
+        case .localServer:
+            guard let serverSession = selectedChatServerSession else {
+                chatStatusText = "Choose Provider"
+                setLastError("Choose a Provider before sending chat prompts.")
+                selectedSurface = .chat
+                notifyStateChanged()
+                return
+            }
+            guard serverSession.isInteractiveReady else {
+                chatStatusText = serverSession.lifecycle.rawValue
+                setLastError(chatSubmissionBlockedMessage(for: serverSession))
+                selectedSurface = .chat
+                notifyStateChanged()
+                return
+            }
+            localServerSession = serverSession
+            remoteTarget = nil
+        case .remoteServer:
+            guard let remoteServer = selectedChatRemoteServer else {
+                chatStatusText = "Provider Unavailable"
+                setLastError("Remote Provider was not found.")
+                selectedSurface = .chat
+                notifyStateChanged()
+                return
+            }
+            do {
+                localServerSession = nil
+                remoteTarget = try chatRemoteTarget(
+                    for: remoteServer,
+                    modelID: providerTarget.modelID
+                )
+            } catch {
+                chatStatusText = "Provider Unavailable"
+                setLastError(error.localizedDescription)
+                selectedSurface = .chat
+                notifyStateChanged()
+                return
+            }
         }
 
         let modelID = resolvedChatModelID()
-        if models.contains(where: { $0.modelID == modelID }) == false {
+        if providerTarget.kind == .localServer,
+           models.contains(where: { $0.modelID == modelID }) == false
+        {
             await refreshDesktopFoundation()
         }
         guard
@@ -8084,7 +8193,8 @@ public final class RuntimeViewModel {
         else {
             return
         }
-        if hasInteractiveServerSession(for: modelID) == false,
+        if providerTarget.kind == .localServer,
+           hasInteractiveServerSession(for: modelID) == false,
            let missingModel = runtimeCacheMissingModel(for: modelID)
         {
             chatStatusText = "Failed • \(ModelRuntimeAvailability.missingRuntimeCacheCode)"
@@ -8123,12 +8233,15 @@ public final class RuntimeViewModel {
 
         let chatRequest = ControlPlaneChatRequest(
             modelID: modelID,
-            serverSessionID: serverSession.id,
+            serverSessionID: providerTarget.serverID,
             messages: chatRequestMessages(publicModelID: modelID),
-            enableThinking: chatThinkingEnabled
+            enableThinking: chatThinkingEnabled,
+            reasoningEffort: chatThinkingEnabled ? nil : "none",
+            remoteTarget: remoteTarget
         )
 
-        if hasInteractiveServerSession(for: modelID) == false,
+        if localServerSession != nil,
+           hasInteractiveServerSession(for: modelID) == false,
            shouldPreloadChatModel(modelID: modelID)
         {
             await loadModel(modelID: modelID)
@@ -8413,6 +8526,38 @@ public final class RuntimeViewModel {
 
     private func chatRequestMessages(publicModelID: String) -> [ControlPlaneChatRequest.Message] {
         [Self.trustedChatRuntimeIdentityMessage(publicModelID: publicModelID)] + chatConversationMessages
+    }
+
+    private func chatRemoteTarget(
+        for server: RemoteServer,
+        modelID rawModelID: String
+    ) throws -> ControlPlaneChatRequest.RemoteTarget {
+        let apiKey = try remoteServerStore
+            .loadAPIKey(remoteServerID: server.id)?
+            .apiKey
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard apiKey.isEmpty == false else {
+            throw MelixCLIError.runtime(
+                "Remote Provider \(server.id) has no API key configured."
+            )
+        }
+        let modelID = rawModelID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard modelID.isEmpty == false else {
+            throw MelixCLIError.runtime(
+                "Remote Provider \(server.id) has no model configured."
+            )
+        }
+        return ControlPlaneChatRequest.RemoteTarget(
+            serverID: server.id,
+            providerKind: server.providerKind,
+            baseURL: server.baseURL,
+            apiKey: apiKey,
+            modelID: modelID,
+            timeoutSeconds: server.timeoutSeconds,
+            rateLimitPerMinute: server.rateLimitPerMinute
+        )
     }
 
     private static func trustedChatRuntimeIdentityMessage(
@@ -12215,9 +12360,15 @@ public final class RuntimeViewModel {
 
     private func loadChatSession(_ session: DesktopChatSessionState) {
         selectedChatSessionID = session.id
-        if session.hasServerBinding,
-           (selectedServerSessionID.isEmpty || serverSession(id: session.serverSessionID) != nil) {
-            selectedServerSessionID = session.serverSessionID
+        if let target = selectedChatProviderTarget {
+            selectedProviderTargetID = target.id
+            selectedChatModelID = target.modelID
+            switch target.kind {
+            case .localServer:
+                selectedServerSessionID = target.serverID
+            case .remoteServer:
+                selectedRemoteServerID = target.serverID
+            }
         }
         chatTranscript = session.transcript
         chatStatusText = session.statusText
@@ -12233,9 +12384,6 @@ public final class RuntimeViewModel {
             default:
                 return nil
             }
-        }
-        if let boundServer = serverSession(id: session.serverSessionID) {
-            selectedChatModelID = boundServer.modelID
         }
         refreshChatCapabilities()
     }
@@ -12257,15 +12405,19 @@ public final class RuntimeViewModel {
             return
         }
 
+        let availableTargetIDs = Set(chatProviderTargets.map(\.id))
         chatSessions = chatSessions.map { session in
-            guard session.hasServerBinding, serverSession(id: session.serverSessionID) == nil else {
-                return session
+            var normalized = session
+            guard normalized.hasProviderBinding,
+                  availableTargetIDs.contains(normalized.providerTargetID) == false
+            else {
+                return normalized
             }
-            var unbound = session
-            unbound.serverSessionID = ""
-            unbound.statusText = "Choose Provider"
-            unbound.updatedAt = Date()
-            return unbound
+            normalized.providerTargetID = ""
+            normalized.serverSessionID = ""
+            normalized.statusText = "Choose Provider"
+            normalized.updatedAt = Date()
+            return normalized
         }
 
         if selectedChatSession == nil, let first = chatSessions.first {
@@ -15050,6 +15202,13 @@ public final class RuntimeViewModel {
     }
 
     private func resolvedChatModelID() -> String {
+        if let providerModelID = selectedChatProviderTarget?.modelID
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           providerModelID.isEmpty == false
+        {
+            selectedChatModelID = providerModelID
+            return providerModelID
+        }
         if let serverModelID = selectedChatServerSession?.modelID
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !serverModelID.isEmpty {
@@ -15176,6 +15335,26 @@ public final class RuntimeViewModel {
     }
 
     private func refreshChatCapabilities() {
+        if let remoteTarget = selectedChatProviderTarget,
+           remoteTarget.kind == .remoteServer
+        {
+            let modelID = remoteTarget.modelID.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            selectedChatModelID = modelID
+            chatCapabilities = modelID.isEmpty
+                ? []
+                : [
+                    DesktopChatCapabilityRow(
+                        id: "text",
+                        title: "Interactive Text",
+                        modelID: modelID,
+                        detail: "\(modelID) • Remote",
+                        isReady: isSelectedChatProviderReady
+                    ),
+                ]
+            return
+        }
         let selectedProvider = selectedChatServerSession
         if let serverModelID = selectedProvider?.modelID {
             selectedChatModelID = serverModelID

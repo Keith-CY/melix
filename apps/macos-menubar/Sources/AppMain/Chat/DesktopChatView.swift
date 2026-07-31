@@ -533,7 +533,7 @@ struct DesktopChatSessionWorkspace: View {
     private var isSendDisabled: Bool {
         viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         || viewModel.isChatStreaming
-        || viewModel.selectedChatServerSession?.isInteractiveReady != true
+        || viewModel.isSelectedChatProviderReady == false
     }
 
     private var selectedChatModelNeedsAttachment: Bool {
@@ -650,6 +650,8 @@ struct DesktopChatSessionWorkspace: View {
                     DesktopChatServerPicker(viewModel: viewModel)
                     if let serverSession = viewModel.selectedChatServerSession {
                         DesktopChatModelIdentityButton(serverSession: serverSession)
+                    } else if let providerTarget = viewModel.selectedChatProviderTarget {
+                        DesktopChatModelIdentityButton(providerTarget: providerTarget)
                     }
                 }
                 .alignmentGuide(.firstTextBaseline) { dimensions in
@@ -706,10 +708,12 @@ struct DesktopChatSessionWorkspace: View {
                     set: { viewModel.chatThinkingEnabled = $0 }
                 ),
                 isSubmitAvailable: viewModel.isChatStreaming == false
-                && viewModel.selectedChatServerSession?.isInteractiveReady == true,
+                && viewModel.isSelectedChatProviderReady,
                 isSendDisabled: isSendDisabled,
                 isStreaming: viewModel.isChatStreaming,
                 serverSession: viewModel.selectedChatServerSession,
+                providerTarget: viewModel.selectedChatProviderTarget,
+                isProviderReady: viewModel.isSelectedChatProviderReady,
                 capabilities: viewModel.chatCapabilities,
                 isModelMissing: selectedChatModelNeedsAttachment,
                 onCommandSubmit: { draft in
@@ -741,6 +745,8 @@ struct DesktopChatSessionInspector: View {
     var body: some View {
         DesktopChatPrecisionInspector(
             serverSession: viewModel.selectedChatServerSession,
+            providerTarget: viewModel.selectedChatProviderTarget,
+            isProviderReady: viewModel.isSelectedChatProviderReady,
             capabilities: viewModel.chatCapabilities,
             isStreaming: viewModel.isChatStreaming,
             usageText: viewModel.lastChatUsageText,
@@ -783,6 +789,8 @@ struct DesktopChatSessionInspector: View {
 
 private struct DesktopChatPrecisionInspector: View {
     let serverSession: DesktopServerSessionState?
+    let providerTarget: RuntimeProviderTargetState?
+    let isProviderReady: Bool
     let capabilities: [DesktopChatCapabilityRow]
     let isStreaming: Bool
     let usageText: String
@@ -791,7 +799,9 @@ private struct DesktopChatPrecisionInspector: View {
     let onResumeProvider: () -> Void
 
     private var modelIdentity: DesktopChatModelIdentityPresentation {
-        DesktopChatModelIdentityPresentation(modelID: serverSession?.modelID ?? "")
+        DesktopChatModelIdentityPresentation(
+            modelID: providerTarget?.modelID ?? serverSession?.modelID ?? ""
+        )
     }
 
     private var primaryCapabilities: [DesktopChatCapabilityRow] {
@@ -816,6 +826,12 @@ private struct DesktopChatPrecisionInspector: View {
                 )
             } else if let serverSession {
                 providerTransientRow(serverSession)
+            } else if providerTarget?.kind == .remoteServer, isProviderReady == false {
+                DesktopChatInspectorTransientRow(
+                    systemImage: "network.slash",
+                    title: "Remote Provider unavailable",
+                    tint: MelixDesignTokens.StatusColor.warning
+                )
             }
 
             if let serverSession {
@@ -848,6 +864,31 @@ private struct DesktopChatPrecisionInspector: View {
                     value: serverSession.idleTimerSeconds > 0 ? "\(serverSession.idleTimerSeconds)s" : "Idle",
                     tail: "timer",
                     helpText: serverSession.idlePolicySummaryText
+                )
+            } else if let providerTarget {
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "network",
+                    value: providerTarget.endpointText,
+                    tail: "/v1",
+                    helpText: providerTarget.endpointText
+                )
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "server.rack",
+                    value: providerTarget.badgeText,
+                    tail: "route",
+                    helpText: providerTarget.statusText
+                )
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "number",
+                    value: usageText.isEmpty ? "No usage" : usageText,
+                    tail: "tokens",
+                    helpText: usageText.isEmpty ? "No token usage recorded" : usageText
+                )
+                DesktopChatInspectorLedgerRow(
+                    systemImage: "checkmark.shield",
+                    value: isProviderReady ? "Credentials ready" : "Credentials required",
+                    tail: "trust",
+                    helpText: "Remote credentials remain in the configured credential store."
                 )
             } else {
                 DesktopChatInspectorLedgerRow(
@@ -898,11 +939,15 @@ private struct DesktopChatPrecisionInspector: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(serverSession?.title ?? "No Provider")
+                Text(providerTarget?.title ?? serverSession?.title ?? "No Provider")
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 HStack(spacing: 5) {
-                    Text(serverSession == nil ? "Choose a provider" : modelIdentity.displayName)
+                    Text(
+                        providerTarget == nil && serverSession == nil
+                            ? "Choose a provider"
+                            : modelIdentity.displayName
+                    )
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -960,6 +1005,11 @@ private struct DesktopChatPrecisionInspector: View {
     }
 
     private var providerStatusColor: Color {
+        if providerTarget?.kind == .remoteServer {
+            return isProviderReady
+                ? MelixDesignTokens.StatusColor.success
+                : MelixDesignTokens.StatusColor.warning
+        }
         switch serverSession?.lifecycle {
         case .running, .sleeping:
             return MelixDesignTokens.StatusColor.success
@@ -975,6 +1025,12 @@ private struct DesktopChatPrecisionInspector: View {
     }
 
     private var identityAccessibilityLabel: String {
+        if let providerTarget, providerTarget.kind == .remoteServer {
+            let quantization = modelIdentity.quantizationLabel.map {
+                ", quantization \($0)"
+            } ?? ""
+            return "\(providerTarget.title), remote model \(modelIdentity.displayName)\(quantization), canonical ID \(modelIdentity.canonicalID)"
+        }
         guard let serverSession else {
             return "No Provider selected"
         }
@@ -1199,15 +1255,23 @@ struct DesktopChatSessionBranchBadgeView: View {
 private struct DesktopChatServerPicker: View {
     let viewModel: RuntimeViewModel
 
-    private var selectedServerBinding: Binding<String> {
+    private var selectedProviderBinding: Binding<String> {
         Binding(
-            get: { viewModel.selectedChatSession?.serverSessionID ?? "" },
-            set: { viewModel.bindSelectedChatSessionToServer(serverSessionID: $0) }
+            get: { viewModel.selectedChatSession?.providerTargetID ?? "" },
+            set: { viewModel.bindSelectedChatSessionToProvider(providerTargetID: $0) }
         )
     }
 
+    private var localTargets: [RuntimeProviderTargetState] {
+        viewModel.chatProviderTargets.filter { $0.kind == .localServer }
+    }
+
+    private var remoteTargets: [RuntimeProviderTargetState] {
+        viewModel.chatProviderTargets.filter { $0.kind == .remoteServer }
+    }
+
     var body: some View {
-        if viewModel.serverSessions.isEmpty {
+        if viewModel.chatProviderTargets.isEmpty {
             Button {
                 viewModel.selectSurface(.server)
             } label: {
@@ -1219,10 +1283,21 @@ private struct DesktopChatServerPicker: View {
             .help("Open Providers to create a chat provider")
             .accessibilityLabel("Choose Chat Provider")
         } else {
-            Picker("Provider", selection: selectedServerBinding) {
+            Picker("Provider", selection: selectedProviderBinding) {
                 Text("Choose Provider").tag("")
-                ForEach(viewModel.serverSessions) { session in
-                    Text(session.title).tag(session.id)
+                if localTargets.isEmpty == false {
+                    Section("Local Providers") {
+                        ForEach(localTargets) { target in
+                            Text(target.title).tag(target.id)
+                        }
+                    }
+                }
+                if remoteTargets.isEmpty == false {
+                    Section("Remote Providers") {
+                        ForEach(remoteTargets) { target in
+                            Text(target.title).tag(target.id)
+                        }
+                    }
                 }
             }
             .labelsHidden()
@@ -1237,15 +1312,34 @@ private struct DesktopChatServerPicker: View {
 }
 
 struct DesktopChatModelIdentityButton: View {
-    let serverSession: DesktopServerSessionState
+    let modelID: String
+    let providerTitle: String
+    let providerStatusText: String
+    let providerTrustText: String
     @State private var showsModelDetails = false
 
     init(serverSession: DesktopServerSessionState) {
-        self.serverSession = serverSession
+        modelID = serverSession.modelID
+        providerTitle = serverSession.title
+        providerStatusText = serverSession.lifecycle.rawValue
+        providerTrustText = serverSession.sharedAccessState == .localOnly
+            ? "Local trust"
+            : "Shared access"
+    }
+
+    init(providerTarget: RuntimeProviderTargetState) {
+        modelID = providerTarget.modelID
+        providerTitle = providerTarget.title
+        providerStatusText = providerTarget.kind == .remoteServer
+            ? "Remote"
+            : providerTarget.statusText
+        providerTrustText = providerTarget.kind == .remoteServer
+            ? "Remote route"
+            : "Local trust"
     }
 
     private var identity: DesktopChatModelIdentityPresentation {
-        DesktopChatModelIdentityPresentation(modelID: serverSession.modelID)
+        DesktopChatModelIdentityPresentation(modelID: modelID)
     }
 
     var body: some View {
@@ -1297,7 +1391,7 @@ struct DesktopChatModelIdentityButton: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(identity.displayName)
                     .font(.headline)
-                Text("\(serverSession.title) · \(serverSession.lifecycle.rawValue)")
+                Text("\(providerTitle) · \(providerStatusText)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -1325,7 +1419,7 @@ struct DesktopChatModelIdentityButton: View {
 
             HStack(spacing: 10) {
                 Text("Canonical ID")
-                Text(serverSession.sharedAccessState == .localOnly ? "Local trust" : "Shared access")
+                Text(providerTrustText)
                 if let quantizationLabel = identity.quantizationLabel {
                     Text("Quantization \(quantizationLabel)")
                 }
@@ -1549,6 +1643,8 @@ struct DesktopChatComposerSurface: View {
     let isSendDisabled: Bool
     let isStreaming: Bool
     let serverSession: DesktopServerSessionState?
+    var providerTarget: RuntimeProviderTargetState? = nil
+    var isProviderReady = false
     let capabilities: [DesktopChatCapabilityRow]
     let isModelMissing: Bool
     let onCommandSubmit: (String) -> Void
@@ -1563,6 +1659,8 @@ struct DesktopChatComposerSurface: View {
     var composerGate: DesktopChatComposerGate {
         DesktopChatComposerGate(
             serverSession: serverSession,
+            providerTarget: providerTarget,
+            isProviderReady: isProviderReady,
             capabilities: capabilities,
             isModelMissing: isModelMissing
         )
@@ -1888,11 +1986,13 @@ struct DesktopChatComposerRepairState: Equatable {
 
 struct DesktopChatComposerGate: Equatable {
     let serverSession: DesktopServerSessionState?
+    var providerTarget: RuntimeProviderTargetState? = nil
+    var isProviderReady = false
     let capabilities: [DesktopChatCapabilityRow]
     let isModelMissing: Bool
 
     var repairState: DesktopChatComposerRepairState? {
-        guard let serverSession else {
+        guard serverSession != nil || providerTarget != nil else {
             return DesktopChatComposerRepairState(
                 title: "Select a provider before sending.",
                 detail: "Bind this chat to a local or remote provider.",
@@ -1901,6 +2001,34 @@ struct DesktopChatComposerGate: Equatable {
                 secondaryActions: [],
                 systemImageName: "server.rack"
             )
+        }
+
+        if providerTarget?.kind == .remoteServer {
+            guard isProviderReady else {
+                return DesktopChatComposerRepairState(
+                    title: "Remote provider is unavailable.",
+                    detail: "Check the endpoint, model, and credentials in Providers.",
+                    primaryActionTitle: "Open Providers",
+                    primaryActionKind: .openProviders,
+                    secondaryActions: [.openDiagnostics],
+                    systemImageName: "network.slash"
+                )
+            }
+            if hasInvalidCapabilityReceipt {
+                return DesktopChatComposerRepairState(
+                    title: "Capability receipt is invalid.",
+                    detail: "Run a capability test before sending with this model.",
+                    primaryActionTitle: "Run Capabilities Test",
+                    primaryActionKind: .runCapabilitiesTest,
+                    secondaryActions: [.openProviders],
+                    systemImageName: "checklist"
+                )
+            }
+            return nil
+        }
+
+        guard let serverSession else {
+            return nil
         }
 
         if isModelMissing {
@@ -1979,7 +2107,7 @@ struct DesktopChatComposerGate: Equatable {
     }
 
     var isDegraded: Bool {
-        guard repairState == nil, serverSession != nil else {
+        guard repairState == nil, serverSession != nil || providerTarget != nil else {
             return false
         }
         return capabilities.contains { $0.isReady == false }

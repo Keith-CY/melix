@@ -101,6 +101,30 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 - keeps the same logical Melix identity while making the bundle-specific distribution and update
   strategy explicit
 
+### Private HTTP Remote Providers
+
+App Transport Security remains strict by default. `NSAllowsLocalNetworking` covers local
+network discovery but does not make every cleartext IP or DNS endpoint eligible for
+`URLSession`. When an operator intentionally packages Melix for a trusted private HTTP
+Remote Provider, add each exact host to the bundle at packaging time:
+
+```bash
+UV_PYTHON=3.12 UV_CACHE_DIR="$(pwd)/.uv-cache" \
+uv run --project services/mlx-worker-python --extra mlx \
+python scripts/package_macos_menubar_app.py \
+  --output-path /tmp/Melix.app \
+  --allow-insecure-http-host 192.0.2.10 \
+  --archive-path /tmp/Melix.zip \
+  --json
+```
+
+Pass only a host, without a scheme, port, path, or wildcard. Repeat
+`--allow-insecure-http-host` for multiple exact hosts. The packager validates and
+deduplicates the values, writes narrow `NSExceptionDomains` entries, and records the
+normalized list as `ats_insecure_http_hosts` in
+`Resources/packaging-target-manifest.json`. HTTPS remains the preferred configuration;
+do not add public hosts merely to avoid deploying TLS.
+
 ## Manual App Archive From `main`
 
 The GitHub Actions workflow `package-self-contained-app` can be run manually when an operator

@@ -63,7 +63,64 @@ def test_render_info_plist_sets_bundle_icon_and_dock_visible_defaults() -> None:
     assert payload["CFBundleExecutable"] == "Melix"
     assert payload["CFBundleIconFile"] == "MelixAppIcon.icns"
     assert payload["CFBundleIdentifier"] == "io.melix.menubar.preview"
+    assert payload["NSAppTransportSecurity"] == {
+        "NSAllowsLocalNetworking": True,
+    }
+    assert payload["NSLocalNetworkUsageDescription"] == (
+        "Connect to remote AI providers that you configure on your local network or tailnet."
+    )
     assert "LSUIElement" not in payload
+
+
+def test_render_info_plist_adds_only_explicit_insecure_http_host_exceptions() -> None:
+    payload = plistlib.loads(
+        render_info_plist(
+            app_name="Melix",
+            bundle_id="io.melix.menubar.preview",
+            version="0.1.0",
+            icon_file="MelixAppIcon.icns",
+            insecure_http_hosts=(
+                "192.0.2.10",
+                "Provider.Tailnet.TS.NET.",
+                "192.0.2.10",
+            ),
+        )
+    )
+
+    assert payload["NSAppTransportSecurity"] == {
+        "NSAllowsLocalNetworking": True,
+        "NSExceptionDomains": {
+            "192.0.2.10": {
+                "NSExceptionAllowsInsecureHTTPLoads": True,
+            },
+            "provider.tailnet.ts.net": {
+                "NSExceptionAllowsInsecureHTTPLoads": True,
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "",
+        "http://192.0.2.10",
+        "192.0.2.10:50650",
+        "*.tailnet.ts.net",
+        "2001:db8::1",
+        "-invalid.example",
+        "\ud800.example",
+    ],
+)
+def test_render_info_plist_rejects_invalid_insecure_http_hosts(host: str) -> None:
+    with pytest.raises(ValueError, match="ATS insecure HTTP host"):
+        render_info_plist(
+            app_name="Melix",
+            bundle_id="io.melix.menubar.preview",
+            version="0.1.0",
+            icon_file="MelixAppIcon.icns",
+            insecure_http_hosts=(host,),
+        )
 
 
 def test_render_portable_environment_script_uses_home_relative_paths() -> None:
@@ -352,6 +409,7 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
         icon_source_path=icon_file,
         http_bind_host="0.0.0.0",
         http_port=12436,
+        insecure_http_hosts=("192.0.2.10",),
     )
 
     app_path = Path(manifest["app_path"])
@@ -414,6 +472,22 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     plist_payload = plistlib.loads(Path(manifest["plist_path"]).read_bytes())
     assert plist_payload["CFBundleIdentifier"] == "io.melix.menubar.preview"
     assert plist_payload["CFBundleIconFile"] == "MelixAppIcon.icns"
+    assert plist_payload["NSAppTransportSecurity"] == {
+        "NSAllowsLocalNetworking": True,
+        "NSExceptionDomains": {
+            "192.0.2.10": {
+                "NSExceptionAllowsInsecureHTTPLoads": True,
+            },
+        },
+    }
+    assert manifest["ats_insecure_http_hosts"] == ["192.0.2.10"]
+    target_manifest = json.loads(
+        Path(manifest["packaging_target_manifest_path"]).read_text(encoding="utf-8")
+    )
+    assert target_manifest["ats_insecure_http_hosts"] == ["192.0.2.10"]
+    assert plist_payload["NSLocalNetworkUsageDescription"] == (
+        "Connect to remote AI providers that you configure on your local network or tailnet."
+    )
     assert "LSUIElement" not in plist_payload
     env_script = Path(manifest["embedded_env_script_path"]).read_text(encoding="utf-8")
     assert 'export MELIX_PACKAGING_TARGET_ID="macos_app_bundle_preview"' in env_script

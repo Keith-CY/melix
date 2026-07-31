@@ -1668,6 +1668,7 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     public let id: String
     public var title: String
     public var serverSessionID: String
+    public var providerTargetID: String
     public var branchID: String
     public var branchTitle: String
     public var transcript: [DesktopChatTranscriptEntry]
@@ -1683,6 +1684,7 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
         id: String,
         title: String,
         serverSessionID: String,
+        providerTargetID: String = "",
         branchID: String = "main",
         branchTitle: String = "Main",
         transcript: [DesktopChatTranscriptEntry] = [],
@@ -1697,6 +1699,15 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
         self.id = id
         self.title = title
         self.serverSessionID = serverSessionID
+        let normalizedProviderTargetID = providerTargetID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let normalizedServerSessionID = serverSessionID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        self.providerTargetID = normalizedProviderTargetID.isEmpty
+            ? (normalizedServerSessionID.isEmpty ? "" : "local:\(normalizedServerSessionID)")
+            : normalizedProviderTargetID
         self.branchID = branchID
         self.branchTitle = branchTitle
         self.transcript = transcript
@@ -1715,6 +1726,11 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
 
     public var hasServerBinding: Bool {
         serverSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    public var hasProviderBinding: Bool {
+        providerTargetID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || hasServerBinding
     }
 
     public var displayBranchTitle: String? {
