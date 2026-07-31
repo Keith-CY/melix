@@ -284,6 +284,9 @@ class LoRATrainingPipeline:
                     trainer_dataset_format=trainer_dataset_format,
                     test_ratio=test_ratio,
                     runtime_failure_details=runtime_failure_details,
+                    include_baseline=truthy(
+                        request_ext.get("heldout_baseline_compare", "")
+                    ),
                 ),
             )
         )
@@ -606,7 +609,7 @@ def _int_ext(ext: dict[str, str], key: str) -> int:
 
 
 def _heldout_evaluation_manifest_fields(*, receipt: dict[str, Any]) -> dict[str, Any]:
-    return {
+    fields = {
         "heldout_evaluation_receipt_path": str(receipt["receipt_path"]),
         "heldout_evaluation_status": str(receipt["status"]),
         "heldout_evaluation_reason": str(receipt["reason"]),
@@ -617,6 +620,21 @@ def _heldout_evaluation_manifest_fields(*, receipt: dict[str, Any]) -> dict[str,
         "heldout_test_loss": receipt["loss"],
         "heldout_test_perplexity": receipt["perplexity"],
     }
+    # Baseline-comparison fields travel only when the operator opted in via
+    # heldout_baseline_compare, keeping default manifests shape-stable.
+    if "baseline_status" in receipt:
+        fields.update(
+            {
+                "heldout_baseline_status": str(receipt["baseline_status"]),
+                "heldout_baseline_reason": str(receipt.get("baseline_reason", "")),
+                "heldout_baseline_backend": str(receipt.get("baseline_backend", "")),
+                "heldout_baseline_loss": receipt.get("baseline_loss"),
+                "heldout_baseline_perplexity": receipt.get("baseline_perplexity"),
+                "heldout_loss_delta": receipt.get("loss_delta"),
+                "heldout_perplexity_ratio": receipt.get("perplexity_ratio"),
+            }
+        )
+    return fields
 
 
 def _write_alignment_trace(path: Path, samples: list[dict[str, Any]]) -> None:
