@@ -32,6 +32,7 @@ _ASSERT_PRECEDING_BOUNDARIES = frozenset("\n\r;:")
 _ASSERT_LINE_SPACING = frozenset(" \t")
 _OS_OPEN = os.open
 _OS_FSTAT = os.fstat
+_OS_PREAD = os.pread
 _OS_READ = os.read
 _OS_CLOSE = os.close
 _OS_RDONLY = os.O_RDONLY
@@ -900,28 +901,37 @@ def _extract_json_int_field_value_and_end(
     return sign * value, cursor
 
 
-def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
+def _read_limited_stdio(
+    path: Path,
+    byte_limit: int,
+    *,
+    _os_open=_OS_OPEN,
+    _os_fstat=_OS_FSTAT,
+    _os_pread=_OS_PREAD,
+    _os_read=_OS_READ,
+    _os_close=_OS_CLOSE,
+) -> tuple[str, int]:
     try:
-        fd = os.open(path, os.O_RDONLY)
+        fd = _os_open(path, _OS_RDONLY)
     except OSError:
         return "", 0
 
     try:
-        size = os.fstat(fd).st_size
+        size = _os_fstat(fd).st_size
         read_limit = byte_limit if byte_limit > 0 else 0
         read_size = read_limit if size > read_limit else size
         if read_size == 0:
             return "", size
         if size > read_limit:
-            payload = os.pread(fd, read_size, size - read_size)
+            payload = _os_pread(fd, read_size, size - read_size)
         else:
-            payload = os.read(fd, read_size)
+            payload = _os_read(fd, read_size)
         return payload.decode("utf-8", errors="replace").strip(), size
     except OSError:
         return "", 0
     finally:
         try:
-            os.close(fd)
+            _os_close(fd)
         except OSError:
             pass
 

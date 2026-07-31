@@ -131,12 +131,12 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
             continue
         if add_changed_line is None or new_line is None:
             continue
-        if first_char == ascii_backslash:
-            continue
         if first_char == ascii_plus:
             add_changed_line(new_line)
             new_line += 1
         elif first_char == ascii_minus:
+            continue
+        elif first_char == ascii_backslash:
             continue
         else:
             new_line += 1

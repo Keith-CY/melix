@@ -192,7 +192,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
 
       - name: Restore Python dependency cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .uv-cache
           key: ${{ runner.os }}-uv-package-${{ hashFiles('uv.lock', 'pyproject.toml', 'services/mlx-worker-python/pyproject.toml') }}
@@ -201,7 +201,7 @@ jobs:
             ${{ runner.os }}-uv-
 
       - name: Restore Swift build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             .swift-home

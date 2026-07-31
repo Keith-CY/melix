@@ -1122,6 +1122,60 @@ def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> 
     ]
 
 
+def test_generate_routing_ext_forwards_acceleration_knobs_but_not_melix_namespace() -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+    request = generate_usage_request(model_handle, return_usage=False)
+    request.execution.id.request_id = "req-routing-accel-ext"
+    request.execution.id.session_id = "session-routing-accel"
+    request.execution.scope.model_id = "model-routing-accel"
+    request.execution.scope.revision = "revision-routing-accel"
+    # Opt-in knobs ride acceleration ext and must reach the runtime...
+    request.execution.acceleration.ext["melix.prompt_lookup.enabled"] = "1"
+    # ...while the engine's own routing namespace stays engine-owned. block_size
+    # is unset on this request, so a plain setdefault merge would let policy ext
+    # populate it and steer prefix-cache routing.
+    request.execution.acceleration.ext["_melix.block_size"] = "512"
+    request.execution.acceleration.ext["_melix.session_id"] = "spoofed-session"
+
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["counted"]
+    assert runtime.execution_exts == [
+        {
+            "melix.prompt_lookup.enabled": "1",
+            "_melix.session_id": "session-routing-accel",
+            "_melix.model_id": "model-routing-accel",
+            "_melix.model_revision": "revision-routing-accel",
+            "_melix.acceleration_mode": "0",
+            "_melix.cache_mode": "0",
+        }
+    ]
+
+
+def test_generate_routing_ext_prefers_request_ext_over_acceleration_ext() -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+    request = generate_usage_request(model_handle, return_usage=False)
+    request.execution.id.request_id = "req-routing-accel-override"
+    request.execution.ext["melix.prompt_lookup.max_draft_tokens"] = "4"
+    request.execution.acceleration.ext["melix.prompt_lookup.max_draft_tokens"] = "16"
+
+    list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+
+    assert runtime.execution_exts[0]["melix.prompt_lookup.max_draft_tokens"] == "4"
+
+
 def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match() -> (
     None
 ):

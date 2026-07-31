@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import math
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
-from worker.model_ops.mlx_lm_runner import HeldoutEvaluationRequest, MLXLMRunner
+from worker.model_ops.mlx_lm_runner import (
+    HeldoutEvaluationRequest,
+    HeldoutEvaluationResult,
+    MLXLMRunner,
+)
 from worker.model_ops.training_config import LoRATrainingConfig
 from worker.model_ops.training_dataset import NormalizedDatasetSnapshot
 from worker.model_ops.training_runtime_preflight import call_with_training_failure_cleanup
@@ -57,9 +63,10 @@ def evaluate_heldout_if_requested(
     trainer_dataset_format: str,
     test_ratio: float,
     runtime_failure_details: dict[str, Any],
+    include_baseline: bool = False,
 ) -> dict[str, Any]:
     if normalized_snapshot.test_path is None or normalized_snapshot.test_sample_count <= 0:
-        return {
+        receipt = {
             "schema_version": "melix.lora_heldout_evaluation_receipt.v1",
             "status": "skipped",
             "reason": _skipped_reason(
@@ -73,28 +80,33 @@ def evaluate_heldout_if_requested(
             "perplexity": None,
             "backend": "",
         }
+        if include_baseline:
+            # No held-out split exists, so the adapter pass was never attempted;
+            # reuse the receipt's own skip reason instead of implying the
+            # adapter evaluation ran and failed to finish.
+            receipt.update(_baseline_not_run_fields(str(receipt["reason"])))
+        return receipt
 
+    heldout_request = HeldoutEvaluationRequest(
+        job_id=job_id,
+        base_model_id=source_model.model_id,
+        model_path=training_model_path,
+        model_revision=source_model.revision,
+        adapter_dir=adapter_output_dir,
+        normalized_dataset_dir=normalized_snapshot.dataset_dir,
+        config=config,
+        dataset_format=trainer_dataset_format,
+        test_sample_count=normalized_snapshot.test_sample_count,
+        source_model_kind=source_model.model_kind,
+        source_model_ext=dict(source_model.ext),
+    )
     try:
         result = call_with_training_failure_cleanup(
-            lambda: runner.evaluate_heldout(
-                HeldoutEvaluationRequest(
-                    job_id=job_id,
-                    base_model_id=source_model.model_id,
-                    model_path=training_model_path,
-                    model_revision=source_model.revision,
-                    adapter_dir=adapter_output_dir,
-                    normalized_dataset_dir=normalized_snapshot.dataset_dir,
-                    config=config,
-                    dataset_format=trainer_dataset_format,
-                    test_sample_count=normalized_snapshot.test_sample_count,
-                    source_model_kind=source_model.model_kind,
-                    source_model_ext=dict(source_model.ext),
-                )
-            ),
+            lambda: runner.evaluate_heldout(heldout_request),
             details=runtime_failure_details,
         )
     except ModelOperationError as exc:
-        return {
+        receipt = {
             "schema_version": "melix.lora_heldout_evaluation_receipt.v1",
             "status": "failed",
             "reason": "heldout_evaluation_failed",
@@ -107,7 +119,10 @@ def evaluate_heldout_if_requested(
             "error_code": exc.code,
             "error_message": exc.message,
         }
-    return {
+        if include_baseline:
+            receipt.update(_baseline_not_run_fields("adapter_evaluation_not_completed"))
+        return receipt
+    receipt = {
         "schema_version": "melix.lora_heldout_evaluation_receipt.v1",
         "status": "completed",
         "reason": "",
@@ -117,6 +132,80 @@ def evaluate_heldout_if_requested(
         "loss": result.loss,
         "perplexity": result.perplexity,
         "backend": result.execution_backend,
+    }
+    if include_baseline:
+        receipt.update(
+            _baseline_comparison_fields(
+                runner=runner,
+                request=heldout_request,
+                adapter_result=result,
+                runtime_failure_details=runtime_failure_details,
+            )
+        )
+    return receipt
+
+
+def _baseline_not_run_fields(reason: str) -> dict[str, Any]:
+    return {
+        "baseline_status": "skipped",
+        "baseline_reason": reason,
+        "baseline_loss": None,
+        "baseline_perplexity": None,
+        "baseline_backend": "",
+        "loss_delta": None,
+        "perplexity_ratio": None,
+    }
+
+
+def _baseline_comparison_fields(
+    *,
+    runner: MLXLMRunner,
+    request: HeldoutEvaluationRequest,
+    adapter_result: HeldoutEvaluationResult,
+    runtime_failure_details: dict[str, Any],
+) -> dict[str, Any]:
+    """Evaluate the plain base model on the same test split.
+
+    A failed baseline pass never fails the adapter receipt: the adapter
+    metrics stand on their own and the failure is recorded next to them.
+    """
+    baseline_request = replace(request, adapter_dir=None)
+    try:
+        baseline = call_with_training_failure_cleanup(
+            lambda: runner.evaluate_heldout(baseline_request),
+            details=runtime_failure_details,
+        )
+    except ModelOperationError as exc:
+        return {
+            "baseline_status": "failed",
+            "baseline_reason": "baseline_evaluation_failed",
+            "baseline_loss": None,
+            "baseline_perplexity": None,
+            "baseline_backend": "",
+            "loss_delta": None,
+            "perplexity_ratio": None,
+            "baseline_error_code": exc.code,
+            "baseline_error_message": exc.message,
+        }
+    perplexity_ratio = (
+        baseline.perplexity / adapter_result.perplexity
+        if adapter_result.perplexity and adapter_result.perplexity > 0
+        else None
+    )
+    # A divergent loss overflows math.exp to inf on either pass; inf/inf is
+    # NaN and inf/finite is inf — neither survives strict JSON serialization.
+    if perplexity_ratio is not None and not math.isfinite(perplexity_ratio):
+        perplexity_ratio = None
+    return {
+        "baseline_status": "completed",
+        "baseline_reason": "",
+        "baseline_loss": baseline.loss,
+        "baseline_perplexity": baseline.perplexity,
+        "baseline_backend": baseline.execution_backend,
+        # Positive delta / ratio > 1 means the adapter beat the base model on
+        # the held-out split.
+        "loss_delta": baseline.loss - adapter_result.loss,
+        "perplexity_ratio": perplexity_ratio,
     }
 
 

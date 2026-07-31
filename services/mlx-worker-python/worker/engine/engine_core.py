@@ -338,6 +338,18 @@ class EngineCore:
         active_kv_quant_profile = str(execution.acceleration.active_kv_quant_profile or "").strip()
         if active_kv_quant_profile:
             _routing_ext["_melix.active_kv_quant_profile"] = active_kv_quant_profile
+        # Acceleration-policy ext carries opt-in knobs (prompt lookup today) that
+        # the runtime reads directly. Request ext already present wins, so a
+        # per-request override is not clobbered by the session-level policy.
+        # `_melix.` is this method's own routing namespace, and several of those
+        # keys are set only conditionally (block size, cache budget, kv-quant
+        # profile), so `setdefault` alone would let policy ext populate the ones
+        # left unset and steer prefix-cache routing through a knob channel.
+        for _accel_key, _accel_value in execution.acceleration.ext.items():
+            _accel_key = str(_accel_key)
+            if _accel_key.startswith("_melix."):
+                continue
+            _routing_ext.setdefault(_accel_key, str(_accel_value))
         sampling = request.sampling
         reasoning = execution.reasoning
         request_id = execution.id.request_id

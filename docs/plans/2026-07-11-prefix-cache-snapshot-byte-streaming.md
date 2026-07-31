@@ -276,3 +276,18 @@ and uncommon non-`int` totals are still coerced by
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Missing State Branch First
+
+The 2026-07-30 follow-up keeps the same registered probe and narrows to the
+per-layer branch order in `estimate_cache_snapshot_bytes()`. Cache layers that
+omit `.state` and expose `.keys` / `.values` do not need an exact `type(state)`
+check, so this slice handles `state is None` first and only resolves `type(state)`
+for real scalar or sequence state objects. Behavior is unchanged for exact
+list/tuple state sequences, scalar state tensors, and `.keys` / `.values` layers;
+the change only avoids one type lookup on missing-state layers in the repeated
+snapshot byte-estimation loop.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.

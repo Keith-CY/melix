@@ -71,7 +71,9 @@ class DeterministicEmbeddingBackend:
         _round=_ROUND,
         _sum_squares=_sum_squares_8,
     ) -> list[float]:
-        if dimensions <= 0:
+        if not dimensions:
+            return []
+        if dimensions < 0:
             return []
         base_values = [
             raw * _DIGEST_UINT32_SCALE - 1.0
@@ -91,6 +93,13 @@ class DeterministicEmbeddingBackend:
             base_values[6] = _round(base_values[6] * inverse_l2_norm, 6)
             base_values[7] = _round(base_values[7] * inverse_l2_norm, 6)
             return base_values
+        if dimensions == 1:
+            value = base_values[0]
+            if value > 0.0:
+                return [1.0]
+            if value < 0.0:
+                return [-1.0]
+            return [0.0]
         return self._project_digest_expanded(base_values, dimensions)
 
     def _project_digest_expanded(
