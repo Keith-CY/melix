@@ -7,6 +7,7 @@ This Python-only performance slice is limited to `tests/integration/helpers.py` 
 The implementation keeps the existing `os.scandir()` candidate scan and executable selection semantics, but hoists repeated lookup work in `_newest_executable_swift_product_binary()` into local bindings:
 
 - `os.path.join` is bound once per resolution call.
+- `os.stat` and `stat.S_ISREG` are bound once per resolution call before the nested candidate check.
 - the executable mode bit mask is computed once per resolution call.
 
 No Swift runtime behavior changes are included.
@@ -29,7 +30,7 @@ Local Linux validation must run:
 2. Changed-scope coverage through the registered coverage command.
 3. The registered probe command and recorded metrics.
 
-GitHub Actions PR-scoped performance remains the merge gate for the registered probe report before merge.
+GitHub Actions PR-scoped performance remains the merge gate for the registered probe report before merge. The registered gate treats `elapsed_ms_mean` as the binary-resolution pass/fail metric; `delta_ms_mean` remains informational because it is the within-run gap against the legacy glob fallback and can move with base-side noise even when the direct head elapsed time improves.
 
 ## Success Criteria
 
