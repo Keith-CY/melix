@@ -1198,6 +1198,15 @@ def test_scope_report_selects_integration_swift_binary_resolution_probe() -> Non
 
     assert scope["selected_count"] == 1
     assert _selected_probe_ids(scope) == ["integration-swift-binary-resolution-scandir"]
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "integration-swift-binary-resolution-scandir"
+    )
+    directions = {metric.key: metric.direction for metric in probe.metrics}
+    assert directions["elapsed_ms_mean"] == "lower_is_better"
+    assert directions["delta_ms_mean"] == "informational"
+    assert directions["remove_tree_delta_ms_mean"] == "lower_is_better"
 
 
 def test_scope_report_selects_same_cohort_batching_probe() -> None:
@@ -5310,8 +5319,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     integration_helper_metrics = {
         metric.key: metric for metric in integration_helper_probe.metrics
     }
-    assert integration_helper_metrics["delta_ms_mean"].warn_pct == 0.0
-    assert integration_helper_metrics["delta_ms_mean"].warn_abs == 5.0
+    assert integration_helper_metrics["delta_ms_mean"].direction == "informational"
     assert integration_helper_metrics["remove_tree_delta_ms_mean"].warn_pct == 0.0
     assert integration_helper_metrics["remove_tree_delta_ms_mean"].warn_abs == 5.0
     assert integration_helper_metrics["remove_tree_peak_bytes_delta_mean"].warn_pct == 0.0

@@ -561,15 +561,17 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
     scoped_depth = 1
     build_root_path = os.fspath(build_root)
     join_path = os.path.join
+    os_stat = os.stat
+    is_regular_file = stat.S_ISREG
     executable_mask = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
     def consider(candidate: str, *, depth: int) -> None:
         nonlocal newest_candidate, newest_key
         try:
-            candidate_stat = os.stat(candidate)
+            candidate_stat = os_stat(candidate)
         except OSError:
             return
-        if not (stat.S_ISREG(candidate_stat.st_mode) and (candidate_stat.st_mode & executable_mask)):
+        if not (is_regular_file(candidate_stat.st_mode) and (candidate_stat.st_mode & executable_mask)):
             return
         candidate_key = (candidate_stat.st_mtime, depth)
         if newest_key is None or candidate_key > newest_key:
