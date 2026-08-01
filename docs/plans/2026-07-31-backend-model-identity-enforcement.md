@@ -430,17 +430,22 @@ regression override.
 
 ## Verification Results
 
-The final 2026-07-31 repository gates completed successfully:
+The final 2026-08-01 repository gates completed successfully against
+`origin/main` at `76c0d55c`:
 
 - `make bootstrap`
 - `make proto`
 - `make proto-check`
-- `make swift-test` (`300` text-worker and `878` menu-bar tests passed,
+- `make swift-test` (`300` text-worker and `882` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
-- `make py-test` (`5480` passed, `14` skipped)
-- `make integration-test` (`124` passed, `1` skipped)
+- `make py-test` (`5491` passed, `14` skipped)
+- `make integration-test` (`125` passed, `1` skipped)
 
-The focused same-endpoint worker-restart integration test also passed.
+The focused same-endpoint worker-restart integration test also passed. After
+the final mainline merge, the atomic stale-cleanup and remote-provider routing
+tests passed together, the registered performance and binary-resolution tests
+passed (`15` tests), and the three changed-line coverage totals remained
+`96.67%`, `96.17%`, and `99.15%`.
 
 ## Known Boundaries
 
