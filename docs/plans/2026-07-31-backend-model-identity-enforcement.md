@@ -402,7 +402,7 @@ relaxing the decode guard.
 
 Final changed-line coverage against current `origin/main`:
 
-- Python backend identity scope: `96.79%` (`603/623`).
+- Python backend identity scope: `96.98%` (`610/629`).
 - Swift control-plane scope: `96.19%` (`1337/1390`).
 - Swift text-worker scope: `99.16%` (`356/359`).
 
@@ -462,10 +462,27 @@ processing was `+2.20%`, and audio local-URI preprocessing was `-7.63%`. None
 crossed its `5%` threshold on repeat. These alerts are recorded as
 non-reproducing measurement noise rather than intentional regressions.
 
+The exact staged-tree report after merging `origin/main` at `99c402a0` is
+`.runtime/pre-commit-performance/20260801-135926-dcf1a567/report`. It completed
+all `148` probes with `0` verification failures. All `20` direct probes passed
+their targeted tests and coverage checks; the backend identity, worker
+registry, dataset preview, OCR, same-cohort batching, and integration probes
+were functionally `ok`. Three unrelated timing samples crossed their direct
+thresholds because this branch changes the shared performance registry test:
+VLM completion token counting, audio local-URI preprocessing, and the remove
+tree submetric bundled with Swift binary resolution. Seven alternating
+base/head repetitions in equivalent fresh worktrees using Python `3.14.4`
+disproved the alerts. VLM changed by `+1.16%` against its `5%` threshold, audio
+changed by `-1.80%` against its `10%` threshold, and Swift binary resolution
+changed by `+1.35%` against its `5%` threshold. The remove-tree samples had one
+base outlier at `-286 ms`; the medians were `-71.81 ms` for base and `-76.56 ms`
+for head, so the head remained faster. These are non-reproducing measurement
+noise, not intentional regressions.
+
 ## Verification Results
 
 The final 2026-08-01 repository gates completed successfully against
-`origin/main` at `29d6f332`:
+`origin/main` at `99c402a0`:
 
 - `make bootstrap`
 - `make proto`

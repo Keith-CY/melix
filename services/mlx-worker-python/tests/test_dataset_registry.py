@@ -738,6 +738,31 @@ def test_dataset_catalog_limited_preview_scan_streams_multiple_files_without_sor
         direct_second,
     ]
 
+    real_path = catalog.Path
+    constructed_paths: list[Path] = []
+
+    def counting_path(*args: Any, **kwargs: Any) -> Path:
+        resolved = real_path(*args, **kwargs)
+        constructed_paths.append(resolved)
+        return resolved
+
+    late_path_root = tmp_path / "late-path-root"
+    late_nested_dir = late_path_root / "a-data"
+    late_nested_dir.mkdir(parents=True)
+    nested_first = late_nested_dir / "part-00000.jsonl"
+    nested_second = late_nested_dir / "part-00001.jsonl"
+    unused_sibling = late_path_root / "b-root.jsonl"
+    nested_first.write_text('{"prompt":"nested-0"}\n', encoding="utf-8")
+    nested_second.write_text('{"prompt":"nested-1"}\n', encoding="utf-8")
+    unused_sibling.write_text('{"prompt":"unused"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(catalog, "Path", counting_path)
+    assert list(catalog._iter_limited_preview_dataset_files(late_path_root, limit=2)) == [
+        nested_first,
+        nested_second,
+    ]
+    assert unused_sibling not in constructed_paths
+
     original_scandir = catalog.os.scandir
 
     def failing_scandir(_path: object):
