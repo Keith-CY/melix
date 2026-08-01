@@ -499,8 +499,9 @@ def _iter_limited_preview_dataset_files(directory: Path, *, limit: int) -> Itera
         return
     emitted = 0
     previous_name = ""
+    make_path = Path
     while emitted < limit:
-        next_entries = _first_supported_scan_entries(
+        next_entries = _first_supported_scan_entry_records(
             directory,
             after=previous_name,
             limit=limit - emitted,
@@ -509,15 +510,16 @@ def _iter_limited_preview_dataset_files(directory: Path, *, limit: int) -> Itera
             return
         for name, path, is_directory, is_file in next_entries:
             previous_name = name
+            entry_path = make_path(path)
             if is_directory:
-                for nested_path in _iter_limited_preview_dataset_files(path, limit=limit - emitted):
+                for nested_path in _iter_limited_preview_dataset_files(entry_path, limit=limit - emitted):
                     yield nested_path
                     emitted += 1
                     if emitted >= limit:
                         return
                 continue
             if is_file:
-                yield path
+                yield entry_path
                 emitted += 1
                 if emitted >= limit:
                     return
@@ -529,18 +531,31 @@ def _first_supported_scan_entries(
     after: str,
     limit: int,
 ) -> list[tuple[str, Path, bool, bool]]:
+    return [
+        (name, Path(path), is_dir, is_file)
+        for name, path, is_dir, is_file in _first_supported_scan_entry_records(
+            directory,
+            after=after,
+            limit=limit,
+        )
+    ]
+
+
+def _first_supported_scan_entry_records(
+    directory: Path,
+    *,
+    after: str,
+    limit: int,
+) -> list[tuple[str, str, bool, bool]]:
     if limit <= 0:
         return []
     try:
         with os.scandir(os.fspath(directory)) as entries:
-            return [
-                (name, Path(path_raw), is_dir, is_file)
-                for name, path_raw, is_dir, is_file in heapq.nsmallest(
-                    limit,
-                    _supported_scan_entry_records(entries, after=after),
-                    key=lambda item: item[0],
-                )
-            ]
+            return heapq.nsmallest(
+                limit,
+                _supported_scan_entry_records(entries, after=after),
+                key=lambda item: item[0],
+            )
     except OSError:
         return []
 
