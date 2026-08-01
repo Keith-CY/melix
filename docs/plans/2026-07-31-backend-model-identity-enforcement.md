@@ -557,25 +557,55 @@ context-only timing alerts had no verification failures. The direct alert is
 therefore non-reproducing measurement noise, not an accepted regression, and
 no performance-regression override is used.
 
+After synchronizing the Swift Collections lock, closure-audit fast path, and
+mixed-case Python fence branch from `origin/main` at `19a20821`, the first full
+hook attempt stopped in the Swift control-plane core group with one failure
+among `594` tests. The unchanged group passed immediately on an exact rerun,
+and the subsequent full hook completed every functional gate: the Swift suites,
+`5,495` Python tests with `14` skips, and `132` integration tests with one skip.
+The exact staged-tree report at
+`.runtime/pre-commit-performance/20260801-201542-9f9ed2ef/report` ran all `148`
+probes with `20` direct probes and `0` verification failures. The backend
+identity probe remained `ok`: it rejected `140,000` mismatches with `0` output
+events before mismatch, recorded retry counts `3/2/1`, coalesced one recovery
+caller into two fresh bindings, and measured matched-worker p95 at
+`0.000443 ms` and control-plane p95 at `0.001358 ms`.
+
+One direct timing sample crossed its threshold in that report: Swift binary
+resolution measured `13.008 ms` for the base and `13.956 ms` for the merged tree
+(`+7.29%` against a `5%` threshold). The probe was selected because the upstream
+merge changes HTTP polling in the shared integration helper; the timed binary
+resolution implementation is unchanged. Seven alternating base/merged-tree
+repetitions using Python `3.12.13` did not reproduce the alert. Aggregate means
+were `14.757 ms` and `14.608 ms` (`-1.01%`), while medians were `14.556 ms` and
+`14.779 ms`. Every repetition preserved `1,501` candidates, `1,200` removed
+directories, and the same memory invariants; the remove-tree mean improved from
+`-103.852 ms` to `-110.453 ms`. The report's `14` context-only timing alerts had
+no verification failures. The direct alert is therefore non-reproducing
+measurement noise, not an accepted regression, and no performance-regression
+override is used.
+
 ## Verification Results
 
 The post-merge repository gates completed successfully against `origin/main`
-at `415eba04` on 2026-08-02:
+at `19a20821` on 2026-08-02:
 
 - `make bootstrap`
 - `make proto`
 - `make proto-check`
 - `make swift-test` (`301` text-worker and `882` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
-- `make py-test` (`5494` passed, `14` skipped)
-- `make integration-test` (`125` passed, `1` skipped)
+- `make py-test` (`5495` passed, `14` skipped)
+- `make integration-test` (`132` passed, `1` skipped)
 
-The final mainline merge also passed the event-extraction, event-performance,
-and backend-identity focused suites (`96` tests). The focused same-endpoint
-worker-restart integration test also passed. Earlier final-base verification
-passed the atomic stale-cleanup and remote-provider routing tests together, and
-the registered performance and binary-resolution tests (`15` tests). The
-remote-review corrections additionally passed all `14`
+The final mainline merge also passed the integration-helper, closure-audit,
+code-evaluation, backend-identity, and shared performance-registry focused
+suites (`129` tests). The preceding merge passed the event-extraction,
+event-performance, and backend-identity focused suites (`96` tests). The
+focused same-endpoint worker-restart integration test also passed. Earlier
+final-base verification passed the atomic stale-cleanup and remote-provider
+routing tests together, and the registered performance and binary-resolution
+tests (`15` tests). The remote-review corrections additionally passed all `14`
 backend identity tests, all `254` OpenAI handler tests, the stale-generation
 snapshot restore regression, the stream-consumption and phase-aware replay
 regressions, and the in-process worker handler performance tests. The three

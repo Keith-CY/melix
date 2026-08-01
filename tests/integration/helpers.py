@@ -31,6 +31,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 import swift_root_package
 
 
+MODEL_STATE_POLL_INTERVAL_SECONDS = 1.0
+
+
 class LiveMelixStack:
     def __init__(
         self,
@@ -795,15 +798,34 @@ def wait_for_http_model_states(
                     for model_id, expected in required_states.items()
                 ):
                     return
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            retry_after_seconds = _http_retry_after_seconds(exc) if exc.code == 429 else None
+            exc.close()
+            if retry_after_seconds is not None:
+                remaining_seconds = max(0.0, deadline - time.time())
+                if remaining_seconds <= 0:
+                    break
+                time.sleep(min(retry_after_seconds, remaining_seconds))
+                continue
         except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as exc:
             last_error = exc
-        time.sleep(0.2)
+        time.sleep(MODEL_STATE_POLL_INTERVAL_SECONDS)
 
     raise AssertionError(
         "Control plane never exposed the required model states "
         f"{required_states} through /api/capabilities on port {port} "
         f"within {timeout_seconds:.1f}s: {last_error}"
     )
+
+
+def _http_retry_after_seconds(error: urllib.error.HTTPError) -> float:
+    raw_value = error.headers.get("Retry-After") if error.headers is not None else None
+    try:
+        parsed_value = float(raw_value)
+    except (TypeError, ValueError):
+        return 1.0
+    return max(MODEL_STATE_POLL_INTERVAL_SECONDS, parsed_value)
 
 
 def abort_worker_request(socket_path: Path, request_id: str) -> bool:

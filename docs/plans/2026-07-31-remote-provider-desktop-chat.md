@@ -132,14 +132,39 @@ Melix CLI.
 - Changed-line coverage for the Python packaging scope was 100 percent
   (37 of 37 executable changed lines).
 
-### Dependency And Main Synchronization
+### Swift Toolchain Compatibility And Main Synchronization
 
-- The final task branch is based on `origin/main` at `9ff3fd82a`.
-- This slice changes neither dependencies nor protobuf schemas. All SwiftPM
-  lockfiles match `origin/main` and are absent from the task diff.
-- The two upstream commits incorporated during final synchronization optimize
-  integration binary lookup and Hub repository validation. Their surrounding
-  changes were inspected and do not alter the Remote Provider Chat path.
+- The compatibility follow-up branch is based on `origin/main` at `4fb0226bb`.
+- A clean Xcode 26.6 / Swift 6.3.3 build exposed a typed-throws compiler
+  incompatibility in the transitive `swift-collections 1.5.0`
+  `ContainersPreview` target before Melix sources compiled.
+- gRPC Swift declares compatibility from `swift-collections 1.1.3`. The five
+  committed SwiftPM workspaces are therefore resolved consistently to
+  `swift-collections 1.3.0`, whose `DequeModule` does not pull
+  `ContainersPreview` into this build path.
+- The lockfiles were regenerated with SwiftPM. Hosted macOS 15 verification
+  with automatic resolution disabled proved that its older resolver still
+  reaches five text-worker transitive pins that Xcode 26.6 prunes locally, so
+  the committed compatibility lock retains those pins while selecting
+  `swift-collections 1.3.0`.
+- Sustained full-gate load also proved that readiness polling at five requests
+  per second can exhaust the built-in 120-request gateway window before a model
+  becomes warm. The integration helper now polls once per second and honors the
+  gateway's numeric `Retry-After` response before polling again. Its regression
+  probes require normal not-ready polling to sleep for one second and a
+  simulated 429 followed by a warm response to make exactly two requests and
+  sleep for the advertised three seconds; the full integration gate remains
+  the end-to-end success metric.
+- The readiness regressions live beside the existing integration-helper tests
+  selected by the registered probe. This keeps changed-line coverage for the
+  shared helper measurable without widening the performance-registry scope.
+- This follow-up changes neither package manifests nor protobuf schemas. The
+  protocol package and control-plane core passed clean default-parallel Xcode
+  26.6 builds with the compatibility resolution. The repository pre-commit
+  test and performance gate remains the commit condition.
+- The lockfile resolution and test-only readiness backoff change no production
+  runtime request path, so their production observability and performance-probe
+  overhead are `N/A`.
 
 ### Remote Thinking Follow-up
 

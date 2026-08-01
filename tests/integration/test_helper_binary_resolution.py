@@ -428,6 +428,145 @@ def test_wait_for_http_model_states_reads_capabilities_models(
     assert observed_requests == [("http://127.0.0.1:12436/api/capabilities", "GET", "1")]
 
 
+def test_wait_for_http_model_states_polls_below_the_gateway_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock_values = iter([0.0, 0.1, 1.1])
+    sleeps: list[float] = []
+    attempts = 0
+
+    class FakeResponse:
+        def __init__(self, state: str) -> None:
+            self.state = state
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"models": [{"model_id": "melix-dev-text", "state": self.state}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float) -> FakeResponse:
+        nonlocal attempts
+        attempts += 1
+        return FakeResponse("loading" if attempts == 1 else "warm")
+
+    monkeypatch.setattr(helpers.time, "time", lambda: next(clock_values))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", fake_urlopen)
+
+    helpers.wait_for_http_model_states(
+        11434,
+        required_states={"melix-dev-text": "warm"},
+        timeout_seconds=5.0,
+    )
+
+    assert attempts == 2
+    assert sleeps == [helpers.MODEL_STATE_POLL_INTERVAL_SECONDS]
+
+
+def test_wait_for_http_model_states_honors_rate_limit_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock_values = iter([0.0, 0.1, 0.2, 3.2])
+    sleeps: list[float] = []
+    attempts = 0
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"models": [{"model_id": "melix-dev-text", "state": "warm"}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float) -> FakeResponse:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise helpers.urllib.error.HTTPError(
+                request.full_url,
+                429,
+                "Too Many Requests",
+                {"Retry-After": "3"},
+                None,
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr(helpers.time, "time", lambda: next(clock_values))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", fake_urlopen)
+
+    helpers.wait_for_http_model_states(
+        11434,
+        required_states={"melix-dev-text": "warm"},
+        timeout_seconds=5.0,
+    )
+
+    assert attempts == 2
+    assert sleeps == [3.0]
+
+
+def test_wait_for_http_model_states_stops_when_rate_limit_reaches_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock_values = iter([0.0, 0.1, 0.6])
+    sleeps: list[float] = []
+
+    def fake_urlopen(request, timeout: float) -> None:
+        raise helpers.urllib.error.HTTPError(
+            request.full_url,
+            429,
+            "Too Many Requests",
+            {"Retry-After": "30"},
+            None,
+        )
+
+    monkeypatch.setattr(helpers.time, "time", lambda: next(clock_values))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(
+        AssertionError,
+        match="Control plane never exposed the required model states",
+    ):
+        helpers.wait_for_http_model_states(
+            11434,
+            required_states={"melix-dev-text": "warm"},
+            timeout_seconds=0.5,
+        )
+
+    assert sleeps == []
+
+
+@pytest.mark.parametrize(
+    ("header_value", "expected_seconds"),
+    [(None, 1.0), ("invalid", 1.0), ("0", 1.0), ("3", 3.0)],
+)
+def test_http_retry_after_seconds_is_bounded_and_has_a_safe_default(
+    header_value: str | None,
+    expected_seconds: float,
+) -> None:
+    headers = {} if header_value is None else {"Retry-After": header_value}
+    error = helpers.urllib.error.HTTPError(
+        "http://127.0.0.1:11434/api/capabilities",
+        429,
+        "Too Many Requests",
+        headers,
+        None,
+    )
+
+    assert helpers._http_retry_after_seconds(error) == expected_seconds
+
+
 def test_wait_for_http_model_states_reports_swift_vision_exit(tmp_path: Path) -> None:
     stdout_path = tmp_path / "vision.stdout.log"
     stderr_path = tmp_path / "vision.stderr.log"

@@ -431,6 +431,8 @@ def _scan_probe_source_file(
         file_path=file_path,
         probe_names=pending_probe_names,
     )
+    if not matched_probe_names:
+        return
     next_pending_probe_names: list[str] = []
     for probe_name in pending_probe_names:
         matches = probe_sources[probe_name]
