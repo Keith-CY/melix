@@ -24,6 +24,7 @@ from worker.model_ops.hub_catalog import (
     _quantization_summary,
     _repo_id_contains_mlx,
     _size_hint_from_text,
+    _string,
     _string_list,
 )
 
@@ -98,6 +99,15 @@ def test_string_list_preserves_exact_list_and_list_subclass_inputs() -> None:
     assert _string_list(["mlx", 7, "safetensors"]) == ["mlx", "safetensors"]
     assert _string_list(TagList(["mlx", "4-bit"])) == ["mlx", "4-bit"]
     assert _string_list("mlx") == ["mlx"]
+
+
+def test_string_helper_preserves_exact_string_and_string_subclass_inputs() -> None:
+    class CustomString(str):
+        pass
+
+    assert _string("owner/model") == "owner/model"
+    assert _string(CustomString("owner/model")) == "owner/model"
+    assert _string(7) == ""
 
 
 def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tags() -> None:
