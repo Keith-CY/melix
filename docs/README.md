@@ -44,6 +44,7 @@ Step-by-step operating procedures for specific workflows. Use these when you nee
 | [Local Install](runbooks/phase-8-local-install.md) | Install Melix as a persistent local service via launch agent |
 | [Homebrew Install](runbooks/homebrew-install.md) | Install and manage Melix through Homebrew |
 | [Packaging Targets](runbooks/platform-packaging-targets.md) | Launch agent, Homebrew, Nix, and preview app-bundle delivery options |
+| [GitHub Release App Updates](runbooks/github-release-app-updates.md) | Independent EdDSA trust, tag-release appcasts, bootstrap acceptance, and recovery without an Apple Developer ID |
 | [Release Gates](runbooks/phase-8-release-gates.md) | Automated release gate workflow and verification criteria |
 | [Product Acceptance](runbooks/phase-8-product-acceptance.md) | Acceptance evidence and product-level smoke procedures |
 | [Runtime Export Smoke Policy](runbooks/runtime-export-smoke-policy.md) | Bounded post-export load, generation, waiver, and receipt checks for runtime export targets |
@@ -77,6 +78,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 | [Open Issue Completion Wave](plans/2026-07-30-open-issue-completion-wave.md) | Ordered completion, review, verification, and merge contract for the open issue queue captured on 2026-07-30 |
 | [Remote Provider Desktop Chat](plans/2026-07-31-remote-provider-desktop-chat.md) | Native Chat binding, readiness, credential safety, packaging policy, and real-App acceptance for local and remote Provider targets |
 | [Remote Provider Generation Control Parity](plans/2026-07-31-remote-provider-generation-control-parity.md) | Direct Remote Provider passthrough for reasoning, sampling, and token-limit controls across the control plane and CLI |
+| [GitHub Release App Updates](plans/2026-08-01-github-release-app-updates.md) | Sparkle integration, independent EdDSA signing, packaging, release workflow, UI, and acceptance boundaries |
 | [Gemma 4 Cross-Surface Chat Routing Repair](plans/2026-07-18-gemma4-cross-surface-chat-routing.md) | Shared Gemma 4 text companion resolution and real CLI, HTTP, and macOS Chat acceptance |
 | [Runtime-Aware Export And Serving Verification Plan](plans/2026-06-21-runtime-aware-export-and-serving-verification.md) | M3 export target manifests, layout, retention, post-export smoke policy, diagnostics, waiver semantics, and serving evidence |
 | [Export Artifact Layout And Retention Policy](plans/2026-06-24-export-artifact-layout-retention.md) | Runtime export target layout, retention reports, cleanup dry-run/apply behavior, and byte-accounting metrics |

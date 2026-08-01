@@ -25,7 +25,8 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 | --- | --- | --- | --- | --- | --- |
 | `launch_agents_checkout` | `launch_agents` | local checkout | `repo_checkout` | `install_manifest_v1` | repository update channel |
 | `homebrew_service` | `homebrew` | Homebrew formula | `repo_checkout_with_installed_binaries` | `service_manifest_v1` | `brew upgrade` plus repository update metadata |
-| `macos_app_bundle_preview` | `app_bundle` | archive or drag install | `self_contained_bundle` | `embedded_target_manifest_v1` | manual bundle refresh with embedded update metadata |
+| `macos_app_bundle_preview` | `app_bundle` | archive or drag install | `self_contained_bundle` | `embedded_target_manifest_v1` | manual refresh only; ad-hoc signature and no update feed |
+| `macos_app_bundle_github_release` | `app_bundle` | GitHub Release | `self_contained_bundle` | `embedded_target_manifest_v1` | stable self-signed code identity plus signed Sparkle EdDSA appcast |
 | `homebrew_release_cask` | `homebrew_cask` | published Homebrew tap | `self_contained_bundle` | `release_asset_digest_v1` | GitHub Release published workflow |
 | `nix_release_flake` | `nix_flake` | published Nix flake repository | `self_contained_bundle` | `release_asset_digest_v1` | GitHub Release published workflow |
 
@@ -100,6 +101,36 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
   `Resources/packaging-target-manifest.json`
 - keeps the same logical Melix identity while making the bundle-specific distribution and update
   strategy explicit
+- bundles Sparkle `2.9.4` under `Contents/Frameworks` and verifies the menu-bar executable's
+  framework rpath before archiving
+- omits the update feed and public key from branch, pull-request, scheduled, and manually
+  dispatched preview artifacts, so those artifacts cannot enter the signed release update chain
+- uses bundle ID `io.melix.menubar.preview`, the
+  `macos_app_bundle_preview` target, and an ad-hoc code signature; it must never
+  be described as update-enabled
+
+### `macos_app_bundle_github_release`
+
+- is produced only by a `v*` tag push, never by branch, pull-request,
+  scheduled, or manually dispatched preview packaging
+- uses bundle ID `io.melix.menubar` and the
+  `macos_app_bundle_github_release` target
+- inherits the self-contained runtime and complete Sparkle framework contract
+  from the preview bundle
+- embeds the stable GitHub Release feed and independent Melix EdDSA public key
+- records the expected public certificate SHA-1, authority, and
+  `stable_self_signed` mode in the embedded packaging-target manifest before
+  the bundle is signed and verified
+- signs every nested component and the complete App with the stable self-signed
+  identity `Melix GitHub Release Signing`
+- verifies the exact code-signing authority, certificate SHA-1, designated
+  requirement, deep archive signature, archive EdDSA signature, and signed
+  appcast before any release asset is uploaded
+- fails closed unless the EdDSA public variable, EdDSA private secret,
+  self-signed PKCS#12 secret, and PKCS#12 password secret are all available
+
+See [GitHub Release App Updates](github-release-app-updates.md) for the trust boundary,
+credential interface, bootstrap sequence, release acceptance, and recovery procedure.
 
 ### Private HTTP Remote Providers
 

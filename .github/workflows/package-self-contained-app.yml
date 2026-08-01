@@ -309,13 +309,124 @@ jobs:
             --github-output "$GITHUB_OUTPUT" \
             --json
 
+      - name: Import stable GitHub release signing identity
+        id: release-signing
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          SIGNING_CERTIFICATE_P12: ${{ secrets.MELIX_SIGNING_CERTIFICATE_P12 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MELIX_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SIGNING_CERTIFICATE_P12" ]; then
+            printf 'fatal: tag releases require the MELIX_SIGNING_CERTIFICATE_P12 Actions secret\n' >&2
+            exit 1
+          fi
+          if [ -z "$SIGNING_CERTIFICATE_PASSWORD" ]; then
+            printf 'fatal: tag releases require the MELIX_SIGNING_CERTIFICATE_PASSWORD Actions secret\n' >&2
+            exit 1
+          fi
+
+          umask 077
+          identity_name="Melix GitHub Release Signing"
+          keychain_path="$RUNNER_TEMP/melix-release-signing.keychain-db"
+          certificate_path="$RUNNER_TEMP/melix-release-signing.p12"
+          public_certificate_path="$RUNNER_TEMP/melix-release-signing.pem"
+          keychain_password="$(openssl rand -hex 24)"
+
+          printf '%s' "$SIGNING_CERTIFICATE_P12" | /usr/bin/base64 -D > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$SIGNING_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path" \
+            >/dev/null
+          security list-keychains -d user -s "$keychain_path"
+
+          certificate_sha="$(
+            security find-certificate \
+              -a \
+              -Z \
+              -c "$identity_name" \
+              "$keychain_path" \
+              | awk '/SHA-1 hash:/ { print $3; exit }'
+          )"
+          test -n "$certificate_sha"
+          identity_listing="$(security find-identity -v -p codesigning "$keychain_path")"
+          case "$identity_listing" in
+            *"$certificate_sha"*"$identity_name"*) ;;
+            *)
+              printf 'fatal: imported certificate is not the stable Melix code-signing identity\n' >&2
+              exit 1
+              ;;
+          esac
+
+          security find-certificate \
+            -p \
+            -c "$identity_name" \
+            "$keychain_path" \
+            > "$public_certificate_path"
+          certificate_subject="$(
+            openssl x509 -in "$public_certificate_path" -noout -subject -nameopt RFC2253 \
+              | sed 's/^subject=//'
+          )"
+          certificate_issuer="$(
+            openssl x509 -in "$public_certificate_path" -noout -issuer -nameopt RFC2253 \
+              | sed 's/^issuer=//'
+          )"
+          test "$certificate_subject" = "$certificate_issuer"
+          openssl verify -CAfile "$public_certificate_path" "$public_certificate_path"
+
+          rm -f "$certificate_path" "$public_certificate_path"
+          {
+            printf 'certificate_sha=%s\n' "$certificate_sha"
+            printf 'keychain_path=%s\n' "$keychain_path"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Package self-contained Melix.app
         id: package-app
+        env:
+          IS_SIGNED_UPDATE_RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'true' || 'false' }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.SPARKLE_EDDSA_PUBLIC_KEY || '' }}
+          MELIX_CODESIGN_IDENTITY: ${{ steps.release-signing.outputs.certificate_sha }}
+          MELIX_CODESIGN_KEYCHAIN: ${{ steps.release-signing.outputs.keychain_path }}
         run: |
+          set -euo pipefail
           : "${PACKAGE_PYTHON:?PACKAGE_PYTHON must be exported by Prepare packaging Python runtime}"
           PACKAGE_VENV_PYTHON="$GITHUB_WORKSPACE/.venv-package/bin/python"
           PYTHON_RUNTIME_ROOT="$("$PACKAGE_PYTHON" -c 'import sys; print(sys.base_prefix)')"
           PYTHON_SITE_PACKAGES="$("$PACKAGE_VENV_PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+          update_arguments=()
+          if [ "$IS_SIGNED_UPDATE_RELEASE" = "true" ]; then
+            if [ -z "$SPARKLE_PUBLIC_ED_KEY" ]; then
+              printf 'fatal: tag releases require the SPARKLE_EDDSA_PUBLIC_KEY Actions variable\n' >&2
+              exit 1
+            fi
+            if [ -z "$MELIX_CODESIGN_IDENTITY" ] || [ -z "$MELIX_CODESIGN_KEYCHAIN" ]; then
+              printf 'fatal: tag releases require the stable Melix code-signing identity\n' >&2
+              exit 1
+            fi
+            update_arguments+=(
+              --bundle-id
+              "io.melix.menubar"
+              --packaging-target-id
+              "macos_app_bundle_github_release"
+              --sparkle-feed-url
+              "https://github.com/Keith-CY/melix/releases/latest/download/appcast.xml"
+              --sparkle-public-ed-key
+              "$SPARKLE_PUBLIC_ED_KEY"
+              --codesign-identity
+              "$MELIX_CODESIGN_IDENTITY"
+              --codesign-keychain
+              "$MELIX_CODESIGN_KEYCHAIN"
+            )
+          fi
           bash scripts/ci_progress.sh "Package app bundle assembly" \
             env PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
             "$PACKAGE_VENV_PYTHON" scripts/package_macos_menubar_app.py \
@@ -326,7 +437,101 @@ jobs:
             --python-site-packages-path "$PYTHON_SITE_PACKAGES" \
             --swift-mlx-metallib-path "$SWIFT_MLX_METALLIB_PATH" \
             --version "${{ steps.compute-build-metadata.outputs.version }}" \
+            "${update_arguments[@]}" \
             --json
+
+      - name: Remove ephemeral release signing material
+        if: always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          security delete-keychain "$RUNNER_TEMP/melix-release-signing.keychain-db" 2>/dev/null || true
+          rm -f \
+            "$RUNNER_TEMP/melix-release-signing.p12" \
+            "$RUNNER_TEMP/melix-release-signing.pem"
+
+      - name: Generate and verify signed update feed
+        id: signed-update-feed
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_EDDSA_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            printf 'fatal: tag releases require the SPARKLE_EDDSA_PRIVATE_KEY Actions secret\n' >&2
+            exit 1
+          fi
+          if [ -z "$SPARKLE_PUBLIC_KEY" ]; then
+            printf 'fatal: tag releases require the SPARKLE_EDDSA_PUBLIC_KEY Actions variable\n' >&2
+            exit 1
+          fi
+
+          private_key_bytes="$(
+            printf '%s' "$SPARKLE_PRIVATE_KEY" | /usr/bin/base64 -D | wc -c | tr -d ' '
+          )"
+          if [ "$private_key_bytes" != "32" ]; then
+            printf 'fatal: Melix requires a new-format 32-byte Sparkle EdDSA private seed\n' >&2
+            exit 1
+          fi
+          derived_public_key="$(
+            {
+              printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x70\x04\x22\x04\x20'
+              printf '%s' "$SPARKLE_PRIVATE_KEY" | /usr/bin/base64 -D
+            } \
+              | openssl pkey -inform DER -pubout -outform DER 2>/dev/null \
+              | tail -c 32 \
+              | /usr/bin/base64
+          )"
+          if [ "$derived_public_key" != "$SPARKLE_PUBLIC_KEY" ]; then
+            printf 'fatal: Sparkle EdDSA public and private release keys do not match\n' >&2
+            exit 1
+          fi
+
+          sparkle_bin="$GITHUB_WORKSPACE/apps/macos-menubar/.build/artifacts/sparkle/Sparkle/bin"
+          release_directory="$RUNNER_TEMP/signed-update-release"
+          archive_name="${{ steps.compute-build-metadata.outputs.artifact_name }}.zip"
+          archive_path="$RUNNER_TEMP/$archive_name"
+          release_archive_path="$release_directory/$archive_name"
+          appcast_path="$release_directory/appcast.xml"
+          release_url="https://github.com/${{ github.repository }}/releases/tag/$GITHUB_REF_NAME"
+
+          test -x "$sparkle_bin/generate_appcast"
+          test -x "$sparkle_bin/sign_update"
+          test -s "$archive_path"
+          mkdir -p "$release_directory"
+          cp "$archive_path" "$release_archive_path"
+
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | \
+            "$sparkle_bin/generate_appcast" \
+              --ed-key-file - \
+              --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/$GITHUB_REF_NAME/" \
+              --full-release-notes-url "$release_url" \
+              --link "$release_url" \
+              --maximum-versions 1 \
+              --maximum-deltas 0 \
+              "$release_directory"
+
+          test -s "$appcast_path"
+          xmllint --noout "$appcast_path"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | \
+            "$sparkle_bin/sign_update" \
+              --ed-key-file - \
+              --verify \
+              "$appcast_path"
+
+          archive_signature="$(
+            xmllint \
+              --xpath 'string(//*[local-name()="enclosure"]/@*[local-name()="edSignature"])' \
+              "$appcast_path"
+          )"
+          test -n "$archive_signature"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | \
+            "$sparkle_bin/sign_update" \
+              --ed-key-file - \
+              --verify \
+              "$release_archive_path" \
+              "$archive_signature"
+
+          printf 'appcast_path=%s\n' "$appcast_path" >> "$GITHUB_OUTPUT"
 
       - name: Upload app artifact
         id: upload-app-artifact
@@ -336,6 +541,15 @@ jobs:
           path: ${{ runner.temp }}/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload signed update feed artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.compute-build-metadata.outputs.artifact_name }}-appcast
+          path: ${{ steps.signed-update-feed.outputs.appcast_path }}
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Publish app artifact download summary
         if: github.event_name != 'pull_request' && success()
@@ -431,7 +645,7 @@ jobs:
             }
 
   attach-release-artifact:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: package-app
     runs-on: ubuntu-latest
     permissions:
@@ -444,10 +658,18 @@ jobs:
           name: ${{ needs.package-app.outputs.artifact_name }}
           path: ${{ runner.temp }}
 
+      - name: Download signed update feed artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.package-app.outputs.artifact_name }}-appcast
+          path: ${{ runner.temp }}
+
       - name: Attach app to GitHub Release
         uses: softprops/action-gh-release@da05d552573ad5aba039eaff05c3d0a71e06a66f # v2
         with:
-          files: ${{ runner.temp }}/${{ needs.package-app.outputs.artifact_name }}.zip
+          files: |
+            ${{ runner.temp }}/${{ needs.package-app.outputs.artifact_name }}.zip
+            ${{ runner.temp }}/appcast.xml
           # Tag pushes are the release source of truth for this workflow, so generated notes own the body.
           generate_release_notes: true
 

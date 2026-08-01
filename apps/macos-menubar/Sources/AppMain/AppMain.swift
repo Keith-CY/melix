@@ -225,11 +225,25 @@ enum MenuBarApplicationMenuBuilder {
     @MainActor
     static func makeMainMenu(
         target: AnyObject,
-        action: Selector
+        action: Selector,
+        updateTarget: AnyObject? = nil,
+        updateAction: Selector? = nil,
+        updateEnabled: Bool = false
     ) -> NSMenu {
         let mainMenu = NSMenu(title: MelixBranding.productName)
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu(title: MelixBranding.productName)
+        if let updateTarget, let updateAction {
+            let updateItem = NSMenuItem(
+                title: "Check for Updates…",
+                action: updateAction,
+                keyEquivalent: ""
+            )
+            updateItem.target = updateTarget
+            updateItem.isEnabled = updateEnabled
+            appMenu.addItem(updateItem)
+            appMenu.addItem(.separator())
+        }
         let quitItem = NSMenuItem(title: "Quit Melix", action: action, keyEquivalent: "q")
         quitItem.target = target
         quitItem.keyEquivalentModifierMask = [.command]
@@ -584,14 +598,19 @@ enum MelixMenuBarLauncher {
             repoRoot: FileManager.default.currentDirectoryPath,
             runtimeDirectory: nil
         ),
+        softwareUpdates: SoftwareUpdateController = .shared,
         bootstrapFactory: (@escaping @MainActor @Sendable () -> Void) -> MelixMenuBarBootstrap,
         retain: (MelixMenuBarBootstrap) -> Void
     ) {
+        softwareUpdates.start()
         application.setActivationPolicy(presentationMode.activationPolicy)
         application.setMainMenu(
             MenuBarApplicationMenuBuilder.makeMainMenu(
                 target: terminationCoordinator,
-                action: #selector(MenuBarTerminationCoordinator.handleQuitMenuItem(_:))
+                action: #selector(MenuBarTerminationCoordinator.handleQuitMenuItem(_:)),
+                updateTarget: softwareUpdates,
+                updateAction: #selector(SoftwareUpdateController.checkForUpdates(_:)),
+                updateEnabled: softwareUpdates.canCheckForUpdates
             )
         )
 

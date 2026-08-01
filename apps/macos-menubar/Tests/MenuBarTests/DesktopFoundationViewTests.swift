@@ -1048,6 +1048,9 @@ struct DesktopFoundationViewTests {
         )
         let summary = DesktopSettingsTabView(foundation: foundation).accessibilitySummary
 
+        #expect(summary.contains("Software Updates"))
+        #expect(summary.contains("Check for updates automatically"))
+        #expect(summary.contains("Signed updates are unavailable in this preview build."))
         #expect(summary.contains("Embedding Model"))
         #expect(summary.contains("melix-dev-embed"))
         #expect(summary.contains("MCP Config"))
@@ -1057,6 +1060,103 @@ struct DesktopFoundationViewTests {
         #expect(foundation.settings.contains { $0.key == "Gateway Config Store" && $0.value == "/tmp/gateway-config.json" })
         #expect(foundation.settings.contains { $0.key == "Built-in Tool Parsers" && $0.value == "text, json, qwen" })
         #expect(foundation.settings.contains { $0.key == "Boot Arguments" && $0.value == "--config /tmp/melix.json" })
+    }
+
+    @Test("software update card renders every lifecycle state and drives its controls")
+    @MainActor
+    func softwareUpdateCardRendersLifecycleAndDrivesControls() throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-software-updates",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let engine = SoftwareUpdateCardTestEngine()
+        var openedURL: URL?
+        let configuration = SoftwareUpdateConfiguration(infoDictionary: [
+            "SUFeedURL": SoftwareUpdateConfiguration.feedURLString,
+            "SUPublicEDKey": Data(repeating: 6, count: 32).base64EncodedString(),
+        ])
+        let controller = SoftwareUpdateController(
+            applicationBundle: .main,
+            configuration: configuration,
+            version: .init(marketingVersion: "1.0.0", buildNumber: "100"),
+            engineFactory: { _, eventHandler in
+                engine.eventHandler = eventHandler
+                return engine
+            },
+            openURL: { openedURL = $0 }
+        )
+        controller.start()
+
+        func renderedUpdateCard() -> DesktopSettingsTabView {
+            let tab = DesktopSettingsTabView(
+                foundation: foundation,
+                softwareUpdates: controller
+            )
+            _ = hostView(tab)
+            return tab
+        }
+
+        let idleTab = renderedUpdateCard()
+        let idleSummary = idleTab.accessibilitySummary
+        #expect(idleSummary.contains("Software Updates"))
+        #expect(idleSummary.contains("Version 1.0.0 (100)"))
+        #expect(idleSummary.contains("Ready"))
+
+        idleTab.requestSoftwareUpdateCheck()
+        idleTab.openSoftwareUpdateReleases()
+        #expect(engine.checkCount == 1)
+        #expect(openedURL?.absoluteString == SoftwareUpdateConfiguration.releasesURLString)
+        idleTab.softwareUpdateAutomaticChecksBinding.wrappedValue = false
+        #expect(engine.automaticallyChecksForUpdates == false)
+
+        #expect(renderedUpdateCard().accessibilitySummary.contains("Checking for updates..."))
+        engine.send(.found(version: "2.0.0"))
+        #expect(renderedUpdateCard().accessibilitySummary.contains("Version 2.0.0 is available"))
+        engine.send(.downloading(version: "2.0.0"))
+        #expect(renderedUpdateCard().accessibilitySummary.contains("Downloading version 2.0.0..."))
+        engine.send(.downloaded(version: "2.0.0"))
+        #expect(renderedUpdateCard().accessibilitySummary.contains("Verifying version 2.0.0..."))
+        engine.send(.installing(version: "2.0.0"))
+        #expect(renderedUpdateCard().accessibilitySummary.contains("Installing version 2.0.0..."))
+        engine.send(.relaunching(version: "2.0.0"))
+        #expect(renderedUpdateCard().accessibilitySummary.contains("Relaunching version 2.0.0..."))
+
+        let checkDate = Date(timeIntervalSince1970: 1_800_000_000)
+        engine.lastUpdateCheckDate = checkDate
+        engine.send(.finished(lastCheckDate: checkDate))
+        _ = renderedUpdateCard()
+        engine.send(.noUpdate)
+        #expect(renderedUpdateCard().accessibilitySummary.contains("Melix is up to date"))
+
+        engine.send(.failed(.init(kind: .replacement, code: 4000)))
+        let failureSummary = renderedUpdateCard().accessibilitySummary
+        #expect(failureSummary.contains("Ready"))
+        #expect(failureSummary.contains("kept the previous version"))
+
+        let previewController = SoftwareUpdateController(
+            applicationBundle: .main,
+            configuration: SoftwareUpdateConfiguration(infoDictionary: nil),
+            version: .init(marketingVersion: "Development", buildNumber: ""),
+            engineFactory: { _, _ in engine }
+        )
+        let previewTab = DesktopSettingsTabView(
+            foundation: foundation,
+            softwareUpdates: previewController
+        )
+        _ = hostView(previewTab)
+        #expect(previewTab.accessibilitySummary.contains("Unavailable"))
+        #expect(previewTab.accessibilitySummary.contains("unavailable in this preview build"))
     }
 
     @Test("settings tab renders runtime settings rows with source and validation state")
@@ -12996,6 +13096,25 @@ private func hostView<Content: View>(_ rootView: Content) -> NSView {
     view.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
     view.layoutSubtreeIfNeeded()
     return view
+}
+
+@MainActor
+private final class SoftwareUpdateCardTestEngine: SoftwareUpdateDriving {
+    var automaticallyChecksForUpdates = true
+    var lastUpdateCheckDate: Date?
+    var canCheckForUpdates = true
+    var eventHandler: (@MainActor (SoftwareUpdateEngineEvent) -> Void)?
+    private(set) var checkCount = 0
+
+    func start() throws {}
+
+    func checkForUpdates() {
+        checkCount += 1
+    }
+
+    func send(_ event: SoftwareUpdateEngineEvent) {
+        eventHandler?(event)
+    }
 }
 
 @MainActor
