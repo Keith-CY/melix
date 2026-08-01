@@ -48,7 +48,7 @@ Reverted to a single straightforward implementation, preserving observable behav
 | Module | Before | After |
 | --- | --- | --- |
 | `worker/trajectory_provenance.py` | 956 lines | 236 lines |
-| `worker/productization/report_evidence_gate.py` | 720 lines | 439 lines |
+| `worker/productization/report_evidence_gate.py` | 720 lines | 478 lines |
 | `scripts/changed_scope_coverage.py` `_measurable_non_comment_lines` | 5 duplicated scan strategies | 1 |
 | `worker/runtime/token_counting.py` | 2 hand-rolled scan loops | `len(text.split())` |
 | `worker/runtime/stream_assembler.py` `_whitespace_token_count` | 11-condition guard | `len(text.split())` |
@@ -72,14 +72,34 @@ value is normalized, and `_dict_list` no longer returns the caller's list object
 
 ## Rule going forward
 
-Micro-optimize a pure-Python helper only when a profile of a real workload attributes
-measurable time to it. A registered probe that measures a synthetic loop over the
-helper is not that evidence. When a fast path is justified, it needs a test that
-pins the *result*, not the branch — a test that fails when a branch is deleted but
-the output is unchanged is a maintenance liability, not coverage.
+Keep properties that change complexity class; drop constant-factor tricks and caches
+that mutate caller data. The first cut of this refactor removed both kinds together
+and the PR-scoped report caught it: deriving run-kind values per rule instead of once
+per matrix turned matching from O(roles + rows) into O(roles x rows), and dropping the
+metric-prefix bucketing and the bounded top-k cost real time on real inputs. Those were
+restored. The rule-dict mutation was not.
+
+Beyond that line, micro-optimize a pure-Python helper only when a profile of a real
+workload attributes measurable time to it. A registered probe that measures a synthetic
+loop over the helper is not that evidence. When a fast path is justified, it needs a
+test that pins the *result*, not the branch — a test that fails when a branch is
+deleted but the output is unchanged is a maintenance liability, not coverage.
+
+## Probes run against both revisions
+
+The PR-scoped harness executes the **head** probe script against the **base** checkout
+as well (`base/../head/scripts/...`). Renaming or re-typing a private helper's parameter
+therefore breaks the base-side measurement with a `TypeError`, reported as
+`probe_failed` rather than as a regression. A probe script that reaches into a private
+helper must feature-detect the signature it is calling — see
+`scripts/report_evidence_gate_run_kind_probe.py`, which inspects the signature once at
+import and adapts.
 
 ## Verification
 
 `make py-test` plus `pytest tests` on Linux: no regressions against the pre-change
-baseline. (128 tests fail on Linux both before and after this change; they require
-Apple Silicon MLX or a built Swift binary.)
+baseline. The set of failing tests is byte-identical before and after. (128 tests fail
+on Linux in both cases; they require Apple Silicon MLX or a built Swift binary.)
+
+CI on macOS covers what Linux cannot: `python-tests` and `integration-tests` both pass
+on the final revision of this branch.
