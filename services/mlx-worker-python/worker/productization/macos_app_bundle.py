@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -155,7 +158,64 @@ def resolve_site_packages_root(repo_root: str | Path) -> Path:
     return best_entry
 
 
-def render_info_plist(*, app_name: str, bundle_id: str, version: str, icon_file: str) -> bytes:
+def normalize_ats_insecure_http_hosts(hosts: Sequence[str]) -> tuple[str, ...]:
+    normalized: set[str] = set()
+    for raw_host in hosts:
+        host = raw_host.strip().lower().rstrip(".")
+        if not host:
+            raise ValueError("ATS insecure HTTP hosts must not be empty")
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None:
+            if address.version != 4:
+                raise ValueError(
+                    f"ATS insecure HTTP host currently supports IPv4 or DNS names, not IPv6: {raw_host}"
+                )
+            normalized.add(str(address))
+            continue
+        if any(character in host for character in ("/", ":", "@", "[", "]", "?", "#", "*")):
+            raise ValueError(
+                f"ATS insecure HTTP host must be a host without scheme, port, path, or wildcard: {raw_host}"
+            )
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError as error:
+            raise ValueError(f"ATS insecure HTTP host is invalid: {raw_host}") from error
+        labels = host.split(".")
+        if len(host) > 253 or any(
+            not label
+            or len(label) > 63
+            or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label) is None
+            for label in labels
+        ):
+            raise ValueError(f"ATS insecure HTTP host is invalid: {raw_host}")
+        normalized.add(host)
+    return tuple(sorted(normalized))
+
+
+def render_info_plist(
+    *,
+    app_name: str,
+    bundle_id: str,
+    version: str,
+    icon_file: str,
+    insecure_http_hosts: Sequence[str] = (),
+) -> bytes:
+    ats_policy: dict[str, Any] = {
+        "NSAllowsLocalNetworking": True,
+    }
+    normalized_insecure_http_hosts = normalize_ats_insecure_http_hosts(
+        insecure_http_hosts
+    )
+    if normalized_insecure_http_hosts:
+        ats_policy["NSExceptionDomains"] = {
+            host: {
+                "NSExceptionAllowsInsecureHTTPLoads": True,
+            }
+            for host in normalized_insecure_http_hosts
+        }
     payload: dict[str, Any] = {
         "CFBundleDisplayName": app_name,
         "CFBundleExecutable": app_name,
@@ -165,7 +225,11 @@ def render_info_plist(*, app_name: str, bundle_id: str, version: str, icon_file:
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": version,
         "CFBundleVersion": version,
+        "NSAppTransportSecurity": ats_policy,
         "NSHighResolutionCapable": True,
+        "NSLocalNetworkUsageDescription": (
+            "Connect to remote AI providers that you configure on your local network or tailnet."
+        ),
     }
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=False)
 
@@ -700,6 +764,7 @@ def write_unsigned_macos_app_bundle(
     icon_source_path: str | Path | None = None,
     http_bind_host: str = "127.0.0.1",
     http_port: int = 12436,
+    insecure_http_hosts: Sequence[str] = (),
 ) -> dict[str, Any]:
     write_started_at = time.perf_counter()
     timings: dict[str, float] = {}
@@ -712,6 +777,9 @@ def write_unsigned_macos_app_bundle(
     normalized_swift_mlx_metallib_version = swift_mlx_metallib_version.strip()
     python_runtime = Path(python_runtime_root).expanduser().resolve()
     python_site_packages = Path(python_site_packages_path).expanduser().resolve()
+    normalized_insecure_http_hosts = normalize_ats_insecure_http_hosts(
+        insecure_http_hosts
+    )
     resolved_update_channel_path = (
         Path(update_channel_path).expanduser().resolve()
         if update_channel_path is not None
@@ -869,6 +937,9 @@ def write_unsigned_macos_app_bundle(
     target_metadata["http_bind_host"] = normalized_bind_host
     target_metadata["http_connect_host"] = resolved_connect_host
     target_metadata["http_port"] = http_port
+    target_metadata["ats_insecure_http_hosts"] = list(
+        normalized_insecure_http_hosts
+    )
     target_metadata["swift_mlx_metallib_path"] = "mlx.metallib"
     target_metadata["swift_mlx_metallib_version"] = normalized_swift_mlx_metallib_version
     target_metadata["health_probe_url"] = f"http://{format_http_url_host(resolved_connect_host)}:{http_port}/health"
@@ -884,6 +955,7 @@ def write_unsigned_macos_app_bundle(
             bundle_id=bundle_id,
             version=version,
             icon_file=layout.bundled_icon_path.name,
+            insecure_http_hosts=normalized_insecure_http_hosts,
         )
     )
     layout.launcher_script_path.write_text(
@@ -963,6 +1035,7 @@ def write_unsigned_macos_app_bundle(
         "http_port": http_port,
         "health_probe_url": str(target_metadata["health_probe_url"]),
         "service_base_url": str(target_metadata["service_base_url"]),
+        "ats_insecure_http_hosts": list(normalized_insecure_http_hosts),
         "slimming": slimming,
         "timings": timings,
     }

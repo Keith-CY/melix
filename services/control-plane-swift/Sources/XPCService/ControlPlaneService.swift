@@ -524,6 +524,11 @@ public actor ControlPlaneService {
             modelID: remoteTarget.modelID,
             messages: request.messages.map { .init(role: $0.role, content: $0.content) },
             stream: true,
+            enableThinking: request.enableThinking,
+            reasoningEffort: request.reasoningEffort,
+            temperature: request.temperature,
+            topP: request.topP,
+            maxTokens: request.maxTokens,
             timeoutSeconds: remoteTarget.timeoutSeconds
         )
         let remoteStream = try await remoteProviderClient.stream(remoteRequest)
@@ -540,10 +545,14 @@ public actor ControlPlaneService {
         AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> { continuation in
             let forwardTask = Task {
                 do {
+                    var reasoningFragments: [String] = []
                     for try await event in stream {
                         switch event {
                         case .tokenDelta(let text):
                             continuation.yield(.tokenDelta(text))
+                        case .reasoningDelta(let text):
+                            reasoningFragments.append(text)
+                            continuation.yield(.reasoningDelta(text))
                         case .usage(let promptTokens, let completionTokens):
                             continuation.yield(
                                 .usage(
@@ -561,7 +570,7 @@ public actor ControlPlaneService {
                                 .completed(
                                     finishReason: finishReason,
                                     assistantText: assistantText,
-                                    reasoningText: ""
+                                    reasoningText: reasoningFragments.joined()
                                 )
                             )
                         }

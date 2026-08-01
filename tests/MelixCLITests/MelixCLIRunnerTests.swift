@@ -5698,7 +5698,19 @@ struct MelixCLIRunnerTests {
         let toolModeUpdated = try #require(parseJSONObject(toolModeUpdateOutput))
         #expect(toolModeUpdated["tool_support_mode"] as? String == "force_off")
 
-        let testOutput = try await runner.run(.remoteServerTest(.init(remoteServerID: "kimi", remoteModelID: "kimi-2.6", json: true)))
+        let testOutput = try await runner.run(
+            .remoteServerTest(
+                .init(
+                    remoteServerID: "kimi",
+                    remoteModelID: "kimi-2.6",
+                    reasoningEffort: "none",
+                    maxTokens: 128,
+                    temperature: 0.2,
+                    topP: 0.9,
+                    json: true
+                )
+            )
+        )
         let testPayload = try #require(parseJSONObject(testOutput))
         let testRequest = try #require(await client.lastChatRequest)
         #expect(testPayload["remote_server_id"] as? String == "kimi")
@@ -5706,6 +5718,10 @@ struct MelixCLIRunnerTests {
         #expect(testPayload["ok"] as? Bool == true)
         #expect(testRequest.remoteTarget?.apiKey == "sk-new-secret-value")
         #expect(testRequest.messages == [.init(role: "user", content: "Reply with OK.")])
+        #expect(testRequest.reasoningEffort == "none")
+        #expect(testRequest.maxTokens == 128)
+        #expect(testRequest.temperature == 0.2)
+        #expect(testRequest.topP == 0.9)
 
         let plainTestOutput = try await runner.run(.remoteServerTest(.init(remoteServerID: "kimi", remoteModelID: "kimi-2.6")))
         #expect(plainTestOutput == "Remote server kimi responded with stop.\n")
@@ -5717,6 +5733,10 @@ struct MelixCLIRunnerTests {
                     remoteModelID: "",
                     message: "extract events",
                     systemPrompt: "Return JSON.",
+                    reasoningEffort: "none",
+                    maxTokens: 256,
+                    temperature: 0.3,
+                    topP: 0.8,
                     json: true
                 )
             )
@@ -5729,6 +5749,10 @@ struct MelixCLIRunnerTests {
         #expect(chatRequest.remoteTarget?.modelID == "kimi-2.6-chat")
         #expect(chatRequest.remoteTarget?.timeoutSeconds == 43)
         #expect(chatRequest.remoteTarget?.rateLimitPerMinute == 10)
+        #expect(chatRequest.reasoningEffort == "none")
+        #expect(chatRequest.maxTokens == 256)
+        #expect(chatRequest.temperature == 0.3)
+        #expect(chatRequest.topP == 0.8)
         #expect(chatRequest.messages == [
             .init(role: "system", content: "Return JSON."),
             .init(role: "user", content: "extract events"),

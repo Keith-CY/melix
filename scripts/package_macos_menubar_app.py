@@ -309,6 +309,16 @@ def main() -> int:
             ROOT / "apps/macos-menubar/Sources/AppMain/Resources/Branding/MelixAppIcon.icns"
         ),
     )
+    parser.add_argument(
+        "--allow-insecure-http-host",
+        action="append",
+        default=[],
+        metavar="HOST",
+        help=(
+            "Add an explicit App Transport Security exception for one HTTP host. "
+            "Pass a host without scheme, port, or path; repeat for multiple hosts."
+        ),
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -348,6 +358,7 @@ def main() -> int:
         packaging_target_id=args.packaging_target_id,
         update_channel_path=args.update_channel_path or None,
         icon_source_path=args.icon_source_path,
+        insecure_http_hosts=args.allow_insecure_http_host,
     )
     if args.archive_path:
         timings = _manifest_timings(manifest)

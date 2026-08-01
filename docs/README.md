@@ -76,6 +76,8 @@ These are the authoritative interface and architecture definitions. Do not move 
 |---|---|
 | [Open Issue Completion Wave](plans/2026-07-30-open-issue-completion-wave.md) | Ordered completion, review, verification, and merge contract for the open issue queue captured on 2026-07-30 |
 | [Backend Model Identity Enforcement](plans/2026-07-31-backend-model-identity-enforcement.md) | Backend-owned loaded identity, route generations, fail-closed inference guards, replay-safe recovery, diagnostics, and performance evidence for issue #2945 |
+| [Remote Provider Desktop Chat](plans/2026-07-31-remote-provider-desktop-chat.md) | Native Chat binding, readiness, credential safety, packaging policy, and real-App acceptance for local and remote Provider targets |
+| [Remote Provider Generation Control Parity](plans/2026-07-31-remote-provider-generation-control-parity.md) | Direct Remote Provider passthrough for reasoning, sampling, and token-limit controls across the control plane and CLI |
 | [Gemma 4 Cross-Surface Chat Routing Repair](plans/2026-07-18-gemma4-cross-surface-chat-routing.md) | Shared Gemma 4 text companion resolution and real CLI, HTTP, and macOS Chat acceptance |
 | [Runtime-Aware Export And Serving Verification Plan](plans/2026-06-21-runtime-aware-export-and-serving-verification.md) | M3 export target manifests, layout, retention, post-export smoke policy, diagnostics, waiver semantics, and serving evidence |
 | [Export Artifact Layout And Retention Policy](plans/2026-06-24-export-artifact-layout-retention.md) | Runtime export target layout, retention reports, cleanup dry-run/apply behavior, and byte-accounting metrics |
