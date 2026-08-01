@@ -236,6 +236,35 @@ def test_collect_probe_sources_stops_discovering_files_after_probe_slots_are_fil
         ]
 
 
+def test_scan_probe_source_file_skips_pending_rebuild_when_file_has_no_matches(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    noise_file = repo_root / "noise.md"
+    noise_file.write_text("no registered metric names here\n", encoding="utf-8")
+    pending_probe_names = ["gateway.accepted_api_key_count", "disconnect.resume_success_rate"]
+    scanned_relative_paths: set[str] = set()
+
+    class NoLookupProbeSources(dict[str, list[str]]):
+        def __getitem__(self, key: str) -> list[str]:  # pragma: no cover - failure path
+            raise AssertionError(f"no-match files should not rebuild pending probes: {key}")
+
+    closure_audit_module._scan_probe_source_file(
+        file_path=noise_file,
+        root=repo_root,
+        probe_sources=NoLookupProbeSources(),
+        pending_probe_names=pending_probe_names,
+        scanned_relative_paths=scanned_relative_paths,
+    )
+
+    assert pending_probe_names == [
+        "gateway.accepted_api_key_count",
+        "disconnect.resume_success_rate",
+    ]
+    assert scanned_relative_paths == {"noise.md"}
+
+
 def test_collect_probe_sources_stops_checking_saturated_probe_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
