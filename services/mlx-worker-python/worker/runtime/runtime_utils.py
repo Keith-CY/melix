@@ -175,7 +175,10 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
     path_separator = os.sep
     for raw_shard in weight_map.values():
         if type(raw_shard) is str:
-            shard_name = raw_shard.strip()
+            if raw_shard and not raw_shard[0].isspace() and not raw_shard[-1].isspace():
+                shard_name = raw_shard
+            else:
+                shard_name = raw_shard.strip()
         else:
             shard_name = str(raw_shard or "").strip()
         if not shard_name or shard_name in seen:

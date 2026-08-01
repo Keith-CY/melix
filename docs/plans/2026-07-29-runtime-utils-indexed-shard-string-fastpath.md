@@ -13,11 +13,13 @@ The affected path is covered by the registered PR-scoped performance probe `runt
 - `services/mlx-worker-python/tests/test_pr_scoped_performance.py`
 - `scripts/runtime_utils_top_level_weights_probe.py`
 
-The probe reports both top-level directory scanning metrics and indexed safetensors metrics. This slice uses `indexed_elapsed_ms_mean` and `indexed_peak_bytes_mean` as the primary metrics.
+The probe reports both top-level directory scanning metrics and indexed safetensors metrics. This follow-up slice uses `indexed_elapsed_ms_mean` and `indexed_peak_bytes_mean` as the primary metrics.
 
 ## Optimization slice
 
-Safetensors index `weight_map` shard values are relative paths in the common generated-index case. `_indexed_safetensors_shard_bytes(...)` now checks the first character against `os.sep` before constructing an absolute `Path`, avoiding the per-shard `os.path.isabs(...)` call on the hot relative-shard loop. Existing string coercion, whitespace trimming, duplicate suppression, relative joins, and absolute POSIX path handling remain unchanged.
+Safetensors index `weight_map` shard values are relative paths in the common generated-index case. `_indexed_safetensors_shard_bytes(...)` now checks the first character against `os.sep` before constructing an absolute `Path`, avoiding the per-shard `os.path.isabs(...)` call on the hot relative-shard loop. Existing string coercion, duplicate suppression, relative joins, and absolute POSIX path handling remain unchanged.
+
+This follow-up keeps the same whitespace semantics but skips `str.strip()` for already-clean string shard names by checking the first and last character before the legacy strip fallback. Generated safetensors indexes use clean relative shard names, while existing tests continue to cover whitespace-padded legacy shard names and non-string coercion.
 
 ## Verification plan
 
