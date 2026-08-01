@@ -1915,11 +1915,14 @@ def test_verify_archived_macos_app_bundle_rejects_unstable_designated_requiremen
 
 
 def test_verify_archived_macos_app_bundle_requires_complete_signing_expectations(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = load_package_macos_app_module()
     archive_path = tmp_path / "Melix.zip"
     archive_path.write_bytes(b"zip")
+
+    monkeypatch.setattr(module.shutil, "which", lambda name: None)
 
     with pytest.raises(ValueError, match="must be provided together"):
         module.verify_archived_macos_app_bundle(

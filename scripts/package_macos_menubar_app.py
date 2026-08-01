@@ -350,9 +350,6 @@ def verify_archived_macos_app_bundle(
     if normalized_app_name != expected_app_name or not normalized_app_name.endswith(".app"):
         raise ValueError(f"Expected archived app name must be a single .app name: {expected_app_name}")
 
-    codesign = shutil.which("codesign")
-    if codesign is None:
-        raise RuntimeError("codesign is required to verify an archived macOS app bundle")
     identity_expectations = (
         expected_signing_certificate_sha256,
         expected_signing_certificate_sha1,
@@ -383,6 +380,10 @@ def verify_archived_macos_app_bundle(
     )
     if expected_signing_authority is not None and not normalized_expected_authority:
         raise ValueError("Expected code-signing authority must not be empty")
+
+    codesign = shutil.which("codesign")
+    if codesign is None:
+        raise RuntimeError("codesign is required to verify an archived macOS app bundle")
 
     environment = dict(os.environ)
     environment["COPYFILE_DISABLE"] = "1"
