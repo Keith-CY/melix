@@ -26,3 +26,18 @@ Primary metric for this slice: `elapsed_ms_mean` from the no-usage generate loop
 ## Verification Notes
 
 Local Linux verification is sufficient for this Python slice. No Swift runtime effect is claimed.
+
+## 2026-08-01 Allowed-Tools Empty Source-ID Slice
+
+This follow-up Python-only slice stays within `EngineCore._allowed_tools_receipt_json()`.
+When `melix.mcp.source_ids` is absent or whitespace-only but other tool receipt
+metadata forces receipt materialization, normalize the source-id text once and
+skip the comma split entirely for the empty case. Behavior remains unchanged:
+declared source IDs are still trimmed, empty segments are ignored, and omitted
+source IDs still emit an empty `tool_source_ids` array.
+
+The affected file is already covered by the registered PR-scoped performance
+probe `engine-generate-usage-token-elision`, including focused `test_command`,
+`coverage_command`, and `probe_command` entries. Local Linux verification uses
+the registered focused tests, changed-scope coverage, the registered probe, and
+a direct microprobe for the empty-source-id receipt path.
