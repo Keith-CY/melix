@@ -4931,7 +4931,7 @@ def test_text_family_config_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["config_copy_calls_mean"] == 0.0
     assert metrics["config_key_accesses_mean"] > 0.0
-    assert metrics["iterations"] == 10_000
+    assert metrics["iterations"] == 50_000
 
 
 def test_registered_probes_expose_focused_commands() -> None:

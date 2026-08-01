@@ -477,10 +477,15 @@ def test_resolve_text_family_config_skips_expert_metadata_strip_for_missing_valu
 
 
 def test_inferred_expert_count_preserves_config_before_family_default() -> None:
+    class NoStripExact(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("exact string expert counts should parse without strip allocation")
+
     assert _inferred_expert_count({"num_experts": 4}, default=128) == 4
     assert _inferred_expert_count({"num_local_experts": 8.0}, default=128) == 8
-    assert _inferred_expert_count({"num_local_experts": "12"}, default=128) == 12
+    assert _inferred_expert_count({"num_local_experts": NoStripExact("12")}, default=128) == 12
     assert _inferred_expert_count({"num_local_experts": "bogus", "num_experts": 4}, default=128) == 4
+    assert _inferred_expert_count({"num_local_experts": " ", "num_experts": "4"}, default=128) == 4
     assert _inferred_expert_count({}, default=128) == 128
 
 
