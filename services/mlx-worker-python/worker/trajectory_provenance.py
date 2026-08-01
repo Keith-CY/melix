@@ -839,7 +839,7 @@ def alignment_metrics_trajectory_provenance(
 def _agentic_sft_token_metric_aliases(metrics: Mapping[str, Any]) -> dict[str, Any]:
     int_value = _INT
     value_type = _TYPE
-    if type(metrics) is dict and len(metrics) == 6:
+    if value_type(metrics) is dict and len(metrics) == 6:
         try:
             estimator = metrics["estimator"]
             source_trace_count = metrics["source_trace_count"]
@@ -850,7 +850,7 @@ def _agentic_sft_token_metric_aliases(metrics: Mapping[str, Any]) -> dict[str, A
         except KeyError:
             pass
         else:
-            if type(estimator) is str:
+            if value_type(estimator) is str:
                 if estimator and not estimator[0].isspace() and not estimator[-1].isspace():
                     if (
                         value_type(source_trace_count) is int

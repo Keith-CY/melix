@@ -1219,6 +1219,34 @@ def test_adapter_manifest_trajectory_provenance_emits_ordered_token_metric_alias
     assert payload["training.agentic_sft.source_trace_count"] == 64
 
 
+def test_agentic_sft_token_metric_aliases_reuses_module_type_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    def tracking_type(value: object) -> type[object]:
+        calls.append(value)
+        return type(value)
+
+    monkeypatch.setattr(trajectory_provenance_module, "_TYPE", tracking_type)
+
+    payload = trajectory_provenance_module._agentic_sft_token_metric_aliases(
+        {
+            "estimator": "fixture-tokenizer",
+            "source_trace_count": 64,
+            "trace_tokens": 2368,
+            "tool_call_tokens": 704,
+            "observation_tokens": 832,
+            "final_answer_tokens": 320,
+        }
+    )
+
+    assert payload["training.agentic_sft.token_estimator"] == "fixture-tokenizer"
+    assert payload["training.agentic_sft.trace_tokens"] == 2368
+    assert any(isinstance(value, dict) for value in calls)
+    assert "fixture-tokenizer" in calls
+
+
 def test_adapter_manifest_trajectory_provenance_fast_paths_clean_exact_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
