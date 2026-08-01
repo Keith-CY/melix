@@ -344,7 +344,22 @@ public struct OpenAICompatibleRemoteProviderClient: RemoteProviderChatClient {
                 continue
             }
             let object = try parseJSONObject(payloadData)
-            let choice = try firstChoice(from: object)
+            guard let choices = object["choices"] as? [[String: Any]] else {
+                throw RemoteProviderError.invalidResponse("remote provider response did not include choices")
+            }
+            let usage = object["usage"] as? [String: Any]
+            guard let choice = choices.first else {
+                guard let usage else {
+                    throw RemoteProviderError.invalidResponse("remote provider response did not include choices")
+                }
+                events.append(
+                    .usage(
+                        promptTokens: uint32Value(usage["prompt_tokens"]),
+                        completionTokens: uint32Value(usage["completion_tokens"])
+                    )
+                )
+                continue
+            }
             if let delta = choice["delta"] as? [String: Any] {
                 if let reasoningContent = delta["reasoning_content"] as? String,
                    reasoningContent.isEmpty == false
@@ -358,7 +373,7 @@ public struct OpenAICompatibleRemoteProviderClient: RemoteProviderChatClient {
                     events.append(.tokenDelta(content))
                 }
             }
-            if let usage = object["usage"] as? [String: Any] {
+            if let usage {
                 events.append(
                     .usage(
                         promptTokens: uint32Value(usage["prompt_tokens"]),

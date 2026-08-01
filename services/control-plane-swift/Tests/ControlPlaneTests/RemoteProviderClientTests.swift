@@ -767,6 +767,81 @@ struct RemoteProviderClientTests {
         #expect(await transport.lastBodyString?.contains(#""stream":true"#) == true)
     }
 
+    @Test("parses OpenAI compatible usage-only terminal SSE chunk")
+    func parsesOpenAICompatibleUsageOnlyTerminalSSEChunk() async throws {
+        let body = """
+        data: {"choices":[{"delta":{"content":"remote answer"},"finish_reason":null}]}
+
+        data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+        data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}
+
+        data: [DONE]
+
+        """
+        let transport = RecordingRemoteProviderTransport(response: .init(
+            statusCode: 200,
+            headers: ["content-type": "text/event-stream"],
+            body: Data(body.utf8)
+        ))
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "usage-only-terminal",
+                providerKind: "openai-compatible",
+                baseURL: "https://usage-only.example/v1",
+                apiKey: "sk-secret",
+                modelID: "reasoning-model",
+                messages: [.init(role: "user", content: "hello")],
+                stream: true
+            )
+        )
+        var events: [RemoteProviderChatStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        #expect(events == [
+            .tokenDelta("remote answer"),
+            .usage(promptTokens: 7, completionTokens: 3),
+            .completed(finishReason: "stop", assistantText: "remote answer"),
+        ])
+    }
+
+    @Test("rejects OpenAI compatible SSE chunk without choices or usage")
+    func rejectsOpenAICompatibleSSEChunkWithoutChoicesOrUsage() async throws {
+        for malformedEvent in [#"{}"#, #"{"choices":[]}"#] {
+            let body = """
+            data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}
+
+            data: \(malformedEvent)
+
+            data: [DONE]
+
+            """
+            let client = OpenAICompatibleRemoteProviderClient(transport: RecordingRemoteProviderTransport(response: .init(
+                statusCode: 200,
+                headers: ["content-type": "text/event-stream"],
+                body: Data(body.utf8)
+            )))
+
+            await #expect(throws: RemoteProviderError.invalidResponse("remote provider response did not include choices")) {
+                _ = try await client.stream(
+                    RemoteProviderChatRequest(
+                        serverID: "malformed-stream",
+                        providerKind: "openai-compatible",
+                        baseURL: "https://malformed.example/v1",
+                        apiKey: "sk-secret",
+                        modelID: "model",
+                        messages: [.init(role: "user", content: "hello")],
+                        stream: true
+                    )
+                )
+            }
+        }
+    }
+
     @Test("parses OpenAI compatible SSE reasoning separately from assistant text")
     func parsesOpenAICompatibleSSEReasoningSeparatelyFromAssistantText() async throws {
         let body = """
