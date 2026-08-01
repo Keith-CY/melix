@@ -15,6 +15,7 @@ _OS_FSPATH = os.fspath
 _STR = str
 _INT = int
 _TYPE = type
+_PATH_TYPE = type(Path())
 
 
 def _strip_manifest_text(value: Any) -> str:
@@ -539,6 +540,8 @@ def load_trajectory_provenance_from_snapshot_manifest(
     extract_provenance = _trajectory_provenance_from_snapshot_manifest
     if type(manifest_path) is str:
         manifest_path_text = manifest_path
+    elif type(manifest_path) is _PATH_TYPE:
+        manifest_path_text = _STR(manifest_path)
     else:
         manifest_path_text = _OS_FSPATH(manifest_path)
     with open_file(manifest_path_text, "rb") as manifest_file:
