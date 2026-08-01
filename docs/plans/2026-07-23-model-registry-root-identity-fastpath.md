@@ -25,3 +25,13 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_registry/catalog.py services/mlx-worker-python/tests/test_model_registry_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/model_registry_plain_child_path_probe.py
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/model_registry_plain_child_path_probe.py
 ```
+
+## 2026-08-01 follow-up: current name local binding
+
+This scheduled slice keeps the same registered probe and narrows to the scanner's
+per-directory prune checks. `_scan_registry_root_tree_with_hf_repos()` now binds
+`current.name` once after popping a directory from the traversal stack and reuses
+that value for both the generic prune set and Hugging Face cache subtree check.
+This preserves traversal order, HF cache detection, manifest discovery, and
+plain-local scan semantics while avoiding a second `Path.name` property lookup
+for every visited directory.
