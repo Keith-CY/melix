@@ -90,8 +90,9 @@ public key and two certificate pins in environment variables, and put the three
 private values only in environment secrets. Do not print private material or place it in a
 repository file, workflow artifact, issue, pull request, or log. The workflow
 passes the masked PKCS#12 password only to `security import`, reads the EdDSA
-private key only from standard input, and removes administrator trust plus the
-temporary keychain, PKCS#12, PEM, and sentinel before publishing any artifact.
+private key only from standard input, never changes Apple certificate trust,
+and removes the temporary keychain, PKCS#12, PEM, and sentinel before publishing
+any artifact.
 
 Production activation is blocked until GitHub itself is configured outside
 this repository:
@@ -129,9 +130,10 @@ For a tag push, `.github/workflows/package-self-contained-app.yml`:
    match the independently provisioned SHA-256 and SHA-1 pins, exact common
    name, self-signed subject/issuer, code-signing EKU, and private key;
 6. only on a GitHub-hosted macOS runner, it saves the exact user keychain search
-   list, creates an ephemeral keychain, adds code-signing-only administrator
-   trust with passwordless `sudo`, and proves a real hardened-runtime sentinel
-   signature;
+   list, creates an ephemeral keychain, imports the independently pinned
+   PKCS#12, configures its partition list, and proves private-key access with a
+   hardened-runtime sentinel signed through an explicit `--keychain`; it never
+   calls `sudo` or changes user, administrator, or system certificate trust;
 7. it requires and rewrites both App version keys plus the manifest product
    version to the receipt-bound tag version while converting the candidate into
    the stable bundle, then embeds feed, public key, certificate pins, candidate
@@ -149,9 +151,9 @@ For a tag push, `.github/workflows/package-self-contained-app.yml`:
     Sparkle version attributes to equal the receipt-bound version and its
     minimum system version to be exactly `15.0`, and verifies both appcast and
     archive signatures;
-11. an unconditional cleanup removes administrator trust, restores the exact
-    original search list, deletes the ephemeral keychain, PKCS#12, PEM, and
-    sentinel, and writes a cleanup receipt; and
+11. an unconditional cleanup restores the exact original search list, deletes
+    the ephemeral keychain, PKCS#12, PEM, and sentinel, proves Apple trust was
+    never mutated, and writes a cleanup receipt; and
 12. only `cleanup_confirmed=true` permits a fresh force-fetch of all tags and a
     final monotonic tag validation immediately before upload; and
 13. the workflow explicitly marks the release latest, reads GitHub's latest tag
@@ -232,10 +234,12 @@ xcrun swift test --package-path apps/macos-menubar \
 The full repository verification and release gates remain required by
 `AGENTS.md` and `docs/runbooks/phase-8-release-gates.md`.
 
-The trust unit tests are pure/mocked and are safe locally. Never run
+The identity lifecycle unit tests are pure/mocked and are safe locally. Never run
 `macos_self_signed_identity.py prepare` on a developer Mac; the entrypoint also
 rejects anything other than a GitHub-hosted macOS runner. The pull-request
-`self-signed-trust-smoke` job is the sole real add-trust/sentinel/cleanup test.
+`self-signed-keychain-smoke` job is the sole real keychain import, explicit-keychain
+sentinel, search-list restoration, and material-cleanup test. Neither that job nor
+the protected release job changes Apple certificate trust.
 
 On the 64 GiB Mac used for this implementation, the versioned pre-commit hook
 must be invoked normally and is expected to print its policy skip because full

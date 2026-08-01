@@ -78,7 +78,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
 
 jobs:
-  self-signed-trust-smoke:
+  self-signed-keychain-smoke:
     if: github.event_name == 'pull_request'
     runs-on: macos-15
 
@@ -128,7 +128,7 @@ jobs:
           } >> "$GITHUB_ENV"
           rm -f "$config" "$RUNNER_TEMP/melix-test.key" "$RUNNER_TEMP/melix-test.pem" "$RUNNER_TEMP/melix-test.p12"
 
-      - name: Exercise real trust import and hardened-runtime signing
+      - name: Exercise isolated keychain import and hardened-runtime signing
         run: |
           set -euo pipefail
           python3 scripts/macos_self_signed_identity.py prepare \
@@ -143,7 +143,7 @@ jobs:
             --state "$RUNNER_TEMP/melix-smoke-signing-state.json" \
             --cleanup-report "$RUNNER_TEMP/melix-smoke-signing-cleanup.json"
 
-      - name: Prove disposable trust and material cleanup
+      - name: Prove keychain restoration and material cleanup
         if: always()
         run: |
           set -euo pipefail
@@ -711,7 +711,7 @@ jobs:
       - name: Resolve pinned Sparkle release tools
         run: swift package resolve --package-path apps/macos-menubar
 
-      - name: Prepare pinned self-signed release identity
+      - name: Prepare pinned release identity in isolated keychain
         id: release-identity
         env:
           SIGNING_CERTIFICATE_P12: ${{ secrets.MELIX_SIGNING_CERTIFICATE_P12 }}
@@ -799,7 +799,7 @@ jobs:
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_bin/sign_update" \
             --ed-key-file - --verify "$release_directory/$archive_name" "$archive_signature"
 
-      - name: Remove trust and all ephemeral signing material
+      - name: Restore keychain search list and remove signing material
         id: release-cleanup
         if: always()
         run: |

@@ -158,9 +158,10 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
   tag and candidate revalidation, and fails closed unless the EdDSA public
   variable, independent certificate SHA-256/SHA-1 variables, EdDSA private
   secret, self-signed PKCS#12 secret, and PKCS#12 password secret are available
-- permits publication only after GitHub-hosted administrator trust is removed,
-  the original keychain search list is restored, and the ephemeral keychain,
-  PKCS#12, PEM, and sentinel are confirmed absent
+- never calls `sudo` or mutates user, administrator, or system certificate
+  trust; the self-signed identity remains confined to an ephemeral keychain
+- permits publication only after the original keychain search list is restored
+  and the ephemeral keychain, PKCS#12, PEM, and sentinel are confirmed absent
 
 See [GitHub Release App Updates](github-release-app-updates.md) for the trust boundary,
 credential interface, bootstrap sequence, release acceptance, and recovery procedure.

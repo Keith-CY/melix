@@ -2,9 +2,10 @@
 """Prepare and clean up a pinned self-signed macOS code-signing identity.
 
 This entrypoint is intended for an ephemeral GitHub-hosted macOS runner. It
-mutates administrator code-signing trust only during ``prepare`` and records
-enough state for ``cleanup`` to restore the original keychain search list and
-prove that every temporary artifact was removed.
+imports the identity into a disposable user keychain without mutating Apple
+trust settings, and records enough state for ``cleanup`` to restore the exact
+original keychain search list and prove that every temporary artifact was
+removed.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from typing import Any, Mapping, Sequence
 
 
 DEFAULT_COMMON_NAME = "Melix GitHub Release Signing"
+STATE_SCHEMA_VERSION = 2
 _SHA1_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -38,7 +40,7 @@ def require_github_hosted_macos_runner(
         or values.get("RUNNER_ENVIRONMENT") != "github-hosted"
     ):
         raise RuntimeError(
-            "self-signed code-signing trust may only be prepared on a GitHub-hosted macOS runner"
+            "the isolated release signing keychain may only be prepared on a GitHub-hosted macOS runner"
         )
 
 
@@ -61,6 +63,15 @@ def parse_security_keychain_list(output: str) -> list[str]:
     if any(not value for value in values):
         raise ValueError("security returned an empty keychain path")
     return values
+
+
+def parse_security_certificate_sha1s(output: str) -> list[str]:
+    fingerprints: list[str] = []
+    for raw_line in output.splitlines():
+        label, separator, value = raw_line.partition(":")
+        if separator and label.strip() == "SHA-1 hash":
+            fingerprints.append(normalize_fingerprint(value, algorithm="sha1"))
+    return fingerprints
 
 
 def parse_rfc2253_name(output: str, *, prefix: str) -> str:
@@ -159,7 +170,7 @@ def inspect_and_pin_certificate(
     expected_sha1: str,
     expected_common_name: str = DEFAULT_COMMON_NAME,
 ) -> dict[str, str]:
-    """Validate independent pins and private-key ownership before adding trust."""
+    """Validate independent pins and private-key ownership before keychain import."""
 
     if not p12_path.is_file():
         raise FileNotFoundError(f"PKCS#12 identity is missing: {p12_path}")
@@ -313,8 +324,9 @@ def prepare_identity(
 
     original_keychains = _current_keychains()
     state: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": STATE_SCHEMA_VERSION,
         "status": "validating",
+        "apple_trust_mutated": False,
         "original_keychains": original_keychains,
         "keychain_path": os.fspath(keychain_path),
         "public_certificate_path": os.fspath(public_certificate_path),
@@ -323,10 +335,11 @@ def prepare_identity(
         "cleanup_report_path": os.fspath(cleanup_report_path),
         "keychain_created": False,
         "keychain_create_attempted": False,
+        "identity_imported": False,
+        "partition_list_configured": False,
         "search_list_changed": False,
         "search_list_change_attempted": False,
-        "trust_added": False,
-        "trust_add_attempted": False,
+        "sentinel_verified": False,
         "material_paths": [
             os.fspath(p12_path),
             os.fspath(public_certificate_path),
@@ -378,6 +391,7 @@ def prepare_identity(
                 "/usr/bin/codesign",
             ]
         )
+        _update_state(state_path, state, status="identity_imported", identity_imported=True)
         _run(
             [
                 "security",
@@ -390,6 +404,7 @@ def prepare_identity(
                 os.fspath(keychain_path),
             ]
         )
+        _update_state(state_path, state, partition_list_configured=True)
         _update_state(state_path, state, search_list_change_attempted=True)
         _run(
             [
@@ -404,37 +419,22 @@ def prepare_identity(
         )
         _update_state(state_path, state, search_list_changed=True)
 
-        _update_state(state_path, state, trust_add_attempted=True)
-        _run(
+        certificate_listing = _output(
             [
-                "sudo",
-                "-n",
                 "security",
-                "add-trusted-cert",
-                "-d",
-                "-r",
-                "trustRoot",
-                "-p",
-                "codeSign",
-                "-k",
+                "find-certificate",
+                "-a",
+                "-Z",
+                "-c",
+                expected_common_name,
                 os.fspath(keychain_path),
-                os.fspath(public_certificate_path),
             ]
         )
-        _update_state(state_path, state, trust_added=True)
-
-        identity_listing = _output(
-            ["security", "find-identity", "-v", "-p", "codesigning", os.fspath(keychain_path)]
-        )
-        expected_identity_line = (
-            f'{observations["certificate_sha1"].upper()} "{expected_common_name}"'
-        )
-        if (
-            identity_listing.count(expected_identity_line) != 1
-            or "1 valid identities found" not in identity_listing
-        ):
+        if parse_security_certificate_sha1s(certificate_listing) != [
+            observations["certificate_sha1"]
+        ]:
             raise RuntimeError(
-                "pinned release identity is not the unique valid code-signing identity"
+                "pinned release certificate is not unique in the isolated keychain"
             )
 
         shutil.copy2("/usr/bin/true", sentinel_path)
@@ -479,49 +479,38 @@ def prepare_identity(
 def cleanup_identity(*, state_path: Path, report_path: Path) -> dict[str, Any]:
     errors: list[str] = []
     if not state_path.is_file():
-        report = {"schema_version": 1, "cleanup_confirmed": False, "errors": ["state file missing"]}
+        report = {
+            "schema_version": STATE_SCHEMA_VERSION,
+            "cleanup_confirmed": False,
+            "apple_trust_mutated": False,
+            "errors": ["state file missing"],
+        }
         _write_json(report_path, report)
         return report
     state = _read_json(state_path)
-    certificate_path = Path(str(state["public_certificate_path"]))
     keychain_path = Path(str(state["keychain_path"]))
     original_keychains = [str(path) for path in state.get("original_keychains", [])]
-
-    if state.get("trust_added") or state.get("trust_add_attempted"):
-        _run(
-            [
-                "sudo",
-                "-n",
-                "security",
-                "remove-trusted-cert",
-                "-d",
-                os.fspath(certificate_path),
-            ],
-            check=False,
-        )
-        if certificate_path.is_file():
-            trust_probe = _run(
-                ["security", "verify-cert", "-c", os.fspath(certificate_path), "-p", "codeSign"],
-                check=False,
-            )
-            if trust_probe.returncode == 0:
-                errors.append("temporary certificate remains trusted for code signing")
-        else:
-            errors.append(
-                "temporary certificate is missing; code-signing trust removal is unprovable"
-            )
+    apple_trust_unchanged = state.get("apple_trust_mutated") is False
+    if state.get("schema_version") != STATE_SCHEMA_VERSION:
+        errors.append("identity lifecycle state schema is unsupported")
+    if not apple_trust_unchanged:
+        errors.append("identity lifecycle state does not prove Apple trust remained unchanged")
 
     if state.get("search_list_changed") or state.get("search_list_change_attempted"):
-        _run(
+        restore = _run(
             ["security", "list-keychains", "-d", "user", "-s", *original_keychains],
             check=False,
         )
+        if restore.returncode != 0:
+            errors.append("keychain search list restoration command failed")
 
     if state.get("keychain_created") or state.get("keychain_create_attempted"):
         _run(["security", "delete-keychain", os.fspath(keychain_path)], check=False)
 
+    original_keychains_restored = False
     try:
-        if _current_keychains() != original_keychains:
+        original_keychains_restored = _current_keychains() == original_keychains
+        if not original_keychains_restored:
             errors.append("keychain search list does not match its original value")
     except Exception as error:  # pragma: no cover - defensive cleanup reporting
         errors.append(f"keychain search list verification failed: {error}")
@@ -532,18 +521,23 @@ def cleanup_identity(*, state_path: Path, report_path: Path) -> dict[str, Any]:
             material_path.unlink(missing_ok=True)
         except OSError as error:
             errors.append(f"temporary material removal failed for {material_path}: {error}")
-    if keychain_path.exists():
+    ephemeral_keychain_removed = not keychain_path.exists()
+    if not ephemeral_keychain_removed:
         errors.append("temporary keychain remains on disk")
     residual_material = [os.fspath(path) for path in material_paths if path.exists()]
+    temporary_material_removed = not residual_material
     if residual_material:
         errors.append(f"temporary identity material remains: {residual_material}")
 
     report = {
-        "schema_version": 1,
+        "schema_version": STATE_SCHEMA_VERSION,
         "cleanup_confirmed": not errors,
+        "apple_trust_mutated": not apple_trust_unchanged,
         "certificate_sha256": state.get("certificate_sha256"),
         "certificate_sha1": state.get("certificate_sha1"),
-        "original_keychains_restored": not errors,
+        "original_keychains_restored": original_keychains_restored,
+        "ephemeral_keychain_removed": ephemeral_keychain_removed,
+        "temporary_material_removed": temporary_material_removed,
         "errors": errors,
     }
     _write_json(report_path, report)

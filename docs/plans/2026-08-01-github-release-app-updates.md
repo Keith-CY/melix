@@ -135,12 +135,14 @@ The interactive UI walkthrough is therefore not required for this slice.
   files, pull-request text, logs, workflow summaries, or test fixtures. Only
   the EdDSA public key and code-signing certificate fingerprint may be stored or
   displayed.
-- Administrator code-signing trust exists only on a GitHub-hosted macOS runner.
-  Preparation saves the exact user keychain search list, validates independent
-  certificate pins, adds code-signing-only trust with passwordless `sudo`, and
-  proves a real hardened-runtime sentinel signature. Cleanup removes trust,
-  restores the exact search list, deletes keychain, PKCS#12, PEM, and sentinel,
-  and must be confirmed before release assets can be published.
+- The release workflow never calls `sudo` or adds the self-signed certificate
+  to user, administrator, or system trust. On a GitHub-hosted macOS runner,
+  preparation saves the exact user keychain search list, validates independent
+  certificate pins, imports the PKCS#12 into an ephemeral keychain, configures
+  its partition list, and proves private-key access with an explicit-keychain
+  hardened-runtime sentinel signature. Cleanup restores the exact search list,
+  deletes the keychain, PKCS#12, PEM, and sentinel, and must be confirmed before
+  release assets can be published.
 - Repository code cannot create the `github-release` environment, its required
   reviewers, deployment tag policy, protected variables/secrets, protected
   `main`, or immutable release-tag rules. Those external GitHub controls are
@@ -210,8 +212,9 @@ The interactive UI walkthrough is therefore not required for this slice.
 - [x] Keep installable archive summaries unreachable from tag runs and label
       the exact tag candidate artifact as protected-finalizer input that must
       not be installed or distributed.
-- [x] Add GitHub-hosted-only self-signed trust lifecycle and real sentinel
-      smoke coverage with cleanup-confirmed publication ordering.
+- [x] Add a GitHub-hosted-only ephemeral-keychain lifecycle with no Apple trust
+      mutation, plus real sentinel smoke coverage and cleanup-confirmed
+      publication ordering.
 - [x] Add the update runbook and update the packaging target contract.
 - [x] Regenerate focused tests, changed-scope coverage, all seven selected
       packaging performance probes, packaging smoke, and the cached full

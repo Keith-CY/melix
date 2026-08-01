@@ -892,6 +892,11 @@ def test_package_workflow_prepares_and_cleans_identity_only_in_protected_job() -
     assert "vars.MELIX_SIGNING_CERTIFICATE_SHA1" in protected_job
     assert "macos_self_signed_identity.py prepare" in protected_job
     assert "macos_self_signed_identity.py cleanup" in protected_job
+    assert "Prepare pinned release identity in isolated keychain" in protected_job
+    assert "Restore keychain search list and remove signing material" in protected_job
+    assert "sudo" not in protected_job
+    assert "add-trusted-cert" not in protected_job
+    assert "remove-trusted-cert" not in protected_job
     assert "cleanup_confirmed=true" in protected_job
     assert protected_job.index("cleanup_confirmed=true") < protected_job.index("softprops/action-gh-release")
     package_job = find_workflow_job(workflow, "package-app")
@@ -899,15 +904,20 @@ def test_package_workflow_prepares_and_cleans_identity_only_in_protected_job() -
     assert "vars." not in package_job
 
 
-def test_package_workflow_exercises_real_trust_only_on_github_hosted_pull_request() -> None:
+def test_package_workflow_exercises_isolated_keychain_without_apple_trust() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    smoke_job = find_workflow_job(workflow, "self-signed-trust-smoke")
+    smoke_job = find_workflow_job(workflow, "self-signed-keychain-smoke")
     assert "if: github.event_name == 'pull_request'" in smoke_job
     assert "runs-on: macos-15" in smoke_job
+    assert "Exercise isolated keychain import and hardened-runtime signing" in smoke_job
+    assert "Prove keychain restoration and material cleanup" in smoke_job
     assert "macos_self_signed_identity.py prepare" in smoke_job
     assert "macos_self_signed_identity.py cleanup" in smoke_job
     assert "cleanup_confirmed" in smoke_job
+    assert "sudo" not in smoke_job
+    assert "add-trusted-cert" not in workflow
+    assert "remove-trusted-cert" not in workflow
 
 
 def test_protected_release_requires_source_minimum_system_version_in_appcast() -> None:

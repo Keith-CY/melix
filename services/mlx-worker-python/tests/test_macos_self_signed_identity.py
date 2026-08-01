@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import importlib.util
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -147,6 +146,16 @@ def test_parse_security_keychain_list_preserves_exact_order_and_spaces() -> None
         "/Users/runner/Library/Keychains/login.keychain-db",
         "/private/tmp/a release.keychain-db",
     ]
+
+
+def test_parse_security_certificate_sha1s_requires_valid_hashes() -> None:
+    module = load_module()
+
+    assert module.parse_security_certificate_sha1s(
+        f"SHA-256 hash: {'ab' * 32}\nSHA-1 hash: {'01' * 20}\n"
+    ) == ["01" * 20]
+    with pytest.raises(ValueError, match="certificate"):
+        module.parse_security_certificate_sha1s("SHA-1 hash: invalid\n")
 
 
 def test_rfc2253_certificate_identity_requires_exact_common_name() -> None:
@@ -309,17 +318,19 @@ def test_cleanup_fails_closed_when_state_is_missing(tmp_path: Path) -> None:
     )
 
     assert report["cleanup_confirmed"] is False
+    assert report["schema_version"] == module.STATE_SCHEMA_VERSION
+    assert report["apple_trust_mutated"] is False
     assert report_path.is_file()
 
 
-def test_prepare_trust_rejects_non_github_hosted_runner() -> None:
+def test_prepare_identity_rejects_non_github_hosted_runner() -> None:
     module = load_module()
 
     with pytest.raises(RuntimeError, match="GitHub-hosted macOS runner"):
         module.require_github_hosted_macos_runner({})
 
 
-def test_prepare_accepts_base64_p12_and_partial_trust_attempt_is_cleaned(
+def test_prepare_accepts_base64_p12_without_apple_trust_and_cleans_material(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = load_module()
@@ -366,15 +377,10 @@ def test_prepare_accepts_base64_p12_and_partial_trust_attempt_is_cleaned(
             stdout = b"keychain-password\n"
         elif command[:3] == ["security", "create-keychain", "-p"]:
             keychain_path.write_bytes(b"keychain")
-        elif command[:2] == ["security", "find-identity"]:
-            stdout = (
-                f'  1) {sha1.upper()} "{module.DEFAULT_COMMON_NAME}"\n'
-                "     1 valid identities found\n"
-            ).encode()
+        elif command[:2] == ["security", "find-certificate"]:
+            stdout = f"SHA-1 hash: {sha1.upper()}\n".encode()
         elif command[:2] == ["codesign", "--display"]:
             stderr = b"flags=0x10000(runtime)\n"
-        elif command[:2] == ["security", "verify-cert"]:
-            returncode = 1
         elif command[:2] == ["security", "delete-keychain"]:
             keychain_path.unlink(missing_ok=True)
         return subprocess.CompletedProcess(command, returncode, stdout, stderr)
@@ -398,19 +404,133 @@ def test_prepare_accepts_base64_p12_and_partial_trust_attempt_is_cleaned(
     )
 
     assert state["status"] == "prepared"
+    assert state["schema_version"] == module.STATE_SCHEMA_VERSION
+    assert state["apple_trust_mutated"] is False
+    assert state["identity_imported"] is True
+    assert state["partition_list_configured"] is True
+    assert state["sentinel_verified"] is True
     assert p12_path.read_bytes() == b"test-p12"
     assert f"certificate_sha1={sha1}" in github_output_path.read_text(encoding="utf-8")
-    persisted_state = json.loads(state_path.read_text(encoding="utf-8"))
-    persisted_state["trust_added"] = False
-    state_path.write_text(json.dumps(persisted_state), encoding="utf-8")
 
     report = module.cleanup_identity(state_path=state_path, report_path=report_path)
 
     assert report["cleanup_confirmed"] is True
-    assert any(
-        command[:4] == ["sudo", "-n", "security", "remove-trusted-cert"]
+    assert report["apple_trust_mutated"] is False
+    assert report["original_keychains_restored"] is True
+    assert report["ephemeral_keychain_removed"] is True
+    assert report["temporary_material_removed"] is True
+    assert not any("sudo" in command for command in commands)
+    assert not any(
+        argument in {"add-trusted-cert", "remove-trusted-cert"}
         for command in commands
+        for argument in command
     )
+    sentinel_sign = next(
+        command for command in commands if command[:2] == ["codesign", "--force"]
+    )
+    assert "--keychain" in sentinel_sign
+    assert str(keychain_path) in sentinel_sign
+    assert sentinel_sign[sentinel_sign.index("--options") + 1] == "runtime"
+    assert not p12_path.exists()
+    assert not certificate_path.exists()
+    assert not sentinel_path.exists()
+    assert not keychain_path.exists()
+    assert not state_path.exists()
+
+
+@pytest.mark.parametrize(
+    "certificate_listing",
+    [
+        pytest.param("", id="zero-certificates"),
+        pytest.param(
+            f"SHA-1 hash: {'01' * 20}\nSHA-1 hash: {'01' * 20}\n",
+            id="duplicate-certificate",
+        ),
+        pytest.param(f"SHA-1 hash: {'02' * 20}\n", id="wrong-certificate"),
+    ],
+)
+def test_prepare_rejects_non_unique_pinned_certificate_and_confirms_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    certificate_listing: str,
+) -> None:
+    module = load_module()
+    p12_path = tmp_path / "identity.p12"
+    keychain_path = tmp_path / "identity.keychain-db"
+    certificate_path = tmp_path / "identity.pem"
+    sentinel_path = tmp_path / "sentinel"
+    state_path = tmp_path / "state.json"
+    report_path = tmp_path / "cleanup.json"
+    sha256 = "ab" * 32
+    sha1 = "01" * 20
+    original_keychains = ["/tmp/login.keychain-db"]
+    commands: list[list[str]] = []
+
+    monkeypatch.setenv("TEST_P12", base64.b64encode(b"test-p12").decode("ascii"))
+    monkeypatch.setenv("TEST_PASSWORD", "test-password")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("RUNNER_ENVIRONMENT", "github-hosted")
+    monkeypatch.setattr(module, "_current_keychains", lambda: original_keychains)
+
+    def fake_inspect(**_: object) -> dict[str, str]:
+        certificate_path.write_text("certificate", encoding="utf-8")
+        return {
+            "certificate_sha256": sha256,
+            "certificate_sha1": sha1,
+            "common_name": module.DEFAULT_COMMON_NAME,
+        }
+
+    def fake_run(
+        command: list[str], *, input_bytes: bytes | None = None, check: bool = True
+    ) -> subprocess.CompletedProcess[bytes]:
+        del input_bytes, check
+        command = list(command)
+        commands.append(command)
+        stdout = b""
+        if command[:3] == ["openssl", "rand", "-hex"]:
+            stdout = b"keychain-password\n"
+        elif command[:3] == ["security", "create-keychain", "-p"]:
+            keychain_path.write_bytes(b"keychain")
+        elif command[:2] == ["security", "find-certificate"]:
+            stdout = certificate_listing.encode()
+        elif command[:2] == ["security", "delete-keychain"]:
+            keychain_path.unlink(missing_ok=True)
+        return subprocess.CompletedProcess(command, 0, stdout, b"")
+
+    monkeypatch.setattr(module, "inspect_and_pin_certificate", fake_inspect)
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    with pytest.raises(RuntimeError, match="not unique"):
+        module.prepare_identity(
+            p12_path=p12_path,
+            keychain_path=keychain_path,
+            public_certificate_path=certificate_path,
+            sentinel_path=sentinel_path,
+            state_path=state_path,
+            cleanup_report_path=report_path,
+            password_environment_name="TEST_PASSWORD",
+            p12_base64_environment_name="TEST_P12",
+            expected_sha256=sha256,
+            expected_sha1=sha1,
+            expected_common_name=module.DEFAULT_COMMON_NAME,
+            github_output_path=None,
+        )
+
+    report = module._read_json(report_path)
+    assert report["cleanup_confirmed"] is True
+    assert report["original_keychains_restored"] is True
+    assert report["ephemeral_keychain_removed"] is True
+    assert report["temporary_material_removed"] is True
+    restore_command = [
+        "security",
+        "list-keychains",
+        "-d",
+        "user",
+        "-s",
+        *original_keychains,
+    ]
+    assert restore_command in commands
+    assert not any(command[:2] == ["codesign", "--force"] for command in commands)
     assert not p12_path.exists()
     assert not certificate_path.exists()
     assert not sentinel_path.exists()
@@ -512,7 +632,7 @@ def test_prepare_refuses_to_overwrite_lifecycle_paths(
         )
 
 
-def test_cleanup_reports_residual_trust_keychain_and_material(
+def test_cleanup_reports_residual_keychain_search_list_and_material(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = load_module()
@@ -525,10 +645,11 @@ def test_cleanup_reports_residual_trust_keychain_and_material(
     module._write_json(
         state_path,
         {
+            "schema_version": module.STATE_SCHEMA_VERSION,
+            "apple_trust_mutated": False,
             "public_certificate_path": str(tmp_path / "missing-certificate.pem"),
             "keychain_path": str(keychain),
             "original_keychains": ["original"],
-            "trust_add_attempted": True,
             "search_list_change_attempted": True,
             "keychain_create_attempted": True,
             "material_paths": [str(material_directory)],
@@ -544,14 +665,14 @@ def test_cleanup_reports_residual_trust_keychain_and_material(
     report = module.cleanup_identity(state_path=state_path, report_path=report_path)
 
     assert report["cleanup_confirmed"] is False
-    assert any("unprovable" in error for error in report["errors"])
+    assert report["apple_trust_mutated"] is False
     assert any("search list" in error for error in report["errors"])
     assert any("keychain remains" in error for error in report["errors"])
     assert any("material removal failed" in error for error in report["errors"])
     assert any("identity material remains" in error for error in report["errors"])
 
 
-def test_cleanup_rejects_certificate_that_remains_trusted(
+def test_cleanup_rejects_state_that_claims_apple_trust_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = load_module()
@@ -562,24 +683,65 @@ def test_cleanup_rejects_certificate_that_remains_trusted(
     module._write_json(
         state_path,
         {
+            "schema_version": module.STATE_SCHEMA_VERSION,
+            "apple_trust_mutated": True,
             "public_certificate_path": str(certificate),
             "keychain_path": str(tmp_path / "keychain"),
             "original_keychains": ["original"],
-            "trust_added": True,
             "material_paths": [str(certificate)],
         },
     )
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        commands.append(list(command))
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
     monkeypatch.setattr(
         module,
         "_run",
-        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, b"", b""),
+        fake_run,
     )
     monkeypatch.setattr(module, "_current_keychains", lambda: ["original"])
 
     report = module.cleanup_identity(state_path=state_path, report_path=report_path)
 
     assert report["cleanup_confirmed"] is False
-    assert "temporary certificate remains trusted for code signing" in report["errors"]
+    assert report["apple_trust_mutated"] is True
+    assert (
+        "identity lifecycle state does not prove Apple trust remained unchanged"
+        in report["errors"]
+    )
+    assert not any("sudo" in command for command in commands)
+    assert not any("trusted-cert" in argument for command in commands for argument in command)
+
+
+@pytest.mark.parametrize("schema_version", [1, 999])
+def test_cleanup_rejects_unsupported_state_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    schema_version: int,
+) -> None:
+    module = load_module()
+    state_path = tmp_path / "state.json"
+    report_path = tmp_path / "report.json"
+    module._write_json(
+        state_path,
+        {
+            "schema_version": schema_version,
+            "apple_trust_mutated": False,
+            "keychain_path": str(tmp_path / "keychain"),
+            "original_keychains": ["original"],
+            "material_paths": [],
+        },
+    )
+    monkeypatch.setattr(module, "_current_keychains", lambda: ["original"])
+
+    report = module.cleanup_identity(state_path=state_path, report_path=report_path)
+
+    assert report["cleanup_confirmed"] is False
+    assert "identity lifecycle state schema is unsupported" in report["errors"]
+    assert state_path.is_file()
 
 
 def test_state_and_current_keychain_readers_validate_shapes(
