@@ -1024,6 +1024,7 @@ def test_copy_json_list_still_copies_nested_mutable_items(
         (),
         ("agentic",),
         ("agentic", "trajectory"),
+        ("agentic", "trajectory", "quality"),
         ("agentic", "trajectory", 3, True, None, 0.75),
     ],
 )
@@ -1046,15 +1047,28 @@ def test_copy_json_tuple_reuses_scalar_tuples_without_recursive_calls(
     assert copied is source
 
 
-def test_copy_json_tuple_still_copies_nested_mutable_items() -> None:
-    source = ("agentic", {"labels": ["trajectory"]})
+@pytest.mark.parametrize(
+    "source,nested_index",
+    [
+        (("agentic", {"labels": ["trajectory"]}), 1),
+        (("agentic", {"labels": ["trajectory"]}, "quality"), 1),
+    ],
+)
+def test_copy_json_tuple_still_copies_nested_mutable_items(
+    source: tuple[object, ...],
+    nested_index: int,
+) -> None:
 
     copied = trajectory_provenance_module._copy_json_tuple(source)
 
     assert copied == source
     assert copied is not source
-    assert copied[1] is not source[1]
-    assert copied[1]["labels"] is not source[1]["labels"]
+    copied_nested = copied[nested_index]
+    source_nested = source[nested_index]
+    assert isinstance(copied_nested, dict)
+    assert isinstance(source_nested, dict)
+    assert copied_nested is not source_nested
+    assert copied_nested["labels"] is not source_nested["labels"]
 
 
 @pytest.mark.parametrize(

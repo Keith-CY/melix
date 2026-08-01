@@ -26,6 +26,7 @@ try:  # noqa: E402
     from worker.trajectory_provenance import (
         _copy_json_dict,
         _copy_json_list,
+        _copy_json_tuple,
         _copy_trajectory_provenance_value,
     )
 except ImportError:  # base checkout before this slice added the helper
@@ -33,6 +34,9 @@ except ImportError:  # base checkout before this slice added the helper
         return copy.deepcopy(value)
 
     def _copy_json_list(value: list[Any]) -> list[Any]:
+        return copy.deepcopy(value)
+
+    def _copy_json_tuple(value: tuple[Any, ...]) -> tuple[Any, ...]:  # pragma: no cover - base fallback
         return copy.deepcopy(value)
 
     def _copy_trajectory_provenance_value(value: Any) -> Any:
@@ -165,6 +169,14 @@ def _baseline_scalar_dict_copy(value: dict[str, Any]) -> dict[str, Any]:
     return value.copy()
 
 
+def _baseline_scalar_tuple_copy(value: tuple[Any, ...]) -> tuple[Any, ...]:
+    immutable_types = (str, int, float, bool, type(None))
+    for item in value:
+        if type(item) not in immutable_types:  # pragma: no cover - corruption guard
+            return tuple(_copy_trajectory_provenance_value(item) for item in value)
+    return value
+
+
 def _measure_scalar_list_copy(
     func: Callable[[list[Any]], list[Any]],
     value: list[Any],
@@ -194,6 +206,22 @@ def _measure_scalar_dict_copy(
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     if checksum != len(value) * iterations:
         raise RuntimeError("scalar-dict probe checksum mismatch")
+    return elapsed_ms
+
+
+def _measure_scalar_tuple_copy(
+    func: Callable[[tuple[Any, ...]], tuple[Any, ...]],
+    value: tuple[Any, ...],
+    iterations: int,
+) -> float:
+    start = time.perf_counter()
+    checksum = 0
+    for _ in range(iterations):
+        copied = func(value)
+        checksum += len(copied)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    if checksum != len(value) * iterations:  # pragma: no cover - corruption guard
+        raise RuntimeError("scalar-tuple probe checksum mismatch")
     return elapsed_ms
 
 
@@ -231,6 +259,8 @@ def main() -> int:
     scalar_optimized_ms: list[float] = []
     scalar_dict_baseline_ms: list[float] = []
     scalar_dict_optimized_ms: list[float] = []
+    scalar_tuple_baseline_ms: list[float] = []
+    scalar_tuple_optimized_ms: list[float] = []
     adapter_manifest_baseline_ms: list[float] = []
     adapter_manifest_optimized_ms: list[float] = []
 
@@ -240,6 +270,7 @@ def main() -> int:
 
     scalar_values = ["agentic", "trajectory", "quality", 3, True, None, 0.75]
     scalar_dict_values = provenance["agentic_sft_token_metrics"]
+    scalar_tuple_values = ("agentic", "trajectory", "quality")
 
     for _ in range(samples):
         elapsed, peak = _measure(_baseline_normalize, provenance, iterations)
@@ -259,6 +290,16 @@ def main() -> int:
         )
         scalar_dict_optimized_ms.append(
             _measure_scalar_dict_copy(_copy_json_dict, scalar_dict_values, iterations)
+        )
+        scalar_tuple_baseline_ms.append(
+            _measure_scalar_tuple_copy(
+                _baseline_scalar_tuple_copy,
+                scalar_tuple_values,
+                iterations,
+            )
+        )
+        scalar_tuple_optimized_ms.append(
+            _measure_scalar_tuple_copy(_copy_json_tuple, scalar_tuple_values, iterations)
         )
         adapter_manifest_baseline_ms.append(
             _measure_adapter_manifest(
@@ -283,6 +324,8 @@ def main() -> int:
     scalar_optimized_mean = _mean(scalar_optimized_ms)
     scalar_dict_baseline_mean = _mean(scalar_dict_baseline_ms)
     scalar_dict_optimized_mean = _mean(scalar_dict_optimized_ms)
+    scalar_tuple_baseline_mean = _mean(scalar_tuple_baseline_ms)
+    scalar_tuple_optimized_mean = _mean(scalar_tuple_optimized_ms)
     adapter_manifest_baseline_mean = _mean(adapter_manifest_baseline_ms)
     adapter_manifest_optimized_mean = _mean(adapter_manifest_optimized_ms)
     result = {
@@ -305,6 +348,12 @@ def main() -> int:
         "scalar_dict_delta_ms": scalar_dict_optimized_mean - scalar_dict_baseline_mean,
         "scalar_dict_speedup": scalar_dict_baseline_mean / scalar_dict_optimized_mean
         if scalar_dict_optimized_mean > 0
+        else 0.0,
+        "scalar_tuple_baseline_elapsed_ms_mean": scalar_tuple_baseline_mean,
+        "scalar_tuple_elapsed_ms_mean": scalar_tuple_optimized_mean,
+        "scalar_tuple_delta_ms": scalar_tuple_optimized_mean - scalar_tuple_baseline_mean,
+        "scalar_tuple_speedup": scalar_tuple_baseline_mean / scalar_tuple_optimized_mean
+        if scalar_tuple_optimized_mean > 0
         else 0.0,
         "adapter_manifest_baseline_elapsed_ms_mean": adapter_manifest_baseline_mean,
         "adapter_manifest_elapsed_ms_mean": adapter_manifest_optimized_mean,

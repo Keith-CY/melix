@@ -191,3 +191,15 @@ shape checks, label-list isolation, fallback behavior for non-standard component
 payloads, and canonical copied dict order stay unchanged. The registered
 `trajectory-provenance-copy-elision` probe remains the local Linux and CI
 validation gate for this small Python-only slice.
+
+## 2026-08-01 follow-up: exact three-item scalar tuple fast path
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_json_tuple`.
+The common component-label tuple shape contains exactly three immutable label
+values, so the copier now unrolls that exact scalar guard and returns the original
+immutable tuple without entering the generic iterator scan. Tuples with mutable
+members, including three-item tuples, still fall back through recursive copying to
+preserve nested container isolation. The registered
+`trajectory-provenance-copy-elision` probe now reports focused `scalar_tuple_*`
+metrics alongside the broader provenance-copy guardrails and remains the local
+Linux plus CI validation gate for this small Python-only slice.
