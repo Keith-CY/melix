@@ -224,14 +224,14 @@ def test_report_evidence_gate_slowest_probe_phases_accepts_typed_durations() -> 
 def test_report_evidence_gate_run_kind_rules_accept_non_tuple_iterables() -> None:
     assert report_evidence_gate_module._rule_matches_report(
         rule={"run_kinds": {"evaluation", "serving_benchmark"}},
-        runs=[{"run_kind": "serving_benchmark"}],
+        run_kind_values={"serving_benchmark"},
         targets=[],
         metrics=[],
         probe_phases=set(),
     )
     assert not report_evidence_gate_module._rule_matches_report(
         rule={"run_kinds": {"evaluation"}},
-        runs=[{"run_kind": "serving_benchmark"}],
+        run_kind_values={"serving_benchmark"},
         targets=[],
         metrics=[],
         probe_phases=set(),
@@ -241,7 +241,7 @@ def test_report_evidence_gate_run_kind_rules_accept_non_tuple_iterables() -> Non
 def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string() -> None:
     assert report_evidence_gate_module._rule_matches_report(
         rule={"run_kinds": ("42",)},
-        runs=[{"run_kind": 42}],
+        run_kind_values={"42"},
         targets=[],
         metrics=[],
         probe_phases=set(),
@@ -282,7 +282,7 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
 def test_report_evidence_gate_metric_prefix_preserves_non_string_match() -> None:
     assert report_evidence_gate_module._rule_matches_report(
         rule={"metric_prefixes": ("42",)},
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[{"metric": 42}],
         probe_phases=set(),
@@ -295,7 +295,7 @@ def test_report_evidence_gate_metric_prefix_list_rules_reflect_mutation() -> Non
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[{"metric": "runtime.decode_ms"}],
         probe_phases=set(),
@@ -303,7 +303,7 @@ def test_report_evidence_gate_metric_prefix_list_rules_reflect_mutation() -> Non
     metric_prefixes.append("runtime.")
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[{"metric": "runtime.decode_ms"}],
         probe_phases=set(),
@@ -327,7 +327,7 @@ def test_report_evidence_gate_target_field_sparse_match_scans_row_items() -> Non
 
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[target],
         metrics=[],
         probe_phases=set(),
@@ -341,7 +341,7 @@ def test_report_evidence_gate_target_field_list_rules_reflect_mutation() -> None
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_snapshot": "snapshot-a"}],
         metrics=[],
         probe_phases=set(),
@@ -349,7 +349,7 @@ def test_report_evidence_gate_target_field_list_rules_reflect_mutation() -> None
     target_fields.append("adapter_snapshot")
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_snapshot": "snapshot-a"}],
         metrics=[],
         probe_phases=set(),
@@ -361,28 +361,28 @@ def test_report_evidence_gate_target_field_preserves_stringified_presence() -> N
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_id": "   "}],
         metrics=[],
         probe_phases=set(),
     )
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_id": None}],
         metrics=[],
         probe_phases=set(),
     )
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_id": 0}],
         metrics=[],
         probe_phases=set(),
     )
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"unrelated_field": 0}],
         metrics=[],
         probe_phases=set(),
@@ -396,7 +396,7 @@ def test_report_evidence_gate_target_field_preserves_string_subclass_strip() -> 
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule={"target_fields": ("adapter_id",)},
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_id": BlankWhenStripped("adapter-a")}],
         metrics=[],
         probe_phases=set(),
@@ -409,7 +409,7 @@ def test_report_evidence_gate_probe_phase_list_rules_reflect_mutation() -> None:
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[],
         probe_phases={"runtime_prepare", "model_load", "decode"},
@@ -417,7 +417,7 @@ def test_report_evidence_gate_probe_phase_list_rules_reflect_mutation() -> None:
     probe_phases.pop()
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[],
         probe_phases={"runtime_prepare", "model_load", "decode"},
@@ -434,14 +434,14 @@ def test_report_evidence_gate_empty_probe_phase_rules_skip_normalization(
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule={},
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[],
         probe_phases={"runtime_prepare"},
     )
     assert not report_evidence_gate_module._rule_matches_report(
         rule={"probe_phases": ()},
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[],
         probe_phases={"runtime_prepare"},
@@ -526,7 +526,7 @@ def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[{"run_kind": "serving_benchmark"}],
+        run_kind_values={"serving_benchmark"},
         targets=[],
         metrics=[],
         probe_phases=set(),
@@ -534,7 +534,7 @@ def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     run_kinds.append("serving_benchmark")
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[{"run_kind": "serving_benchmark"}],
+        run_kind_values={"serving_benchmark"},
         targets=[],
         metrics=[],
         probe_phases=set(),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -274,11 +275,18 @@ def _has_text(value: object) -> bool:
     return bool(text.strip())
 
 
+def _report_run_kind_values(runs: list[dict[str, object]]) -> set[str]:
+    """Return every ``run_kind`` in the report, normalized to text."""
+    return {str(run.get("run_kind", "")) for run in runs}
+
+
 def _report_matrix_roles(
     report: dict[str, object],
     matrix: dict[str, dict[str, object]],
 ) -> list[str]:
-    runs = _dict_list(report.get("runs"))
+    # Each input is derived once for the whole matrix rather than per rule, so
+    # matching stays O(roles + rows) instead of O(roles x rows).
+    run_kind_values = _report_run_kind_values(_dict_list(report.get("runs")))
     targets = _dict_list(report.get("targets"))
     metrics = _dict_list(report.get("metrics"))
     # Collecting probe phases walks every probe row on both sides of the report,
@@ -290,7 +298,7 @@ def _report_matrix_roles(
         for role, rule in matrix.items()
         if _rule_matches_report(
             rule=rule,
-            runs=runs,
+            run_kind_values=run_kind_values,
             targets=targets,
             metrics=metrics,
             probe_phases=probe_phases,
@@ -301,7 +309,7 @@ def _report_matrix_roles(
 def _rule_matches_report(
     *,
     rule: dict[str, object],
-    runs: list[dict[str, object]],
+    run_kind_values: AbstractSet[str],
     targets: list[dict[str, object]],
     metrics: list[dict[str, object]],
     probe_phases: AbstractSet[str],
@@ -314,26 +322,30 @@ def _rule_matches_report(
     """
     rule_get = rule.get
     run_kinds = rule_get("run_kinds", ())
-    if run_kinds:
-        run_kind_set = _string_frozenset(run_kinds)
-        for run in runs:
-            run_kind = run.get("run_kind", "")
-            if run_kind in run_kind_set or str(run_kind) in run_kind_set:
-                return True
+    if run_kinds and not _string_frozenset(run_kinds).isdisjoint(run_kind_values):
+        return True
 
     metric_prefixes = rule_get("metric_prefixes", ())
     if metric_prefixes:
-        prefixes = _string_tuple(metric_prefixes)
-        if "" in prefixes:
+        matches_any_metric, prefixes_by_initial = _metric_prefix_index(
+            _string_tuple(metric_prefixes)
+        )
+        if matches_any_metric:
             return bool(metrics)
         for metric in metrics:
-            if str(metric.get("metric", "")).startswith(prefixes):
+            metric_value = str(metric.get("metric", ""))
+            if not metric_value:
+                continue
+            candidates = prefixes_by_initial.get(metric_value[0])
+            if candidates is not None and metric_value.startswith(candidates):
                 return True
 
     target_fields = rule_get("target_fields", ())
     if target_fields:
         target_field_set = _string_frozenset(target_fields)
         for target in targets:
+            if target_field_set.isdisjoint(target):
+                continue
             for field, value in target.items():
                 if field in target_field_set and _has_text(value):
                     return True
@@ -352,6 +364,26 @@ def _string_frozenset_from_tuple(values: tuple[object, ...]) -> frozenset[str]:
 @lru_cache(maxsize=128)
 def _string_tuple_from_tuple(values: tuple[object, ...]) -> tuple[str, ...]:
     return tuple(str(item) for item in values)
+
+
+@lru_cache(maxsize=128)
+def _metric_prefix_index(
+    prefixes: tuple[str, ...],
+) -> tuple[bool, dict[str, tuple[str, ...]]]:
+    """Group metric prefixes by first character.
+
+    A rule may list many prefixes while most metrics share none of their initial
+    characters, so bucketing lets those metrics be rejected with one lookup
+    instead of one comparison per prefix. An empty prefix matches every metric
+    and is reported separately.
+    """
+    by_initial: dict[str, list[str]] = {}
+    for prefix in prefixes:
+        if prefix:
+            by_initial.setdefault(prefix[0], []).append(prefix)
+    return "" in prefixes, {
+        initial: tuple(grouped) for initial, grouped in by_initial.items()
+    }
 
 
 def _string_frozenset(values: object) -> frozenset[str]:
@@ -399,19 +431,23 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
     probe_summary = report.get("probe_summary")
     if not isinstance(probe_summary, dict):
         return []
-    rows: list[tuple[float, int, str, dict[str, object]]] = []
-    for side in _PROBE_PHASE_SIDES:
-        side_summary = probe_summary.get(side)
-        if not isinstance(side_summary, dict):
-            continue
-        slowest_phases = side_summary.get("slowest_phases")
-        if not isinstance(slowest_phases, list):
-            continue
-        for row in slowest_phases:
-            if isinstance(row, dict):
-                rows.append((_probe_phase_duration_key(row), -len(rows), side, row))
-    rows.sort(reverse=True)
-    return [{"side": side, **row} for _duration_ms, _row_order, side, row in rows[:5]]
+    def ranked_rows():
+        order = 0
+        for side in _PROBE_PHASE_SIDES:
+            side_summary = probe_summary.get(side)
+            if not isinstance(side_summary, dict):
+                continue
+            slowest_phases = side_summary.get("slowest_phases")
+            if not isinstance(slowest_phases, list):
+                continue
+            for row in slowest_phases:
+                if isinstance(row, dict):
+                    # Negated order breaks duration ties toward the earlier row.
+                    yield _probe_phase_duration_key(row), -order, side, row
+                    order += 1
+
+    top_rows = heapq.nlargest(5, ranked_rows())
+    return [{"side": side, **row} for _duration_ms, _row_order, side, row in top_rows]
 
 
 def _probe_phases(report: dict[str, object]) -> set[str]:

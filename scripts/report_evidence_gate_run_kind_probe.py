@@ -18,6 +18,7 @@ from worker.productization.report_evidence_gate import (  # noqa: E402
     _probe_phases,
     _release_matrix_rows,
     _report_matrix_roles,
+    _report_run_kind_values,
     _rule_matches_report,
     _slowest_probe_phases,
     load_report_payload,
@@ -28,6 +29,7 @@ def _measure_run_kind(iterations: int, sample_count: int) -> tuple[dict[str, flo
     run_kinds = tuple(f"probe_kind_{index}" for index in range(64)) + ("target_kind",)
     rule = {"run_kinds": run_kinds}
     runs = [{"run_kind": f"observed_kind_{index}"} for index in range(79)] + [{"run_kind": "target_kind"}]
+    run_kind_values = _report_run_kind_values(runs)
     elapsed_samples: list[float] = []
     match_count = 0
 
@@ -36,7 +38,7 @@ def _measure_run_kind(iterations: int, sample_count: int) -> tuple[dict[str, flo
         for _index in range(iterations):
             if not _rule_matches_report(
                 rule=rule,
-                runs=runs,
+                run_kind_values=run_kind_values,
                 targets=[],
                 metrics=[],
                 probe_phases=set(),
@@ -71,7 +73,7 @@ def _measure_metric_prefix(iterations: int, sample_count: int) -> tuple[dict[str
         for _index in range(iterations):
             if not _rule_matches_report(
                 rule=rule,
-                runs=[],
+                run_kind_values=set(),
                 targets=[],
                 metrics=metrics,
                 probe_phases=set(),
@@ -106,7 +108,7 @@ def _measure_target_fields(iterations: int, sample_count: int) -> tuple[dict[str
         for _index in range(iterations):
             if not _rule_matches_report(
                 rule=rule,
-                runs=[],
+                run_kind_values=set(),
                 targets=targets,
                 metrics=[],
                 probe_phases=set(),
