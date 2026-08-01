@@ -549,6 +549,34 @@ def test_measurable_changed_lines_filters_blank_comment_and_unmeasured_lines(tmp
     assert missed == [5]
 
 
+def test_measurable_non_comment_lines_numbering_matches_diff_parser(tmp_path: Path) -> None:
+    """Line numbers must mean the same thing here as they do in the diff parser.
+
+    ``str.splitlines()`` splits on separators the diff parser does not count as
+    line breaks, which would shift every subsequent line number and silently
+    mis-score lines as measurable or comment.
+    """
+    extra_separators = ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " "]
+    for separator in extra_separators:
+        source_path = tmp_path / f"sep_{ord(separator):04x}.py"
+        source_path.write_text(
+            f'x = 1\ny = 2\nz = "a{separator}b"\n# comment\nw = 5\n',
+            encoding="utf-8",
+            newline="",
+        )
+
+        # Numbering the diff parser uses: one line per "\n" after universal newlines.
+        with source_path.open("r", encoding="utf-8") as source_file:
+            expected_lines = source_file.readlines()
+        assert len(expected_lines) == 5, separator
+        assert expected_lines[4].rstrip("\n") == "w = 5"
+
+        assert changed_scope_coverage._measurable_non_comment_lines(
+            source_path,
+            [1, 2, 3, 4, 5],
+        ) == [1, 2, 3, 5], f"line numbering shifted by {separator!r}"
+
+
 def test_measurable_non_comment_lines_skips_blanks_comments_and_out_of_range(
     tmp_path: Path,
 ) -> None:

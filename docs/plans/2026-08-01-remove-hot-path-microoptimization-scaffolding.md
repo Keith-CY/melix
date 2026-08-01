@@ -15,17 +15,31 @@ that monkeypatch internals (`monkeypatch.setattr(module, "set", fail_set)`,
 a test failing. That inverts the usual relationship between tests and code: the tests
 asserted *how* the code ran rather than *what* it produced.
 
-Two of the fast paths had drifted from the semantics they claimed to preserve:
+Three of the fast paths had drifted from the semantics they claimed to preserve:
 
 - `worker.runtime.token_counting.whitespace_token_count` documented its ASCII branch
   as "the exact ASCII whitespace set recognized by `str.split()`", but the set omitted
   `\x1c`–`\x1f`, which `str.isspace()` treats as whitespace. ASCII text containing
   those separators was tokenized differently from the Unicode branch.
+- `worker.runtime.stream_assembler._whitespace_token_count` had the same defect from a
+  different direction: its 11-condition guard excluded `\t\n\r\v\f` before returning
+  `text.count(" ") + 1`, but not `\x1c`–`\x1f`, which `str.split()` does split on. Any
+  ASCII delta of 256+ characters containing one undercounted its tokens by one per
+  occurrence.
 - `worker.productization.report_evidence_gate._rule_matches_report` cached normalized
   rule values by writing `_melix_cached_*` keys into the caller's rule dict. The
   matrix dicts are caller-supplied and serializable, so the cache leaked into data the
   gate does not own — and it was redundant with the `lru_cache` already applied to the
   same normalization helpers.
+
+A fourth was introduced by the first cut of this refactor and caught in review:
+collapsing `scripts/changed_scope_coverage._measurable_non_comment_lines` to
+`read_text().splitlines()` changed line numbering, because `str.splitlines()` also
+breaks on `\v`, `\f`, `\x1c`–`\x1e`, `\x85`, ` ` and ` ` while the diff
+parser counts only `\n`-delimited lines. The old code shared the defect but only
+inside a narrow ASCII fast path; the collapse made it unconditional in the script that
+gates changed-line coverage for every PR. It now reads lines through the file object,
+which matches the diff parser exactly.
 
 ## Scope
 

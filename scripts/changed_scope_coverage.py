@@ -268,8 +268,16 @@ def _measurable_non_comment_lines(
     source_path: Path,
     line_numbers: list[int],
 ) -> list[int]:
-    """Return the given line numbers that hold code rather than blanks or comments."""
-    source_lines = source_path.read_text(encoding="utf-8").splitlines()
+    """Return the given line numbers that hold code rather than blanks or comments.
+
+    Lines are read with the file object's own newline handling so the numbering
+    matches the diff parser, which counts only ``\\n``-delimited lines.
+    ``str.splitlines()`` must not be used here: it additionally splits on
+    ``\\v``, ``\\f``, ``\\x1c``-``\\x1e``, ``\\x85``, ``\\u2028`` and ``\\u2029``,
+    which would shift every line number after such a character in the source.
+    """
+    with source_path.open("r", encoding="utf-8") as source_file:
+        source_lines = source_file.readlines()
     line_count = len(source_lines)
     measurable: list[int] = []
     for line_no in line_numbers:
