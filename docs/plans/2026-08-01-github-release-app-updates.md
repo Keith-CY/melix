@@ -143,6 +143,12 @@ The interactive UI walkthrough is therefore not required for this slice.
   hardened-runtime sentinel signature. Cleanup restores the exact search list,
   deletes the keychain, PKCS#12, PEM, and sentinel, and must be confirmed before
   release assets can be published.
+- The macOS `security` CLI requires literal password arguments for keychain
+  creation, unlock, import, and partition-list setup. Those masked values may
+  therefore exist briefly in child-process argv on the enforced single-tenant
+  GitHub-hosted runner, but must be redacted from every error and workflow log.
+  Lifecycle state is written atomically through an exclusive temporary file
+  that is private from creation, independent of the caller's ambient umask.
 - Repository code cannot create the `github-release` environment, its required
   reviewers, deployment tag policy, protected variables/secrets, protected
   `main`, or immutable release-tag rules. Those external GitHub controls are

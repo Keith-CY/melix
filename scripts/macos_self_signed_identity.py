@@ -124,8 +124,22 @@ def _output(command: Sequence[str], *, input_bytes: bytes | None = None) -> str:
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(temporary, 0o600)
+    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    descriptor = os.open(
+        temporary,
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as temporary_file:
+            descriptor = -1
+            temporary_file.write(encoded)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+        raise
     temporary.replace(path)
 
 
@@ -372,6 +386,11 @@ def prepare_identity(
         )
         _update_state(state_path, state, status="validated", **observations)
 
+        # The macOS `security` CLI has no stdin or environment indirection for
+        # these password flags, so the keychain and PKCS#12 passwords briefly
+        # exist in child-process argv. This tradeoff is restricted to the
+        # enforced single-tenant GitHub-hosted runner; `_run` redacts them from
+        # every error message and workflow log.
         keychain_password = _output(["openssl", "rand", "-hex", "24"])
         _update_state(state_path, state, keychain_create_attempted=True)
         _run(["security", "create-keychain", "-p", keychain_password, os.fspath(keychain_path)])

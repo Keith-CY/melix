@@ -89,10 +89,15 @@ both public certificate pins independently at that time. Put only the EdDSA
 public key and two certificate pins in environment variables, and put the three
 private values only in environment secrets. Do not print private material or place it in a
 repository file, workflow artifact, issue, pull request, or log. The workflow
-passes the masked PKCS#12 password only to `security import`, reads the EdDSA
-private key only from standard input, never changes Apple certificate trust,
-and removes the temporary keychain, PKCS#12, PEM, and sentinel before publishing
-any artifact.
+reads the EdDSA private key only from standard input, never changes Apple
+certificate trust, and removes the temporary keychain, PKCS#12, PEM, and
+sentinel before publishing any artifact. The macOS `security` CLI has no stdin
+or environment indirection for its password flags, so the masked keychain and
+PKCS#12 passwords briefly exist in child-process argv on the enforced
+single-tenant GitHub-hosted runner. The identity helper redacts those arguments
+from every error and workflow log. Its lifecycle JSON is atomically replaced
+through an exclusive `0600` temporary file so privacy does not depend on the
+caller's umask.
 
 Production activation is blocked until GitHub itself is configured outside
 this repository:

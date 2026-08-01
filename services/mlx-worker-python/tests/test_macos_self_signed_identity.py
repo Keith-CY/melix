@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -671,6 +673,55 @@ def test_cleanup_reports_residual_keychain_search_list_and_material(
     assert any("keychain remains" in error for error in report["errors"])
     assert any("material removal failed" in error for error in report["errors"])
     assert any("identity material remains" in error for error in report["errors"])
+
+
+def test_write_json_creates_private_exclusive_temporary_file(tmp_path: Path) -> None:
+    module = load_module()
+    state_path = tmp_path / "state.json"
+    observed: dict[str, int] = {}
+    original_open = module.os.open
+
+    def recording_open(path: Path, flags: int, mode: int = 0o777) -> int:
+        descriptor = original_open(path, flags, mode)
+        observed.update(
+            flags=flags,
+            requested_mode=mode,
+            created_mode=stat.S_IMODE(os.fstat(descriptor).st_mode),
+        )
+        return descriptor
+
+    module.os.open = recording_open
+    try:
+        module._write_json(state_path, {"secret": "value"})
+    finally:
+        module.os.open = original_open
+
+    assert observed["flags"] & os.O_CREAT
+    assert observed["flags"] & os.O_EXCL
+    assert observed["requested_mode"] == 0o600
+    assert observed["created_mode"] == 0o600
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+    assert state_path.read_text(encoding="utf-8") == '{\n  "secret": "value"\n}\n'
+
+
+def test_write_json_removes_private_temporary_file_on_setup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_module()
+    state_path = tmp_path / "state.json"
+    temporary_path = tmp_path / ".state.json.tmp"
+
+    def fail_fchmod(descriptor: int, mode: int) -> None:
+        raise OSError("simulated private-file setup failure")
+
+    monkeypatch.setattr(module.os, "fchmod", fail_fchmod)
+
+    with pytest.raises(OSError, match="private-file setup failure"):
+        module._write_json(state_path, {"secret": "value"})
+
+    assert not state_path.exists()
+    assert not temporary_path.exists()
 
 
 def test_cleanup_rejects_state_that_claims_apple_trust_mutation(
