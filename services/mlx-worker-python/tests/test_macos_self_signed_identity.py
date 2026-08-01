@@ -352,7 +352,7 @@ def test_prepare_accepts_base64_p12_without_apple_trust_and_cleans_material(
     monkeypatch.setattr(module, "_current_keychains", lambda: ["/tmp/login.keychain-db"])
     monkeypatch.setattr(
         module.shutil,
-        "copy2",
+        "copyfile",
         lambda _source, destination: Path(destination).write_bytes(b"sentinel"),
     )
 
@@ -409,6 +409,7 @@ def test_prepare_accepts_base64_p12_without_apple_trust_and_cleans_material(
     assert state["identity_imported"] is True
     assert state["partition_list_configured"] is True
     assert state["sentinel_verified"] is True
+    assert sentinel_path.stat().st_mode & 0o777 == 0o700
     assert p12_path.read_bytes() == b"test-p12"
     assert f"certificate_sha1={sha1}" in github_output_path.read_text(encoding="utf-8")
 

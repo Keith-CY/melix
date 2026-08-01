@@ -437,7 +437,11 @@ def prepare_identity(
                 "pinned release certificate is not unique in the isolated keychain"
             )
 
-        shutil.copy2("/usr/bin/true", sentinel_path)
+        # Copy only the Mach-O bytes: copy2() also propagates Apple file flags
+        # from the sealed system volume, which GitHub runners cannot apply in
+        # RUNNER_TEMP. The sentinel needs executable mode, not source metadata.
+        shutil.copyfile("/usr/bin/true", sentinel_path)
+        sentinel_path.chmod(0o700)
         _run(
             [
                 "codesign",
