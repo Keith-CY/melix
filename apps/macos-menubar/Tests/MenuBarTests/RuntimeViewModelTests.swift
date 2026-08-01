@@ -13618,23 +13618,43 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedChatProviderTarget?.serverID == remoteServerID)
     }
 
-    @Test("desktop chat preserves the draft when remote credentials or model configuration is missing")
+    @Test("desktop chat preserves the draft when remote credential, model, or endpoint configuration is missing")
     @MainActor
     func desktopChatRejectsIncompleteRemoteProviderConfiguration() async throws {
         let cases: [(
             modelID: String,
             apiKey: String?,
+            providerKind: String,
+            baseURL: String,
             expectedError: String
         )] = [
             (
                 "deepseek-v4-flash",
                 nil,
+                "openai-compatible",
+                "http://192.0.2.10:50650/v1",
                 "Remote Provider lay2-deepseek-v4 has no API key configured."
             ),
             (
                 "",
                 "melix-no-auth",
+                "openai-compatible",
+                "http://192.0.2.10:50650/v1",
                 "Remote Provider lay2-deepseek-v4 has no model configured."
+            ),
+            (
+                "deepseek-v4-flash",
+                "melix-no-auth",
+                "   ",
+                "http://192.0.2.10:50650/v1",
+                "Remote Provider lay2-deepseek-v4 has no provider kind configured."
+            ),
+            (
+                "deepseek-v4-flash",
+                "melix-no-auth",
+                "openai-compatible",
+                "   ",
+                "Remote Provider lay2-deepseek-v4 has no endpoint configured."
             ),
         ]
 
@@ -13646,8 +13666,8 @@ struct RuntimeViewModelTests {
                         id: remoteServerID,
                         title: "LAY2 DeepSeek V4",
                         providerPreset: .custom,
-                        providerKind: "openai-compatible",
-                        baseURL: "http://192.0.2.10:50650/v1",
+                        providerKind: testCase.providerKind,
+                        baseURL: testCase.baseURL,
                         defaultModelID: testCase.modelID,
                         timeoutSeconds: 120,
                         rateLimitPerMinute: 0,

@@ -687,6 +687,43 @@ struct RemoteProviderClientTests {
         #expect(body["max_tokens"] as? Int == 128)
     }
 
+    @Test("omits enable_thinking unless thinking is explicitly disabled")
+    func omitsEnableThinkingUnlessThinkingIsExplicitlyDisabled() async throws {
+        for enableThinking in [nil, true] as [Bool?] {
+            let transport = RecordingRemoteProviderTransport(response: .init(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    #"{ "choices": [{ "message": { "content": "OK." }, "finish_reason": "stop" }] }"#
+                        .utf8
+                )
+            ))
+            let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+
+            _ = try await client.complete(
+                RemoteProviderChatRequest(
+                    serverID: "strict-endpoint",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://strict.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "gpt-5",
+                    messages: [.init(role: "user", content: "Reply with exactly OK.")],
+                    stream: false,
+                    enableThinking: enableThinking
+                )
+            )
+
+            let bodyString = try #require(await transport.lastBodyString)
+            let bodyData = try #require(bodyString.data(using: .utf8))
+            let body = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+            #expect(body["enable_thinking"] == nil)
+            #expect(body["reasoning_effort"] == nil)
+            #expect(body["temperature"] == nil)
+            #expect(body["top_p"] == nil)
+            #expect(body["max_tokens"] == nil)
+        }
+    }
+
     @Test("parses OpenAI compatible SSE chat completion")
     func parsesOpenAICompatibleSSEChatCompletion() async throws {
         let body = """

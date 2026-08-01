@@ -38,13 +38,23 @@ Melix CLI.
    capabilities, and repair behavior.
 4. For remote targets, load the API key only at dispatch time, construct a
    transient `ControlPlaneChatRequest.RemoteTarget`, and never copy the raw key
-   into Chat state, transcript, logs, or UI labels.
+   into Chat state, transcript, logs, or UI labels. Dispatch-time validation
+   covers the same fields the composer readiness check treats as required —
+   credential, model, provider kind, and endpoint — so a corrupted Server
+   Profile fails with the operator-facing Provider message instead of a
+   low-level remote-provider error.
 5. Present local and remote providers in the existing Chat provider picker.
    Reuse the current Chat layout; do not add a separate remote-chat screen.
 6. Treat the Thinking toggle consistently for reasoning-capable remote
    providers: disabling Thinking sends `reasoning_effort = none`; enabling it
    preserves OpenAI-compatible `reasoning_content` as typed reasoning events
    and final reasoning text instead of folding it into assistant content.
+   `enable_thinking` is a vendor extension rather than an OpenAI-compatible
+   field, so the outbound remote body carries it only as an explicit opt-out
+   (`false`), for endpoints that honor the vendor key but ignore
+   `reasoning_effort`. It is never sent as `true`, which matches the default of
+   every endpoint that understands the key and would otherwise be an unknown
+   top-level field for strict OpenAI-compatible endpoints.
 7. Give the composer and inspector a provider-neutral presentation so a valid
    remote target is ready without local start, resume, wake, or model-attachment
    actions.
@@ -154,6 +164,24 @@ Melix CLI.
 - The native UI automation service failed to start twice. The earlier
   `.runtime/evidence/remote-ui-chat.jpeg` predates this fix and is not claimed
   as post-fix Thinking-rendering evidence.
+
+## Post-Merge Review Follow-Up
+
+Review feedback on the merged slice identified two remaining defects in the
+outbound remote path. Both are fixed as follow-up work:
+
+- `OpenAICompatibleRemoteProviderClient` added `enable_thinking` to every
+  outbound body whenever the field was non-nil. Desktop Chat always supplies a
+  concrete boolean, so every desktop remote request carried the vendor key,
+  including on the default Thinking-enabled path. The client now sends it only
+  as an explicit `false` opt-out, so the default remote request carries no
+  non-OpenAI top-level field.
+- `chatRemoteTarget` validated only the credential and the model, while
+  `isSelectedChatProviderReady` also requires the provider kind and the
+  endpoint. A profile with an empty endpoint reported as ready and failed later
+  with `remote provider base_url is invalid`. Both fields are now validated at
+  dispatch time with the same Provider-facing wording as the other missing-field
+  cases.
 
 ## Packaging Security Boundary
 
