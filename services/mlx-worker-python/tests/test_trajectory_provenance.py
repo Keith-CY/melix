@@ -296,7 +296,11 @@ def test_load_trajectory_provenance_from_snapshot_manifest_path_uses_direct_open
     def fail_path_read_bytes(_self: Path) -> bytes:
         raise AssertionError("exact Path manifest paths should use direct open")
 
+    def fail_os_fspath(_path: object) -> str:
+        raise AssertionError("exact Path manifest paths should use direct str conversion")
+
     monkeypatch.setattr(trajectory_provenance_module, "_PATH_READ_BYTES", fail_path_read_bytes)
+    monkeypatch.setattr(trajectory_provenance_module, "_OS_FSPATH", fail_os_fspath)
 
     assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
         "trajectory_dataset_id": "agentic-snapshot",
