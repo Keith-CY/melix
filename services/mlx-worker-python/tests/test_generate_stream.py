@@ -947,6 +947,16 @@ def test_allowed_tools_receipt_trims_source_ids_with_cached_ext_fields() -> None
     }
 
 
+def test_allowed_tools_receipt_skips_empty_source_id_split() -> None:
+    request = inference_pb2.GenerateRequest()
+    request.execution.ext["melix.tool_config.source"] = " client "
+
+    receipt = json.loads(EngineCore._allowed_tools_receipt_json(request))
+
+    assert receipt["tool_config_source"] == "client"
+    assert receipt["tool_source_ids"] == []
+
+
 def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> None:
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
