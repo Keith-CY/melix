@@ -75,6 +75,16 @@ _MODEL_INVENTORY_SOURCE_KINDS = (
     _SOURCE_KIND_LM_STUDIO_STORE,
 )
 _MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
+_MODEL_WEIGHT_FILE_SUFFIX_LAST_CHARS = frozenset("sz")
+_REGISTRY_SCAN_SENTINEL_FILENAMES = frozenset(
+    {
+        "manifest.json",
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "model.safetensors.index.json",
+    }
+)
 _SECRET_LIKE_PATTERN = re.compile(
     r"(?i)(?:token|secret|api[_-]?key|authorization|bearer|hf_[a-z0-9]{8,})"
 )
@@ -3988,22 +3998,24 @@ class WorkerModelCatalog:
                     for entry in entries:
                         entry_name = entry.name
                         try:
-                            if entry_name == "manifest.json" and entry.is_file():
-                                has_manifest = True
+                            if entry_name in _REGISTRY_SCAN_SENTINEL_FILENAMES and entry.is_file():
+                                if entry_name == "manifest.json":
+                                    has_manifest = True
+                                elif entry_name == "config.json":
+                                    has_config = True
+                                elif entry_name == "generation_config.json":
+                                    has_generation_config = True
+                                elif entry_name == "tokenizer_config.json":
+                                    has_tokenizer_config = True
+                                else:
+                                    has_model_weight_files = True
                                 continue
-                            if entry_name == "config.json" and entry.is_file():
-                                has_config = True
-                                continue
-                            if entry_name == "generation_config.json" and entry.is_file():
-                                has_generation_config = True
-                                continue
-                            if entry_name == "tokenizer_config.json" and entry.is_file():
-                                has_tokenizer_config = True
-                                continue
-                            if entry_name == "model.safetensors.index.json" and entry.is_file():
-                                has_model_weight_files = True
-                                continue
-                            if entry_name.endswith(_MODEL_WEIGHT_FILE_SUFFIXES) and entry.is_file():
+                            if (
+                                entry_name
+                                and entry_name[-1] in _MODEL_WEIGHT_FILE_SUFFIX_LAST_CHARS
+                                and entry_name.endswith(_MODEL_WEIGHT_FILE_SUFFIXES)
+                                and entry.is_file()
+                            ):
                                 has_model_weight_files = True
                                 continue
                             if entry.is_dir():

@@ -515,10 +515,29 @@ failures and do not gate this change. These sampled direct alerts are
 non-reproducing measurement noise, not intentional regressions. Only this
 evidence paragraph changed after the exact staged-tree report.
 
+After synchronizing the usage-only remote-provider stream fix and model-registry
+filename prefilter from `origin/main` at `cd99c4a4`, the exact staged-tree report
+at `.runtime/pre-commit-performance/20260801-174846-24722764/report` again ran
+all `148` probes with `20` direct probes and `0` verification failures. The
+backend identity, model-registry, remote-provider, and all focused post-merge
+tests passed. One direct timing sample crossed its threshold: Swift binary
+resolution measured `13.769 ms` for the base and `14.761 ms` for the merged tree
+in the single report (`+7.21%`). The probe was selected because this task adds
+the worker-restart identity regression through the shared integration helper;
+the timed Swift binary lookup implementation itself is unchanged.
+
+Seven alternating `cd99c4a4`/merged-tree repetitions using the pre-commit
+hook's Python `3.12.13` did not reproduce the alert. The aggregate means were
+`14.521 ms` for the base and `14.640 ms` for the merged tree (`+0.82%`), below
+the `5%` threshold; the medians were `14.448 ms` and `14.685 ms`. The report's
+`21` context-only timing alerts had no verification failures and do not gate
+this change. The direct alert is therefore non-reproducing measurement noise,
+not an accepted regression, and no performance-regression override is used.
+
 ## Verification Results
 
-The final 2026-08-01 repository gates completed successfully against
-`origin/main` at `4fb0226b`:
+The post-merge repository gates completed successfully against `origin/main`
+at `cd99c4a4` on 2026-08-02:
 
 - `make bootstrap`
 - `make proto`
