@@ -2310,6 +2310,12 @@ def test_backend_model_identity_probe_script_emits_metrics(
     assert coverage_script.count("swift_changed_line_coverage.py") == 2
     assert coverage_script.count("python_changed_line_coverage.py") == 1
     assert '--diff-from "${diff_from}"' in coverage_script
+    assert "MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON" in coverage_script
+    assert "run_changed_line_coverage" in coverage_script
+    assert "$'TOTAL\\t100.00%\\t0/0'" in coverage_script
+    assert coverage_script.count("--no-parallel") == 2
+    assert "control_identity_test_filters" in coverage_script
+    assert "llvm-profdata merge" in coverage_script
     assert "--enable-code-coverage" in coverage_script
     assert "services/control-plane-swift" in coverage_script
     assert "services/mlx-text-worker-swift" in coverage_script

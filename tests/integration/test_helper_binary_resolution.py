@@ -264,6 +264,115 @@ def test_live_stack_starts_and_stops_swift_vision_worker(
     assert not stack.swift_vision_worker_stderr_path.exists()
 
 
+def test_live_stack_starts_stops_and_restarts_python_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stack = helpers.LiveMelixStack(
+        tmp_path,
+        start_swift_text_worker=False,
+        start_python_worker=False,
+        environment_overrides={"MELIX_PYTHONPATH_PREFIX": "/workspace-prefix"},
+    )
+    stack.python_socket_path = tmp_path / "python.sock"
+    stack.python_worker_metrics_path = tmp_path / "python-metrics.json"
+    stack.python_worker_stdout_path = tmp_path / "python.stdout.log"
+    stack.python_worker_stderr_path = tmp_path / "python.stderr.log"
+    stack.python_socket_path.touch()
+
+    popen_calls: list[dict[str, object]] = []
+    handshakes: list[Path] = []
+    stopped: list[str] = []
+
+    class FakeProcess:
+        next_pid = 2000
+
+        def __init__(self) -> None:
+            self.pid = FakeProcess.next_pid
+            FakeProcess.next_pid += 1
+
+        def poll(self) -> None:
+            return None
+
+    tick = 0.0
+
+    def fake_perf_counter() -> float:
+        nonlocal tick
+        tick += 0.1
+        return tick
+
+    def fake_popen(command: list[str], **kwargs: object) -> FakeProcess:
+        popen_calls.append({"command": command, **kwargs})
+        return FakeProcess()
+
+    monkeypatch.setattr(helpers.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        helpers,
+        "wait_for_worker_handshake",
+        lambda socket_path, **kwargs: handshakes.append(socket_path),
+    )
+    monkeypatch.setattr(helpers.time, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(helpers.time, "perf_counter_ns", lambda: 456)
+    monkeypatch.setattr(stack, "_stop_process", lambda name, process: stopped.append(name))
+
+    stack.start_python_worker()
+
+    assert not stack.python_socket_path.exists()
+    assert handshakes == [stack.python_socket_path]
+    assert stack.python_worker is not None
+    assert stack.python_worker.pid == 2000
+    assert stack.startup_timings["python_worker_ready_ms"] == pytest.approx(100.0)
+    first_call = popen_calls[0]
+    assert first_call["command"] == [
+        "uv",
+        "run",
+        "--project",
+        str(tmp_path / "services/mlx-worker-python"),
+        "python",
+        "-m",
+        "worker.bootstrap",
+        "--socket-path",
+        str(stack.python_socket_path),
+        "--backend-mode",
+        "deterministic",
+    ]
+    assert first_call["env"]["PYTHONPATH"] == os.pathsep.join(  # type: ignore[index]
+        [
+            "/workspace-prefix",
+            str(tmp_path),
+            str(tmp_path / "services/mlx-worker-python"),
+        ]
+    )
+    assert first_call["env"]["MELIX_PYTHON_WORKER_METRICS_PATH"] == str(  # type: ignore[index]
+        stack.python_worker_metrics_path
+    )
+    assert first_call["env"]["MELIX_PYTHON_WORKER_STARTUP_T0_NS"] == "456"  # type: ignore[index]
+
+    with pytest.raises(RuntimeError, match="python worker is already running"):
+        stack.start_python_worker()
+
+    stack.python_socket_path.touch()
+    stack.python_worker_metrics_path.touch()
+    stack.stop_python_worker()
+
+    assert stopped == ["python worker"]
+    assert stack.python_worker is None
+    assert stack.python_worker_stdout is None
+    assert stack.python_worker_stderr is None
+    assert not stack.python_socket_path.exists()
+    assert not stack.python_worker_metrics_path.exists()
+    assert not stack.python_worker_stdout_path.exists()
+    assert not stack.python_worker_stderr_path.exists()
+
+    stack.start_python_worker()
+
+    assert stack.python_worker is not None
+    assert stack.python_worker.pid == 2001
+    assert handshakes == [stack.python_socket_path, stack.python_socket_path]
+    stack.stop_python_worker()
+    assert stopped == ["python worker", "python worker"]
+
+
 def test_live_stack_exposes_capabilities_url(tmp_path: Path) -> None:
     stack = helpers.LiveMelixStack(tmp_path)
 

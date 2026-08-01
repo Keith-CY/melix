@@ -402,13 +402,14 @@ relaxing the decode guard.
 
 Final changed-line coverage against current `origin/main`:
 
-- Python backend identity scope: `96.64%` (`575/595`).
-- Swift control-plane scope: `96.46%` (`1334/1383`).
+- Python backend identity scope: `96.67%` (`581/601`).
+- Swift control-plane scope: `96.17%` (`1330/1383`).
 - Swift text-worker scope: `99.15%` (`348/351`).
 
-The control-plane coverage command excludes `SiblingFileAdvisoryLockTests`, an
-unrelated timing-sensitive suite under instrumentation. The normal full Swift
-gate includes that suite and passed.
+The control-plane coverage command runs affected suites and identity-recovery
+tests as isolated shards, then merges their LLVM profiles before measuring the
+changed lines. This avoids shared-state interference under instrumentation.
+The normal full Swift gate remains the complete behavior gate and passed.
 
 The first current-snapshot pre-commit report at
 `.runtime/pre-commit-performance/20260731-212740-686de830/report` selected five
