@@ -21,6 +21,7 @@ def test_list_packaging_target_profiles_share_one_logical_identity() -> None:
         "launch_agents_checkout",
         "homebrew_service",
         "macos_app_bundle_preview",
+        "macos_app_bundle_github_release_candidate",
         "macos_app_bundle_github_release",
     ]
     assert {profile.logical_product_identity for profile in profiles} == {"io.melix"}

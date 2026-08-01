@@ -61,6 +61,16 @@ _TARGETS: dict[str, PackagingTargetProfile] = {
         state_contract="embedded_target_manifest_v1",
         update_strategy="manual_bundle_refresh_with_embedded_update_metadata",
     ),
+    "macos_app_bundle_github_release_candidate": PackagingTargetProfile(
+        target_id="macos_app_bundle_github_release_candidate",
+        packaging_kind="app_bundle",
+        distribution_channel="github_actions_release_candidate",
+        runtime_layout="self_contained_bundle",
+        artifact_format="adhoc_macos_app_bundle_release_candidate",
+        optimization_intent="protected_release_finalization_input",
+        state_contract="embedded_target_manifest_v1",
+        update_strategy="no_embedded_feed_until_protected_finalization",
+    ),
     "macos_app_bundle_github_release": PackagingTargetProfile(
         target_id="macos_app_bundle_github_release",
         packaging_kind="app_bundle",
