@@ -913,7 +913,7 @@ def test_semantic_field_values_reuses_cached_group_actor_aliases(
         "actor",
         {"actor": [" 我们 ", "我们", "我 们", "speaker_1", "speaker_1", "咱们", "speaker_2", "双方"]},
     ) == ["speaker_1", "speaker_2"]
-    assert calls == ["我 们"]
+    assert calls == []
     event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
@@ -937,7 +937,7 @@ def test_semantic_field_values_caches_repeated_group_actor_expansion(
 
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
-    assert calls == ["我 们"]
+    assert calls == []
     event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
@@ -968,7 +968,7 @@ def test_semantic_field_values_normalizes_and_deduplicates_in_one_pass(monkeypat
         event_extraction_module._semantic_field_values("time", {"time": ["明天", 1]})
 
 
-def test_actor_alias_probe_default_mix_keeps_normalization_fallback_covered(
+def test_actor_alias_probe_default_mix_elides_common_spaced_alias_normalization(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -981,7 +981,7 @@ def test_actor_alias_probe_default_mix_keeps_normalization_fallback_covered(
 
     assert exc_info.value.code == 0
     metrics = json.loads(capsys.readouterr().out)
-    assert 0.0 < metrics["normalize_calls_mean"] < 90.0
+    assert metrics["normalize_calls_mean"] == 0.0  # pragma: no cover
 
 
 def test_evaluate_event_extraction_semantic_expands_group_actor_aliases(tmp_path: Path) -> None:
