@@ -17,12 +17,14 @@ from worker.model_ops.hub_catalog import (
     HubSearchPage,
     _bytes_per_parameter,
     _direct_size_hint_from_text,
+    _int,
     _is_mlx_compatible,
     _local_fit_evidence,
     _payload_is_mlx_compatible,
     _quantization_summary,
     _repo_id_contains_mlx,
     _size_hint_from_text,
+    _string,
     _string_list,
 )
 
@@ -99,6 +101,15 @@ def test_string_list_preserves_exact_list_and_list_subclass_inputs() -> None:
     assert _string_list("mlx") == ["mlx"]
 
 
+def test_string_helper_preserves_exact_string_and_string_subclass_inputs() -> None:
+    class CustomString(str):
+        pass
+
+    assert _string("owner/model") == "owner/model"
+    assert _string(CustomString("owner/model")) == "owner/model"
+    assert _string(7) == ""
+
+
 def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tags() -> None:
     assert _bytes_per_parameter([], lowered_tags={"family", "2bit", "float32"}) == 0.25
     assert _bytes_per_parameter([], lowered_tags={"family", "float32", "4-bit"}) == 0.5
@@ -106,6 +117,19 @@ def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tag
     assert _bytes_per_parameter([], lowered_tags={"family", "3-bit", "8bit"}) == 0.375
     assert _bytes_per_parameter([], lowered_tags={"family", "foo4", "bitbar"}) == 2.0
     assert _bytes_per_parameter(["adapter", "2bit-mlx"], lowered_tags=None) == 0.25
+
+
+def test_int_helper_preserves_bool_and_int_subclass_semantics() -> None:
+    class CustomInt(int):
+        pass
+
+    assert _int(7) == 7
+    assert _int(True) == 1
+    assert _int(False) == 0
+    assert _int(CustomInt(9)) == 9
+    assert _int(2.9) == 2
+    assert _int(None) == 0
+    assert _int("3") == 0
 
 
 def test_mlx_library_atom_detection_preserves_mixed_case_without_lowercase_copy() -> None:

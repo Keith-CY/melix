@@ -428,17 +428,37 @@ failures are never eligible for an override. Any sampled regression must be
 analyzed and reproduced before using the repository's documented intentional
 regression override.
 
+The review-correction snapshot report at
+`.runtime/pre-commit-performance/20260801-103014-06c48008/report` completed all
+`148` probes with status `ok`: all `3` direct/gated probes passed, with `0`
+regressions and `0` verification failures. A prior isolated registry cold-load
+alert did not reproduce in seven repeated base/head measurements and did not
+recur in this exact staged-snapshot report.
+
+The post-merge report at
+`.runtime/pre-commit-performance/20260801-113349-bd849303/report` also completed
+all `148` probes with `0` verification failures. The backend identity, registry
+cache, and same-cohort probes were all `ok`. An upstream one-line change to the
+shared performance test file forced `20` probes into the direct gate and two
+unrelated timing samples crossed their `5%` thresholds. Neither probe watches
+or executes a runtime path changed by this branch. Seven alternating
+`origin/main`/merged-tree repetitions disproved both alerts: deterministic image
+output byte accounting changed from `20.407 ms` to `20.457 ms` (`+0.24%`), and
+deterministic OCR token counting changed from `793.868 ms` to `791.479 ms`
+(`-0.30%`). The sampled alerts are therefore recorded as non-reproducing
+measurement noise, not accepted regressions.
+
 ## Verification Results
 
 The final 2026-08-01 repository gates completed successfully against
-`origin/main` at `76c0d55c`:
+`origin/main` at `a501bbb6`:
 
 - `make bootstrap`
 - `make proto`
 - `make proto-check`
 - `make swift-test` (`301` text-worker and `882` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
-- `make py-test` (`5491` passed, `14` skipped)
+- `make py-test` (`5494` passed, `14` skipped)
 - `make integration-test` (`125` passed, `1` skipped)
 
 The focused same-endpoint worker-restart integration test also passed. After

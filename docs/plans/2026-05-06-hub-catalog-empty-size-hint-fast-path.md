@@ -117,3 +117,29 @@ first-query-key fallback. Cursor extraction semantics remain unchanged for
 first-query, later-query, fragment-delimited, and missing-cursor links while the
 registered cursor probe measures the repeated Hub pagination workload locally and
 in CI.
+
+## 2026-08-01 exact int helper fast path
+
+This follow-up Python-only slice keeps registered probe coverage through
+`hub-catalog-tag-normalization-single-pass` and
+`hub-catalog-size-hint-regex-precompile`, and narrows to the shared `_int(...)`
+helper used while building Hub catalog summary records and size hints. Hub API
+JSON decoding produces exact `int` instances for common numeric fields such as
+`downloads`, `likes`, and safetensors totals, while absent optional numeric fields
+arrive as `None`. The helper now returns exact ints and `None` before the existing
+bool/subclass/float compatibility branches. Behavior for bool values, int
+subclasses, floats, and unsupported values remains unchanged while the registered
+Hub catalog probes measure the repeated summary and size hint workloads locally
+and in CI.
+
+## 2026-08-01 exact string helper fast path
+
+This follow-up Python-only slice keeps registered probe coverage through the Hub
+catalog probes and narrows to the shared `_string(...)` helper used while
+building Hub catalog summary and card records. Hub API JSON decoding produces
+exact `str` instances for common text fields such as repo ids, authors,
+descriptions, pipeline tags, and timestamps. The helper now returns exact strings
+before the broader `isinstance(...)` compatibility branch. Behavior for string
+subclasses and unsupported values remains unchanged while the registered Hub
+catalog probes measure the repeated summary, cursor, and size hint workloads
+locally and in CI.

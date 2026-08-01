@@ -1193,7 +1193,7 @@ class EngineCore:
         tool_choice_resolved = ext_get("melix.compat.tool_choice_resolved", "").strip()
         tool_config_source = ext_get("melix.tool_config.source", "").strip()
         raw_tool_count = ext_get("melix.tool_config.tool_count", "").strip()
-        raw_source_ids = ext_get("melix.mcp.source_ids", "")
+        source_ids_text = ext_get("melix.mcp.source_ids", "").strip()
         suppressed_reason = ext_get("melix.tool_parser.suppressed_reason", "").strip()
         if (
             not execution.tool_config.tools
@@ -1201,7 +1201,7 @@ class EngineCore:
             and not tool_choice_resolved
             and not tool_config_source
             and not raw_tool_count
-            and not raw_source_ids.strip()
+            and not source_ids_text
             and not suppressed_reason
         ):
             return _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
@@ -1238,10 +1238,11 @@ class EngineCore:
             or "auto"
         )
         source_ids: list[str] = []
-        for item in raw_source_ids.split(","):
-            source_id = item.strip()
-            if source_id:
-                source_ids.append(source_id)
+        if source_ids_text:
+            for item in source_ids_text.split(","):
+                source_id = item.strip()
+                if source_id:
+                    source_ids.append(source_id)
         payload = {
             "allowed_tool_names": allowed_names,
             "allowed_tool_count": len(allowed_names),

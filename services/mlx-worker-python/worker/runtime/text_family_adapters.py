@@ -433,28 +433,38 @@ def _resolved_expert_count(
 def _expert_count_from_config(config_payload: Mapping[str, Any] | None) -> int | None:
     config_payload = _config_mapping(config_payload)
     value = config_payload.get("num_local_experts")
-    if type(value) is int:
+    if type(value) is str:
+        try:
+            return max(0, int(value))
+        except ValueError:
+            pass
+    elif type(value) is int:
         return max(0, value)
-    if isinstance(value, bool):
+    elif isinstance(value, bool):
         pass
     elif isinstance(value, float):
         return max(0, int(value))
-    elif isinstance(value, str) and value.strip():
+    elif isinstance(value, str):
         try:
-            return max(0, int(value.strip()))
+            return max(0, int(value))
         except ValueError:
             pass
     for key in ("num_experts", "moe_num_experts", "n_routed_experts"):
         value = config_payload.get(key)
+        if type(value) is str:
+            try:
+                return max(0, int(value))
+            except ValueError:
+                continue
         if isinstance(value, bool):
             continue
         if isinstance(value, int):
             return max(0, value)
         if isinstance(value, float):
             return max(0, int(value))
-        if isinstance(value, str) and value.strip():
+        if isinstance(value, str):
             try:
-                return max(0, int(value.strip()))
+                return max(0, int(value))
             except ValueError:
                 continue
     return None
