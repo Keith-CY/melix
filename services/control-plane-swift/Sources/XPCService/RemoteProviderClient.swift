@@ -34,6 +34,11 @@ public struct RemoteProviderChatRequest: Equatable, Sendable {
     public let modelID: String
     public let messages: [Message]
     public let stream: Bool
+    public let enableThinking: Bool?
+    public let reasoningEffort: String?
+    public let temperature: Double?
+    public let topP: Double?
+    public let maxTokens: UInt32?
     public let timeoutSeconds: UInt32
 
     public init(
@@ -44,6 +49,11 @@ public struct RemoteProviderChatRequest: Equatable, Sendable {
         modelID: String,
         messages: [Message],
         stream: Bool,
+        enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
+        temperature: Double? = nil,
+        topP: Double? = nil,
+        maxTokens: UInt32? = nil,
         timeoutSeconds: UInt32 = 60
     ) {
         self.serverID = serverID
@@ -53,6 +63,11 @@ public struct RemoteProviderChatRequest: Equatable, Sendable {
         self.modelID = modelID
         self.messages = messages
         self.stream = stream
+        self.enableThinking = enableThinking
+        self.reasoningEffort = reasoningEffort
+        self.temperature = temperature
+        self.topP = topP
+        self.maxTokens = maxTokens
         self.timeoutSeconds = timeoutSeconds
     }
 
@@ -65,6 +80,11 @@ public struct RemoteProviderChatRequest: Equatable, Sendable {
             modelID: modelID,
             messages: messages,
             stream: stream,
+            enableThinking: enableThinking,
+            reasoningEffort: reasoningEffort,
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
             timeoutSeconds: timeoutSeconds
         )
     }
@@ -91,6 +111,7 @@ public struct RemoteProviderChatCompletion: Equatable, Sendable {
 
 public enum RemoteProviderChatStreamEvent: Equatable, Sendable {
     case tokenDelta(String)
+    case reasoningDelta(String)
     case usage(promptTokens: UInt32, completionTokens: UInt32)
     case completed(finishReason: String, assistantText: String)
 }
@@ -197,11 +218,35 @@ public struct OpenAICompatibleRemoteProviderClient: RemoteProviderChatClient {
         guard let url = URL(string: normalizedBase + "/chat/completions") else {
             throw RemoteProviderError.invalidRequest("remote provider base_url is invalid: \(request.baseURL)")
         }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": request.modelID,
             "messages": request.messages.map { ["role": $0.role, "content": $0.content] },
             "stream": request.stream,
         ]
+        if let enableThinking = request.enableThinking {
+            body["enable_thinking"] = enableThinking
+        }
+        if let reasoningEffort = request.reasoningEffort?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           reasoningEffort.isEmpty == false
+        {
+            body["reasoning_effort"] = reasoningEffort
+        }
+        if let temperature = request.temperature {
+            guard temperature.isFinite else {
+                throw RemoteProviderError.invalidRequest("remote provider temperature must be finite")
+            }
+            body["temperature"] = temperature
+        }
+        if let topP = request.topP {
+            guard topP.isFinite else {
+                throw RemoteProviderError.invalidRequest("remote provider top_p must be finite")
+            }
+            body["top_p"] = topP
+        }
+        if let maxTokens = request.maxTokens, maxTokens > 0 {
+            body["max_tokens"] = maxTokens
+        }
         var httpRequest = URLRequest(url: url)
         httpRequest.httpMethod = "POST"
         httpRequest.timeoutInterval = TimeInterval(request.timeoutSeconds == 0 ? 60 : request.timeoutSeconds)
@@ -294,12 +339,18 @@ public struct OpenAICompatibleRemoteProviderClient: RemoteProviderChatClient {
             }
             let object = try parseJSONObject(payloadData)
             let choice = try firstChoice(from: object)
-            if let delta = choice["delta"] as? [String: Any],
-               let content = delta["content"] as? String,
-               content.isEmpty == false
-            {
-                assistantText += content
-                events.append(.tokenDelta(content))
+            if let delta = choice["delta"] as? [String: Any] {
+                if let reasoningContent = delta["reasoning_content"] as? String,
+                   reasoningContent.isEmpty == false
+                {
+                    events.append(.reasoningDelta(reasoningContent))
+                }
+                if let content = delta["content"] as? String,
+                   content.isEmpty == false
+                {
+                    assistantText += content
+                    events.append(.tokenDelta(content))
+                }
             }
             if let usage = object["usage"] as? [String: Any] {
                 events.append(

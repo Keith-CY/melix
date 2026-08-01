@@ -13539,8 +13539,190 @@ struct RuntimeViewModelTests {
         let followUp = try #require(await client.recordedChatRequests.last)
         #expect(followUp.serverSessionID == selectedServerSessionID)
         #expect(followUp.enableThinking == false)
+        #expect(followUp.reasoningEffort == "none")
         #expect(followUp.messages.filter { $0.role == "system" }.count == 1)
         #expect(followUp.messages.map(\.role) == ["system", "user", "assistant", "user"])
+    }
+
+    @Test("desktop chat binds and sends through a remote Provider target")
+    @MainActor
+    func desktopChatBindsAndSendsThroughRemoteProviderTarget() async throws {
+        let remoteServerID = "lay2-deepseek-v4"
+        let remoteModelID = "deepseek-v4-flash"
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: remoteServerID,
+                    title: "LAY2 DeepSeek V4",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "http://192.0.2.10:50650/v1",
+                    defaultModelID: remoteModelID,
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 0,
+                    toolSupportMode: .forceOff,
+                    credentialRef: RemoteServerStore.credentialRef(for: remoteServerID),
+                    apiKeyHint: "meli...auth",
+                    healthStatus: "ready"
+                ),
+            ],
+            apiKeys: [remoteServerID: "melix-no-auth"]
+        )
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .tokenDelta("MELIX_UI_REMOTE_OK"),
+            .completed(
+                finishReason: "stop",
+                assistantText: "MELIX_UI_REMOTE_OK",
+                reasoningText: ""
+            ),
+        ])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore
+        )
+
+        await viewModel.start()
+        viewModel.bindSelectedChatSessionToProvider(
+            providerTargetID: "remote:\(remoteServerID)"
+        )
+
+        #expect(viewModel.selectedChatSession?.providerTargetID == "remote:\(remoteServerID)")
+        #expect(viewModel.selectedChatSession?.serverSessionID.isEmpty == true)
+        #expect(viewModel.selectedChatProviderTarget?.kind == .remoteServer)
+        #expect(viewModel.selectedChatServerSession == nil)
+        #expect(viewModel.isSelectedChatProviderReady)
+
+        viewModel.chatThinkingEnabled = false
+        viewModel.chatComposerText = "Reply with exactly MELIX_UI_REMOTE_OK"
+        await viewModel.submitChatPrompt()
+
+        let request = try #require(await client.recordedChatRequests.last)
+        let remoteTarget = try #require(request.remoteTarget)
+        #expect(request.modelID == remoteModelID)
+        #expect(request.serverSessionID == remoteServerID)
+        #expect(request.enableThinking == false)
+        #expect(request.reasoningEffort == "none")
+        #expect(remoteTarget.serverID == remoteServerID)
+        #expect(remoteTarget.providerKind == "openai-compatible")
+        #expect(remoteTarget.baseURL == "http://192.0.2.10:50650/v1")
+        #expect(remoteTarget.apiKey == "melix-no-auth")
+        #expect(remoteTarget.modelID == remoteModelID)
+        #expect(remoteTarget.timeoutSeconds == 120)
+        #expect(viewModel.chatTranscript.contains {
+            $0.kind == .assistant && $0.body == "MELIX_UI_REMOTE_OK"
+        })
+
+        viewModel.forkSelectedChatSession()
+        #expect(viewModel.selectedChatSession?.providerTargetID == "remote:\(remoteServerID)")
+        #expect(viewModel.selectedChatProviderTarget?.serverID == remoteServerID)
+    }
+
+    @Test("desktop chat preserves the draft when remote credentials or model configuration is missing")
+    @MainActor
+    func desktopChatRejectsIncompleteRemoteProviderConfiguration() async throws {
+        let cases: [(
+            modelID: String,
+            apiKey: String?,
+            expectedError: String
+        )] = [
+            (
+                "deepseek-v4-flash",
+                nil,
+                "Remote Provider lay2-deepseek-v4 has no API key configured."
+            ),
+            (
+                "",
+                "melix-no-auth",
+                "Remote Provider lay2-deepseek-v4 has no model configured."
+            ),
+        ]
+
+        for testCase in cases {
+            let remoteServerID = "lay2-deepseek-v4"
+            let remoteStore = FakeRemoteServerStore(
+                servers: [
+                    RemoteServer(
+                        id: remoteServerID,
+                        title: "LAY2 DeepSeek V4",
+                        providerPreset: .custom,
+                        providerKind: "openai-compatible",
+                        baseURL: "http://192.0.2.10:50650/v1",
+                        defaultModelID: testCase.modelID,
+                        timeoutSeconds: 120,
+                        rateLimitPerMinute: 0,
+                        toolSupportMode: .forceOff,
+                        credentialRef: RemoteServerStore.credentialRef(for: remoteServerID),
+                        apiKeyHint: testCase.apiKey == nil ? "" : "meli...auth",
+                        healthStatus: "ready"
+                    ),
+                ],
+                apiKeys: testCase.apiKey.map { [remoteServerID: $0] } ?? [:]
+            )
+            let client = FakeControlPlaneXPCClient()
+            let viewModel = RuntimeViewModel(
+                client: client,
+                remoteServerStore: remoteStore
+            )
+
+            await viewModel.start()
+            viewModel.bindSelectedChatSessionToProvider(
+                providerTargetID: "remote:\(remoteServerID)"
+            )
+            viewModel.chatComposerText = "Keep this draft"
+
+            await viewModel.submitChatPrompt()
+
+            #expect(await client.recordedChatRequests.isEmpty)
+            #expect(viewModel.chatStatusText == "Provider Unavailable")
+            #expect(viewModel.lastError == testCase.expectedError)
+            #expect(viewModel.chatComposerText == "Keep this draft")
+            #expect(viewModel.selectedSurface == .chat)
+        }
+    }
+
+    @Test("desktop chat clears a remote binding after its Provider is removed")
+    @MainActor
+    func desktopChatClearsRemovedRemoteProviderBinding() async throws {
+        let remoteServerID = "lay2-deepseek-v4"
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: remoteServerID,
+                    title: "LAY2 DeepSeek V4",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "http://192.0.2.10:50650/v1",
+                    defaultModelID: "deepseek-v4-flash",
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 0,
+                    toolSupportMode: .forceOff,
+                    credentialRef: RemoteServerStore.credentialRef(for: remoteServerID),
+                    apiKeyHint: "meli...auth",
+                    healthStatus: "ready"
+                ),
+            ],
+            apiKeys: [remoteServerID: "melix-no-auth"]
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: remoteStore
+        )
+
+        await viewModel.start()
+        viewModel.bindSelectedChatSessionToProvider(
+            providerTargetID: "remote:\(remoteServerID)"
+        )
+        #expect(viewModel.selectedChatSession?.providerTargetID == "remote:\(remoteServerID)")
+
+        viewModel.removeSelectedRemoteServer()
+        await viewModel.refreshDesktopFoundation()
+
+        #expect(remoteStore.removedIDs == [remoteServerID])
+        #expect(viewModel.selectedChatSession?.providerTargetID == "")
+        #expect(viewModel.selectedChatSession?.serverSessionID == "")
+        #expect(viewModel.selectedChatSession?.statusText == "Choose Provider")
+        #expect(viewModel.selectedChatProviderTarget == nil)
     }
 
     @Test("chat streaming state follows reasoning tool and assistant entries independently")

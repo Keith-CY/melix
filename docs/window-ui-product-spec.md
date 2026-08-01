@@ -663,13 +663,27 @@ selected. Required composer states:
 Production composer state is driven by runtime state, not by a user-facing
 manual segmented control.
 
-A local Chat session's explicit Provider binding is execution-authoritative,
-not presentation-only metadata. Every direct Desktop or CLI chat request must
-carry that Provider's Server Session ID through the control-plane boundary.
-Lifecycle admission, request-activity wakeup, and serving-default resolution
-must all use that same ID; a non-default selection must never inherit the
-default Server Session's lifecycle or generation policy. An omitted or blank
-ID retains the legacy default Server Session behavior.
+A Chat session's explicit Provider binding is execution-authoritative, not
+presentation-only metadata. The binding uses a provider-target identity that
+can resolve to either a local or remote Provider. Local Desktop and CLI chat
+requests carry the selected Provider's Server Session ID through the
+control-plane boundary. Lifecycle admission, request-activity wakeup, and
+serving-default resolution all use that same ID; a non-default local selection
+must never inherit the default Server Session's lifecycle or generation
+policy. An omitted or blank local ID retains the legacy default Server Session
+behavior.
+
+Remote Chat bindings resolve to the configured endpoint and model without
+starting, waking, preloading, or attaching a local model. The App loads the
+outbound Remote Provider Credential only while constructing the dispatch
+request; the raw value must not enter Chat session state, transcript, logs,
+exports, labels, or accessibility text. The provider picker distinguishes Local
+Providers from Remote Providers, while the Composer and Inspector retain one
+provider-neutral interaction model. Disabling Thinking for a reasoning-capable
+remote target sends an explicit `reasoning_effort = none`. When Thinking is
+enabled and an OpenAI-compatible remote target emits `reasoning_content`,
+Melix must preserve it as typed reasoning deltas and final reasoning text,
+separate from visible assistant content.
 
 User-facing Chat binding language must use Provider terms. Starter prompts,
 empty states, composer repair actions, diagnostics pickers, and selected-object

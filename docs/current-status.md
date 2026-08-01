@@ -1,12 +1,12 @@
 # Melix Current Status
 
-_Last updated: 2026-05-14_
+_Last updated: 2026-07-31_
 
 ---
 
 ## Summary
 
-Melix is a production-ready local AI runtime for Apple Silicon. It covers the full local model-operations loop: model registry management, server session control, local chat, LoRA fine-tuning, and benchmark or evaluation workflows — all from a native macOS app and CLI.
+Melix is a production-ready local AI runtime for Apple Silicon. It covers the full local model-operations loop: model registry management, server session control, local and explicitly configured remote chat, LoRA fine-tuning, and benchmark or evaluation workflows — all from a native macOS app and CLI.
 
 The original Phase 0–8 productization roadmap is **complete**. The codebase is no longer an early-stage thin path; it is a productized local runtime with CLI-first authority and a native macOS operator surface.
 
@@ -24,9 +24,10 @@ The original Phase 0–8 productization roadmap is **complete**. The codebase is
 - Full session lifecycle visible from the `melix` CLI and macOS workspace
 
 ### Chat
-- Local chat flows through the `melix` CLI
-- Chat surface in the native macOS operator workspace
-- Fully offline — no data leaves your machine
+- Local and configured Remote Provider chat flows through the `melix` CLI
+- The native macOS Chat surface selects either a Local Provider or Remote Provider
+- Local Provider chat remains fully offline; Remote Provider chat sends the conversation only to the operator-selected endpoint
+- Remote OpenAI-compatible requests preserve configured reasoning, sampling, and token-limit controls
 
 ### LoRA & QLoRA Fine-Tuning
 - Train LoRA and QLoRA adapters on custom datasets

@@ -655,6 +655,13 @@ public enum MelixCLICommandCodec {
             arguments = ["remote-server", "test"]
             appendOption("--remote-server-id", value: options.remoteServerID, into: &arguments)
             appendOption("--model", value: options.remoteModelID, into: &arguments)
+            appendGenerationControlOptions(
+                reasoningEffort: options.reasoningEffort,
+                maxTokens: options.maxTokens,
+                temperature: options.temperature,
+                topP: options.topP,
+                into: &arguments
+            )
             json = options.json
         case .chatRun(let options):
             arguments = ["chat", "run"]
@@ -667,6 +674,13 @@ public enum MelixCLICommandCodec {
             appendOption("--message", value: options.message, into: &arguments)
             appendOption("--system", value: options.systemPrompt, into: &arguments)
             appendOption("--server-session-id", value: options.serverSessionID, into: &arguments)
+            appendGenerationControlOptions(
+                reasoningEffort: options.reasoningEffort,
+                maxTokens: options.maxTokens,
+                temperature: options.temperature,
+                topP: options.topP,
+                into: &arguments
+            )
             json = options.json
         case .loraTrain(let options):
             arguments = ["lora", "train"]
@@ -1155,6 +1169,19 @@ public enum MelixCLICommandCodec {
         appendPositiveUInt32("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
         appendPositiveUInt32("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
         appendOption("--tool-support-mode", value: options.toolSupportMode?.commandValue, into: &arguments)
+    }
+
+    private static func appendGenerationControlOptions(
+        reasoningEffort: String,
+        maxTokens: UInt32,
+        temperature: Double?,
+        topP: Double?,
+        into arguments: inout [String]
+    ) {
+        appendOption("--reasoning-effort", value: reasoningEffort, into: &arguments)
+        appendPositiveUInt32("--max-tokens", value: maxTokens, into: &arguments)
+        appendOption("--temperature", value: temperature.map { String($0) }, into: &arguments)
+        appendOption("--top-p", value: topP.map { String($0) }, into: &arguments)
     }
 
     private static func appendExportOptions(_ jobID: String, _ outputPath: String, into arguments: inout [String]) {

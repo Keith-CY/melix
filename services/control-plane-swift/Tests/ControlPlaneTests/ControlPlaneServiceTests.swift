@@ -8952,6 +8952,7 @@ struct ControlPlaneServiceTests {
     @Test("startChat routes remote server targets through the remote provider client")
     func startChatRoutesRemoteServerTargetsThroughTheRemoteProviderClient() async throws {
         let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .reasoningDelta("remote reasoning"),
             .tokenDelta("remote"),
             .usage(promptTokens: 11, completionTokens: 3),
             .completed(finishReason: "stop", assistantText: "remote"),
@@ -8962,6 +8963,11 @@ struct ControlPlaneServiceTests {
             ControlPlaneChatRequest(
                 modelID: "",
                 messages: [.init(role: "user", content: "hello")],
+                enableThinking: false,
+                reasoningEffort: "none",
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 128,
                 remoteTarget: .init(
                     serverID: "sub2api",
                     providerKind: "openai-compatible",
@@ -8984,7 +8990,13 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.baseURL == "https://sub2api.example/v1")
         #expect(lastRequest.apiKey == "sk-secret")
         #expect(lastRequest.modelID == "gemini-2.5-flash")
+        #expect(lastRequest.enableThinking == false)
+        #expect(lastRequest.reasoningEffort == "none")
+        #expect(lastRequest.temperature == 0.2)
+        #expect(lastRequest.topP == 0.9)
+        #expect(lastRequest.maxTokens == 128)
         #expect(events == [
+            .reasoningDelta("remote reasoning"),
             .tokenDelta("remote"),
             .usage(
                 promptTokens: 11,
@@ -8995,7 +9007,11 @@ struct ControlPlaneServiceTests {
                 mediaFeatureEncoderCallsSaved: 0,
                 mediaFeatureWorkSavedBytes: 0
             ),
-            .completed(finishReason: "stop", assistantText: "remote", reasoningText: ""),
+            .completed(
+                finishReason: "stop",
+                assistantText: "remote",
+                reasoningText: "remote reasoning"
+            ),
         ])
     }
 
@@ -12087,6 +12103,8 @@ private actor ScriptedRemoteProviderChatClient: RemoteProviderChatClient {
             switch event {
             case .tokenDelta(let text):
                 assistantText += text
+            case .reasoningDelta:
+                break
             case .completed(let completedFinishReason, let completedAssistantText):
                 finishReason = completedFinishReason
                 assistantText = completedAssistantText
