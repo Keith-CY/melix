@@ -21,6 +21,8 @@ Exact metadata string values that already have no leading or trailing whitespace
 
 The registered probe uses exact text-family metadata values for the hot resolver loop, so elapsed time and peak allocations measure the avoided string normalization work directly.
 
+2026-08-01 follow-up slice: string expert-count values from model config now parse directly with `int(value)` instead of first allocating a stripped copy. Python's integer parser preserves the existing whitespace-tolerant behavior, while exact values such as the registered probe's `"128"` avoid the extra string normalization on each resolver pass.
+
 ## Verification plan
 
 Run the focused registered test command, changed-scope coverage command, and registered probe locally on Linux before opening the PR. GitHub Actions PR-scoped performance remains the merge gate for the registered probe report.
