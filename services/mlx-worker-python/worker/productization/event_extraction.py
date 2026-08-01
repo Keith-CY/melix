@@ -48,6 +48,18 @@ _PRECOMPUTED_SEMANTIC_VALUE_GROUPS_BY_COUNT = (
 )
 SEMANTIC_JUDGE_PROMPT_VERSION = "semantic-judge.v4"
 _GROUP_ACTOR_ALIASES = {"我们", "双方", "咱们", "咱俩", "咱两", "我俩", "两人", "二人"}
+_COMMON_SPACED_GROUP_ACTOR_ALIASES = frozenset(
+    {
+        "我 们",
+        "双 方",
+        "咱 们",
+        "咱 俩",
+        "咱 两",
+        "我 俩",
+        "两 人",
+        "二 人",
+    }
+)
 _GROUP_ACTOR_ALIAS_CHARS = frozenset("".join(_GROUP_ACTOR_ALIASES))
 _SIMILARITY_IGNORED_CHARS = set(
     " \t\r\n"
@@ -2230,7 +2242,7 @@ _NORMALIZED_GROUP_ACTOR_ALIASES = frozenset(
 
 @lru_cache(maxsize=512)
 def _is_group_actor_alias(value: str) -> bool:
-    if value in _GROUP_ACTOR_ALIASES:
+    if value in _GROUP_ACTOR_ALIASES or value in _COMMON_SPACED_GROUP_ACTOR_ALIASES:
         return True
     for char in value:
         if char not in _SIMILARITY_IGNORED_CHARS and char not in _GROUP_ACTOR_ALIAS_CHARS:

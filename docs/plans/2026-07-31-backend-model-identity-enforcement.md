@@ -534,10 +534,33 @@ the `5%` threshold; the medians were `14.448 ms` and `14.685 ms`. The report's
 this change. The direct alert is therefore non-reproducing measurement noise,
 not an accepted regression, and no performance-regression override is used.
 
+After synchronizing the event-actor spaced-alias fast path from `origin/main`
+at `415eba04`, the exact staged-tree report at
+`.runtime/pre-commit-performance/20260801-190032-7ed9469e/report` again ran all
+`148` probes with `20` direct probes and `0` verification failures. The full
+Swift, Python, and integration gates passed. The backend identity probe remained
+`ok`: it rejected `140,000` mismatches with `0` output events before mismatch,
+recorded retry counts `3/2/1`, coalesced one recovery caller into two fresh
+bindings, and measured matched-worker p95 at `0.000515 ms` and control-plane p95
+at `0.001534 ms`.
+
+One unrelated direct timing sample crossed its threshold in that single report:
+local-URI multimodal preprocessing measured `125.546 ms` for the base and
+`133.563 ms` for the merged tree (`+6.38%` against a `5%` threshold). The probe
+was selected because the shared performance registry test changed; the merge
+does not change the measured multimodal preprocessing implementation. Seven
+alternating base/merged-tree repetitions using Python `3.12.13` did not
+reproduce the alert. Aggregate means were `131.521 ms` and `130.907 ms`
+(`-0.47%`), while medians were `130.832 ms` and `130.041 ms`. Every repetition
+preserved `0` URL parser calls and `5,000` byte reads. The report's `23`
+context-only timing alerts had no verification failures. The direct alert is
+therefore non-reproducing measurement noise, not an accepted regression, and
+no performance-regression override is used.
+
 ## Verification Results
 
 The post-merge repository gates completed successfully against `origin/main`
-at `cd99c4a4` on 2026-08-02:
+at `415eba04` on 2026-08-02:
 
 - `make bootstrap`
 - `make proto`
@@ -547,10 +570,12 @@ at `cd99c4a4` on 2026-08-02:
 - `make py-test` (`5494` passed, `14` skipped)
 - `make integration-test` (`125` passed, `1` skipped)
 
-The focused same-endpoint worker-restart integration test also passed. After
-the final mainline merge, the atomic stale-cleanup and remote-provider routing
-tests passed together, the registered performance and binary-resolution tests
-passed (`15` tests). The remote-review corrections additionally passed all `14`
+The final mainline merge also passed the event-extraction, event-performance,
+and backend-identity focused suites (`96` tests). The focused same-endpoint
+worker-restart integration test also passed. Earlier final-base verification
+passed the atomic stale-cleanup and remote-provider routing tests together, and
+the registered performance and binary-resolution tests (`15` tests). The
+remote-review corrections additionally passed all `14`
 backend identity tests, all `254` OpenAI handler tests, the stale-generation
 snapshot restore regression, the stream-consumption and phase-aware replay
 regressions, and the in-process worker handler performance tests. The three
