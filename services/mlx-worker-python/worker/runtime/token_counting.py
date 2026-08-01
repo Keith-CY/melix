@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-_ASCII_WHITESPACE = frozenset(" \t\n\r\v\f")
+_ASCII_WHITESPACE = " \t\n\r\v\f"
 
 
 @lru_cache(maxsize=512)
 def whitespace_token_count(
     text: str,
     *,
-    _ascii_whitespace: frozenset[str] = _ASCII_WHITESPACE,
+    _ascii_whitespace: str = _ASCII_WHITESPACE,
     _is_space=str.isspace,
 ) -> int:
     token_count = 0

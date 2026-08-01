@@ -33,3 +33,17 @@ semantics while reducing global lookups in the synthetic first-preview workload.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Multi-Limit Late Path Construction
+
+The 2026-08-01 follow-up keeps the same registered probe and narrows to the
+multi-file preview iterator used when `read_hf_dataset_snapshot_rows(...,
+limit=N)` has no split filter and `N > 1`. The iterator now asks the bounded
+scan helper for raw path strings and constructs `Path` objects only when a
+selected entry is actually processed. This preserves sorted depth-first preview
+semantics while avoiding `Path` allocation for selected sibling candidates that
+become unnecessary after an earlier directory yields enough rows.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass, and if the PR-scoped CI probe reports no regression
+before merge.
