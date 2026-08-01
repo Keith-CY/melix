@@ -608,10 +608,34 @@ The report's `14` context-only timing alerts had no verification failures. The
 direct alert is non-reproducing measurement noise, not an accepted regression,
 and no performance-regression override is used.
 
+After synchronizing the sparse sequential changed-scope scan from
+`origin/main` at `7ca8655a`, the exact staged-tree hook completed every
+functional gate again: all Swift suites, `5,495` Python tests with `14` skips,
+and `132` integration tests with one skip. The report at
+`.runtime/pre-commit-performance/20260801-223738-a8f842ae/report` ran all `148`
+probes with `20` direct probes, `0` direct regressions, and `0` gated
+verification failures. The backend identity probe remained `ok`: it rejected
+`140,000` mismatches with `0` output events before mismatch, recorded retry
+counts `3/2/1`, coalesced one recovery caller into two fresh bindings, and
+measured matched-worker p95 at `0.000436 ms` and control-plane p95 at
+`0.001473 ms`.
+
+The synchronized changed-scope measured-set probe preserved zero source reads
+and measured its sparse workload at `7.236 ms`, while the singleton-range probe
+also preserved zero source reads and measured its singleton workload at
+`31.718 ms`; both were `ok`. The rerank direct probe was also `ok`, with request
+processing improving from `277.420 ms` to `276.159 ms`. The report recorded
+`13` context-only timing alerts. One unrelated context-only startup-signals
+verification command failed inside the all-probe run, but its exact registered
+test and coverage commands immediately passed on the staged tree (`61` tests,
+`100%` coverage over zero changed lines). Because it was outside the direct
+gate, reproduced cleanly, and did not affect any performance metric or scoped
+file, no performance-regression override is used.
+
 ## Verification Results
 
 The final post-merge repository gates completed successfully against
-`origin/main` at `ec2c915e` on 2026-08-02:
+`origin/main` at `7ca8655a` on 2026-08-01:
 
 - `make bootstrap`
 - `make proto`
@@ -621,8 +645,10 @@ The final post-merge repository gates completed successfully against
 - `make py-test` (`5495` passed, `14` skipped)
 - `make integration-test` (`132` passed, `1` skipped)
 
-The final mainline merge also passed the changed-scope coverage, backend
-identity, and identity-probe focused suites (`73` tests). The preceding merge
+The final mainline merge also passed the changed-scope coverage and registered
+coverage/probe focused suites (`69` tests). The preceding merge passed the
+changed-scope coverage, backend identity, and identity-probe focused suites
+(`73` tests). The merge before that
 passed the integration-helper, closure-audit, code-evaluation, backend-identity,
 and shared performance-registry focused suites (`129` tests), while the merge
 before that passed the event-extraction, event-performance, and backend-identity

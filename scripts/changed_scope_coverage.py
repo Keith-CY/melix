@@ -338,20 +338,45 @@ def _measurable_non_comment_lines(
                     break
         return measurable
     if len(line_numbers) <= _SPARSE_SOURCE_LINE_SCAN_THRESHOLD:
-        remaining = set(line_numbers)
+        targets = line_numbers
+        if targets[0] > targets[-1]:
+            remaining = set(line_numbers)
+            with source_path.open("r", encoding="utf-8") as source_file:
+                for index, line in enumerate(source_file, 1):
+                    if index in remaining:
+                        first_char = line[0] if line else ""
+                        if first_char and first_char != "#" and not first_char.isspace():
+                            append_measurable(index)
+                        else:
+                            stripped = line.strip()
+                            if stripped and not stripped.startswith("#"):
+                                append_measurable(index)
+                        remaining.remove(index)
+                        if not remaining:
+                            break
+            return measurable
+        target_count = len(targets)
+        target_index = 0
+        while target_index < target_count and targets[target_index] < 1:
+            target_index += 1
+        if target_index >= target_count:
+            return measurable
+        target_line = targets[target_index]
         with source_path.open("r", encoding="utf-8") as source_file:
             for index, line in enumerate(source_file, 1):
-                if index in remaining:
-                    first_char = line[0] if line else ""
-                    if first_char and first_char != "#" and not first_char.isspace():
+                if index != target_line:
+                    continue
+                first_char = line[0] if line else ""
+                if first_char and first_char != "#" and not first_char.isspace():
+                    append_measurable(index)
+                else:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
                         append_measurable(index)
-                    else:
-                        stripped = line.strip()
-                        if stripped and not stripped.startswith("#"):
-                            append_measurable(index)
-                    remaining.remove(index)
-                    if not remaining:
-                        break
+                target_index += 1
+                if target_index >= target_count:
+                    break
+                target_line = targets[target_index]
         return measurable
 
     ascii_measurable = _ascii_bytes_measurable_non_comment_lines(source_path, line_numbers)

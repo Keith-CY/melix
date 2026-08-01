@@ -638,6 +638,73 @@ def test_measurable_non_comment_lines_two_line_sparse_avoids_remaining_set(
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [0, 0]) == []
 
 
+def test_measurable_non_comment_lines_sparse_sequence_avoids_remaining_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "multi_sparse.py"
+    source_path.write_text(
+        "\n".join(
+            [
+                "covered = 1",
+                "# comment",
+                "    missed = 2",
+                "",
+                "tail = 3",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_set(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("multi-line sparse source scans should avoid building a set")
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("multi-line sparse source scans should stream target lines")
+
+    monkeypatch.setattr(changed_scope_coverage, "set", fail_set, raising=False)
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [-1, 1, 3, 4, 5]) == [
+        1,
+        3,
+        5,
+    ]
+
+
+def test_measurable_non_comment_lines_sparse_sequence_handles_all_nonpositive(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "all_nonpositive_sparse.py"
+    source_path.write_text("value = 1\n", encoding="utf-8")
+
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [-3, -1, 0]) == []
+
+
+def test_measurable_non_comment_lines_unsorted_sparse_preserves_set_fallback(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "unsorted_sparse.py"
+    source_path.write_text(
+        "\n".join(
+            [
+                "covered = 1",
+                "# comment",
+                "    missed = 2",
+                "",
+                "tail = 3",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [5, 1, 4, 3]) == [
+        1,
+        3,
+        5,
+    ]
+
+
 def test_measurable_non_comment_lines_falls_back_for_unicode_whitespace(tmp_path: Path) -> None:
     source_path = tmp_path / "dense_unicode.py"
     source_path.write_text(
@@ -1240,10 +1307,10 @@ def test_changed_scope_coverage_measured_probe_rejects_unexpected_allowlist_pars
             rel_path: str,
             changed: set[int],
         ) -> tuple[list[int], list[int], list[int]]:
-            if changed == {1, 2}:
-                return [1, 2], [1], [2]
+            if changed == {1, 2, 3, 4, 5}:
+                return [1, 2, 3, 4, 5], [1, 3, 5], [2, 4]
             if 1 in changed:
-                return [1, 2, 3, 4], [1, 3], [2, 4]
+                return list(range(1, 11)), [1, 3, 5, 7, 9], [2, 4, 6, 8, 10]
             return [], [], []
 
         @staticmethod
@@ -1260,7 +1327,7 @@ def test_changed_scope_coverage_measured_probe_rejects_unexpected_allowlist_pars
         changed_scope_coverage_measured_probe.run_probe(
             tmp_path,
             path_count=1,
-            measured_lines_per_path=4,
+            measured_lines_per_path=10,
             allowlist_parse_count=1,
             samples=1,
         )
@@ -1280,8 +1347,8 @@ def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_measurem
             rel_path: str,
             changed: set[int],
         ) -> tuple[list[int], list[int], list[int]]:
-            if changed == {1, 2}:
-                return [1, 2], [1], [2]
+            if changed == {1, 2, 3, 4, 5}:
+                return [1, 2, 3, 4, 5], [1, 3, 5], [2, 4]
             if 1 in changed:
                 return [1], [1], []
             return [], [], []
@@ -1300,7 +1367,7 @@ def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_measurem
         changed_scope_coverage_measured_probe.run_probe(
             tmp_path,
             path_count=1,
-            measured_lines_per_path=4,
+            measured_lines_per_path=10,
             allowlist_parse_count=1,
             samples=1,
         )
@@ -1320,10 +1387,10 @@ def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_partitio
             rel_path: str,
             changed: set[int],
         ) -> tuple[list[int], list[int], list[int]]:
-            if changed == {1, 2}:
-                return [1, 2], [1], [2]
+            if changed == {1, 2, 3, 4, 5}:
+                return [1, 2, 3, 4, 5], [1, 3, 5], [2, 4]
             if 1 in changed:
-                return [1, 2, 3, 4], [1, 3], []
+                return list(range(1, 11)), [1, 3, 5, 7, 9], []
             return [], [], []
 
         @staticmethod
@@ -1340,7 +1407,7 @@ def test_changed_scope_coverage_measured_probe_rejects_incomplete_dense_partitio
         changed_scope_coverage_measured_probe.run_probe(
             tmp_path,
             path_count=1,
-            measured_lines_per_path=4,
+            measured_lines_per_path=10,
             allowlist_parse_count=1,
             samples=1,
         )

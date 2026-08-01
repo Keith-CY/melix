@@ -58,7 +58,11 @@ def run_probe(
             }
         }
         changed_lines = {measured_lines_per_path + 1, measured_lines_per_path + 2}
-        sparse_changed_lines = {1, 2}
+        sparse_target_count = min(5, measured_lines_per_path)
+        sparse_changed_lines = set(range(1, sparse_target_count + 1))
+        expected_sparse_measurable = list(range(1, sparse_target_count + 1))
+        expected_sparse_covered = list(range(1, sparse_target_count + 1, 2))
+        expected_sparse_missed = list(range(2, sparse_target_count + 1, 2))
         dense_changed_lines = set(range(1, measured_lines_per_path + 1))
 
         original_read_text = module.Path.read_text
@@ -94,7 +98,11 @@ def run_probe(
                         rel_path,
                         sparse_changed_lines,
                     )
-                    if measurable != [1, 2] or covered != [1] or missed != [2]:
+                    if (
+                        measurable != expected_sparse_measurable
+                        or covered != expected_sparse_covered
+                        or missed != expected_sparse_missed
+                    ):
                         raise RuntimeError("sparse changed set should stream and partition target lines")
                 sparse_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
                 sparse_read_samples.append(float(read_calls))
