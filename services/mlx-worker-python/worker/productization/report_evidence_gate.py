@@ -281,7 +281,10 @@ def _report_matrix_roles(
     runs = _dict_list(report.get("runs"))
     targets = _dict_list(report.get("targets"))
     metrics = _dict_list(report.get("metrics"))
-    probe_phases = _probe_phases(report)
+    # Collecting probe phases walks every probe row on both sides of the report,
+    # so skip it entirely when no rule in the matrix asks for one.
+    needs_probe_phases = any(rule.get("probe_phases") for rule in matrix.values())
+    probe_phases = _probe_phases(report) if needs_probe_phases else frozenset()
     return [
         role
         for role, rule in matrix.items()

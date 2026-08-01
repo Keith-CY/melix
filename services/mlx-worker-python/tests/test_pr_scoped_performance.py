@@ -5019,6 +5019,48 @@ def test_text_family_config_probe_script_emits_metrics(
     assert metrics["iterations"] == 50_000
 
 
+def test_registered_probe_commands_reference_tests_that_exist() -> None:
+    """Every ``file.py::test_name`` in the registry must resolve to a real test.
+
+    The registry pins exact pytest node ids, so renaming or deleting a test
+    without updating the probe leaves a command that fails in CI with an
+    unhelpful collection error. Catch that here instead.
+    """
+    import ast
+
+    node_id = re.compile(r"([\w/\.-]+\.py)::([\w\.\-]+)")
+    names_by_path: dict[str, set[str]] = {}
+    stale: list[str] = []
+
+    for probe in load_probe_registry(REGISTRY_PATH):
+        for command in (probe.test_command, probe.coverage_command, probe.probe_command):
+            for match in node_id.finditer(command or ""):
+                rel_path, test_name = match.group(1), match.group(2)
+                names = names_by_path.get(rel_path)
+                if names is None:
+                    source_path = REPO_ROOT / rel_path
+                    if not source_path.is_file():
+                        stale.append(f"{probe.probe_id}: missing file {rel_path}")
+                        names_by_path[rel_path] = set()
+                        continue
+                    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+                    names = set()
+                    for node in tree.body:
+                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            names.add(node.name)
+                        elif isinstance(node, ast.Assign):
+                            names.update(
+                                target.id
+                                for target in node.targets
+                                if isinstance(target, ast.Name)
+                            )
+                    names_by_path[rel_path] = names
+                if test_name not in names:
+                    stale.append(f"{probe.probe_id}: {rel_path}::{test_name}")
+
+    assert not stale, "registry references tests that do not exist:\n" + "\n".join(sorted(set(stale)))
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "backend-model-identity-boundary",
