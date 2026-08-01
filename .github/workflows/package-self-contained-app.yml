@@ -501,6 +501,7 @@ jobs:
           retention-days: 14
 
       - name: Upload isolated release candidate
+        id: upload-release-candidate
         if: github.event_name == 'push' && github.ref_type == 'tag'
         uses: actions/upload-artifact@v7
         with:
@@ -512,7 +513,7 @@ jobs:
           retention-days: 90
 
       - name: Publish app artifact download summary
-        if: github.event_name != 'pull_request' && success()
+        if: github.event_name != 'pull_request' && github.ref_type != 'tag' && success()
         uses: actions/github-script@v9
         env:
           ARTIFACT_NAME: ${{ steps.compute-build-metadata.outputs.artifact_name }}
@@ -544,6 +545,39 @@ jobs:
                 `- Workflow run: ${runUrl}`,
                 '',
                 '> GitHub authentication may be required to download workflow artifacts.',
+                '',
+              ].join('\n');
+              fs.appendFileSync(summaryPath, body, 'utf8');
+            }
+
+      - name: Publish isolated release candidate summary
+        if: github.event_name == 'push' && github.ref_type == 'tag' && success()
+        uses: actions/github-script@v9
+        env:
+          CANDIDATE_ARTIFACT_NAME: ${{ steps.package-names.outputs.candidate_artifact_name }}
+          CANDIDATE_ARTIFACT_URL: ${{ steps.upload-release-candidate.outputs.artifact-url }}
+        with:
+          script: |
+            const fs = require('fs');
+            const candidateArtifactName = process.env.CANDIDATE_ARTIFACT_NAME;
+            const candidateArtifactUrl = process.env.CANDIDATE_ARTIFACT_URL;
+            if (!candidateArtifactName || !candidateArtifactUrl) {
+              core.setFailed('Candidate artifact name or URL is unavailable.');
+              return;
+            }
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+            if (!summaryPath) {
+              core.warning('GITHUB_STEP_SUMMARY is not set; skipping candidate summary.');
+            } else {
+              const body = [
+                '## Protected finalizer input: Melix release candidate',
+                '',
+                `- Candidate artifact: **${candidateArtifactName}**`,
+                `- Candidate artifact link: ${candidateArtifactUrl}`,
+                `- Workflow run: ${runUrl}`,
+                '',
+                '> Do not install or distribute this artifact. It is untrusted input for the protected release finalizer.',
                 '',
               ].join('\n');
               fs.appendFileSync(summaryPath, body, 'utf8');

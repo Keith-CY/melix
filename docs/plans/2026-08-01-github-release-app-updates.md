@@ -207,6 +207,9 @@ The interactive UI walkthrough is therefore not required for this slice.
 - [x] Isolate the tag candidate from all release inputs and require non-secret
       tag validation plus protected revalidation before any protected input is
       referenced.
+- [x] Keep installable archive summaries unreachable from tag runs and label
+      the exact tag candidate artifact as protected-finalizer input that must
+      not be installed or distributed.
 - [x] Add GitHub-hosted-only self-signed trust lifecycle and real sentinel
       smoke coverage with cleanup-confirmed publication ordering.
 - [x] Add the update runbook and update the packaging target contract.

@@ -1107,7 +1107,10 @@ def test_package_workflow_publishes_download_summary_for_uploaded_app_artifact()
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
     summary_step = find_workflow_step(workflow, "Publish app artifact download summary")
-    assert "github.event_name != 'pull_request' && success()" in summary_step
+    assert (
+        "github.event_name != 'pull_request' && github.ref_type != 'tag' && success()"
+        in summary_step
+    )
     assert "github.rest.actions.listWorkflowRunArtifacts" in summary_step
     assert "process.env.GITHUB_STEP_SUMMARY" in summary_step
     assert "Download packaged Melix.app" in summary_step
@@ -1115,6 +1118,33 @@ def test_package_workflow_publishes_download_summary_for_uploaded_app_artifact()
     assert "Download:" in summary_step
     assert "Workflow run:" in summary_step
     assert "artifacts/${artifact.id}" in summary_step
+
+
+def test_package_workflow_labels_tag_candidate_as_protected_finalizer_input() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    candidate_summary = find_workflow_step(
+        workflow,
+        "Publish isolated release candidate summary",
+    )
+    assert (
+        "github.event_name == 'push' && github.ref_type == 'tag' && success()"
+        in candidate_summary
+    )
+    assert (
+        "CANDIDATE_ARTIFACT_NAME: "
+        "${{ steps.package-names.outputs.candidate_artifact_name }}"
+        in candidate_summary
+    )
+    assert (
+        "CANDIDATE_ARTIFACT_URL: "
+        "${{ steps.upload-release-candidate.outputs.artifact-url }}"
+        in candidate_summary
+    )
+    assert "Candidate artifact link: ${candidateArtifactUrl}" in candidate_summary
+    assert "Protected finalizer input: Melix release candidate" in candidate_summary
+    assert "Do not install or distribute this artifact" in candidate_summary
+    assert "Download packaged Melix.app" not in candidate_summary
 
 
 def test_package_workflow_runs_daily_at_midnight_utc() -> None:
