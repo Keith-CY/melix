@@ -448,21 +448,11 @@ def _unquote_plus_ascii_cursor(value: str) -> str:
 
 
 def _string(value: Any) -> str:
-    if type(value) is str:
-        return value
     return value if isinstance(value, str) else ""
 
 
 def _int(value: Any) -> int:
-    if type(value) is int:
-        return value
-    if value is None:
-        return 0
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
+    if isinstance(value, (int, float)):
         return int(value)
     return 0
 

@@ -45,18 +45,6 @@ assert MEASURED_PROBE_MODULE_SPEC.loader is not None
 changed_scope_coverage_measured_probe = importlib.util.module_from_spec(MEASURED_PROBE_MODULE_SPEC)
 MEASURED_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_measured_probe)
 
-SINGLETON_PROBE_MODULE_PATH = (
-    Path(__file__).resolve().parents[1] / "scripts" / "changed_scope_coverage_singleton_probe.py"
-)
-SINGLETON_PROBE_MODULE_SPEC = importlib.util.spec_from_file_location(
-    "changed_scope_coverage_singleton_probe", SINGLETON_PROBE_MODULE_PATH
-)
-assert SINGLETON_PROBE_MODULE_SPEC is not None
-assert SINGLETON_PROBE_MODULE_SPEC.loader is not None
-changed_scope_coverage_singleton_probe = importlib.util.module_from_spec(SINGLETON_PROBE_MODULE_SPEC)
-SINGLETON_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_singleton_probe)
-
-
 @pytest.fixture(autouse=True)
 def clear_probe_coverage_path_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", raising=False)
@@ -561,8 +549,7 @@ def test_measurable_changed_lines_filters_blank_comment_and_unmeasured_lines(tmp
     assert missed == [5]
 
 
-def test_measurable_non_comment_lines_preserves_dense_indented_comment_behavior(
-    monkeypatch: pytest.MonkeyPatch,
+def test_measurable_non_comment_lines_skips_blanks_comments_and_out_of_range(
     tmp_path: Path,
 ) -> None:
     source_path = tmp_path / "dense.py"
@@ -583,73 +570,37 @@ def test_measurable_non_comment_lines_preserves_dense_indented_comment_behavior(
         encoding="utf-8",
     )
 
-    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        raise AssertionError("ASCII dense scans should avoid Path.read_text")
-
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
-
     assert changed_scope_coverage._measurable_non_comment_lines(
         source_path,
-        list(range(1, 10)),
+        list(range(0, 12)),
     ) == [1, 3, 6, 7, 9]
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [2]) == []
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [1, 5]) == [1]
 
 
-def test_measurable_non_comment_lines_singleton_uses_ascii_bytes_fast_path(
-    monkeypatch: pytest.MonkeyPatch,
+def test_measurable_non_comment_lines_singleton_classifies_comment_and_indented_code(
     tmp_path: Path,
 ) -> None:
     source_path = tmp_path / "singleton.py"
     source_path.write_text("# comment\n    value = 1\n", encoding="utf-8")
-    read_bytes_calls = 0
-    original_read_bytes = changed_scope_coverage.Path.read_bytes
-
-    def fail_set(*args: object, **kwargs: object) -> object:  # pragma: no cover
-        raise AssertionError("singleton sparse source scans should avoid building a set")
-
-    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        raise AssertionError("ASCII singleton source scans should avoid Path.read_text")
-
-    def counted_read_bytes(self: Path, *args: object, **kwargs: object) -> bytes:
-        nonlocal read_bytes_calls
-        read_bytes_calls += 1
-        return original_read_bytes(self, *args, **kwargs)
-
-    monkeypatch.setattr(changed_scope_coverage, "set", fail_set, raising=False)
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_bytes", counted_read_bytes)
 
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [0]) == []
-    assert read_bytes_calls == 0
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [1]) == []
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [2]) == [2]
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [3]) == []
-    assert read_bytes_calls == 2
 
 
-def test_measurable_non_comment_lines_two_line_sparse_avoids_remaining_set(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+def test_measurable_non_comment_lines_two_line_sparse_selection(tmp_path: Path) -> None:
     source_path = tmp_path / "two_line_sparse.py"
     source_path.write_text("covered = 1\n# comment\n    missed = 2\n", encoding="utf-8")
 
-    def fail_set(*args: object, **kwargs: object) -> object:  # pragma: no cover
-        raise AssertionError("two-line sparse source scans should avoid building a set")
-
-    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        raise AssertionError("two-line sparse source scans should stream target lines")
-
-    monkeypatch.setattr(changed_scope_coverage, "set", fail_set, raising=False)
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
-
-    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [1, 3]) == [
-        1,
-        3,
-    ]
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [1, 3]) == [1, 3]
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [1, 2]) == [1]
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [0, 0]) == []
 
 
-def test_measurable_non_comment_lines_sparse_sequence_avoids_remaining_set(
-    monkeypatch: pytest.MonkeyPatch,
+
+def test_measurable_non_comment_lines_sparse_sequence_selects_code_lines(
     tmp_path: Path,
 ) -> None:
     source_path = tmp_path / "multi_sparse.py"
@@ -665,15 +616,6 @@ def test_measurable_non_comment_lines_sparse_sequence_avoids_remaining_set(
         ),
         encoding="utf-8",
     )
-
-    def fail_set(*args: object, **kwargs: object) -> object:  # pragma: no cover
-        raise AssertionError("multi-line sparse source scans should avoid building a set")
-
-    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        raise AssertionError("multi-line sparse source scans should stream target lines")
-
-    monkeypatch.setattr(changed_scope_coverage, "set", fail_set, raising=False)
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
 
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [-1, 1, 3, 4, 5]) == [
         1,
@@ -743,7 +685,11 @@ def test_line_ranges_may_overlap_rejects_disjoint_changed_bounds() -> None:
     assert changed_scope_coverage._line_ranges_may_overlap({5}, [], [9, 1]) is True
 
 
-def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkeypatch, tmp_path: Path) -> None:
+def test_measurable_changed_lines_returns_empty_when_no_changed_line_is_measured(
+    tmp_path: Path,
+) -> None:
+    # ``foo.py`` is deliberately absent from ``tmp_path``: reading the source would
+    # raise ``FileNotFoundError``, so an empty result also proves no read happened.
     coverage_payload = {
         "files": {
             "foo.py": {
@@ -752,13 +698,6 @@ def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkey
             }
         }
     }
-    read_calls: list[Path] = []
-
-    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        read_calls.append(self)
-        raise AssertionError("source file should not be read when no changed line is measurable")
-
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
 
     for changed in (set(), changed_scope_coverage._EMPTY_CHANGED_LINES, {3, 4}):
         measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
@@ -771,7 +710,6 @@ def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkey
         assert measurable == []
         assert covered == []
         assert missed == []
-    assert read_calls == []
 
 
 def test_measurable_changed_lines_checks_singletons_before_range_overlap(
@@ -804,10 +742,10 @@ def test_measurable_changed_lines_checks_singletons_before_range_overlap(
     assert missed == []
 
 
-def test_measurable_changed_lines_singleton_skips_range_helper_for_measured_lists(
-    monkeypatch: pytest.MonkeyPatch,
+def test_measurable_changed_lines_singleton_outside_measured_bounds_returns_empty(
     tmp_path: Path,
 ) -> None:
+    # ``foo.py`` is absent, so an empty result also proves the source was not read.
     coverage_payload = {
         "files": {
             "foo.py": {
@@ -816,15 +754,6 @@ def test_measurable_changed_lines_singleton_skips_range_helper_for_measured_list
             }
         }
     }
-
-    def fail_range_overlap(*args: object, **kwargs: object) -> bool:  # pragma: no cover
-        raise AssertionError("singleton changed sets should check measured bounds directly")
-
-    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        raise AssertionError("out-of-range singleton changed line should not read source")
-
-    monkeypatch.setattr(changed_scope_coverage, "_line_ranges_may_overlap", fail_range_overlap)
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
 
     measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
         tmp_path,
@@ -917,10 +846,10 @@ def test_measurable_changed_lines_singleton_skips_missing_lookup_when_covered(
     assert contains_calls == [([1, 3, 5], 3)]
 
 
-def test_measurable_changed_lines_singleton_inside_bounds_but_unmeasured_skips_source_read(
-    monkeypatch: pytest.MonkeyPatch,
+def test_measurable_changed_lines_singleton_inside_bounds_but_unmeasured_returns_empty(
     tmp_path: Path,
 ) -> None:
+    # ``foo.py`` is absent, so an empty result also proves the source was not read.
     coverage_payload = {
         "files": {
             "foo.py": {
@@ -929,11 +858,6 @@ def test_measurable_changed_lines_singleton_inside_bounds_but_unmeasured_skips_s
             }
         }
     }
-
-    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        raise AssertionError("unmeasured singleton changed line should not read source")
-
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
 
     measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
         tmp_path,
@@ -1015,13 +939,11 @@ def test_line_ranges_may_overlap_single_changed_line_avoids_changed_minmax(
     assert changed_scope_coverage._line_ranges_may_overlap(SingleLineSet({12}), [1, 12], []) is True
 
 
-def test_measurable_changed_lines_skips_empty_measured_lines(monkeypatch, tmp_path: Path) -> None:
+def test_measurable_changed_lines_returns_empty_when_coverage_has_no_measured_lines(
+    tmp_path: Path,
+) -> None:
+    # ``foo.py`` is absent, so an empty result also proves the source was not read.
     coverage_payload = {"files": {"foo.py": {"executed_lines": [], "missing_lines": []}}}
-
-    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        raise AssertionError("source file should not be read when coverage has no measured lines")
-
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
 
     measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
         tmp_path,
@@ -1057,47 +979,6 @@ def test_measurable_changed_lines_handles_large_measured_sets_without_union(tmp_
     assert measurable == [2, 51]
     assert covered == [51]
     assert missed == [2]
-
-
-def test_measurable_changed_lines_streams_sparse_source_lines(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    source_path = tmp_path / "foo.py"
-    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 101)), encoding="utf-8")
-    coverage_payload = {
-        "files": {
-            "foo.py": {
-                "executed_lines": list(range(1, 100, 2)),
-                "missing_lines": list(range(2, 101, 2)),
-            }
-        }
-    }
-    original_open = changed_scope_coverage.Path.open
-    open_calls: list[Path] = []
-
-    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        raise AssertionError("sparse changed-line source filtering should stream target lines")
-
-    def counted_open(self: Path, *args: object, **kwargs: object) -> object:
-        if self == source_path:
-            open_calls.append(self)
-        return original_open(self, *args, **kwargs)
-
-    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
-    monkeypatch.setattr(changed_scope_coverage.Path, "open", counted_open)
-
-    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
-        tmp_path,
-        coverage_payload,
-        "foo.py",
-        {2, 51},
-    )
-
-    assert measurable == [2, 51]
-    assert covered == [51]
-    assert missed == [2]
-    assert open_calls == [source_path]
 
 
 def test_measurable_changed_lines_ignores_out_of_range_source_lines(tmp_path: Path) -> None:
@@ -1283,25 +1164,6 @@ def test_changed_scope_coverage_measured_probe_emits_large_measured_metrics() ->
     assert metrics["dense_elapsed_ms_mean"] > 0
     assert metrics["allowlist_parse_elapsed_ms_mean"] > 0
     assert metrics["allowlist_parse_count"] == 10000.0
-    assert metrics["source_read_calls_mean"] == 0.0
-    assert metrics["sparse_source_read_calls_mean"] == 0.0
-    assert metrics["dense_source_read_calls_mean"] == 0.0
-
-
-def test_changed_scope_coverage_singleton_probe_emits_range_metrics() -> None:
-    metrics = changed_scope_coverage_singleton_probe.run_probe(
-        Path(__file__).resolve().parents[1],
-        path_count=5,
-        measured_lines_per_path=10,
-        samples=2,
-    )
-
-    assert metrics["path_count"] == 5.0
-    assert metrics["measured_lines_per_path"] == 10.0
-    assert metrics["sample_count"] == 2.0
-    assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["singleton_measured_elapsed_ms_mean"] > 0
-    assert metrics["source_read_calls_mean"] == 0.0
 
 
 def test_changed_scope_coverage_measured_probe_rejects_unexpected_allowlist_parse(

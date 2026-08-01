@@ -294,15 +294,11 @@ def _measure_dict_list(iterations: int, sample_count: int) -> tuple[dict[str, fl
     ]
     elapsed_samples: list[float] = []
     checksum = 0
-    identity_hits = 0
 
     for _ in range(sample_count):
         started = time.perf_counter()
         for _index in range(iterations):
-            result = _dict_list(rows)
-            checksum += len(result)
-            if result is rows:
-                identity_hits += 1
+            checksum += len(_dict_list(rows))
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
     elapsed_mean = statistics.fmean(elapsed_samples)
@@ -310,7 +306,6 @@ def _measure_dict_list(iterations: int, sample_count: int) -> tuple[dict[str, fl
         {
             "dict_list_elapsed_ms_mean": elapsed_mean,
             "dict_list_rows_per_call": float(len(rows)),
-            "dict_list_identity_hits": float(identity_hits),
             "dict_list_checksum": float(checksum),
         },
         elapsed_mean,

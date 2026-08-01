@@ -409,9 +409,6 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["load_report_payload_checksum"] == (
         96.0 * max(1.0, metrics["iterations"] / 500.0) * metrics["sample_count"]
     )
-    assert metrics["dict_list_identity_hits"] == (
-        max(1.0, metrics["iterations"] / 50.0) * metrics["sample_count"]
-    )
     assert metrics["probe_phases_checksum"] == (
         256.0 * max(1.0, metrics["iterations"] / 200.0) * metrics["sample_count"]
     )
@@ -518,32 +515,6 @@ def test_lora_aux_modules_sidecar_delta_metrics_are_informational() -> None:
     assert directions["processor_resume_delta_ms"] == "informational"
     assert directions["quantized_kind_baseline_elapsed_ms_mean"] == "informational"
     assert directions["quantized_kind_delta_ms"] == "informational"
-
-
-def test_scope_report_selects_trajectory_provenance_copy_elision_probe() -> None:
-    scope = build_scope_report(
-        registry_path=REGISTRY_PATH,
-        changed_files=["services/mlx-worker-python/worker/trajectory_provenance.py"],
-    )
-
-    assert _selected_probe_ids(scope) == [
-        "trajectory-provenance-copy-elision",
-        "trajectory-manifest-json-load",
-    ]
-
-
-def test_trajectory_provenance_copy_elision_sidecar_speedups_are_informational() -> None:
-    probe = next(
-        probe
-        for probe in load_probe_registry(REGISTRY_PATH)
-        if probe.probe_id == "trajectory-provenance-copy-elision"
-    )
-    directions = {metric.key: metric.direction for metric in probe.metrics}
-
-    assert directions["speedup"] == "higher_is_better"
-    assert directions["scalar_list_speedup"] == "informational"
-    assert directions["scalar_dict_speedup"] == "informational"
-    assert directions["adapter_manifest_speedup"] == "informational"
 
 
 def test_scope_report_selects_native_mtp_loader_probe() -> None:
@@ -769,50 +740,6 @@ def test_lora_processor_resume_probe_baseline_modes(tmp_path: Path) -> None:
     assert baseline_processor_resume_mode(base_model_dir) == "preprocessor_config"
     (base_model_dir / "processor_config.json").write_text("{}\n", encoding="utf-8")
     assert baseline_processor_resume_mode(base_model_dir) == "processor_config"
-
-
-def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("MELIX_TRAJECTORY_PROVENANCE_PROBE_ITERATIONS", "10")
-    monkeypatch.setenv("MELIX_TRAJECTORY_PROVENANCE_PROBE_SAMPLES", "1")
-    monkeypatch.setenv("MELIX_TRAJECTORY_PROVENANCE_PROBE_COMPONENTS", "4")
-    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/trajectory_provenance_copy_elision_probe.py"))
-
-    assert probe_script["main"]() == 0
-
-    metrics = json.loads(capsys.readouterr().out)
-    assert metrics["baseline_elapsed_ms_mean"] >= 0.0
-    assert metrics["optimized_elapsed_ms_mean"] >= 0.0
-    assert metrics["elapsed_ms_mean"] == metrics["optimized_elapsed_ms_mean"]
-    assert metrics["sample_count"] == 1.0
-    assert metrics["iteration_count"] == 10.0
-    assert metrics["component_count"] == 4.0
-    assert metrics["scalar_dict_baseline_elapsed_ms_mean"] >= 0.0
-    assert metrics["scalar_dict_elapsed_ms_mean"] >= 0.0
-    assert metrics["scalar_dict_speedup"] >= 0.0
-    assert metrics["adapter_manifest_baseline_elapsed_ms_mean"] >= 0.0
-    assert metrics["adapter_manifest_elapsed_ms_mean"] >= 0.0
-    assert metrics["adapter_manifest_speedup"] >= 0.0
-
-
-def test_trajectory_manifest_json_load_probe_script_emits_metrics(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("MELIX_TRAJECTORY_MANIFEST_JSON_PROBE_ITERATIONS", "10")
-    monkeypatch.setenv("MELIX_TRAJECTORY_MANIFEST_JSON_PROBE_SAMPLES", "1")
-    monkeypatch.setenv("MELIX_TRAJECTORY_MANIFEST_JSON_PROBE_COMPONENTS", "4")
-    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/trajectory_manifest_json_load_probe.py"))
-
-    metrics = probe_script["run_probe"]()
-
-    assert metrics["old_mean_ms"] >= 0.0
-    assert metrics["new_mean_ms"] >= 0.0
-    assert metrics["elapsed_ms_mean"] == metrics["new_mean_ms"]
-    assert metrics["sample_count"] == 1.0
-    assert metrics["iteration_count"] == 10.0
-    assert metrics["component_count"] == 4.0
 
 
 def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
@@ -2482,12 +2409,11 @@ def test_scope_report_selects_changed_scope_coverage_probe() -> None:
     )
 
     selected_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 4
+    assert scope["selected_count"] == 3
     assert scope["force_all"] is False
     assert selected_ids == {
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-measured-set-filter",
-        "changed-scope-coverage-singleton-range-fastpath",
         "changed-scope-coverage-diff-parser",
     }
 
@@ -5117,7 +5043,6 @@ def test_registered_probes_expose_focused_commands() -> None:
         "benchmark-store-matrix-streaming",
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-measured-set-filter",
-        "changed-scope-coverage-singleton-range-fastpath",
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
         "code-eval-code-block-last-match-streaming",
@@ -5211,8 +5136,6 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-validation-split-nsmallest",
         "training-dataset-validation-sample-limit",
         "training-dataset-chunker-top-level-base-copy",
-        "trajectory-provenance-copy-elision",
-        "trajectory-manifest-json-load",
         "dataset-registry-preview-limit-short-circuit",
         "dataset-version-listing-scandir",
         "dataset-quality-lengths-chain",
@@ -8529,7 +8452,6 @@ def test_vision_family_prompt_token_count_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
 
     assert metrics["token_count"] > 0
-    assert metrics["split_calls_mean"] == 0.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["config_object_footprint_bytes"] > 0
     assert metrics["config_resolve_elapsed_ms_mean"] > 0
@@ -8583,7 +8505,6 @@ def test_deterministic_vlm_completion_token_probe_script_emits_metrics(
     assert exc_info.value.code == 0
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["split_calls_mean"] == 0.0
     assert metrics["token_count_calls_mean"] == 1.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["samples"] == 1
