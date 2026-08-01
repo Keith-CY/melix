@@ -32,12 +32,13 @@ convenience.
 
 ## Build Classes
 
-The package workflow produces two classes of App bundle:
+The package workflow produces three classes of App bundle:
 
 | Build class | Trigger | Update configuration |
 | --- | --- | --- |
 | Preview | branch, pull request, schedule, or manual dispatch | bundle ID `io.melix.menubar.preview`, target `macos_app_bundle_preview`, ad-hoc signature; Sparkle is bundled because the executable links it, but `SUFeedURL` and `SUPublicEDKey` are omitted and in-App updates are unavailable |
-| Signed release | push of a `v*` tag | bundle ID `io.melix.menubar`, target `macos_app_bundle_github_release`, stable self-signed code identity, stable GitHub Release feed and Melix public EdDSA key; generates and verifies a signed `appcast.xml` before publishing |
+| Isolated release candidate | push of a validated stable `v<major>.<minor>.<patch>` tag | bundle ID `io.melix.menubar.release-candidate`, target `macos_app_bundle_github_release_candidate`, ad-hoc signature, independently named archive, and no feed, public update key, or certificate pins; it is a workflow artifact that can never be attached by the preview publishing path |
+| Signed release | protected finalization of that tag candidate | bundle ID `io.melix.menubar`, target `macos_app_bundle_github_release`, stable self-signed code identity, stable GitHub Release feed and Melix public EdDSA key; generates and verifies a signed `appcast.xml` before publishing |
 
 The stable feed is:
 
@@ -51,23 +52,30 @@ requires explicit user confirmation before installation.
 
 ## Release Credential Interface
 
-The repository must eventually provide these GitHub Actions values:
+The fixed `github-release` GitHub Actions environment must eventually provide
+these protected values:
 
-- Actions variable `SPARKLE_EDDSA_PUBLIC_KEY`: the base64-encoded 32-byte Melix
+- Environment variable `SPARKLE_EDDSA_PUBLIC_KEY`: the base64-encoded 32-byte Melix
   public Ed25519 key embedded in tagged release bundles.
-- Actions secret `SPARKLE_EDDSA_PRIVATE_KEY`: the matching private seed used by
+- Environment variable `MELIX_SIGNING_CERTIFICATE_SHA256`: the independently
+  recorded 64-hex SHA-256 leaf-certificate pin.
+- Environment variable `MELIX_SIGNING_CERTIFICATE_SHA1`: the independently
+  recorded 40-hex SHA-1 leaf-certificate pin used by the macOS designated
+  requirement. Neither expected pin is derived from the supplied PKCS#12.
+- Environment secret `SPARKLE_EDDSA_PRIVATE_KEY`: the matching private seed used by
   the tag release job through standard input only.
-- Actions secret `MELIX_SIGNING_CERTIFICATE_P12`: the base64-encoded PKCS#12
+- Environment secret `MELIX_SIGNING_CERTIFICATE_P12`: the base64-encoded PKCS#12
   export of the stable self-signed identity named exactly
   `Melix GitHub Release Signing`.
-- Actions secret `MELIX_SIGNING_CERTIFICATE_PASSWORD`: the PKCS#12 export
+- Environment secret `MELIX_SIGNING_CERTIFICATE_PASSWORD`: the PKCS#12 export
   password.
 
-All four values are required for a version-tag release. The workflow fails
-closed before publishing release artifacts if any value is absent or invalid,
-or if the configured EdDSA public key does not match the private seed.
-Preview artifacts do not read these values and remain intentionally outside the
-update trust chain.
+All six values are required for protected version-tag finalization. The
+workflow validates the tag and candidate receipts before the first expression
+that references any protected variable or secret, then fails closed before
+publishing if a value is absent, invalid, or inconsistent. Preview and
+candidate jobs do not read these values and remain outside the update trust
+chain.
 
 Key and certificate creation, backup, and GitHub provisioning require explicit
 operator authorization and are intentionally not performed by repository
@@ -76,41 +84,75 @@ EdDSA key with the `generate_keys` tool from the repository-pinned Sparkle
 artifact and a Melix-specific account name. Separately create a long-lived
 self-signed code-signing certificate whose common name is exactly
 `Melix GitHub Release Signing`, then export its identity as password-protected
-PKCS#12. Store encrypted offline recovery copies of both identities. Put only
-the EdDSA public key in the Actions variable and put the three private values
-only in their Actions secrets. Do not print private material or place it in a
+PKCS#12. Store encrypted offline recovery copies of both identities and record
+both public certificate pins independently at that time. Put only the EdDSA
+public key and two certificate pins in environment variables, and put the three
+private values only in environment secrets. Do not print private material or place it in a
 repository file, workflow artifact, issue, pull request, or log. The workflow
 passes the masked PKCS#12 password only to `security import`, reads the EdDSA
-private key only from standard input, and removes the temporary PKCS#12 file
-and keychain before publishing any artifact.
+private key only from standard input, and removes administrator trust plus the
+temporary keychain, PKCS#12, PEM, and sentinel before publishing any artifact.
+
+Production activation is blocked until GitHub itself is configured outside
+this repository:
+
+1. create the environment named exactly `github-release`;
+2. require an authorized reviewer and restrict deployments to protected stable
+   release tags;
+3. configure the six protected values above in that environment;
+4. protect `main` with the required reviews and status checks; and
+5. protect release tags against deletion, rewriting, and unauthorized creation.
+
+The workflow validates ancestry and version monotonicity, but repository code
+cannot substitute for these environment, branch, and tag protections. Do not
+publish an update-enabled release until all five controls are confirmed.
 
 ## Tag Release Flow
 
-For a push of a `v*` tag, `.github/workflows/package-self-contained-app.yml`:
+For a tag push, `.github/workflows/package-self-contained-app.yml`:
 
-1. builds the App and all bundled runtimes from the tagged commit;
-2. imports the stable self-signed PKCS#12 identity into an ephemeral keychain,
-   verifies its exact name and self-signed subject/issuer, and resolves its
-   public certificate SHA-1;
-3. validates the EdDSA public key and embeds the release bundle ID, packaging
-   target, feed URL, and public key in
-   `Contents/Info.plist`;
-4. copies the complete Sparkle framework, including `Updater.app` and both XPC
-   services, into `Contents/Frameworks`;
-5. adds and verifies the executable rpath for `Contents/Frameworks`;
-6. signs nested code and the complete App with the stable identity, archives
-   it, extracts it, and verifies the archive layout, deep signature, exact
-   authority, certificate SHA-1, and designated requirement;
-7. deletes the ephemeral keychain and PKCS#12 file before artifact upload;
-8. derives the EdDSA public key from the new-format private seed in memory,
-   requires it to match the configured public key, and then passes the private
-   key to the pinned Sparkle tools through standard input;
-9. generates a one-version, no-delta `appcast.xml`, verifies the appcast
-   signature, extracts the enclosure signature, and verifies the archive;
-10. publishes both the archive and `appcast.xml` on the matching GitHub Release.
+1. a non-secret Linux job checks an exact canonical stable SemVer tag, tag
+   commit equality with `GITHUB_SHA`, ancestry from freshly fetched
+   `origin/main`, and strict numeric monotonicity over all stable tags;
+2. an ordinary macOS package job builds the tagged source as the isolated
+   candidate, without a feed, update key, certificate pin, or private input;
+3. the candidate receipt binds tag, source SHA, bundle-tree digest, and archive
+   digest, and the candidate is uploaded under an independent artifact and
+   archive name that the old preview attachment path does not publish;
+4. the fixed `github-release` environment job checks out the validated source,
+   repeats tag validation against current `origin/main`, byte-compares the two
+   tag receipts, extracts the candidate, and revalidates every candidate
+   binding before any protected input is referenced;
+5. it validates the three public variables, resolves the repository-pinned
+   Sparkle tools, decodes the PKCS#12, and requires its leaf certificate to
+   match the independently provisioned SHA-256 and SHA-1 pins, exact common
+   name, self-signed subject/issuer, code-signing EKU, and private key;
+6. only on a GitHub-hosted macOS runner, it saves the exact user keychain search
+   list, creates an ephemeral keychain, adds code-signing-only administrator
+   trust with passwordless `sudo`, and proves a real hardened-runtime sentinel
+   signature;
+7. it converts the candidate into the stable bundle, embeds feed, public key,
+   certificate pins, candidate provenance, and `LSMinimumSystemVersion=15.0`;
+8. it signs in Sparkle's documented order: `Installer.xpc`, `Downloader.xpc`
+   with preserved entitlements, `Autoupdate` with preserved entitlements,
+   `Updater.app`, `Sparkle.framework`, other Mach-O files, and the outer App;
+   every target gets hardened runtime and explicit strict verification, and
+   `codesign --deep` is never used;
+9. it archives and extracts the result, then rechecks layout, runtime,
+   entitlements, exact authority, both certificate hashes, and designated
+   requirement for every required helper and outer code object;
+10. it derives the EdDSA public key from the protected private seed in memory,
+    requires a match, generates a one-version/no-delta appcast, requires its
+    minimum system version to be exactly `15.0`, and verifies both appcast and
+    archive signatures;
+11. an unconditional cleanup removes administrator trust, restores the exact
+    original search list, deletes the ephemeral keychain, PKCS#12, PEM, and
+    sentinel, and writes a cleanup receipt; and
+12. only `cleanup_confirmed=true` permits the stable archive and `appcast.xml`
+    to be published and downstream distribution workflows to be triggered.
 
-No archive is attached to a version-tag release unless all signed-update steps
-succeed.
+No candidate archive or stable archive is attached to a version-tag release
+unless all signed-update and cleanup steps succeed.
 
 ## Bootstrap And Acceptance
 
@@ -135,6 +177,12 @@ Acceptance requires all of the following evidence:
 Until this two-release acceptance is complete, describe the implementation as
 update-capable but not production-accepted.
 
+Cancellation is not a failed update. Sparkle error codes `4007` and `4008` and
+`userDidCancelDownload` return the controller to an idle, retryable state and
+clear any stale failure. A generic network error is `metadata` before an update
+is discovered and `download` after discovery. Delegate and cycle-finish
+callbacks must emit at most one terminal cancellation or failure.
+
 ## Recovery And Key Rotation
 
 If metadata, download, authentication, extraction, replacement, or relaunch
@@ -144,15 +192,15 @@ the previous App until the new copy launches successfully. User state remains
 outside the bundle under `MELIX_HOME` and must not be removed as part of App
 recovery.
 
-Rotate the EdDSA signing key through a transition release signed by the current key
-and embedding the next public key. Only later releases may be signed solely by
-the next key. If the current private key is lost or compromised before a
-transition release, existing installations cannot securely trust a replacement
-key through the update channel; require a new manual bootstrap installation and
-publish an incident notice. Replacing or losing the self-signed code identity
-also changes the App's designated requirement and can require users to approve
-privacy permissions again. Keep multiple encrypted offline backups of both
-identities and never rotate either casually.
+This implementation intentionally does not support in-band key rotation.
+Changing, losing, or compromising either the EdDSA identity or self-signed code
+identity requires an incident notice, revocation of the affected protected
+values, creation of a new identity, and a new manually installed bootstrap App.
+Existing installations must never accept a replacement key merely because a
+new appcast advertises it. A code-identity change also changes the designated
+requirement and may require users to approve privacy permissions again. Keep
+multiple encrypted offline backups and rotate only through this manual
+rebootstrap procedure.
 
 ## Verification
 
@@ -162,6 +210,11 @@ Run the focused package and update tests before a release workflow change:
 PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
 UV_CACHE_DIR="$(pwd)/.uv-cache" UV_PYTHON=3.12 \
 uv run --project services/mlx-worker-python pytest -q \
+  services/mlx-worker-python/tests/test_validate_macos_release_tag.py \
+  services/mlx-worker-python/tests/test_macos_release_candidate.py \
+  services/mlx-worker-python/tests/test_macos_self_signed_identity.py \
+  services/mlx-worker-python/tests/test_finalize_macos_release_candidate.py \
+  services/mlx-worker-python/tests/test_packaging_targets.py \
   services/mlx-worker-python/tests/test_macos_app_bundle.py \
   services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py
 
@@ -171,3 +224,15 @@ xcrun swift test --package-path apps/macos-menubar \
 
 The full repository verification and release gates remain required by
 `AGENTS.md` and `docs/runbooks/phase-8-release-gates.md`.
+
+The trust unit tests are pure/mocked and are safe locally. Never run
+`macos_self_signed_identity.py prepare` on a developer Mac; the entrypoint also
+rejects anything other than a GitHub-hosted macOS runner. The pull-request
+`self-signed-trust-smoke` job is the sole real add-trust/sentinel/cleanup test.
+
+On the 64 GiB Mac used for this implementation, the versioned pre-commit hook
+must be invoked normally and is expected to print its policy skip because full
+hook execution requires at least 128 GiB. Record that output honestly. The
+focused suites, cached full menu-bar Swift suite, changed-scope coverage, and
+GitHub CI are separate required evidence; do not describe the memory-policy
+skip as a passed full repository gate.

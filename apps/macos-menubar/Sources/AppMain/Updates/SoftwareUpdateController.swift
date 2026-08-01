@@ -195,6 +195,7 @@ enum SoftwareUpdateEngineEvent: Equatable, Sendable {
   case extracting(version: String)
   case installing(version: String)
   case relaunching(version: String)
+  case cancelled
   case failed(SoftwareUpdateFailure)
   case finished(lastCheckDate: Date?)
 }
@@ -336,6 +337,9 @@ final class SoftwareUpdateController {
       stage = .installing(version: version)
     case .relaunching(let version):
       stage = .relaunching(version: version)
+    case .cancelled:
+      lastFailure = nil
+      stage = configuration.isEnabled ? .idle : .unavailable
     case .failed(let failure):
       lastFailure = failure
       stage = configuration.isEnabled ? .idle : .unavailable
@@ -383,12 +387,24 @@ enum SoftwareUpdateBundleResolver {
 enum SoftwareUpdateErrorMapper {
   static let sparkleErrorDomain = "SUSparkleErrorDomain"
 
-  static func failure(from error: NSError) -> SoftwareUpdateFailure? {
-    if error.domain == sparkleErrorDomain, error.code == 1001 {
+  static func isCancellation(_ error: NSError) -> Bool {
+    error.domain == sparkleErrorDomain && [4007, 4008].contains(error.code)
+  }
+
+  static func failure(
+    from error: NSError,
+    updateWasDiscovered: Bool = false
+  ) -> SoftwareUpdateFailure? {
+    if error.domain == sparkleErrorDomain,
+      error.code == 1001 || isCancellation(error)
+    {
       return nil
     }
     guard error.domain == sparkleErrorDomain else {
-      return SoftwareUpdateFailure(kind: .metadata, code: error.code)
+      return SoftwareUpdateFailure(
+        kind: updateWasDiscovered ? .download : .metadata,
+        code: error.code
+      )
     }
 
     let kind: SoftwareUpdateFailureKind
@@ -405,7 +421,7 @@ enum SoftwareUpdateErrorMapper {
       kind = .extraction
     case 4004:
       kind = .relaunch
-    case 4000...4012:
+    case 4000...4006, 4009...4012:
       kind = .replacement
     default:
       kind = .unknown

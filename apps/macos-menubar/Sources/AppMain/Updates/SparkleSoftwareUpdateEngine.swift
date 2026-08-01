@@ -7,6 +7,8 @@ final class SparkleSoftwareUpdateEngine: NSObject, SoftwareUpdateDriving {
   private var userDriver: SPUStandardUserDriver!
   private(set) var updater: SPUUpdater!
   private var activeUpdateVersion = "update"
+  private var updateWasDiscovered = false
+  private var terminalEventEmitted = false
 
   static func make(
     applicationBundle: Bundle,
@@ -51,7 +53,35 @@ final class SparkleSoftwareUpdateEngine: NSObject, SoftwareUpdateDriving {
   }
 
   func checkForUpdates() {
+    beginUpdateCycle()
     updater.checkForUpdates()
+  }
+
+  private func beginUpdateCycle() {
+    updateWasDiscovered = false
+    terminalEventEmitted = false
+  }
+
+  private func emitCancellationIfNeeded() {
+    guard terminalEventEmitted == false else { return }
+    terminalEventEmitted = true
+    eventHandler(.cancelled)
+  }
+
+  private func emitFailureIfNeeded(_ error: NSError) {
+    guard terminalEventEmitted == false else { return }
+    if SoftwareUpdateErrorMapper.isCancellation(error) {
+      emitCancellationIfNeeded()
+      return
+    }
+    guard
+      let failure = SoftwareUpdateErrorMapper.failure(
+        from: error,
+        updateWasDiscovered: updateWasDiscovered
+      )
+    else { return }
+    terminalEventEmitted = true
+    eventHandler(.failed(failure))
   }
 
   private func version(for item: SUAppcastItem) -> String {
@@ -61,11 +91,13 @@ final class SparkleSoftwareUpdateEngine: NSObject, SoftwareUpdateDriving {
 
 extension SparkleSoftwareUpdateEngine: SPUUpdaterDelegate {
   func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+    updateWasDiscovered = true
     activeUpdateVersion = version(for: item)
     eventHandler(.found(version: activeUpdateVersion))
   }
 
   func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: any Error) {
+    terminalEventEmitted = true
     eventHandler(.noUpdate)
   }
 
@@ -75,6 +107,7 @@ extension SparkleSoftwareUpdateEngine: SPUUpdaterDelegate {
     with request: NSMutableURLRequest
   ) {
     _ = request
+    updateWasDiscovered = true
     activeUpdateVersion = version(for: item)
     eventHandler(.downloading(version: activeUpdateVersion))
   }
@@ -90,8 +123,12 @@ extension SparkleSoftwareUpdateEngine: SPUUpdaterDelegate {
     error: any Error
   ) {
     _ = item
-    let failure = SoftwareUpdateFailure(kind: .download, code: (error as NSError).code)
-    eventHandler(.failed(failure))
+    emitFailureIfNeeded(error as NSError)
+  }
+
+  func userDidCancelDownload(_ updater: SPUUpdater) {
+    _ = updater
+    emitCancellationIfNeeded()
   }
 
   func updater(_ updater: SPUUpdater, willExtractUpdate item: SUAppcastItem) {
@@ -114,11 +151,10 @@ extension SparkleSoftwareUpdateEngine: SPUUpdaterDelegate {
     error: (any Error)?
   ) {
     _ = updateCheck
-    if let error,
-      let failure = SoftwareUpdateErrorMapper.failure(from: error as NSError)
-    {
-      eventHandler(.failed(failure))
+    if let error {
+      emitFailureIfNeeded(error as NSError)
     }
     eventHandler(.finished(lastCheckDate: updater.lastUpdateCheckDate))
+    beginUpdateCycle()
   }
 }

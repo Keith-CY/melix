@@ -53,32 +53,54 @@ The interactive UI walkthrough is therefore not required for this slice.
 5. Publish a signed `appcast.xml` and its EdDSA-signed App archive from version
    tags. The stable feed is
    `https://github.com/Keith-CY/melix/releases/latest/download/appcast.xml`.
-6. Fail tag packaging closed unless the public-key build variable, EdDSA
-   private-key secret, self-signed PKCS#12 secret, and PKCS#12 password secret
-   are present and the EdDSA public/private values form the same key pair.
-   Pull-request, branch, scheduled, and
-   manually dispatched preview archives remain explicitly outside the supported
-   update chain and do not embed an updater public key.
-7. Package the complete Sparkle framework, including its updater and XPC helper
-   components, under `Contents/Frameworks`. Deep-sign the finished App bundle
-   only after all nested components are present, then verify the archive after
-   extraction.
-8. Sign the completed release bundle and every nested component with the stable
-   self-signed identity, then verify its exact authority, certificate SHA-1,
-   designated requirement, complete archive layout, and deep signature after
-   archive extraction.
-9. Initialize updates only when the running bundle contains a valid HTTPS feed,
+6. Split a tag run into three trust classes. A non-secret job first validates
+   an exact stable canonical tag, tag-to-source SHA equality, ancestry from the
+   current `origin/main`, and a strictly increasing numeric SemVer. An
+   untrusted package job then emits an independently named candidate with
+   bundle ID `io.melix.menubar.release-candidate`, target
+   `macos_app_bundle_github_release_candidate`, no feed, no update key, no
+   certificate pins, and a receipt binding tag, source SHA, bundle tree, and
+   archive digest. Only the fixed `github-release` protected environment may
+   turn that candidate into a release after revalidating both receipts.
+7. Fail the protected release job closed unless its independently provisioned
+   EdDSA public variable, certificate SHA-256 variable, certificate SHA-1
+   variable, EdDSA private secret, self-signed PKCS#12 secret, and PKCS#12
+   password secret are present and mutually consistent. Pull-request, branch,
+   scheduled, and manually dispatched preview archives remain outside the
+   supported update chain.
+8. Package the complete Sparkle framework, including `Installer.xpc`,
+   `Downloader.xpc`, `Autoupdate`, and `Updater.app`, under
+   `Contents/Frameworks`. Sign in Sparkle's documented inside-out order:
+   `Installer.xpc`; `Downloader.xpc` while preserving entitlements;
+   `Autoupdate` while preserving entitlements; `Updater.app`;
+   `Sparkle.framework`; remaining Mach-O files; outer App. Every signature uses
+   hardened runtime and is verified explicitly; `codesign --deep` is forbidden.
+9. Pin the release certificate twice from protected configuration, using both
+   SHA-256 and SHA-1 rather than deriving either expectation from the PKCS#12.
+   Verify exact authority, both leaf-certificate hashes, designated
+   requirement, helper entitlements, hardened runtime, complete layout, and
+   the extracted archive before publishing.
+10. Derive `LSMinimumSystemVersion` from the menu-bar package's
+   `.macOS(.v15)` declaration and require the signed appcast to publish exactly
+   `15.0`.
+11. Initialize updates only when the running bundle contains a valid HTTPS feed,
    a non-empty public key, and the packaged Sparkle framework. A checkout build
    or preview bundle reports updates as unavailable instead of starting a
    partially configured updater.
-10. Add a Software Updates card to Settings and a **Check for Updates...** item
+12. Add a Software Updates card to Settings and a **Check for Updates...** item
    to the application menu. The card exposes the current version, automatic
    check preference, last check time, current stage, last failure, manual check,
    and GitHub Releases fallback.
-11. Check at most once per day by default. Installing always requires an
+13. Check at most once per day by default. Installing always requires an
    explicit user decision; automatic download and silent installation remain
    disabled.
-12. Redact implementation details from operator errors while retaining a typed
+14. Treat Sparkle cancellation codes `4007` and `4008`, including
+    `userDidCancelDownload`, as one non-failure terminal event that returns the
+    controller to an idle, retryable state. Track whether an update was already
+    discovered so generic network errors map to metadata before discovery and
+    download afterward, and suppress duplicate terminal failures from paired
+    delegate callbacks.
+15. Redact implementation details from operator errors while retaining a typed
     state that distinguishes configuration, metadata, download, authenticity,
     extraction, replacement/recovery, and relaunch failures for tests and
     diagnostics.
@@ -106,6 +128,19 @@ The interactive UI walkthrough is therefore not required for this slice.
   files, pull-request text, logs, workflow summaries, or test fixtures. Only
   the EdDSA public key and code-signing certificate fingerprint may be stored or
   displayed.
+- Administrator code-signing trust exists only on a GitHub-hosted macOS runner.
+  Preparation saves the exact user keychain search list, validates independent
+  certificate pins, adds code-signing-only trust with passwordless `sudo`, and
+  proves a real hardened-runtime sentinel signature. Cleanup removes trust,
+  restores the exact search list, deletes keychain, PKCS#12, PEM, and sentinel,
+  and must be confirmed before release assets can be published.
+- Repository code cannot create the `github-release` environment, its required
+  reviewers, deployment tag policy, protected variables/secrets, protected
+  `main`, or immutable release-tag rules. Those external GitHub controls are
+  production activation blockers, not follow-up niceties.
+- EdDSA and stable code-signing identities do not rotate in-band. Any change or
+  loss requires incident handling and a new manually installed bootstrap App;
+  existing installations must never silently trust a replacement identity.
 
 ## Performance Probes And Success Metrics
 
@@ -129,6 +164,11 @@ The interactive UI walkthrough is therefore not required for this slice.
 - Packaging tests must prove the release `Info.plist`, framework layout, stable
   nested code identity, designated requirement, signed feed inputs, and
   fail-closed workflow contract.
+- The versioned pre-commit hook remains authoritative. On this task's 64 GiB
+  macOS host it is expected to record its policy skip because the full hook gate
+  requires at least 128 GiB; focused Python/Swift suites, an explicit cached
+  full menu-bar Swift suite, changed-scope coverage, and CI remain required
+  evidence. The memory-policy skip is not evidence that the full gate passed.
 - Observability mode is `minimal`: only current stage, last check time, and a
   redacted error summary are retained. No URLs with query data, HTTP bodies,
   system profile, key material, or downloaded paths are logged.
@@ -148,12 +188,23 @@ The interactive UI walkthrough is therefore not required for this slice.
       the exact authority and designated requirement before release.
 - [x] Extend the tag workflow to generate, verify, and publish the signed
       archive plus signed appcast.
+- [x] Isolate the tag candidate from all release inputs and require non-secret
+      tag validation plus protected revalidation before any protected input is
+      referenced.
+- [x] Add GitHub-hosted-only self-signed trust lifecycle and real sentinel
+      smoke coverage with cleanup-confirmed publication ordering.
 - [x] Add the update runbook and update the packaging target contract.
 - [x] Run focused tests, changed-scope coverage, performance probes, packaging
-      smoke, and the full repository gates.
-- [ ] Provision a new Melix update key, stable self-signed code identity, and
-      repository values only after explicit operator authorization; never
-      create or expose private material as part of this pull request.
+      smoke, and the cached full menu-bar Swift suite.
+- [ ] Complete the remaining full repository gates in GitHub CI. The local
+      64 GiB host invokes the normal versioned hook, which records its
+      memory-policy skip instead of running the 128 GiB full gate.
+- [ ] Create and protect the external `github-release` environment, configure
+      required reviewers and tag deployment policy, protect `main` and release
+      tags, then provision a new Melix update key, stable self-signed code
+      identity, two protected public pins, and three protected secrets only
+      after explicit operator authorization. Never create or expose private
+      material as part of this pull request.
 - [ ] Install the first signed bootstrap release manually and validate a real
       update to the next signed release before calling the production chain
       end-to-end accepted.
@@ -162,8 +213,11 @@ The interactive UI walkthrough is therefore not required for this slice.
 
 This pull request can implement and verify every deterministic code, packaging,
 and workflow boundary without handling private signing material. Production
-activation remains intentionally blocked until an operator authorizes creation
-of a new Melix-specific EdDSA identity and stable self-signed macOS code
-identity, stores encrypted offline backups, and configures the required Actions
-variable and three secrets. That operational step is security-sensitive and is
-not inferred from permission to edit source code.
+activation remains intentionally blocked until an operator creates the
+`github-release` environment with required review and tag deployment policy,
+protects `main` and release tags, authorizes a new Melix-specific EdDSA identity
+and stable self-signed macOS identity, stores encrypted offline backups, and
+configures the three protected variables and three protected secrets. The
+first release must still be installed manually and a second release must pass
+real update acceptance. These external and security-sensitive steps are not
+inferred from permission to edit source code.

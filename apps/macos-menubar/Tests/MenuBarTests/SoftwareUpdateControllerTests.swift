@@ -332,6 +332,45 @@ struct SoftwareUpdateControllerTests {
     #expect(SoftwareUpdateErrorMapper.failure(from: error) == nil)
   }
 
+  @Test(
+    "Sparkle cancellation and authorize-later outcomes are not failures", arguments: [4007, 4008])
+  func cancellationIsNotFailure(code: Int) {
+    let error = NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: code)
+
+    #expect(SoftwareUpdateErrorMapper.isCancellation(error))
+    #expect(SoftwareUpdateErrorMapper.failure(from: error) == nil)
+  }
+
+  @Test("network failures after discovery are download failures")
+  func postDiscoveryNetworkFailureIsDownloadFailure() throws {
+    let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost)
+
+    let failure = try #require(
+      SoftwareUpdateErrorMapper.failure(from: error, updateWasDiscovered: true)
+    )
+    #expect(failure.kind == .download)
+  }
+
+  @Test("cancelled download returns to a retryable non-failure state")
+  @MainActor
+  func cancelledDownloadPermitsRetry() {
+    let engine = RecordingSoftwareUpdateEngine()
+    let controller = makeController(engine: engine)
+    controller.start()
+    controller.checkForUpdates()
+    engine.send(.downloading(version: "2.0.0"))
+
+    engine.send(.cancelled)
+    engine.canCheckForUpdates = true
+    engine.send(.finished(lastCheckDate: nil))
+
+    #expect(controller.stage == .idle)
+    #expect(controller.lastFailure == nil)
+    #expect(controller.canCheckForUpdates)
+    controller.checkForUpdates()
+    #expect(engine.checkCount == 2)
+  }
+
   @Test("failed cycle keeps current App and permits another check")
   @MainActor
   func failedCyclePermitsRetry() {
@@ -432,11 +471,14 @@ struct SoftwareUpdateControllerTests {
       updater,
       error: NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: 1001)
     )
+    engine.updater(updater, didFinishUpdateCycleFor: .updates, error: nil)
+    engine.updater(updater, didFindValidUpdate: item)
     engine.updater(
       updater,
       failedToDownloadUpdate: item,
       error: NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost)
     )
+    engine.userDidCancelDownload(updater)
     engine.updater(
       updater,
       didFinishUpdateCycleFor: .updates,
@@ -451,16 +493,51 @@ struct SoftwareUpdateControllerTests {
     #expect(events.contains(.relaunching(version: "2.0.0")))
     #expect(events.contains(.noUpdate))
     #expect(events.contains(.failed(.init(kind: .download, code: NSURLErrorNetworkConnectionLost))))
-    #expect(events.contains(.failed(.init(kind: .authenticity, code: 3001))))
-    #expect(events.contains { event in
-      if case .finished = event { return true }
-      return false
-    })
+    #expect(
+      events.filter {
+        if case .failed = $0 { return true }
+        return false
+      }.count == 1)
+    #expect(events.contains(.cancelled) == false)
+    #expect(
+      events.contains { event in
+        if case .finished = event { return true }
+        return false
+      })
 
     _ = engine.automaticallyChecksForUpdates
     _ = engine.lastUpdateCheckDate
     _ = engine.canCheckForUpdates
     engine.automaticallyChecksForUpdates = false
+  }
+
+  @Test("Sparkle cancellation emits once and finish suppresses duplicate failure")
+  @MainActor
+  func sparkleCancellationIsSingleTerminalEvent() throws {
+    var events: [SoftwareUpdateEngineEvent] = []
+    let drivingEngine = try SparkleSoftwareUpdateEngine.make(
+      applicationBundle: .main,
+      eventHandler: { events.append($0) }
+    )
+    let engine = try #require(drivingEngine as? SparkleSoftwareUpdateEngine)
+    let updater = try #require(engine.updater)
+    let item = SUAppcastItem.empty()
+    item.setValue("2.0.0", forKey: "displayVersionString")
+    engine.updater(updater, didFindValidUpdate: item)
+
+    engine.userDidCancelDownload(updater)
+    engine.updater(
+      updater,
+      didFinishUpdateCycleFor: .updates,
+      error: NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: 4007)
+    )
+
+    #expect(events.filter { $0 == .cancelled }.count == 1)
+    #expect(
+      events.contains {
+        if case .failed = $0 { return true }
+        return false
+      } == false)
   }
 
   @MainActor
