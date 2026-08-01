@@ -800,7 +800,44 @@ def test_measurable_changed_lines_singleton_classifies_measured_line_once(
     assert measurable == [77]
     assert covered == [77]
     assert missed == []
-    assert contains_calls == 2
+    assert contains_calls == 1
+
+
+def test_measurable_changed_lines_singleton_skips_missing_lookup_when_covered(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 7)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [1, 3, 5],
+                "missing_lines": [2, 4, 6],
+            }
+        }
+    }
+
+    original_contains = changed_scope_coverage._sorted_line_list_contains
+    contains_calls: list[tuple[list[int], int]] = []
+
+    def counting_contains(lines: list[int], line_no: int) -> bool:
+        contains_calls.append((lines, line_no))
+        return original_contains(lines, line_no)
+
+    monkeypatch.setattr(changed_scope_coverage, "_sorted_line_list_contains", counting_contains)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {3},
+    )
+
+    assert measurable == [3]
+    assert covered == [3]
+    assert missed == []
+    assert contains_calls == [([1, 3, 5], 3)]
 
 
 def test_measurable_changed_lines_singleton_inside_bounds_but_unmeasured_skips_source_read(

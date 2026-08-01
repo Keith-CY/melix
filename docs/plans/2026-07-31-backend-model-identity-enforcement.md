@@ -585,10 +585,33 @@ no verification failures. The direct alert is therefore non-reproducing
 measurement noise, not an accepted regression, and no performance-regression
 override is used.
 
+After synchronizing the changed-scope singleton coverage fast path from
+`origin/main` at `ec2c915e`, the final exact staged-tree hook again completed
+every functional gate: all Swift suites, `5,495` Python tests with `14` skips,
+and `132` integration tests with one skip. The report at
+`.runtime/pre-commit-performance/20260801-212623-59bc0a5c/report` ran all `148`
+probes with `20` direct probes and `0` verification failures. The backend
+identity probe remained `ok`: it rejected `140,000` mismatches with `0` output
+events before mismatch, recorded retry counts `3/2/1`, coalesced one recovery
+caller into two fresh bindings, and measured matched-worker p95 at
+`0.000445 ms` and control-plane p95 at `0.001365 ms`.
+
+One unrelated direct timing sample crossed its threshold in that single report:
+rerank request processing measured `279.356 ms` for the base and `294.333 ms`
+for the merged tree (`+5.36%` against a `5%` threshold), while the probe's total
+elapsed time improved by `2.32%` and all memory and semantic counters matched.
+Seven alternating `ec2c915e`/merged-tree repetitions using Python `3.12.13` did
+not reproduce the alert. Request-processing means were `278.812 ms` and
+`279.048 ms` (`+0.085%`), and medians were `279.164 ms` and `277.142 ms`
+(`-0.724%`). Total elapsed means differed by `+0.378%`, also below the threshold.
+The report's `14` context-only timing alerts had no verification failures. The
+direct alert is non-reproducing measurement noise, not an accepted regression,
+and no performance-regression override is used.
+
 ## Verification Results
 
-The post-merge repository gates completed successfully against `origin/main`
-at `19a20821` on 2026-08-02:
+The final post-merge repository gates completed successfully against
+`origin/main` at `ec2c915e` on 2026-08-02:
 
 - `make bootstrap`
 - `make proto`
@@ -598,11 +621,13 @@ at `19a20821` on 2026-08-02:
 - `make py-test` (`5495` passed, `14` skipped)
 - `make integration-test` (`132` passed, `1` skipped)
 
-The final mainline merge also passed the integration-helper, closure-audit,
-code-evaluation, backend-identity, and shared performance-registry focused
-suites (`129` tests). The preceding merge passed the event-extraction,
-event-performance, and backend-identity focused suites (`96` tests). The
-focused same-endpoint worker-restart integration test also passed. Earlier
+The final mainline merge also passed the changed-scope coverage, backend
+identity, and identity-probe focused suites (`73` tests). The preceding merge
+passed the integration-helper, closure-audit, code-evaluation, backend-identity,
+and shared performance-registry focused suites (`129` tests), while the merge
+before that passed the event-extraction, event-performance, and backend-identity
+focused suites (`96` tests). The focused same-endpoint worker-restart integration
+test also passed. Earlier
 final-base verification passed the atomic stale-cleanup and remote-provider
 routing tests together, and the registered performance and binary-resolution
 tests (`15` tests). The remote-review corrections additionally passed all `14`
