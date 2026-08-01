@@ -132,14 +132,25 @@ Melix CLI.
 - Changed-line coverage for the Python packaging scope was 100 percent
   (37 of 37 executable changed lines).
 
-### Dependency And Main Synchronization
+### Swift Toolchain Compatibility And Main Synchronization
 
-- The final task branch is based on `origin/main` at `9ff3fd82a`.
-- This slice changes neither dependencies nor protobuf schemas. All SwiftPM
-  lockfiles match `origin/main` and are absent from the task diff.
-- The two upstream commits incorporated during final synchronization optimize
-  integration binary lookup and Hub repository validation. Their surrounding
-  changes were inspected and do not alter the Remote Provider Chat path.
+- The compatibility follow-up branch is based on `origin/main` at `a501bbb61`.
+- A clean Xcode 26.6 / Swift 6.3.3 build exposed a typed-throws compiler
+  incompatibility in the transitive `swift-collections 1.5.0`
+  `ContainersPreview` target before Melix sources compiled.
+- gRPC Swift declares compatibility from `swift-collections 1.1.3`. The five
+  committed SwiftPM workspaces are therefore resolved consistently to
+  `swift-collections 1.3.0`, whose `DequeModule` does not pull
+  `ContainersPreview` into this build path.
+- The lockfiles were regenerated with SwiftPM rather than edited by hand.
+  Regenerating the text-worker lock also removed five no-longer-reachable
+  transitive pins.
+- This follow-up changes neither package manifests nor protobuf schemas. The
+  protocol package and control-plane core passed clean default-parallel Xcode
+  26.6 builds with the compatibility resolution. The repository pre-commit
+  test and performance gate remains the commit condition.
+- This lockfile-only resolution changes no runtime request path, so its
+  production observability and performance-probe overhead are `N/A`.
 
 ### Remote Thinking Follow-up
 
