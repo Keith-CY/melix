@@ -306,6 +306,41 @@ struct BackendModelIdentityTests {
         )?.handle == "replacement-handle")
     }
 
+    @Test("route-agnostic handle replacement advances identity generation")
+    func routeAgnosticHandleReplacementAdvancesIdentityGeneration() async throws {
+        let model = ModelCatalog.devTextModel()
+        let catalog = ModelCatalog(seedModels: [model])
+        let reservation = try #require(await catalog.beginBackendRouteLoad(
+            id: model.modelID,
+            routeKind: .swiftText,
+            workerInstanceID: "identity-bound-worker"
+        ))
+        _ = await catalog.recordLoadSucceeded(
+            id: model.modelID,
+            dispatchHandle: "first-handle",
+            routeKind: .swiftText,
+            expectedRouteGeneration: reservation.generation,
+            workerInstanceID: reservation.workerInstanceID
+        )
+        let first = try #require(
+            await catalog.backendRouteBinding(for: model.modelID, routeKind: .swiftText)
+        )
+
+        _ = await catalog.recordLoadSucceeded(
+            id: model.modelID,
+            dispatchHandle: "replacement-handle"
+        )
+
+        #expect(first.handle == "first-handle")
+        #expect(first.workerInstanceID == "identity-bound-worker")
+        let replacement = try #require(
+            await catalog.backendRouteBinding(for: model.modelID, routeKind: .swiftText)
+        )
+        #expect(replacement.handle == "replacement-handle")
+        #expect(replacement.generation > first.generation)
+        #expect(replacement.workerInstanceID == "legacy-unbound-worker")
+    }
+
     @Test("one binding stamps every production inference request shape")
     func stampsEveryInferenceRequestShape() {
         let binding = ModelCatalog.BackendRouteBinding(

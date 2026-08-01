@@ -808,12 +808,20 @@ actor WorkerRuntimeRegistry {
                 await cacheStore.recordReconstructionFailure()
                 throw error
             }
+            let restoredIdentity = restored.execution?.hasBackendIdentity == true
+                ? restored.execution?.backendIdentity
+                : nil
+            let expectedSnapshotIdentity = resolvedBackendModelIdentity(
+                for: restored.model,
+                requested: restoredIdentity,
+                workerInstanceID: configuration.workerInstanceID
+            )
             guard WorkerModelResidencyKey(
                 loaded.spec,
                 backendIdentity: loaded.backendIdentity
             ) == WorkerModelResidencyKey(
                 restored.model,
-                backendIdentity: loaded.backendIdentity
+                backendIdentity: expectedSnapshotIdentity
             ) else {
                 await cacheStore.recordReconstructionFailure()
                 throw WorkerRuntimeRegistryError.snapshotScopeMismatch

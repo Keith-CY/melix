@@ -17,6 +17,8 @@ import sys
 import pytest
 import worker.productization.pr_scoped_performance as pr_scoped_performance_module
 
+from packages.protocol.python.worker.v1 import inference_pb2
+
 from worker.productization.pr_scoped_performance import (
     _build_large_benchmark_bundle,
     _build_large_scope_probe_changed_files,
@@ -154,7 +156,6 @@ def test_image_family_config_probe_script_emits_metrics(
     assert metrics["metadata_iteration_calls_mean"] == 0.0
     assert metrics["iteration_count"] == 128.0
     assert metrics["sample_count"] == 2.0
-
 
 def test_scope_report_selects_hub_catalog_probe() -> None:
     scope = build_scope_report(
@@ -2282,6 +2283,7 @@ def test_backend_model_identity_probe_script_emits_metrics(
     assert metrics["mismatched_boundary_latency_ms_p95"] > 0.0
     assert metrics["mismatch_count"] == 64.0
     assert metrics["output_before_mismatch_count"] == 0.0
+    assert metrics["handler_boundary_available"] == 1.0
     assert metrics["control_plane_probe_available"] == 0.0
     assert metrics["retry_allowed_count"] == 0.0
     assert metrics["retry_suppressed_count"] == 0.0
@@ -2291,6 +2293,23 @@ def test_backend_model_identity_probe_script_emits_metrics(
     assert metrics["duplicate_completed_tool_count"] == 0.0
     assert metrics["iteration_count"] == 32.0
     assert metrics["sample_count"] == 2.0
+
+    token = inference_pb2.ExecuteEvent()
+    token.token_delta.text = "must be counted"
+    mismatch = inference_pb2.ExecuteEvent()
+    mismatch.error.error.code = "model_identity_mismatch"
+    assert probe_script["_output_before_identity_mismatch"]([token, mismatch]) == 1
+    with pytest.raises(
+        AssertionError,
+        match="inference handler did not emit model_identity_mismatch",
+    ):
+        probe_script["_output_before_identity_mismatch"]([token])
+
+    probe_script["main"].__globals__["_output_before_identity_mismatch"] = (
+        lambda events: 1
+    )
+    with pytest.raises(AssertionError, match="identity mismatch emitted output"):
+        probe_script["main"]()
 
     registry = load_probe_registry(REGISTRY_PATH)
     probe = next(
@@ -2307,6 +2326,7 @@ def test_backend_model_identity_probe_script_emits_metrics(
     } <= watched
     assert probe.coverage_command == "bash scripts/backend_model_identity_coverage.sh"
     coverage_script = (REPO_ROOT / "scripts/backend_model_identity_coverage.sh").read_text()
+    assert 'MELIX_BACKEND_IDENTITY_COVERAGE_DIFF_FROM:-origin/main' in coverage_script
     assert coverage_script.count("swift_changed_line_coverage.py") == 2
     assert coverage_script.count("python_changed_line_coverage.py") == 1
     assert '--diff-from "${diff_from}"' in coverage_script
@@ -2323,6 +2343,11 @@ def test_backend_model_identity_probe_script_emits_metrics(
     assert definitions["matched_boundary_latency_ms_p95"].warn_pct == 0.0
     assert definitions["matched_boundary_latency_ms_p95"].warn_abs == 0.05
     assert definitions["mismatched_boundary_latency_ms_p95"].direction == "informational"
+    assert definitions["handler_boundary_available"].direction == "informational"
+
+    workflow = (REPO_ROOT / ".github/workflows/pr-scoped-performance.yml").read_text()
+    assert "MELIX_BACKEND_IDENTITY_COVERAGE_DIFF_FROM" in workflow
+    assert "github.event.pull_request.base.sha" in workflow
 
     parsed = probe_script["_parse_control_plane_probe_output"](
         "MELIX_BACKEND_IDENTITY_PROBE_JSON="

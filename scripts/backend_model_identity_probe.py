@@ -19,7 +19,8 @@ CONTROL_PLANE_PROBE_PREFIX = "MELIX_BACKEND_IDENTITY_PROBE_JSON="
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
-from packages.protocol.python.worker.v1 import common_pb2  # noqa: E402
+from packages.protocol.python.worker.v1 import common_pb2, inference_pb2  # noqa: E402
+from worker.grpc_server import WorkerInferenceService  # noqa: E402
 from worker.model_registry.catalog import WorkerModelCatalog  # noqa: E402
 from worker.registry import WorkerRegistry  # noqa: E402
 from worker.runtime.mlx_text_runtime import MLXTextRuntime  # noqa: E402
@@ -55,6 +56,20 @@ def _identity(
 def _p95(values: list[float]) -> float:
     ordered = sorted(values)
     return ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
+
+
+def _output_before_identity_mismatch(
+    events: list[inference_pb2.ExecuteEvent],
+) -> int:
+    output_count = 0
+    for event in events:
+        if (
+            event.WhichOneof("payload") == "error"
+            and event.error.error.code == "model_identity_mismatch"
+        ):
+            return output_count
+        output_count += 1
+    raise AssertionError("inference handler did not emit model_identity_mismatch")
 
 
 def _empty_control_plane_metrics() -> dict[str, float]:
@@ -167,6 +182,24 @@ def main() -> int:
         loaded = registry.load_model(model)
     else:
         loaded = registry.load_model(model, backend_identity=matched)
+    inference_service = WorkerInferenceService(registry) if identity_guard is not None else None
+    mismatch_request = (
+        inference_pb2.GenerateRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id="backend-identity-probe"),
+                model_handle=loaded.handle,
+                backend_identity=mismatched,
+            ),
+            messages=[
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="must fail before execution")],
+                )
+            ],
+        )
+        if inference_service is not None
+        else None
+    )
 
     matched_samples: list[float] = []
     mismatched_samples: list[float] = []
@@ -185,14 +218,17 @@ def main() -> int:
 
         started = time.perf_counter()
         for _ in range(iterations):
-            error = identity_guard(loaded.handle, mismatched) if identity_guard is not None else None
-            if identity_guard is not None and (
-                error is None or error.code != "model_identity_mismatch"
-            ):
-                raise AssertionError("mismatched backend identity was accepted")
-            if output_before_mismatch_count != 0:
-                raise AssertionError("identity mismatch emitted output")
+            if inference_service is not None and mismatch_request is not None:
+                mismatch_events = list(
+                    inference_service.Generate(mismatch_request, context=None)
+                )
+                output_before_mismatch_count += _output_before_identity_mismatch(
+                    mismatch_events
+                )
         mismatched_samples.append((time.perf_counter() - started) * 1000.0 / iterations)
+
+    if output_before_mismatch_count != 0:
+        raise AssertionError("identity mismatch emitted output")
 
     stats = registry.runtime_stats()
     observed_mismatch_count = float(getattr(stats, "model_identity_mismatch_count", 0))
@@ -202,6 +238,7 @@ def main() -> int:
 
     metrics = {
         "iteration_count": float(iterations),
+        "handler_boundary_available": 1.0 if inference_service is not None else 0.0,
         "matched_boundary_latency_ms_mean": statistics.fmean(matched_samples),
         "matched_boundary_latency_ms_p95": _p95(matched_samples),
         "mismatch_count": observed_mismatch_count,

@@ -433,14 +433,21 @@ public actor ModelCatalog {
                     guard let existing = backendRouteBindings[routeKey] else {
                         continue
                     }
+                    let handleChanged = existing.handle != dispatchHandle
+                    let generation = handleChanged
+                        ? nextGeneration(after: routeGenerations[routeKey] ?? existing.generation)
+                        : existing.generation
+                    routeGenerations[routeKey] = generation
                     routeDispatchHandles[routeKey] = dispatchHandle
                     backendRouteBindings[routeKey] = BackendRouteBinding(
                         modelID: existing.modelID,
                         adapterID: model.settings.ext["melix.adapter_set_hash"] ?? existing.adapterID,
-                        generation: existing.generation,
+                        generation: generation,
                         handle: dispatchHandle,
                         routeKind: existing.routeKind,
-                        workerInstanceID: existing.workerInstanceID
+                        workerInstanceID: handleChanged
+                            ? "legacy-unbound-worker"
+                            : existing.workerInstanceID
                     )
                 }
             }

@@ -246,7 +246,7 @@ enum BackendRouteRecovery {
                     do {
                         let stream = try await dispatch(attemptBinding)
                         var retryRequested = false
-                        for try await event in stream {
+                        streamLoop: for try await event in stream {
                             switch classify(event) {
                             case .error(let status):
                                 let recoverable = BackendRouteRecoveryClassifier.shouldRecover(status)
@@ -262,7 +262,7 @@ enum BackendRouteRecovery {
                                 }
                                 if recoverable, attemptIndex == 0 {
                                     retryRequested = true
-                                    break
+                                    break streamLoop
                                 }
                                 if recoverable {
                                     await recordRetryExhausted(metricsStore: metricsStore)

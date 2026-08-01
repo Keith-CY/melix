@@ -2292,6 +2292,11 @@
         "direction": "informational"
       },
       {
+        "key": "handler_boundary_available",
+        "unit": "bool",
+        "direction": "informational"
+      },
+      {
         "key": "control_plane_probe_available",
         "unit": "bool",
         "direction": "informational"

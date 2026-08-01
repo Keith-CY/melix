@@ -10060,6 +10060,129 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testPrefillRestoreRejectsSnapshotFromStaleRouteGeneration() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]
+            let initialServices = makeServices(
+                environment: environment,
+                backend: FakeRuntimeBackend(tokenDelayNanos: 0)
+            )
+            let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
+                return try await initialServices.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+            XCTAssertTrue(loadResponse.ok)
+
+            var sourcePrefill = Melix_Worker_V1_PrefillRequest()
+            sourcePrefill.execution.id.requestID = "req-stale-snapshot-source"
+            bindBackendIdentity(&sourcePrefill.execution, toModelHandle: loadResponse.modelHandle)
+            sourcePrefill.execution.cacheHints.allowL2 = true
+            sourcePrefill.execution.cacheHints.persistL2 = true
+            sourcePrefill.returnDecodeHandle = true
+            sourcePrefill.messages = [makeUserMessage("persist stale route generation")]
+            let sourceResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await initialServices.inference.prefill(
+                    request: sourcePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+            XCTAssertTrue(sourceResponse.ok)
+
+            let savedSnapshot = try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_SaveBoundarySnapshotRequest()
+                request.requestID = sourcePrefill.execution.id.requestID
+                request.decodeHandle = sourceResponse.decodeHandle
+                request.tokenBoundary = sourceResponse.promptTokens
+                return try await initialServices.cache.saveBoundarySnapshot(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_CacheService.Method.SaveBoundarySnapshot.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+            XCTAssertTrue(savedSnapshot.ok)
+
+            let snapshotURL = cacheRoot
+                .appendingPathComponent("snapshots", isDirectory: true)
+                .appendingPathComponent("\(savedSnapshot.snapshotID).json", isDirectory: false)
+            let persistedData = try Data(contentsOf: snapshotURL)
+            var persistedObject = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
+            )
+            let executionData = try XCTUnwrap(
+                (persistedObject["executionData"] as? String).flatMap {
+                    Data(base64Encoded: $0)
+                }
+            )
+            var persistedExecution = try Melix_Worker_V1_ExecutionMetadata(
+                serializedBytes: executionData
+            )
+            persistedExecution.backendIdentity.routeGeneration += 1
+            persistedObject["executionData"] = try persistedExecution.serializedData()
+                .base64EncodedString()
+            try JSONSerialization.data(withJSONObject: persistedObject)
+                .write(to: snapshotURL, options: [.atomic])
+
+            let restartedBackend = FakeRuntimeBackend(tokenDelayNanos: 0)
+            let restartedServices = makeServices(
+                environment: environment,
+                backend: restartedBackend
+            )
+            let restartedLoad = try await withTestServerContextRPCCancellationHandle { handle in
+                let request = makeIdentityBoundLoadRequest(modelID: "melix-dev-text")
+                return try await restartedServices.runtime.loadModel(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+            XCTAssertTrue(restartedLoad.ok)
+
+            var restorePrefill = Melix_Worker_V1_PrefillRequest()
+            restorePrefill.execution.id.requestID = "req-stale-snapshot-restore"
+            bindBackendIdentity(&restorePrefill.execution, toModelHandle: restartedLoad.modelHandle)
+            restorePrefill.execution.cacheHints.restoreSnapshotID = savedSnapshot.snapshotID
+            restorePrefill.returnDecodeHandle = true
+            let restoreResponse = try await withTestServerContextRPCCancellationHandle { handle in
+                try await restartedServices.inference.prefill(
+                    request: restorePrefill,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+
+            XCTAssertFalse(restoreResponse.ok)
+            XCTAssertEqual(restoreResponse.error.code, "runtime_error")
+            XCTAssertTrue(restoreResponse.error.message.contains("incompatible"))
+            let restartedPrefillExecutions = await restartedBackend.prefillExecutions()
+            XCTAssertEqual(restartedPrefillExecutions.count, 0)
+        }
+    }
+
     func testPrefillCanRestoreBoundarySnapshotsFromCacheHints() async throws {
         try await withTemporaryCacheRoot { cacheRoot in
             let environment = ["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT": cacheRoot.path]

@@ -402,9 +402,9 @@ relaxing the decode guard.
 
 Final changed-line coverage against current `origin/main`:
 
-- Python backend identity scope: `96.67%` (`581/601`).
-- Swift control-plane scope: `96.17%` (`1330/1383`).
-- Swift text-worker scope: `99.15%` (`348/351`).
+- Python backend identity scope: `96.79%` (`603/623`).
+- Swift control-plane scope: `96.19%` (`1337/1390`).
+- Swift text-worker scope: `99.16%` (`356/359`).
 
 The control-plane coverage command runs affected suites and identity-recovery
 tests as isolated shards, then merges their LLVM profiles before measuring the
@@ -436,7 +436,7 @@ The final 2026-08-01 repository gates completed successfully against
 - `make bootstrap`
 - `make proto`
 - `make proto-check`
-- `make swift-test` (`300` text-worker and `882` menu-bar tests passed,
+- `make swift-test` (`301` text-worker and `882` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
 - `make py-test` (`5491` passed, `14` skipped)
 - `make integration-test` (`125` passed, `1` skipped)
@@ -444,8 +444,11 @@ The final 2026-08-01 repository gates completed successfully against
 The focused same-endpoint worker-restart integration test also passed. After
 the final mainline merge, the atomic stale-cleanup and remote-provider routing
 tests passed together, the registered performance and binary-resolution tests
-passed (`15` tests), and the three changed-line coverage totals remained
-`96.67%`, `96.17%`, and `99.15%`.
+passed (`15` tests). The remote-review corrections additionally passed all `14`
+backend identity tests, all `254` OpenAI handler tests, the stale-generation
+snapshot restore regression, the stream-consumption and phase-aware replay
+regressions, and the in-process worker handler performance tests. The three
+changed-line coverage totals are `96.79%`, `96.19%`, and `99.16%`.
 
 ## Known Boundaries
 
@@ -483,3 +486,39 @@ against a current residency. Restore now rebinds the complete execution backend
 identity to the selected loaded residency before runtime prefill and context
 creation. The restart regression uses distinct worker instance IDs and proves
 the new owner and current residency can consume the restored handle.
+
+## Remote Review Corrections
+
+The pull request review found four additional implementation and evidence gaps.
+Snapshot restore now derives the expected identity from the snapshot's own
+execution metadata before comparing residency keys, so a snapshot from another
+route generation is rejected before runtime prefill. Replay-safe streaming now
+uses a labeled loop exit so a recoverable mismatch cannot leak trailing events
+from the failed stream before the one allowed retry.
+
+The worker performance probe retains the matched direct-guard microbenchmark but
+measures mismatch output ordering through the in-process inference handler. Its
+zero-output metric is therefore an observed handler result rather than a fixed
+counter. The PR performance workflow imports the exact pull request base commit
+into the head checkout and passes that SHA to changed-line coverage. The local
+pre-commit gate instead passes the temporary repository's synthetic `HEAD`,
+whose tree is the exact staged-comparison base, while the index snapshot remains
+in its worktree. Only an interactive direct script invocation uses `origin/main`
+as its default; a clean CI checkout never compares coverage to itself.
+
+A route-agnostic load completion cannot safely associate a changed handle with
+an unknown worker instance. If such a completion changes an existing handle, the
+catalog advances the route generation atomically with the handle and replaces
+the old worker identity with the `legacy-unbound-worker` sentinel. This preserves
+legacy handle routing without copying a real worker UUID across generations;
+identity-enforcing workers fail closed until a route-aware load binds the actual
+worker instance.
+
+Two review suggestions were intentionally not applied because they contradict
+the approved replay and replacement rules above. A caller arriving after a
+failed-generation recovery task has completed cannot adopt an arbitrary newer
+binding because that binding may belong to an explicit unload or replacement.
+Likewise, phase-aware prefill events remain response-opening backend events:
+once prefill has been exposed, a decode mismatch returns
+`partial_stream_failure` and does not replay. Focused tests preserve both
+contracts.

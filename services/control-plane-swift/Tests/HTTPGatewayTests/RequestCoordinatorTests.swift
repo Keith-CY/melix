@@ -298,6 +298,72 @@ struct RequestCoordinatorTests {
         ) == 1)
     }
 
+    @Test("identity mismatch stops consuming trailing events before replay")
+    func identityMismatchStopsTrailingEventsBeforeReplay() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(
+            script: .identityMismatchThenTrailingToken
+        )
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let events = try await recoveredCoordinatorEvents(
+            coordinator: coordinator,
+            requestID: "req-mismatch-trailing-token"
+        )
+
+        #expect(events.filter { if case .tokenDelta = $0.payload { true } else { false } }.count == 1)
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+    }
+
+    @Test("phase-aware decode identity mismatch after prefill is never replayed")
+    func phaseAwareDecodeIdentityMismatchAfterPrefillIsNeverReplayed() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let initialBinding = try #require(
+            await catalog.backendRouteBinding(for: "melix-dev-text", routeKind: .swiftText)
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let translated = makeTranslatedChatRequest(
+            requestID: "req-phase-aware-decode-mismatch",
+            saveBoundarySnapshot: true
+        )
+        let execution = try await coordinator.startChatCompletion(translated)
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+                Issue.record("Expected typed partial stream failure.")
+            } catch let error as WorkerClientError {
+                #expect(error == BackendRouteRecovery.partialStreamFailure())
+            } catch {
+                Issue.record("Unexpected phase-aware stream error: \(error)")
+            }
+        }
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitIdentityMismatchAndFinish(
+            requestID: "req-phase-aware-decode-mismatch"
+        )
+        _ = await consumer.result
+
+        #expect(await workerClient.prefillRequestObservations().count == 1)
+        #expect(await workerClient.decodeRequestObservations().count == 1)
+        #expect(await catalog.backendRouteBinding(
+            for: "melix-dev-text",
+            routeKind: .swiftText
+        ) == initialBinding)
+    }
+
     @Test("identity mismatch event after token output is never replayed")
     func identityMismatchEventAfterTokenOutputIsNeverReplayed() async throws {
         let workerClient = BackendIdentityRecoveryWorkerClient(script: .tokenThenIdentityMismatch)
@@ -7251,6 +7317,20 @@ private actor PhaseAwareWorkerClient:
         continuation.yield(event)
     }
 
+    func emitIdentityMismatchAndFinish(requestID: String) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "decode"
+        event.phase = .executionFailed
+        event.error.error.code = "model_identity_mismatch"
+        event.error.error.message = "stale phase-aware decode binding"
+        continuation.yield(event)
+        continuation.finish()
+    }
+
     func finish(requestID: String) {
         finishDecode(requestID: requestID)
     }
@@ -7696,6 +7776,7 @@ private actor BackendIdentityRecoveryWorkerClient:
         case streamFailureThenSuccess
         case preResponseFailureThenSuccess(String)
         case identityMismatchThenSuccess
+        case identityMismatchThenTrailingToken
         case alwaysIdentityMismatch
         case tokenThenIdentityMismatch
         case identityMismatchThenLoadFailure
@@ -7764,6 +7845,17 @@ private actor BackendIdentityRecoveryWorkerClient:
             case .identityMismatchThenSuccess:
                 if callIndex == 1 {
                     continuation.yield(Self.identityMismatchEvent(request: request))
+                    continuation.finish()
+                } else {
+                    Self.yieldSuccess(
+                        requestID: request.execution.id.requestID,
+                        continuation: continuation
+                    )
+                }
+            case .identityMismatchThenTrailingToken:
+                if callIndex == 1 {
+                    continuation.yield(Self.identityMismatchEvent(request: request))
+                    continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
                     continuation.finish()
                 } else {
                     Self.yieldSuccess(
