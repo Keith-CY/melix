@@ -18,10 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
 
+import worker.productization.macos_app_bundle as macos_app_bundle_module
 from worker.productization.macos_app_bundle import (
     archive_macos_app_bundle,
     elapsed_seconds,
     normalize_codesign_certificate_sha1,
+    normalize_codesign_certificate_sha256,
+    resolve_macos_minimum_system_version,
     resolve_python_runtime_root,
     resolve_site_packages_root,
     sign_macos_app_bundle,
@@ -42,12 +45,14 @@ _PREVIEW_PACKAGING_TARGET_ID = "macos_app_bundle_preview"
 _RELEASE_BUNDLE_ID = "io.melix.menubar"
 _RELEASE_PACKAGING_TARGET_ID = "macos_app_bundle_github_release"
 _RELEASE_SIGNING_AUTHORITY = "Melix GitHub Release Signing"
+_MINIMUM_SYSTEM_VERSION = resolve_macos_minimum_system_version(ROOT)
 
 
 @dataclass(frozen=True)
 class AppCodeSigningConfiguration:
     identity: str
     keychain_path: Path | None
+    expected_certificate_sha256: str | None
     expected_certificate_sha1: str | None
     expected_authority: str | None
     mode: str
@@ -61,6 +66,7 @@ def resolve_app_code_signing_configuration(
     packaging_target_id: str,
     codesign_identity: str,
     codesign_keychain: str,
+    codesign_certificate_sha256: str = "",
 ) -> AppCodeSigningConfiguration:
     has_feed = bool(sparkle_feed_url.strip())
     has_public_key = bool(sparkle_public_ed_key.strip())
@@ -101,12 +107,16 @@ def resolve_app_code_signing_configuration(
         return AppCodeSigningConfiguration(
             identity="-",
             keychain_path=None,
+            expected_certificate_sha256=None,
             expected_certificate_sha1=None,
             expected_authority=None,
             mode="adhoc",
         )
 
     certificate_sha1 = normalize_codesign_certificate_sha1(normalized_identity)
+    certificate_sha256 = normalize_codesign_certificate_sha256(
+        codesign_certificate_sha256
+    )
     if not normalized_keychain:
         raise ValueError("Stable release signing requires an explicit ephemeral keychain")
     keychain_path = Path(normalized_keychain).expanduser().resolve()
@@ -115,6 +125,7 @@ def resolve_app_code_signing_configuration(
     return AppCodeSigningConfiguration(
         identity=certificate_sha1,
         keychain_path=keychain_path,
+        expected_certificate_sha256=certificate_sha256,
         expected_certificate_sha1=certificate_sha1,
         expected_authority=_RELEASE_SIGNING_AUTHORITY,
         mode="stable_self_signed",
@@ -257,6 +268,7 @@ def resolve_sparkle_framework(
         )
     required_paths = [
         framework_path / "Versions/B/Sparkle",
+        framework_path / "Versions/B/Autoupdate",
         framework_path / "Versions/B/Updater.app",
         framework_path / "Versions/B/XPCServices/Downloader.xpc",
         framework_path / "Versions/B/XPCServices/Installer.xpc",
@@ -326,6 +338,7 @@ def verify_archived_macos_app_bundle(
     *,
     expected_app_name: str,
     require_sparkle_framework: bool = False,
+    expected_signing_certificate_sha256: str | None = None,
     expected_signing_certificate_sha1: str | None = None,
     expected_signing_authority: str | None = None,
 ) -> None:
@@ -340,12 +353,24 @@ def verify_archived_macos_app_bundle(
     codesign = shutil.which("codesign")
     if codesign is None:
         raise RuntimeError("codesign is required to verify an archived macOS app bundle")
-    if (expected_signing_certificate_sha1 is None) != (
-        expected_signing_authority is None
+    identity_expectations = (
+        expected_signing_certificate_sha256,
+        expected_signing_certificate_sha1,
+        expected_signing_authority,
+    )
+    if any(value is not None for value in identity_expectations) and not all(
+        value is not None for value in identity_expectations
     ):
         raise ValueError(
-            "Expected code-signing certificate SHA-1 and authority must be provided together"
+            "Expected code-signing certificate SHA-256, SHA-1, and authority must be provided together"
         )
+    normalized_expected_certificate_sha256 = (
+        macos_app_bundle_module.normalize_codesign_certificate_sha256(
+            expected_signing_certificate_sha256
+        )
+        if expected_signing_certificate_sha256 is not None
+        else None
+    )
     normalized_expected_certificate_sha1 = (
         normalize_codesign_certificate_sha1(expected_signing_certificate_sha1)
         if expected_signing_certificate_sha1 is not None
@@ -410,6 +435,7 @@ def verify_archived_macos_app_bundle(
             sparkle_framework = extracted_app / "Contents/Frameworks/Sparkle.framework"
             required_sparkle_paths = [
                 sparkle_framework / "Versions/B/Sparkle",
+                sparkle_framework / "Versions/B/Autoupdate",
                 sparkle_framework / "Versions/B/Updater.app",
                 sparkle_framework / "Versions/B/XPCServices/Downloader.xpc",
                 sparkle_framework / "Versions/B/XPCServices/Installer.xpc",
@@ -447,52 +473,41 @@ def verify_archived_macos_app_bundle(
                 )
 
         try:
-            subprocess.run(
-                [
-                    codesign,
-                    "--verify",
-                    "--deep",
-                    "--strict",
-                    "--verbose=4",
-                    os.fspath(extracted_app),
-                ],
-                check=True,
-            )
-        except subprocess.CalledProcessError as error:
+            for target in macos_app_bundle_module.macos_code_signing_plan(extracted_app):
+                subprocess.run(
+                    [
+                        codesign,
+                        "--verify",
+                        "--strict",
+                        "--verbose=4",
+                        os.fspath(target.path),
+                    ],
+                    check=True,
+                )
+                if "runtime" not in macos_app_bundle_module._codesign_details(
+                    codesign, target.path
+                ):
+                    raise RuntimeError(
+                        f"Archived code is missing hardened runtime: {target.path}"
+                    )
+                if normalized_expected_certificate_sha1 is not None:
+                    assert normalized_expected_certificate_sha256 is not None
+                    assert normalized_expected_authority is not None
+                    if target.preserve_entitlements:
+                        macos_app_bundle_module._canonical_codesign_entitlements(
+                            codesign, target.path
+                        )
+                    macos_app_bundle_module._verify_codesign_identity_evidence(
+                        codesign,
+                        target.path,
+                        expected_certificate_sha256=normalized_expected_certificate_sha256,
+                        expected_certificate_sha1=normalized_expected_certificate_sha1,
+                        expected_authority=normalized_expected_authority,
+                    )
+        except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
             raise RuntimeError(
-                f"Archived macOS app deep signature verification failed: {extracted_app}"
+                f"Archived macOS app signature verification failed: {extracted_app}"
             ) from error
-
-        if normalized_expected_certificate_sha1 is not None:
-            details = subprocess.run(
-                [codesign, "--display", "--verbose=4", os.fspath(extracted_app)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            detail_lines = f"{details.stdout}\n{details.stderr}".splitlines()
-            if f"Authority={normalized_expected_authority}" not in {
-                line.strip() for line in detail_lines
-            }:
-                raise RuntimeError(
-                    "Archived macOS app does not use the stable Melix release signing authority"
-                )
-
-            requirement = subprocess.run(
-                [codesign, "-d", "-r-", os.fspath(extracted_app)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            requirement_text = f"{requirement.stdout}\n{requirement.stderr}".lower()
-            expected_requirement = (
-                f'certificate root = h"{normalized_expected_certificate_sha1}"'
-            )
-            if expected_requirement not in requirement_text:
-                raise RuntimeError(
-                    "Archived macOS app designated requirement does not match the stable "
-                    "Melix release signing certificate"
-                )
 
 
 def main() -> int:
@@ -513,6 +528,7 @@ def main() -> int:
     parser.add_argument("--sparkle-public-ed-key", default="")
     parser.add_argument("--codesign-identity", default="-")
     parser.add_argument("--codesign-keychain", default="")
+    parser.add_argument("--codesign-certificate-sha256", default="")
     parser.add_argument(
         "--swift-mlx-metallib-path",
         default=os.environ.get(SWIFT_MLX_METALLIB_PATH_ENV, ""),
@@ -543,6 +559,7 @@ def main() -> int:
         packaging_target_id=args.packaging_target_id,
         codesign_identity=args.codesign_identity,
         codesign_keychain=args.codesign_keychain,
+        codesign_certificate_sha256=args.codesign_certificate_sha256,
     )
     if code_signing.mode == "stable_self_signed" and not args.archive_path.strip():
         raise ValueError("Signed update releases require an archive path")
@@ -592,8 +609,10 @@ def main() -> int:
         sparkle_feed_url=args.sparkle_feed_url or None,
         sparkle_public_ed_key=args.sparkle_public_ed_key or None,
         code_signing_mode=code_signing.mode,
+        code_signing_certificate_sha256=code_signing.expected_certificate_sha256,
         code_signing_certificate_sha1=code_signing.expected_certificate_sha1,
         code_signing_authority=code_signing.expected_authority,
+        minimum_system_version=_MINIMUM_SYSTEM_VERSION,
     )
     if args.archive_path:
         timings = _manifest_timings(manifest)
@@ -606,6 +625,7 @@ def main() -> int:
             manifest["app_path"],
             identity=code_signing.identity,
             keychain_path=code_signing.keychain_path,
+            expected_certificate_sha256=code_signing.expected_certificate_sha256,
             expected_certificate_sha1=code_signing.expected_certificate_sha1,
             expected_authority=code_signing.expected_authority,
         )
@@ -613,6 +633,9 @@ def main() -> int:
         if code_signing.mode == "adhoc":
             timings["adhoc_sign_seconds"] = timings["code_sign_seconds"]
         manifest["code_signing_mode"] = code_signing.mode
+        manifest["code_signing_certificate_sha256"] = (
+            code_signing.expected_certificate_sha256
+        )
         manifest["code_signing_certificate_sha1"] = (
             code_signing.expected_certificate_sha1
         )
@@ -636,6 +659,9 @@ def main() -> int:
             manifest["archive_path"],
             expected_app_name=Path(manifest["app_path"]).name,
             require_sparkle_framework=True,
+            expected_signing_certificate_sha256=(
+                code_signing.expected_certificate_sha256
+            ),
             expected_signing_certificate_sha1=(
                 code_signing.expected_certificate_sha1
             ),

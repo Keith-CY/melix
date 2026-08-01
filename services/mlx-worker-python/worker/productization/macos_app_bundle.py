@@ -10,6 +10,7 @@ import plistlib
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -52,6 +53,8 @@ _SPARKLE_FEED_URL = "https://github.com/Keith-CY/melix/releases/latest/download/
 _SPARKLE_FRAMEWORK_RELATIVE_PATH = Path("Sparkle.framework")
 _SPARKLE_EXECUTABLE_RPATH = "@loader_path/../Frameworks"
 _CERTIFICATE_SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
+_CERTIFICATE_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_MACOS_PLATFORM_RE = re.compile(r"\.macOS\(\.v(?P<major>[1-9][0-9]*)\)")
 _RELEASE_BUNDLE_ID = "io.melix.menubar"
 _RELEASE_PACKAGING_TARGET_ID = "macos_app_bundle_github_release"
 
@@ -217,6 +220,7 @@ def render_info_plist(
     insecure_http_hosts: Sequence[str] = (),
     sparkle_feed_url: str | None = None,
     sparkle_public_ed_key: str | None = None,
+    minimum_system_version: str = "15.0",
 ) -> bytes:
     ats_policy: dict[str, Any] = {
         "NSAllowsLocalNetworking": True,
@@ -240,6 +244,7 @@ def render_info_plist(
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": version,
         "CFBundleVersion": version,
+        "LSMinimumSystemVersion": minimum_system_version,
         "NSAppTransportSecurity": ats_policy,
         "NSHighResolutionCapable": True,
         "NSLocalNetworkUsageDescription": (
@@ -263,6 +268,21 @@ def render_info_plist(
             }
         )
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=False)
+
+
+def resolve_macos_minimum_system_version(repo_root: str | Path) -> str:
+    """Read the single macOS deployment target from the app Package.swift."""
+
+    package_path = (
+        Path(repo_root).expanduser().resolve() / "apps/macos-menubar/Package.swift"
+    )
+    source = package_path.read_text(encoding="utf-8")
+    matches = _MACOS_PLATFORM_RE.findall(source)
+    if len(matches) != 1:
+        raise ValueError(
+            "apps/macos-menubar/Package.swift must declare exactly one .macOS(.vN) platform"
+        )
+    return f"{int(matches[0])}.0"
 
 
 def normalize_sparkle_update_configuration(
@@ -885,12 +905,16 @@ def write_unsigned_macos_app_bundle(
     sparkle_feed_url: str | None = None,
     sparkle_public_ed_key: str | None = None,
     code_signing_mode: str = "adhoc",
+    code_signing_certificate_sha256: str | None = None,
     code_signing_certificate_sha1: str | None = None,
     code_signing_authority: str | None = None,
+    minimum_system_version: str = "15.0",
 ) -> dict[str, Any]:
     write_started_at = time.perf_counter()
     timings: dict[str, float] = {}
     repo_root_path = Path(repo_root).expanduser().resolve()
+    if re.fullmatch(r"[1-9][0-9]*\.0", minimum_system_version) is None:
+        raise ValueError("minimum system version must use MAJOR.0 format")
     executable = Path(executable_path).expanduser().resolve()
     cli_executable = Path(cli_executable_path).expanduser().resolve()
     control_plane_executable = Path(control_plane_executable_path).expanduser().resolve()
@@ -923,6 +947,11 @@ def write_unsigned_macos_app_bundle(
             "The Melix release bundle identity must not be used without signed updates"
         )
     normalized_code_signing_mode = code_signing_mode.strip()
+    normalized_code_signing_certificate_sha256 = (
+        normalize_codesign_certificate_sha256(code_signing_certificate_sha256)
+        if code_signing_certificate_sha256 is not None
+        else None
+    )
     normalized_code_signing_certificate_sha1 = (
         normalize_codesign_certificate_sha1(code_signing_certificate_sha1)
         if code_signing_certificate_sha1 is not None
@@ -937,7 +966,8 @@ def write_unsigned_macos_app_bundle(
         if normalized_code_signing_mode != "adhoc":
             raise ValueError("Preview bundles require ad-hoc code signing")
         if (
-            normalized_code_signing_certificate_sha1 is not None
+            normalized_code_signing_certificate_sha256 is not None
+            or normalized_code_signing_certificate_sha1 is not None
             or normalized_code_signing_authority is not None
         ):
             raise ValueError(
@@ -949,11 +979,12 @@ def write_unsigned_macos_app_bundle(
                 "Signed updates require stable self-signed code-signing metadata"
             )
         if (
-            normalized_code_signing_certificate_sha1 is None
+            normalized_code_signing_certificate_sha256 is None
+            or normalized_code_signing_certificate_sha1 is None
             or not normalized_code_signing_authority
         ):
             raise ValueError(
-                "Signed updates require the release certificate SHA-1 and authority"
+                "Signed updates require independent release certificate SHA-256, SHA-1, and authority pins"
             )
     sparkle_framework = (
         Path(sparkle_framework_path).expanduser().resolve()
@@ -1143,8 +1174,10 @@ def write_unsigned_macos_app_bundle(
     )
     target_metadata["swift_mlx_metallib_path"] = "mlx.metallib"
     target_metadata["swift_mlx_metallib_version"] = normalized_swift_mlx_metallib_version
+    target_metadata["minimum_system_version"] = minimum_system_version
     target_metadata["code_signing"] = {
         "mode": normalized_code_signing_mode,
+        "expected_certificate_sha256": normalized_code_signing_certificate_sha256,
         "expected_certificate_sha1": normalized_code_signing_certificate_sha1,
         "expected_authority": normalized_code_signing_authority,
     }
@@ -1195,6 +1228,7 @@ def write_unsigned_macos_app_bundle(
                 if sparkle_update_configuration is not None
                 else None
             ),
+            minimum_system_version=minimum_system_version,
         )
     )
     layout.launcher_script_path.write_text(
@@ -1335,11 +1369,148 @@ def normalize_codesign_certificate_sha1(value: str) -> str:
     return normalized
 
 
+def normalize_codesign_certificate_sha256(value: str) -> str:
+    normalized = value.strip().replace(":", "").lower()
+    if _CERTIFICATE_SHA256_RE.fullmatch(normalized) is None:
+        raise ValueError("Code-signing certificate SHA-256 must contain exactly 64 hex digits")
+    return normalized
+
+
+@dataclass(frozen=True)
+class MacOSCodeSigningTarget:
+    path: Path
+    role: str
+    preserve_entitlements: bool = False
+
+
+def macos_code_signing_plan(app_path: str | Path) -> list[MacOSCodeSigningTarget]:
+    """Return Sparkle's required inside-out order followed by other leaf code."""
+
+    app = Path(app_path).expanduser().resolve()
+    sparkle_framework = app / "Contents/Frameworks/Sparkle.framework"
+    plan: list[MacOSCodeSigningTarget] = []
+    if sparkle_framework.exists():
+        fixed_targets = [
+            MacOSCodeSigningTarget(
+                sparkle_framework / "Versions/B/XPCServices/Installer.xpc",
+                "sparkle_installer_xpc",
+            ),
+            MacOSCodeSigningTarget(
+                sparkle_framework / "Versions/B/XPCServices/Downloader.xpc",
+                "sparkle_downloader_xpc",
+                preserve_entitlements=True,
+            ),
+            MacOSCodeSigningTarget(
+                sparkle_framework / "Versions/B/Autoupdate",
+                "sparkle_autoupdate",
+                preserve_entitlements=True,
+            ),
+            MacOSCodeSigningTarget(
+                sparkle_framework / "Versions/B/Updater.app",
+                "sparkle_updater_app",
+            ),
+            MacOSCodeSigningTarget(sparkle_framework, "sparkle_framework"),
+        ]
+        missing = [target.path for target in fixed_targets if not target.path.exists()]
+        if missing:
+            raise FileNotFoundError(
+                "Sparkle code-signing target is missing: "
+                + ", ".join(os.fspath(path) for path in missing)
+            )
+        plan.extend(fixed_targets)
+
+    other_macho_targets = [
+        path
+        for path in _iter_nested_macho_signing_targets(app)
+        if not sparkle_framework.exists() or sparkle_framework not in path.parents
+    ]
+    other_macho_targets.sort(
+        key=lambda path: (-len(path.relative_to(app).parts), path.as_posix())
+    )
+    plan.extend(
+        MacOSCodeSigningTarget(path, "nested_macho") for path in other_macho_targets
+    )
+    plan.append(MacOSCodeSigningTarget(app, "outer_app"))
+    return plan
+
+
+def _canonical_codesign_entitlements(codesign: str, target: Path) -> bytes:
+    result = subprocess.run(
+        [codesign, "--display", "--entitlements", ":-", os.fspath(target)],
+        check=True,
+        capture_output=True,
+    )
+    output = result.stdout + result.stderr
+    xml_start = output.find(b"<?xml")
+    if xml_start < 0:
+        raise RuntimeError(f"required entitlements are missing from {target}")
+    payload = plistlib.loads(output[xml_start:])
+    if not isinstance(payload, dict) or not payload:
+        raise RuntimeError(f"required entitlements are empty on {target}")
+    return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True)
+
+
+def _codesign_details(codesign: str, target: Path) -> str:
+    details = subprocess.run(
+        [codesign, "--display", "--verbose=4", os.fspath(target)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return f"{details.stdout}\n{details.stderr}"
+
+
+def _verify_codesign_identity_evidence(
+    codesign: str,
+    target: Path,
+    *,
+    expected_certificate_sha256: str,
+    expected_certificate_sha1: str,
+    expected_authority: str,
+) -> None:
+    details = _codesign_details(codesign, target)
+    if f"Authority={expected_authority}" not in {
+        line.strip() for line in details.splitlines()
+    }:
+        raise RuntimeError(f"unexpected code-signing authority on {target}")
+
+    requirement = subprocess.run(
+        [codesign, "-d", "-r-", os.fspath(target)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    requirement_text = f"{requirement.stdout}\n{requirement.stderr}".lower()
+    if f'certificate root = h"{expected_certificate_sha1}"' not in requirement_text:
+        raise RuntimeError(f"designated requirement certificate mismatch on {target}")
+
+    with tempfile.TemporaryDirectory(prefix="melix-codesign-cert-") as directory:
+        certificate_prefix = Path(directory) / "certificate"
+        subprocess.run(
+            [
+                codesign,
+                "--display",
+                "--extract-certificates",
+                os.fspath(certificate_prefix),
+                os.fspath(target),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        leaf_certificate = certificate_prefix.with_name(f"{certificate_prefix.name}0")
+        certificate = leaf_certificate.read_bytes()
+    if hashlib.sha256(certificate).hexdigest() != expected_certificate_sha256:
+        raise RuntimeError(f"code-signing certificate SHA-256 mismatch on {target}")
+    if hashlib.sha1(certificate).hexdigest() != expected_certificate_sha1:
+        raise RuntimeError(f"code-signing certificate SHA-1 mismatch on {target}")
+
+
 def sign_macos_app_bundle(
     app_path: str | Path,
     *,
     identity: str,
     keychain_path: str | Path | None = None,
+    expected_certificate_sha256: str | None = None,
     expected_certificate_sha1: str | None = None,
     expected_authority: str | None = None,
 ) -> bool:
@@ -1356,10 +1527,22 @@ def sign_macos_app_bundle(
         if keychain_path is not None
         else None
     )
-    if (expected_certificate_sha1 is None) != (expected_authority is None):
+    identity_expectations = (
+        expected_certificate_sha256,
+        expected_certificate_sha1,
+        expected_authority,
+    )
+    if any(value is not None for value in identity_expectations) and not all(
+        value is not None for value in identity_expectations
+    ):
         raise ValueError(
-            "Expected code-signing certificate SHA-1 and authority must be provided together"
+            "Expected code-signing certificate SHA-256, SHA-1, and authority must be provided together"
         )
+    normalized_expected_sha256 = (
+        normalize_codesign_certificate_sha256(expected_certificate_sha256)
+        if expected_certificate_sha256 is not None
+        else None
+    )
     normalized_expected_sha1 = (
         normalize_codesign_certificate_sha1(expected_certificate_sha1)
         if expected_certificate_sha1 is not None
@@ -1379,54 +1562,62 @@ def sign_macos_app_bundle(
             "Code-signing identity must match the expected certificate SHA-1"
         )
 
-    def sign_command(target: Path, *, deep: bool = False) -> list[str]:
-        command = [codesign, "--force"]
-        if deep:
-            command.append("--deep")
-        command.extend(["--sign", normalized_identity, "--timestamp=none"])
+    def sign_command(target: MacOSCodeSigningTarget) -> list[str]:
+        command = [
+            codesign,
+            "--force",
+            "--options",
+            "runtime",
+            "--sign",
+            normalized_identity,
+            "--timestamp=none",
+        ]
         if normalized_keychain is not None:
             command.extend(["--keychain", os.fspath(normalized_keychain)])
-        command.append(os.fspath(target))
+        if target.preserve_entitlements:
+            command.append("--preserve-metadata=entitlements")
+        command.append(os.fspath(target.path))
         return command
 
     try:
-        for nested_target in _iter_nested_macho_signing_targets(app):
-            subprocess.run(sign_command(nested_target), check=True)
-        subprocess.run(sign_command(app, deep=True), check=True)
-        subprocess.run(
-            [
-                codesign,
-                "--verify",
-                "--deep",
-                "--strict",
-                "--verbose=4",
-                os.fspath(app),
-            ],
-            check=True,
-        )
-        if normalized_expected_sha1 is not None:
-            details = subprocess.run(
-                [codesign, "--display", "--verbose=4", os.fspath(app)],
+        plan = macos_code_signing_plan(app)
+        entitlement_snapshots = {
+            target.path: _canonical_codesign_entitlements(codesign, target.path)
+            for target in plan
+            if target.preserve_entitlements
+        }
+        for target in plan:
+            subprocess.run(sign_command(target), check=True)
+        for target in plan:
+            subprocess.run(
+                [
+                    codesign,
+                    "--verify",
+                    "--strict",
+                    "--verbose=4",
+                    os.fspath(target.path),
+                ],
                 check=True,
-                capture_output=True,
-                text=True,
             )
-            detail_lines = f"{details.stdout}\n{details.stderr}".splitlines()
-            if f"Authority={normalized_expected_authority}" not in {
-                line.strip() for line in detail_lines
-            }:
-                return False
-
-            requirement = subprocess.run(
-                [codesign, "-d", "-r-", os.fspath(app)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            requirement_text = f"{requirement.stdout}\n{requirement.stderr}".lower()
-            if f'certificate root = h"{normalized_expected_sha1}"' not in requirement_text:
-                return False
-    except subprocess.CalledProcessError:
+            details = _codesign_details(codesign, target.path)
+            if "runtime" not in details:
+                raise RuntimeError(f"hardened runtime is missing on {target.path}")
+            if target.preserve_entitlements:
+                if _canonical_codesign_entitlements(codesign, target.path) != entitlement_snapshots[
+                    target.path
+                ]:
+                    raise RuntimeError(f"entitlements changed while signing {target.path}")
+            if normalized_expected_sha1 is not None:
+                assert normalized_expected_sha256 is not None
+                assert normalized_expected_authority is not None
+                _verify_codesign_identity_evidence(
+                    codesign,
+                    target.path,
+                    expected_certificate_sha256=normalized_expected_sha256,
+                    expected_certificate_sha1=normalized_expected_sha1,
+                    expected_authority=normalized_expected_authority,
+                )
+    except (OSError, RuntimeError, subprocess.CalledProcessError, plistlib.InvalidFileException):
         return False
     return True
 

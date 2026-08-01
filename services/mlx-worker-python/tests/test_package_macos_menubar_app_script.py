@@ -9,11 +9,27 @@ from types import SimpleNamespace
 
 import pytest
 
+import worker.productization.macos_app_bundle as macos_app_bundle_module
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODULE_PATH = REPO_ROOT / "scripts" / "package_macos_menubar_app.py"
 PACKAGE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "package-self-contained-app.yml"
 PACKAGING_RUNBOOK_PATH = REPO_ROOT / "docs" / "runbooks" / "platform-packaging-targets.md"
+
+
+@pytest.fixture(autouse=True)
+def stable_codesign_detail_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_codesign_details",
+        lambda codesign, target: "flags=0x10000(runtime)\n",
+    )
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_verify_codesign_identity_evidence",
+        lambda *args, **kwargs: None,
+    )
 
 
 def find_named_workflow_step(workflow: str, name: str) -> re.Match[str]:
@@ -105,11 +121,13 @@ def test_resolve_app_code_signing_configuration_separates_preview_and_release(
     )
     assert preview.mode == "adhoc"
     assert preview.identity == "-"
+    assert preview.expected_certificate_sha256 is None
     assert preview.expected_certificate_sha1 is None
 
     keychain_path = tmp_path / "melix-release-signing.keychain-db"
     keychain_path.write_bytes(b"fixture")
     certificate_sha1 = "0123456789ABCDEF0123456789ABCDEF01234567"
+    certificate_sha256 = "AB" * 32
     release = module.resolve_app_code_signing_configuration(
         sparkle_feed_url=(
             "https://github.com/Keith-CY/melix/releases/latest/download/appcast.xml"
@@ -119,10 +137,12 @@ def test_resolve_app_code_signing_configuration_separates_preview_and_release(
         packaging_target_id="macos_app_bundle_github_release",
         codesign_identity=certificate_sha1,
         codesign_keychain=str(keychain_path),
+        codesign_certificate_sha256=certificate_sha256,
     )
     assert release.mode == "stable_self_signed"
     assert release.identity == certificate_sha1.lower()
     assert release.keychain_path == keychain_path.resolve()
+    assert release.expected_certificate_sha256 == certificate_sha256.lower()
     assert release.expected_certificate_sha1 == certificate_sha1.lower()
     assert release.expected_authority == "Melix GitHub Release Signing"
 
@@ -168,6 +188,7 @@ def test_resolve_app_code_signing_configuration_fails_closed(
             packaging_target_id=target_id,
             codesign_identity=identity,
             codesign_keychain=keychain,
+            codesign_certificate_sha256="0" * 64,
         )
 
 
@@ -195,6 +216,8 @@ def test_main_rejects_signed_update_release_without_archive(
             "0" * 40,
             "--codesign-keychain",
             str(keychain_path),
+            "--codesign-certificate-sha256",
+            "0" * 64,
         ],
     )
 
@@ -323,6 +346,7 @@ def test_resolve_built_control_plane_requires_built_product(tmp_path: Path) -> N
 def _write_complete_sparkle_framework(framework_path: Path) -> None:
     for relative_path in (
         "Versions/B/Sparkle",
+        "Versions/B/Autoupdate",
         "Versions/B/Updater.app",
         "Versions/B/XPCServices/Downloader.xpc",
         "Versions/B/XPCServices/Installer.xpc",
@@ -791,7 +815,11 @@ def test_package_workflow_installs_matching_swift_mlx_metallib() -> None:
         "scripts/ci_progress.sh",
         "scripts/compute_build_metadata.py",
         "scripts/dev_up.py",
+        "scripts/finalize_macos_release_candidate.py",
         "scripts/m8_packaging_target_smoke.py",
+        "scripts/macos_release_candidate.py",
+        "scripts/macos_self_signed_identity.py",
+        "scripts/validate_macos_release_tag.py",
     ],
 )
 def test_package_workflow_triggers_for_direct_packaging_inputs(path: str) -> None:
@@ -835,84 +863,63 @@ def test_package_workflow_builds_required_swift_products_before_packaging_app() 
         previous_step_end = build_step.end()
 
 
-def test_package_workflow_enables_updates_only_for_signed_tag_releases() -> None:
+def test_package_workflow_builds_isolated_tag_candidate_without_release_trust() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
     package_step = find_workflow_step(workflow, "Package self-contained Melix.app")
-    assert (
-        "IS_SIGNED_UPDATE_RELEASE: ${{ github.event_name == 'push' && "
-        "startsWith(github.ref, 'refs/tags/v')" in package_step
-    )
-    assert (
-        "SPARKLE_PUBLIC_ED_KEY: ${{ github.event_name == 'push' && "
-        "startsWith(github.ref, 'refs/tags/v') && vars.SPARKLE_EDDSA_PUBLIC_KEY || '' }}"
-        in package_step
-    )
-    assert "MELIX_CODESIGN_IDENTITY: ${{ steps.release-signing.outputs.certificate_sha }}" in package_step
-    assert "MELIX_CODESIGN_KEYCHAIN: ${{ steps.release-signing.outputs.keychain_path }}" in package_step
-    assert 'if [ "$IS_SIGNED_UPDATE_RELEASE" = "true" ]; then' in package_step
-    assert "tag releases require the SPARKLE_EDDSA_PUBLIC_KEY Actions variable" in package_step
-    assert (
-        '"https://github.com/Keith-CY/melix/releases/latest/download/appcast.xml"'
-        in package_step
-    )
-    assert '--sparkle-public-ed-key' in package_step
-    assert '--bundle-id' in package_step
-    assert '"io.melix.menubar"' in package_step
-    assert '--packaging-target-id' in package_step
-    assert '"macos_app_bundle_github_release"' in package_step
-    assert '--codesign-identity' in package_step
-    assert '--codesign-keychain' in package_step
-    assert '"${update_arguments[@]}"' in package_step
+    assert "IS_RELEASE_CANDIDATE:" in package_step
+    assert 'if [ "$IS_RELEASE_CANDIDATE" = "true" ]; then' in package_step
+    assert '"io.melix.menubar.release-candidate"' in package_step
+    assert '"macos_app_bundle_github_release_candidate"' in package_step
+    for protected_input in ("secrets.", "vars.", "--sparkle-public-ed-key", "--codesign-identity"):
+        assert protected_input not in package_step
 
 
-def test_package_workflow_imports_and_cleans_stable_self_signed_identity() -> None:
+def test_package_workflow_prepares_and_cleans_identity_only_in_protected_job() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    import_step = find_workflow_step(
-        workflow,
-        "Import stable GitHub release signing identity",
-    )
-    assert (
-        "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
-        in import_step
-    )
-    assert (
-        "SIGNING_CERTIFICATE_P12: ${{ secrets.MELIX_SIGNING_CERTIFICATE_P12 }}"
-        in import_step
-    )
-    assert (
-        "SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MELIX_SIGNING_CERTIFICATE_PASSWORD }}"
-        in import_step
-    )
-    assert "tag releases require the MELIX_SIGNING_CERTIFICATE_P12 Actions secret" in import_step
-    assert (
-        "tag releases require the MELIX_SIGNING_CERTIFICATE_PASSWORD Actions secret"
-        in import_step
-    )
-    assert 'identity_name="Melix GitHub Release Signing"' in import_step
-    assert "/usr/bin/base64 -D" in import_step
-    assert "security import" in import_step
-    assert "security find-identity -v -p codesigning" in import_step
-    assert "openssl verify -CAfile" in import_step
-    assert 'test "$certificate_subject" = "$certificate_issuer"' in import_step
-    assert "printf 'certificate_sha=%s\\n' \"$certificate_sha\"" in import_step
-    assert "printf '%s' \"$SIGNING_CERTIFICATE_PASSWORD\"" not in import_step
+    protected_job = find_workflow_job(workflow, "publish-signed-release")
+    assert "environment: github-release" in protected_job
+    assert "Revalidate candidate receipt before protected inputs" in protected_job
+    secret_index = protected_job.index("secrets.MELIX_SIGNING_CERTIFICATE_P12")
+    variable_index = protected_job.index("vars.SPARKLE_EDDSA_PUBLIC_KEY")
+    receipt_index = protected_job.index("macos_release_candidate.py verify")
+    assert receipt_index < secret_index
+    assert receipt_index < variable_index
+    assert "vars.MELIX_SIGNING_CERTIFICATE_SHA256" in protected_job
+    assert "vars.MELIX_SIGNING_CERTIFICATE_SHA1" in protected_job
+    assert "macos_self_signed_identity.py prepare" in protected_job
+    assert "macos_self_signed_identity.py cleanup" in protected_job
+    assert "cleanup_confirmed=true" in protected_job
+    assert protected_job.index("cleanup_confirmed=true") < protected_job.index("softprops/action-gh-release")
+    package_job = find_workflow_job(workflow, "package-app")
+    assert "secrets." not in package_job
+    assert "vars." not in package_job
 
-    cleanup_step = find_workflow_step(
-        workflow,
-        "Remove ephemeral release signing material",
-    )
-    assert "if: always() && github.event_name == 'push'" in cleanup_step
-    assert "security delete-keychain" in cleanup_step
-    assert "melix-release-signing.p12" in cleanup_step
-    assert "melix-release-signing.pem" in cleanup_step
+
+def test_package_workflow_exercises_real_trust_only_on_github_hosted_pull_request() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    smoke_job = find_workflow_job(workflow, "self-signed-trust-smoke")
+    assert "if: github.event_name == 'pull_request'" in smoke_job
+    assert "runs-on: macos-15" in smoke_job
+    assert "macos_self_signed_identity.py prepare" in smoke_job
+    assert "macos_self_signed_identity.py cleanup" in smoke_job
+    assert "cleanup_confirmed" in smoke_job
+
+
+def test_protected_release_requires_source_minimum_system_version_in_appcast() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    signed_feed_step = find_workflow_step(workflow, "Generate and verify signed update feed")
+    assert "minimumSystemVersion" in signed_feed_step
+    assert 'test "$minimum_system_version" = "15.0"' in signed_feed_step
 
 
 def test_package_workflow_keeps_preview_archives_adhoc_and_update_disabled() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
     package_step = find_workflow_step(workflow, "Package self-contained Melix.app")
-    release_condition = package_step.index('if [ "$IS_SIGNED_UPDATE_RELEASE" = "true" ]; then')
+    release_condition = package_step.index('if [ "$IS_RELEASE_CANDIDATE" = "true" ]; then')
     package_command = package_step.index(
         'bash scripts/ci_progress.sh "Package app bundle assembly"',
         release_condition,
@@ -920,58 +927,43 @@ def test_package_workflow_keeps_preview_archives_adhoc_and_update_disabled() -> 
     release_only_block = package_step[release_condition:package_command]
 
     for release_only_argument in (
-        "--sparkle-feed-url",
-        "--sparkle-public-ed-key",
-        "--codesign-identity",
-        "--codesign-keychain",
-        "macos_app_bundle_github_release",
+        "io.melix.menubar.release-candidate",
+        "macos_app_bundle_github_release_candidate",
     ):
         assert release_only_argument in release_only_block
         assert package_step.count(release_only_argument) == 1
 
 
-def test_package_workflow_generates_and_verifies_appcast_without_key_files() -> None:
+def test_protected_release_generates_and_verifies_appcast_without_key_files() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
     signed_feed_step = find_workflow_step(
         workflow,
         "Generate and verify signed update feed",
     )
-    assert (
-        "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
-        in signed_feed_step
-    )
     assert "SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}" in signed_feed_step
     assert "SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_EDDSA_PUBLIC_KEY }}" in signed_feed_step
-    assert "tag releases require the SPARKLE_EDDSA_PRIVATE_KEY Actions secret" in signed_feed_step
     assert "private_key_bytes" in signed_feed_step
     assert "openssl pkey -inform DER -pubout -outform DER" in signed_feed_step
-    assert 'if [ "$derived_public_key" != "$SPARKLE_PUBLIC_KEY" ]; then' in signed_feed_step
+    assert 'test "$derived_public_key" = "$SPARKLE_PUBLIC_KEY"' in signed_feed_step
     assert '"$sparkle_bin/generate_appcast"' in signed_feed_step
     assert signed_feed_step.count("--ed-key-file -") == 3
-    assert signed_feed_step.count("printf '%s' \"$SPARKLE_PRIVATE_KEY\" |") == 5
     assert 'xmllint --noout "$appcast_path"' in signed_feed_step
     assert "edSignature" in signed_feed_step
     assert "private_key_path" not in signed_feed_step
     assert "> \"$private" not in signed_feed_step
 
 
-def test_package_workflow_attaches_signed_appcast_to_tag_release() -> None:
+def test_package_workflow_publishes_only_final_archive_after_cleanup() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    upload_step = find_workflow_step(workflow, "Upload signed update feed artifact")
-    assert (
-        "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
-        in upload_step
-    )
-    assert "${{ steps.compute-build-metadata.outputs.artifact_name }}-appcast" in upload_step
-    assert "${{ steps.signed-update-feed.outputs.appcast_path }}" in upload_step
-
-    release_job = find_workflow_job(workflow, "attach-release-artifact")
-    assert "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" in release_job
-    assert "Download signed update feed artifact" in release_job
-    assert "${{ needs.package-app.outputs.artifact_name }}-appcast" in release_job
-    assert "${{ runner.temp }}/appcast.xml" in release_job
+    release_job = find_workflow_job(workflow, "publish-signed-release")
+    assert "attach-release-artifact:" not in workflow
+    assert "environment: github-release" in release_job
+    assert "steps.release-cleanup.outputs.cleanup_confirmed == 'true'" in release_job
+    assert "signed-update-release/${{ needs.package-app.outputs.artifact_name }}.zip" in release_job
+    assert "release-candidate/${{ needs.package-app.outputs.archive_name }}" in release_job
+    assert release_job.index("macos_release_candidate.py verify") < release_job.index("secrets.")
 
 
 def test_package_workflow_wraps_long_packaging_steps_with_ci_progress() -> None:
@@ -1149,7 +1141,7 @@ def test_package_workflow_gates_package_job_only_for_scheduled_skip_and_pr_label
     package_app_job = find_workflow_job(workflow, "package-app")
     assert "github.event_name != 'schedule' || needs.detect-main-update.outputs.should_package == 'true'" in package_app_job
     assert "github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app')" in package_app_job
-    assert "startsWith(github.ref, 'refs/tags/v')" in workflow
+    assert "github.ref_type != 'tag' || needs.validate-release-tag.result == 'success'" in package_app_job
 
 
 def test_package_workflow_sets_nightly_artifact_retention() -> None:
@@ -1297,15 +1289,17 @@ def test_main_records_archive_timing_in_json_manifest(
     def fake_verify_archived_macos_app_bundle(
         requested_archive_path,
         *,
-        expected_app_name,
-        require_sparkle_framework=False,
-        expected_signing_certificate_sha1=None,
+            expected_app_name,
+            require_sparkle_framework=False,
+            expected_signing_certificate_sha256=None,
+            expected_signing_certificate_sha1=None,
         expected_signing_authority=None,
     ):
         call_order.append("verify")
         seen["verified_archive_path"] = requested_archive_path
         seen["expected_app_name"] = expected_app_name
         seen["require_sparkle_framework"] = require_sparkle_framework
+        seen["expected_signing_certificate_sha256"] = expected_signing_certificate_sha256
         seen["expected_signing_certificate_sha1"] = expected_signing_certificate_sha1
         seen["expected_signing_authority"] = expected_signing_authority
 
@@ -1443,6 +1437,8 @@ def test_main_stable_release_signs_and_reverifies_certificate_identity(
             certificate_sha1,
             "--codesign-keychain",
             str(keychain_path),
+            "--codesign-certificate-sha256",
+            "a" * 64,
             "--json",
         ],
     )
@@ -1454,19 +1450,23 @@ def test_main_stable_release_signs_and_reverifies_certificate_identity(
     assert payload["code_signed"] is True
     assert payload["adhoc_signed"] is False
     assert payload["code_signing_mode"] == "stable_self_signed"
+    assert payload["code_signing_certificate_sha256"] == "a" * 64
     assert payload["code_signing_certificate_sha1"] == normalized_sha1
     assert payload["code_signing_authority"] == "Melix GitHub Release Signing"
     assert seen["write"]["bundle_id"] == "io.melix.menubar"
     assert seen["write"]["packaging_target_id"] == "macos_app_bundle_github_release"
     assert seen["write"]["code_signing_mode"] == "stable_self_signed"
+    assert seen["write"]["code_signing_certificate_sha256"] == "a" * 64
     assert seen["write"]["code_signing_certificate_sha1"] == normalized_sha1
     assert seen["write"]["code_signing_authority"] == "Melix GitHub Release Signing"
     assert seen["sign"] == {
         "identity": normalized_sha1,
         "keychain_path": keychain_path.resolve(),
+        "expected_certificate_sha256": "a" * 64,
         "expected_certificate_sha1": normalized_sha1,
         "expected_authority": "Melix GitHub Release Signing",
     }
+    assert seen["verify"]["expected_signing_certificate_sha256"] == "a" * 64
     assert seen["verify"]["expected_signing_certificate_sha1"] == normalized_sha1
     assert seen["verify"]["expected_signing_authority"] == "Melix GitHub Release Signing"
     assert "adhoc_sign_seconds" not in payload["timings"]
@@ -1636,7 +1636,7 @@ def _write_extracted_archive_fixture(
     return app_path
 
 
-def test_verify_archived_macos_app_bundle_requires_relative_metallib_link_and_deep_signature(
+def test_verify_archived_macos_app_bundle_requires_relative_metallib_link_and_strict_signature(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1666,7 +1666,6 @@ def test_verify_archived_macos_app_bundle_requires_relative_metallib_link_and_de
     assert calls[-1] == [
         "/usr/bin/codesign",
         "--verify",
-        "--deep",
         "--strict",
         "--verbose=4",
         str((Path(calls[0][-1]) / "Melix.app").resolve()),
@@ -1695,6 +1694,7 @@ def test_verify_archived_macos_app_bundle_requires_complete_sparkle_linkage(
             (framework / "XPCServices/Downloader.xpc").mkdir(parents=True)
             (framework / "XPCServices/Installer.xpc").mkdir()
             (framework / "Updater.app").mkdir()
+            (framework / "Autoupdate").write_bytes(b"autoupdate")
             (framework / "Sparkle").write_bytes(b"framework")
             return None
         if command[:2] == ["/usr/bin/otool", "-L"]:
@@ -1727,6 +1727,8 @@ def test_verify_archived_macos_app_bundle_verifies_stable_designated_requirement
     archive_path.write_bytes(b"zip")
     certificate_sha1 = "0123456789abcdef0123456789abcdef01234567"
     calls: list[list[str]] = []
+    verified_targets: list[Path] = []
+    entitlement_targets: list[Path] = []
     monkeypatch.setattr(module.shutil, "which", lambda name: f"/usr/bin/{name}")
 
     def fake_run(command: list[str], check: bool, **kwargs: object):
@@ -1763,17 +1765,32 @@ def test_verify_archived_macos_app_bundle_verifies_stable_designated_requirement
         return SimpleNamespace(stdout="", stderr="")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_verify_codesign_identity_evidence",
+        lambda codesign, target, **kwargs: verified_targets.append(target),
+    )
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_canonical_codesign_entitlements",
+        lambda codesign, target: entitlement_targets.append(target) or b"entitlements",
+    )
 
     module.verify_archived_macos_app_bundle(
         archive_path,
         expected_app_name="Melix.app",
         require_sparkle_framework=True,
+        expected_signing_certificate_sha256="a" * 64,
         expected_signing_certificate_sha1=certificate_sha1.upper(),
         expected_signing_authority="Melix GitHub Release Signing",
     )
 
-    assert any(command[1:3] == ["--display", "--verbose=4"] for command in calls)
-    assert any(command[1:3] == ["-d", "-r-"] for command in calls)
+    assert verified_targets
+    assert verified_targets[-1].name == "Melix.app"
+    assert [target.name for target in entitlement_targets] == [
+        "Downloader.xpc",
+        "Autoupdate",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1782,12 +1799,12 @@ def test_verify_archived_macos_app_bundle_verifies_stable_designated_requirement
         (
             "Different Signing Authority",
             'certificate root = H"0123456789abcdef0123456789abcdef01234567"',
-            "does not use the stable Melix release signing authority",
+            "signature verification failed",
         ),
         (
             "Melix GitHub Release Signing",
             "identifier io.melix.menubar",
-            "designated requirement does not match",
+            "signature verification failed",
         ),
     ],
 )
@@ -1818,11 +1835,17 @@ def test_verify_archived_macos_app_bundle_rejects_unstable_designated_requiremen
         return SimpleNamespace(stdout="", stderr="")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_verify_codesign_identity_evidence",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("identity mismatch")),
+    )
 
     with pytest.raises(RuntimeError, match=message):
         module.verify_archived_macos_app_bundle(
             archive_path,
             expected_app_name="Melix.app",
+            expected_signing_certificate_sha256="a" * 64,
             expected_signing_certificate_sha1=certificate_sha1,
             expected_signing_authority="Melix GitHub Release Signing",
         )
@@ -1956,7 +1979,7 @@ def test_verify_archived_macos_app_bundle_rejects_absolute_metallib_link(
         )
 
 
-def test_verify_archived_macos_app_bundle_propagates_deep_signature_failure(
+def test_verify_archived_macos_app_bundle_propagates_strict_signature_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1977,7 +2000,37 @@ def test_verify_archived_macos_app_bundle_propagates_deep_signature_failure(
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
 
-    with pytest.raises(RuntimeError, match="deep signature verification failed"):
+    with pytest.raises(RuntimeError, match="signature verification failed"):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+        )
+
+
+def test_verify_archived_macos_app_bundle_rejects_missing_hardened_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/codesign")
+    monkeypatch.setattr(
+        module.macos_app_bundle_module,
+        "_codesign_details",
+        lambda codesign, target: "flags=none",
+    )
+
+    def fake_run(command: list[str], check: bool, **kwargs: object) -> None:
+        if command[0] == "/usr/bin/ditto":
+            _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+            )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="signature verification failed"):
         module.verify_archived_macos_app_bundle(
             archive_path,
             expected_app_name="Melix.app",
