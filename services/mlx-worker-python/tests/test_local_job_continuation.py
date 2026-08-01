@@ -896,6 +896,18 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
                 "tail",
                 "end",
             ),
+            "ten": (
+                "phase",
+                scalar_payload,
+                4,
+                True,
+                None,
+                "done",
+                9.5,
+                "tail",
+                "end",
+                "receipt",
+            ),
             "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
         }
     )
@@ -920,6 +932,18 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
             "tail",
             "end",
         ),
+        "ten": (
+            "phase",
+            scalar_payload,
+            4,
+            True,
+            None,
+            "done",
+            9.5,
+            "tail",
+            "end",
+            "receipt",
+        ),
         "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
     }
     assert copied is not scalar_payload
@@ -933,6 +957,7 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
     assert copied["sept"][1] is not scalar_payload
     assert copied["oct"][1] is not scalar_payload
     assert copied["nine"][1] is not scalar_payload
+    assert copied["ten"][1] is not scalar_payload
     assert copied["summary"]["text"] is scalar_text
     assert copied["triple"][0] == "a"
     assert copied["triple"][2] == 3
@@ -948,6 +973,8 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
     assert copied["oct"][2:] == (4, True, None, "done", 9.5, "tail")
     assert copied["nine"][0] == "phase"
     assert copied["nine"][2:] == (4, True, None, "done", 9.5, "tail", "end")
+    assert copied["ten"][0] == "phase"
+    assert copied["ten"][2:] == (4, True, None, "done", 9.5, "tail", "end", "receipt")
     copied["summary"]["text"] = "downstream mutation"
     assert scalar_payload["text"] == scalar_text
 
@@ -975,6 +1002,9 @@ def test_copy_json_like_value_exact_scalar_tuple_avoids_recursive_dispatch(
     copied_nine = counted_copy(
         ("phase", 7, True, None, "done", 9.5, "tail", "end", "receipt")
     )
+    copied_ten = counted_copy(
+        ("phase", 7, True, None, "done", 9.5, "tail", "end", "receipt", "final")
+    )
 
     assert copied == ("status", 7, True)
     assert copied_pair == ("id", None)
@@ -994,7 +1024,19 @@ def test_copy_json_like_value_exact_scalar_tuple_avoids_recursive_dispatch(
         "end",
         "receipt",
     )
-    assert dispatch_count == 8
+    assert copied_ten == (
+        "phase",
+        7,
+        True,
+        None,
+        "done",
+        9.5,
+        "tail",
+        "end",
+        "receipt",
+        "final",
+    )
+    assert dispatch_count == 9
 
 
 class _CopyDict(dict):

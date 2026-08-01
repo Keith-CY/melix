@@ -38,3 +38,15 @@ changed.
    `scalar_copy_speedup`.
 4. Use GitHub Actions PR-scoped performance as the final registered CI probe
    validation before merge.
+
+## Follow-up Slice: Tuple10 Scalar Copy Fast Path
+
+The 2026-08-01 follow-up keeps the same Python-only boundary and registered
+`local-job-followup-scan-scandir` probe. The local-job JSON-like copier now adds
+a direct exact ten-item scalar tuple path to match the probe's compact completion
+summary payload, avoiding the generic tuple generator for that shape while still
+recursively copying any non-scalar member.
+
+Success is accepted only if the registered focused tests, changed-scope coverage,
+and local Linux registered probe pass with neutral-to-lower scalar-copy timing;
+GitHub Actions PR-scoped performance remains the merge gate before squash merge.
