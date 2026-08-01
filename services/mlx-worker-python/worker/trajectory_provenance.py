@@ -538,9 +538,10 @@ def load_trajectory_provenance_from_snapshot_manifest(
     open_file = _OPEN
     loads = _JSON_LOADS
     extract_provenance = _trajectory_provenance_from_snapshot_manifest
-    if type(manifest_path) is str:
+    manifest_path_type = _TYPE(manifest_path)
+    if manifest_path_type is str:
         manifest_path_text = manifest_path
-    elif type(manifest_path) is _PATH_TYPE:
+    elif manifest_path_type is _PATH_TYPE:
         manifest_path_text = _STR(manifest_path)
     else:
         manifest_path_text = _OS_FSPATH(manifest_path)
