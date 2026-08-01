@@ -452,6 +452,10 @@ def _string(value: Any) -> str:
 
 
 def _int(value: Any) -> int:
+    if type(value) is int:
+        return value
+    if value is None:
+        return 0
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
