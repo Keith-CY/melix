@@ -440,7 +440,9 @@ def _measurable_changed_lines(
                 covered_singleton = _sorted_line_list_contains(executed_lines, changed_line)
             else:
                 covered_singleton = changed_line in executed_lines
-            if singleton_combined_sorted or (
+            if covered_singleton:
+                missed_singleton = False
+            elif singleton_combined_sorted or (
                 missing_lines and missing_lines[0] <= missing_lines[-1]
             ):
                 missed_singleton = _sorted_line_list_contains(missing_lines, changed_line)
