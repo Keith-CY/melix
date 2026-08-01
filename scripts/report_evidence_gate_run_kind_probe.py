@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import statistics
@@ -24,6 +25,40 @@ from worker.productization.report_evidence_gate import (  # noqa: E402
     load_report_payload,
 )
 
+# The harness runs this script against both the base and the head checkout, so
+# it has to drive whichever `_rule_matches_report` signature the module under
+# test exposes: the base takes the raw `runs` list, the head takes the run-kind
+# value set that is now derived once per matrix.
+_RULE_MATCHES_TAKES_RUN_KIND_VALUES = (
+    "run_kind_values" in inspect.signature(_rule_matches_report).parameters
+)
+
+
+def _match_rule(
+    *,
+    rule: dict[str, object],
+    runs: list[dict[str, object]],
+    run_kind_values: set[str],
+    targets: list[dict[str, object]],
+    metrics: list[dict[str, object]],
+    probe_phases: set[str],
+) -> bool:
+    if _RULE_MATCHES_TAKES_RUN_KIND_VALUES:
+        return _rule_matches_report(
+            rule=rule,
+            run_kind_values=run_kind_values,
+            targets=targets,
+            metrics=metrics,
+            probe_phases=probe_phases,
+        )
+    return _rule_matches_report(
+        rule=rule,
+        runs=runs,
+        targets=targets,
+        metrics=metrics,
+        probe_phases=probe_phases,
+    )
+
 
 def _measure_run_kind(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
     run_kinds = tuple(f"probe_kind_{index}" for index in range(64)) + ("target_kind",)
@@ -36,8 +71,9 @@ def _measure_run_kind(iterations: int, sample_count: int) -> tuple[dict[str, flo
     for _ in range(sample_count):
         started = time.perf_counter()
         for _index in range(iterations):
-            if not _rule_matches_report(
+            if not _match_rule(
                 rule=rule,
+                runs=runs,
                 run_kind_values=run_kind_values,
                 targets=[],
                 metrics=[],
@@ -71,8 +107,9 @@ def _measure_metric_prefix(iterations: int, sample_count: int) -> tuple[dict[str
     for _ in range(sample_count):
         started = time.perf_counter()
         for _index in range(iterations):
-            if not _rule_matches_report(
+            if not _match_rule(
                 rule=rule,
+                runs=[],
                 run_kind_values=set(),
                 targets=[],
                 metrics=metrics,
@@ -106,8 +143,9 @@ def _measure_target_fields(iterations: int, sample_count: int) -> tuple[dict[str
     for _ in range(sample_count):
         started = time.perf_counter()
         for _index in range(iterations):
-            if not _rule_matches_report(
+            if not _match_rule(
                 rule=rule,
+                runs=[],
                 run_kind_values=set(),
                 targets=targets,
                 metrics=[],

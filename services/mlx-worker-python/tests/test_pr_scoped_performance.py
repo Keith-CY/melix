@@ -5019,6 +5019,44 @@ def test_text_family_config_probe_script_emits_metrics(
     assert metrics["iterations"] == 50_000
 
 
+def test_report_evidence_gate_probe_drives_both_rule_matcher_signatures() -> None:
+    """The probe must run against the base checkout's module, not just head's.
+
+    The harness executes the head probe script against both checkouts, so a
+    probe that hard-codes head's private signature fails the base measurement
+    with a TypeError instead of reporting a delta.
+    """
+    probe = _load_repo_module(
+        REPO_ROOT / "scripts/report_evidence_gate_run_kind_probe.py",
+        unique_name="report_evidence_gate_run_kind_probe_signature_check",
+    )
+    rule = {"run_kinds": ("target_kind",)}
+    runs = [{"run_kind": "target_kind"}]
+
+    def base_rule_matches_report(*, rule, runs, targets, metrics, probe_phases):
+        assert runs == [{"run_kind": "target_kind"}]
+        return True
+
+    def head_rule_matches_report(*, rule, run_kind_values, targets, metrics, probe_phases):
+        assert run_kind_values == {"target_kind"}
+        return True
+
+    for matcher, takes_values in (
+        (base_rule_matches_report, False),
+        (head_rule_matches_report, True),
+    ):
+        probe._rule_matches_report = matcher
+        probe._RULE_MATCHES_TAKES_RUN_KIND_VALUES = takes_values
+        assert probe._match_rule(
+            rule=rule,
+            runs=runs,
+            run_kind_values={"target_kind"},
+            targets=[],
+            metrics=[],
+            probe_phases=set(),
+        )
+
+
 def test_registered_probe_commands_reference_tests_that_exist() -> None:
     """Every ``file.py::test_name`` in the registry must resolve to a real test.
 
