@@ -40,6 +40,9 @@ from worker.productization.macos_app_bundle import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
 def test_build_macos_app_bundle_layout_uses_standard_app_structure(tmp_path: Path) -> None:
     layout = build_macos_app_bundle_layout(tmp_path / "Melix.app")
 
@@ -1979,7 +1982,7 @@ def test_sparkle_code_signing_plan_is_official_inside_out_order(tmp_path: Path) 
     assert [target.preserve_entitlements for target in plan[:5]] == [
         False,
         True,
-        True,
+        False,
         False,
         False,
     ]
@@ -1994,16 +1997,28 @@ def test_sparkle_code_signing_plan_rejects_missing_required_helper(tmp_path: Pat
         macos_code_signing_plan(app)
 
 
-def test_codesign_entitlements_are_canonical_and_required(
+def test_codesign_entitlements_extract_complete_plist_from_either_stream(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target = tmp_path / "Downloader.xpc"
     target.mkdir()
     payloads = iter(
         [
-            SimpleNamespace(stdout=plistlib.dumps({"com.apple.security.network.client": True}), stderr=b""),
+            SimpleNamespace(
+                stdout=plistlib.dumps({"com.apple.security.network.client": True})
+                + b"\nExecutable=/tmp/Downloader\n",
+                stderr=b"codesign diagnostics\n",
+            ),
+            SimpleNamespace(
+                stdout=(
+                    b'<?xml version="1.0"?><plist version="1.0"><dict></plist>\n'
+                    b"codesign diagnostics\n"
+                ),
+                stderr=b"warning before plist\n" + plistlib.dumps({}) + b"\nwarning after plist\n",
+            ),
+            SimpleNamespace(stdout=b'<?xml version="1.0"?><plist version="1.0">', stderr=b""),
+            SimpleNamespace(stdout=plistlib.dumps([]), stderr=b""),
             SimpleNamespace(stdout=b"no entitlements", stderr=b""),
-            SimpleNamespace(stdout=plistlib.dumps({}), stderr=b""),
         ]
     )
     monkeypatch.setattr(
@@ -2016,10 +2031,50 @@ def test_codesign_entitlements_are_canonical_and_required(
         "/usr/bin/codesign", target
     )
     assert plistlib.loads(canonical) == {"com.apple.security.network.client": True}
+    empty = macos_app_bundle_module._canonical_codesign_entitlements(
+        "/usr/bin/codesign", target
+    )
+    assert plistlib.loads(empty) == {}
     with pytest.raises(RuntimeError, match="missing"):
         macos_app_bundle_module._canonical_codesign_entitlements("/usr/bin/codesign", target)
-    with pytest.raises(RuntimeError, match="empty"):
+    with pytest.raises(RuntimeError, match="not a dictionary"):
         macos_app_bundle_module._canonical_codesign_entitlements("/usr/bin/codesign", target)
+    with pytest.raises(RuntimeError, match="missing"):
+        macos_app_bundle_module._canonical_codesign_entitlements("/usr/bin/codesign", target)
+
+
+def test_locked_sparkle_downloader_empty_entitlements_are_preserved_but_autoupdate_is_not(
+    tmp_path: Path,
+) -> None:
+    resolved = json.loads((REPO_ROOT / "apps/macos-menubar/Package.resolved").read_text())
+    sparkle_pin = next(pin for pin in resolved["pins"] if pin["identity"] == "sparkle")
+    assert sparkle_pin["state"]["version"] == "2.9.4"
+
+    codesign = Path("/usr/bin/codesign")
+    framework_source = (
+        REPO_ROOT
+        / "apps/macos-menubar/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework"
+        / "macos-arm64_x86_64/Sparkle.framework"
+    )
+    if not codesign.is_file() or not framework_source.is_dir():
+        pytest.skip("locked Sparkle artifact is resolved only on the macOS package path")
+    with (framework_source / "Versions/B/Resources/Info.plist").open("rb") as handle:
+        framework_info = plistlib.load(handle)
+    assert framework_info["CFBundleShortVersionString"] == "2.9.4"
+
+    framework = tmp_path / "Melix.app/Contents/Frameworks/Sparkle.framework"
+    framework.parent.mkdir(parents=True)
+    framework.symlink_to(framework_source, target_is_directory=True)
+    plan = macos_code_signing_plan(tmp_path / "Melix.app")
+    downloader = next(target for target in plan if target.role == "sparkle_downloader_xpc")
+    autoupdate = next(target for target in plan if target.role == "sparkle_autoupdate")
+
+    assert downloader.preserve_entitlements is True
+    assert autoupdate.preserve_entitlements is False
+    canonical = macos_app_bundle_module._canonical_codesign_entitlements(
+        str(codesign), downloader.path
+    )
+    assert plistlib.loads(canonical) == {}
 
 
 def test_codesign_details_combines_standard_output_and_error(
@@ -2199,11 +2254,10 @@ def test_sign_macos_app_bundle_preserves_required_helper_entitlements(
     tmp_path: Path,
 ) -> None:
     app_path = tmp_path / "Melix.app"
-    helper = app_path / "Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
-    helper.parent.mkdir(parents=True)
-    helper.write_bytes(b"helper")
+    helper = app_path / "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+    helper.mkdir(parents=True)
     target = macos_app_bundle_module.MacOSCodeSigningTarget(
-        helper.resolve(), "sparkle_autoupdate", preserve_entitlements=True
+        helper.resolve(), "sparkle_downloader_xpc", preserve_entitlements=True
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/codesign")
@@ -2236,11 +2290,10 @@ def test_sign_macos_app_bundle_rejects_missing_runtime_or_changed_entitlements(
     failure: str,
 ) -> None:
     app_path = tmp_path / "Melix.app"
-    helper = app_path / "Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
-    helper.parent.mkdir(parents=True)
-    helper.write_bytes(b"helper")
+    helper = app_path / "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+    helper.mkdir(parents=True)
     target = macos_app_bundle_module.MacOSCodeSigningTarget(
-        helper.resolve(), "sparkle_autoupdate", preserve_entitlements=True
+        helper.resolve(), "sparkle_downloader_xpc", preserve_entitlements=True
     )
     entitlement_values = iter([b"before", b"after" if failure == "entitlements" else b"before"])
     monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/codesign")

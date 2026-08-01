@@ -119,9 +119,10 @@ For a tag push, `.github/workflows/package-self-contained-app.yml`:
 3. the candidate receipt binds tag, source SHA, bundle-tree digest, and archive
    digest, and the candidate is uploaded under an independent artifact and
    archive name that the old preview attachment path does not publish;
-4. the fixed `github-release` environment job checks out the validated source,
-   repeats tag validation against current `origin/main`, byte-compares the two
-   tag receipts, extracts the candidate, and revalidates every candidate
+4. the fixed `github-release` environment job uses one repository-wide
+   non-cancelling publication lock across every tag, checks out the validated
+   source, repeats tag validation against current `origin/main`, byte-compares
+   the two tag receipts, extracts the candidate, and revalidates every candidate
    binding before any protected input is referenced;
 5. it validates the three public variables, resolves the repository-pinned
    Sparkle tools, decodes the PKCS#12, and requires its leaf certificate to
@@ -131,10 +132,12 @@ For a tag push, `.github/workflows/package-self-contained-app.yml`:
    list, creates an ephemeral keychain, adds code-signing-only administrator
    trust with passwordless `sudo`, and proves a real hardened-runtime sentinel
    signature;
-7. it converts the candidate into the stable bundle, embeds feed, public key,
-   certificate pins, candidate provenance, and `LSMinimumSystemVersion=15.0`;
+7. it requires and rewrites both App version keys plus the manifest product
+   version to the receipt-bound tag version while converting the candidate into
+   the stable bundle, then embeds feed, public key, certificate pins, candidate
+   provenance, and `LSMinimumSystemVersion=15.0`;
 8. it signs in Sparkle's documented order: `Installer.xpc`, `Downloader.xpc`
-   with preserved entitlements, `Autoupdate` with preserved entitlements,
+   with its legal empty entitlement plist preserved, `Autoupdate`,
    `Updater.app`, `Sparkle.framework`, other Mach-O files, and the outer App;
    every target gets hardened runtime and explicit strict verification, and
    `codesign --deep` is never used;
@@ -142,14 +145,18 @@ For a tag push, `.github/workflows/package-self-contained-app.yml`:
    entitlements, exact authority, both certificate hashes, and designated
    requirement for every required helper and outer code object;
 10. it derives the EdDSA public key from the protected private seed in memory,
-    requires a match, generates a one-version/no-delta appcast, requires its
+    requires a match, generates a one-version/no-delta appcast, requires both
+    Sparkle version attributes to equal the receipt-bound version and its
     minimum system version to be exactly `15.0`, and verifies both appcast and
     archive signatures;
 11. an unconditional cleanup removes administrator trust, restores the exact
     original search list, deletes the ephemeral keychain, PKCS#12, PEM, and
     sentinel, and writes a cleanup receipt; and
-12. only `cleanup_confirmed=true` permits the stable archive and `appcast.xml`
-    to be published and downstream distribution workflows to be triggered.
+12. only `cleanup_confirmed=true` permits a fresh force-fetch of all tags and a
+    final monotonic tag validation immediately before upload; and
+13. the workflow explicitly marks the release latest, reads GitHub's latest tag
+    and downloaded appcast back, and rechecks tag, both version attributes,
+    minimum OS, and enclosure URL before downstream distribution is triggered.
 
 No candidate archive or stable archive is attached to a version-tag release
 unless all signed-update and cleanup steps succeed.

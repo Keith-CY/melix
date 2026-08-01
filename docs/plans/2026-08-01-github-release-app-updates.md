@@ -61,7 +61,10 @@ The interactive UI walkthrough is therefore not required for this slice.
    `macos_app_bundle_github_release_candidate`, no feed, no update key, no
    certificate pins, and a receipt binding tag, source SHA, bundle tree, and
    archive digest. Only the fixed `github-release` protected environment may
-   turn that candidate into a release after revalidating both receipts.
+   turn that candidate into a release after revalidating both receipts. That
+   protected publication is globally serialized across tags, re-fetches every
+   stable tag immediately before upload, and fails a queued older release once
+   a newer stable version exists.
 7. Fail the protected release job closed unless its independently provisioned
    EdDSA public variable, certificate SHA-256 variable, certificate SHA-1
    variable, EdDSA private secret, self-signed PKCS#12 secret, and PKCS#12
@@ -71,8 +74,8 @@ The interactive UI walkthrough is therefore not required for this slice.
 8. Package the complete Sparkle framework, including `Installer.xpc`,
    `Downloader.xpc`, `Autoupdate`, and `Updater.app`, under
    `Contents/Frameworks`. Sign in Sparkle's documented inside-out order:
-   `Installer.xpc`; `Downloader.xpc` while preserving entitlements;
-   `Autoupdate` while preserving entitlements; `Updater.app`;
+   `Installer.xpc`; `Downloader.xpc` while preserving its legal empty
+   entitlement plist; `Autoupdate`; `Updater.app`;
    `Sparkle.framework`; remaining Mach-O files; outer App. Every signature uses
    hardened runtime and is verified explicitly; `codesign --deep` is forbidden.
 9. Pin the release certificate twice from protected configuration, using both
@@ -80,9 +83,13 @@ The interactive UI walkthrough is therefore not required for this slice.
    Verify exact authority, both leaf-certificate hashes, designated
    requirement, helper entitlements, hardened runtime, complete layout, and
    the extracted archive before publishing.
-10. Derive `LSMinimumSystemVersion` from the menu-bar package's
-   `.macOS(.v15)` declaration and require the signed appcast to publish exactly
-   `15.0`.
+10. Bind `CFBundleShortVersionString`, `CFBundleVersion`, the packaging
+    manifest `product_version`, and both Sparkle appcast version attributes to
+    the validated tag receipt. Derive `LSMinimumSystemVersion` from the
+    menu-bar package's `.macOS(.v15)` declaration and require the signed
+    appcast to publish exactly `15.0`. Publish explicitly as latest, then read
+    GitHub's latest release and its downloaded appcast back before dispatching
+    downstream distribution.
 11. Initialize updates only when the running bundle contains a valid HTTPS feed,
    a non-empty public key, and the packaged Sparkle framework. A checkout build
    or preview bundle reports updates as unavailable instead of starting a
@@ -97,9 +104,9 @@ The interactive UI walkthrough is therefore not required for this slice.
 14. Treat Sparkle cancellation codes `4007` and `4008`, including
     `userDidCancelDownload`, as one non-failure terminal event that returns the
     controller to an idle, retryable state. Track whether an update was already
-    discovered so generic network errors map to metadata before discovery and
-    download afterward, and suppress duplicate terminal failures from paired
-    delegate callbacks.
+    discovered so generic network errors and Sparkle codes `2000`/`2001` map
+    to metadata before discovery and download afterward, and suppress duplicate
+    terminal failures from paired delegate callbacks.
 15. Redact implementation details from operator errors while retaining a typed
     state that distinguishes configuration, metadata, download, authenticity,
     extraction, replacement/recovery, and relaunch failures for tests and
@@ -172,6 +179,15 @@ The interactive UI walkthrough is therefore not required for this slice.
 - Observability mode is `minimal`: only current stage, last check time, and a
   redacted error summary are retained. No URLs with query data, HTTP bodies,
   system profile, key material, or downloaded paths are logged.
+- Fixed-base local performance reports for the final review-hardening tree
+  selected all seven packaging probes with no verification failures; every
+  targeted test and changed-scope coverage gate passed. Concurrent host load
+  produced unstable timing-only regressions in both retained reports. The
+  measured functions, their repository-owned transitive helpers and constants,
+  and every probe definition match `origin/main` by AST or content SHA-256;
+  the only probe-file difference is an untimed Python 3.12 module-registration
+  compatibility fix. The timing findings are therefore outside this change's
+  hot paths and non-blocking rather than an accepted product regression.
 
 ## Delivery Slices
 
@@ -194,8 +210,9 @@ The interactive UI walkthrough is therefore not required for this slice.
 - [x] Add GitHub-hosted-only self-signed trust lifecycle and real sentinel
       smoke coverage with cleanup-confirmed publication ordering.
 - [x] Add the update runbook and update the packaging target contract.
-- [x] Run focused tests, changed-scope coverage, performance probes, packaging
-      smoke, and the cached full menu-bar Swift suite.
+- [x] Regenerate focused tests, changed-scope coverage, all seven selected
+      packaging performance probes, packaging smoke, and the cached full
+      menu-bar Swift suite for the final review-hardening tree.
 - [ ] Complete the remaining full repository gates in GitHub CI. The local
       64 GiB host invokes the normal versioned hook, which records its
       memory-policy skip instead of running the 128 GiB full gate.

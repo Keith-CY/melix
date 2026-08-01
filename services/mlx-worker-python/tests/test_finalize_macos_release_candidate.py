@@ -91,10 +91,13 @@ def test_finalize_candidate_metadata_injects_only_protected_release_trust(
     with (app / "Contents/Info.plist").open("rb") as handle:
         info = plistlib.load(handle)
     assert info["CFBundleIdentifier"] == "io.melix.menubar"
+    assert info["CFBundleShortVersionString"] == "1.2.3"
+    assert info["CFBundleVersion"] == "1.2.3"
     assert info["LSMinimumSystemVersion"] == "15.0"
     assert info["SUFeedURL"].endswith("/releases/latest/download/appcast.xml")
     assert info["SUPublicEDKey"] == public_key
     assert manifest["packaging_target_id"] == "macos_app_bundle_github_release"
+    assert manifest["product_version"] == "1.2.3"
     assert manifest["code_signing"] == {
         "mode": "stable_self_signed",
         "expected_certificate_sha256": "d" * 64,
@@ -138,9 +141,11 @@ def test_finalize_candidate_rejects_candidate_with_preinjected_feed(
     [
         ("plist_bundle", "io.melix.wrong", "bundle identifier mismatch"),
         ("plist_version", "9.9.9", "version does not match"),
+        ("plist_bundle_version", "9.9.9", "bundle version does not match"),
         ("plist_minimum", "14.0", "minimum system version"),
         ("manifest_target", "wrong", "target manifest mismatch"),
         ("manifest_bundle", "io.melix.wrong", "manifest bundle identifier"),
+        ("manifest_version", "9.9.9", "manifest product version does not match"),
         ("environment", "wrong", "environment script"),
     ],
 )
@@ -158,6 +163,7 @@ def test_finalize_candidate_rejects_mismatched_candidate_metadata(
         key = {
             "plist_bundle": "CFBundleIdentifier",
             "plist_version": "CFBundleShortVersionString",
+            "plist_bundle_version": "CFBundleVersion",
             "plist_minimum": "LSMinimumSystemVersion",
         }[surface]
         info[key] = value
@@ -167,6 +173,7 @@ def test_finalize_candidate_rejects_mismatched_candidate_metadata(
         key = {
             "manifest_target": "packaging_target_id",
             "manifest_bundle": "bundle_id",
+            "manifest_version": "product_version",
         }[surface]
         manifest[key] = value
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")

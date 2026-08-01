@@ -305,7 +305,7 @@ struct SoftwareUpdateControllerTests {
         NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost),
         SoftwareUpdateFailureKind.metadata
       ),
-      (NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: 2001), .download),
+      (NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: 2001), .metadata),
       (NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: 3001), .authenticity),
       (NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: 3002), .authenticity),
       (NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: 3000), .extraction),
@@ -344,6 +344,24 @@ struct SoftwareUpdateControllerTests {
   @Test("network failures after discovery are download failures")
   func postDiscoveryNetworkFailureIsDownloadFailure() throws {
     let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost)
+
+    let failure = try #require(
+      SoftwareUpdateErrorMapper.failure(from: error, updateWasDiscovered: true)
+    )
+    #expect(failure.kind == .download)
+  }
+
+  @Test("Sparkle 2001 before discovery is a metadata failure")
+  func sparkle2001BeforeDiscoveryIsMetadataFailure() throws {
+    let error = NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: 2001)
+
+    let failure = try #require(SoftwareUpdateErrorMapper.failure(from: error))
+    #expect(failure.kind == .metadata)
+  }
+
+  @Test("Sparkle 2001 after discovery is a download failure")
+  func sparkle2001AfterDiscoveryIsDownloadFailure() throws {
+    let error = NSError(domain: SoftwareUpdateErrorMapper.sparkleErrorDomain, code: 2001)
 
     let failure = try #require(
       SoftwareUpdateErrorMapper.failure(from: error, updateWasDiscovered: true)

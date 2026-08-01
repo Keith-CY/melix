@@ -880,6 +880,8 @@ def test_package_workflow_prepares_and_cleans_identity_only_in_protected_job() -
 
     protected_job = find_workflow_job(workflow, "publish-signed-release")
     assert "environment: github-release" in protected_job
+    assert "group: melix-protected-github-release" in protected_job
+    assert "cancel-in-progress: false" in protected_job
     assert "Revalidate candidate receipt before protected inputs" in protected_job
     secret_index = protected_job.index("secrets.MELIX_SIGNING_CERTIFICATE_P12")
     variable_index = protected_job.index("vars.SPARKLE_EDDSA_PUBLIC_KEY")
@@ -912,6 +914,11 @@ def test_protected_release_requires_source_minimum_system_version_in_appcast() -
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
     signed_feed_step = find_workflow_step(workflow, "Generate and verify signed update feed")
+    assert 'test "$EXPECTED_TAG" = "v$EXPECTED_VERSION"' in signed_feed_step
+    assert 'local-name()="item"]/*[local-name()="version"' in signed_feed_step
+    assert 'test "$appcast_version" = "$EXPECTED_VERSION"' in signed_feed_step
+    assert 'local-name()="item"]/*[local-name()="shortVersionString"' in signed_feed_step
+    assert 'test "$appcast_short_version" = "$EXPECTED_VERSION"' in signed_feed_step
     assert "minimumSystemVersion" in signed_feed_step
     assert 'test "$minimum_system_version" = "15.0"' in signed_feed_step
 
@@ -964,6 +971,33 @@ def test_package_workflow_publishes_only_final_archive_after_cleanup() -> None:
     assert "signed-update-release/${{ needs.package-app.outputs.artifact_name }}.zip" in release_job
     assert "release-candidate/${{ needs.package-app.outputs.archive_name }}" in release_job
     assert release_job.index("macos_release_candidate.py verify") < release_job.index("secrets.")
+    cleanup_index = release_job.index("cleanup_confirmed=true")
+    final_tag_fetch_index = release_job.index("git fetch --force --tags origin", cleanup_index)
+    final_validation_index = release_job.index(
+        "python3 scripts/validate_macos_release_tag.py", final_tag_fetch_index
+    )
+    publish_index = release_job.index("softprops/action-gh-release")
+    assert cleanup_index < final_tag_fetch_index < final_validation_index < publish_index
+    assert release_job.count("python3 scripts/validate_macos_release_tag.py") == 2
+    assert "make_latest: true" in release_job
+
+
+def test_package_workflow_verifies_latest_release_and_published_appcast_before_dispatch() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    release_job = find_workflow_job(workflow, "publish-signed-release")
+    publish_index = release_job.index("softprops/action-gh-release")
+    latest_index = release_job.index('repos/$RELEASE_REPOSITORY/releases/latest', publish_index)
+    download_index = release_job.index('gh release download "$EXPECTED_TAG"', latest_index)
+    dispatch_index = release_job.index("melix-release-asset-published", download_index)
+    assert publish_index < latest_index < download_index < dispatch_index
+    assert 'test "$latest_tag" = "$EXPECTED_TAG"' in release_job
+    assert 'test "$appcast_version" = "$EXPECTED_VERSION"' in release_job
+    assert 'test "$appcast_short_version" = "$EXPECTED_VERSION"' in release_job
+    assert 'test "$minimum_system_version" = "15.0"' in release_job
+    assert (
+        'releases/download/$EXPECTED_TAG/$RELEASE_ARCHIVE_NAME' in release_job
+    )
 
 
 def test_package_workflow_wraps_long_packaging_steps_with_ci_progress() -> None:
@@ -1789,7 +1823,6 @@ def test_verify_archived_macos_app_bundle_verifies_stable_designated_requirement
     assert verified_targets[-1].name == "Melix.app"
     assert [target.name for target in entitlement_targets] == [
         "Downloader.xpc",
-        "Autoupdate",
     ]
 
 

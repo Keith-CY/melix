@@ -142,14 +142,18 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
   packaging-target manifest before the bundle is signed and verified
 - signs every nested component and the complete App with the stable self-signed
   identity `Melix GitHub Release Signing`
-- signs Sparkle inside-out (`Installer.xpc`, entitlement-preserving
-  `Downloader.xpc`, entitlement-preserving `Autoupdate`, `Updater.app`,
+- signs Sparkle inside-out (`Installer.xpc`, `Downloader.xpc` with its legal
+  empty entitlement plist preserved, `Autoupdate`, `Updater.app`,
   `Sparkle.framework`, remaining Mach-O, outer App) with hardened runtime and
   explicit strict verification; it never uses `codesign --deep`
 - verifies exact code-signing authority, both certificate hashes, designated
   requirement, helper entitlements/runtime, extracted archive layout, archive
-  EdDSA signature, signed appcast, and appcast minimum system version `15.0`
-  before any release asset is uploaded
+  EdDSA signature, both receipt-bound appcast version attributes, signed
+  appcast, and appcast minimum system version `15.0` before any release asset
+  is uploaded
+- serializes every protected tag publication, force-fetches stable tags and
+  revalidates monotonicity immediately before upload, then verifies GitHub's
+  latest release and its downloaded appcast before downstream dispatch
 - is finalized only in the fixed `github-release` protected environment after
   tag and candidate revalidation, and fails closed unless the EdDSA public
   variable, independent certificate SHA-256/SHA-1 variables, EdDSA private

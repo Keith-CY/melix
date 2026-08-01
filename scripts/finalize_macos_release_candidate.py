@@ -97,7 +97,9 @@ def finalize_candidate_metadata(
     if "SUFeedURL" in info_plist or "SUPublicEDKey" in info_plist:
         raise ValueError("release candidate must not contain update trust configuration")
     if info_plist.get("CFBundleShortVersionString") != version:
-        raise ValueError("candidate version does not match the validated release tag")
+        raise ValueError("candidate short version does not match the validated release tag")
+    if info_plist.get("CFBundleVersion") != version:
+        raise ValueError("candidate bundle version does not match the validated release tag")
     if info_plist.get("LSMinimumSystemVersion") != minimum_system_version:
         raise ValueError("candidate minimum system version does not match Package.swift")
 
@@ -106,11 +108,17 @@ def finalize_candidate_metadata(
         raise ValueError("candidate packaging target manifest mismatch")
     if manifest.get("bundle_id") != CANDIDATE_BUNDLE_ID:
         raise ValueError("candidate manifest bundle identifier mismatch")
+    if manifest.get("product_version") != version:
+        raise ValueError(
+            "candidate manifest product version does not match the validated release tag"
+        )
     environment = _require_candidate_marker(environment_path)
 
     info_plist.update(
         {
             "CFBundleIdentifier": RELEASE_BUNDLE_ID,
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": version,
             "LSMinimumSystemVersion": minimum_system_version,
             "SUFeedURL": update_configuration["feed_url"],
             "SUPublicEDKey": update_configuration["public_ed_key"],
@@ -161,6 +169,11 @@ def finalize_candidate_metadata(
     )
     if info_plist["CFBundleIdentifier"] != RELEASE_BUNDLE_ID:  # pragma: no cover
         raise RuntimeError("final Info.plist bundle identity was not rewritten")
+    if (
+        info_plist["CFBundleShortVersionString"] != version
+        or info_plist["CFBundleVersion"] != version
+    ):  # pragma: no cover
+        raise RuntimeError("final Info.plist versions were not rewritten")
     if (
         manifest["packaging_target_id"] != RELEASE_TARGET_ID
         or manifest["bundle_id"] != RELEASE_BUNDLE_ID

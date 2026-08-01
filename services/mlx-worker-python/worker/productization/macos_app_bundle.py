@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from xml.parsers.expat import ExpatError
 
 from worker.productization.packaging_targets import (
     build_packaging_target_metadata,
@@ -1403,7 +1404,6 @@ def macos_code_signing_plan(app_path: str | Path) -> list[MacOSCodeSigningTarget
             MacOSCodeSigningTarget(
                 sparkle_framework / "Versions/B/Autoupdate",
                 "sparkle_autoupdate",
-                preserve_entitlements=True,
             ),
             MacOSCodeSigningTarget(
                 sparkle_framework / "Versions/B/Updater.app",
@@ -1440,14 +1440,23 @@ def _canonical_codesign_entitlements(codesign: str, target: Path) -> bytes:
         check=True,
         capture_output=True,
     )
-    output = result.stdout + result.stderr
-    xml_start = output.find(b"<?xml")
-    if xml_start < 0:
-        raise RuntimeError(f"required entitlements are missing from {target}")
-    payload = plistlib.loads(output[xml_start:])
-    if not isinstance(payload, dict) or not payload:
-        raise RuntimeError(f"required entitlements are empty on {target}")
-    return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True)
+    plist_end_marker = b"</plist>"
+    for output in (result.stdout, result.stderr, result.stdout + result.stderr):
+        xml_start = output.find(b"<?xml")
+        if xml_start < 0:
+            continue
+        plist_end = output.find(plist_end_marker, xml_start)
+        if plist_end < 0:
+            continue
+        xml_end = plist_end + len(plist_end_marker)
+        try:
+            payload = plistlib.loads(output[xml_start:xml_end])
+        except (plistlib.InvalidFileException, ExpatError):
+            continue
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"required entitlements are not a dictionary on {target}")
+        return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True)
+    raise RuntimeError(f"required entitlements are missing from {target}")
 
 
 def _codesign_details(codesign: str, target: Path) -> str:

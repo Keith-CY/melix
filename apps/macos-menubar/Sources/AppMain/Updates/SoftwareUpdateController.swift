@@ -414,7 +414,7 @@ enum SoftwareUpdateErrorMapper {
     case 1000...1007:
       kind = .metadata
     case 2000...2001:
-      kind = .download
+      kind = updateWasDiscovered ? .download : .metadata
     case 3001...3002:
       kind = .authenticity
     case 3000:
