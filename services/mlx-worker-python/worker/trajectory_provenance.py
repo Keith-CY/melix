@@ -15,6 +15,7 @@ _OS_FSPATH = os.fspath
 _STR = str
 _INT = int
 _TYPE = type
+_PATH_TYPE = type(Path())
 
 
 def _strip_manifest_text(value: Any) -> str:
@@ -89,6 +90,15 @@ def _copy_json_list(value: list[Any]) -> list[Any]:
 def _copy_json_tuple(value: tuple[Any, ...]) -> tuple[Any, ...]:
     immutable_types = _JSON_IMMUTABLE_TYPE_SET
     value_type = _TYPE
+    if len(value) == 3:
+        item_0, item_1, item_2 = value
+        if (
+            value_type(item_0) in immutable_types
+            and value_type(item_1) in immutable_types
+            and value_type(item_2) in immutable_types
+        ):
+            return value
+        return tuple(_copy_trajectory_provenance_value(item) for item in value)
     for item in value:
         if value_type(item) not in immutable_types:
             return tuple(_copy_trajectory_provenance_value(item) for item in value)
@@ -530,6 +540,8 @@ def load_trajectory_provenance_from_snapshot_manifest(
     extract_provenance = _trajectory_provenance_from_snapshot_manifest
     if type(manifest_path) is str:
         manifest_path_text = manifest_path
+    elif type(manifest_path) is _PATH_TYPE:
+        manifest_path_text = _STR(manifest_path)
     else:
         manifest_path_text = _OS_FSPATH(manifest_path)
     with open_file(manifest_path_text, "rb") as manifest_file:

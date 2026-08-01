@@ -223,8 +223,14 @@ public struct OpenAICompatibleRemoteProviderClient: RemoteProviderChatClient {
             "messages": request.messages.map { ["role": $0.role, "content": $0.content] },
             "stream": request.stream,
         ]
-        if let enableThinking = request.enableThinking {
-            body["enable_thinking"] = enableThinking
+        // `enable_thinking` is a vendor extension rather than an OpenAI-compatible
+        // field, so it is only sent when it changes provider behavior: an explicit
+        // opt-out that `reasoning_effort` cannot express on endpoints that ignore
+        // that field. `enable_thinking: true` matches the default of every endpoint
+        // that understands the key, so sending it only risks a schema rejection from
+        // strict endpoints that reject unknown top-level fields.
+        if request.enableThinking == false {
+            body["enable_thinking"] = false
         }
         if let reasoningEffort = request.reasoningEffort?
             .trimmingCharacters(in: .whitespacesAndNewlines),

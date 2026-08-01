@@ -8549,10 +8549,29 @@ public final class RuntimeViewModel {
                 "Remote Provider \(server.id) has no model configured."
             )
         }
+        // `isSelectedChatProviderReady` treats the endpoint and provider kind as
+        // required, so a corrupted profile must fail here with the same friendly
+        // wording instead of surfacing a low-level RemoteProviderError later.
+        let providerKind = server.providerKind.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard providerKind.isEmpty == false else {
+            throw MelixCLIError.runtime(
+                "Remote Provider \(server.id) has no provider kind configured."
+            )
+        }
+        let baseURL = server.baseURL.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard baseURL.isEmpty == false else {
+            throw MelixCLIError.runtime(
+                "Remote Provider \(server.id) has no endpoint configured."
+            )
+        }
         return ControlPlaneChatRequest.RemoteTarget(
             serverID: server.id,
-            providerKind: server.providerKind,
-            baseURL: server.baseURL,
+            providerKind: providerKind,
+            baseURL: baseURL,
             apiKey: apiKey,
             modelID: modelID,
             timeoutSeconds: server.timeoutSeconds,

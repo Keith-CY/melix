@@ -296,7 +296,11 @@ def test_load_trajectory_provenance_from_snapshot_manifest_path_uses_direct_open
     def fail_path_read_bytes(_self: Path) -> bytes:
         raise AssertionError("exact Path manifest paths should use direct open")
 
+    def fail_os_fspath(_path: object) -> str:
+        raise AssertionError("exact Path manifest paths should use direct str conversion")
+
     monkeypatch.setattr(trajectory_provenance_module, "_PATH_READ_BYTES", fail_path_read_bytes)
+    monkeypatch.setattr(trajectory_provenance_module, "_OS_FSPATH", fail_os_fspath)
 
     assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
         "trajectory_dataset_id": "agentic-snapshot",
@@ -1024,6 +1028,7 @@ def test_copy_json_list_still_copies_nested_mutable_items(
         (),
         ("agentic",),
         ("agentic", "trajectory"),
+        ("agentic", "trajectory", "quality"),
         ("agentic", "trajectory", 3, True, None, 0.75),
     ],
 )
@@ -1046,15 +1051,28 @@ def test_copy_json_tuple_reuses_scalar_tuples_without_recursive_calls(
     assert copied is source
 
 
-def test_copy_json_tuple_still_copies_nested_mutable_items() -> None:
-    source = ("agentic", {"labels": ["trajectory"]})
+@pytest.mark.parametrize(
+    "source,nested_index",
+    [
+        (("agentic", {"labels": ["trajectory"]}), 1),
+        (("agentic", {"labels": ["trajectory"]}, "quality"), 1),
+    ],
+)
+def test_copy_json_tuple_still_copies_nested_mutable_items(
+    source: tuple[object, ...],
+    nested_index: int,
+) -> None:
 
     copied = trajectory_provenance_module._copy_json_tuple(source)
 
     assert copied == source
     assert copied is not source
-    assert copied[1] is not source[1]
-    assert copied[1]["labels"] is not source[1]["labels"]
+    copied_nested = copied[nested_index]
+    source_nested = source[nested_index]
+    assert isinstance(copied_nested, dict)
+    assert isinstance(source_nested, dict)
+    assert copied_nested is not source_nested
+    assert copied_nested["labels"] is not source_nested["labels"]
 
 
 @pytest.mark.parametrize(
