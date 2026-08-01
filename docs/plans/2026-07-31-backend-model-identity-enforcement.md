@@ -479,10 +479,23 @@ base outlier at `-286 ms`; the medians were `-71.81 ms` for base and `-76.56 ms`
 for head, so the head remained faster. These are non-reproducing measurement
 noise, not intentional regressions.
 
+After the next mainline synchronization at `dba0f70d`, the exact staged-tree
+report at
+`.runtime/pre-commit-performance/20260801-151056-e0c1557e/report` again ran all
+`148` probes with `20` direct probes and `0` verification failures. The backend
+identity and all newly synchronized runtime-weight paths were functionally
+`ok`. Two unrelated direct timing samples crossed thresholds: deterministic
+embedding duplicate-input reuse and audio local-URI preprocessing. Seven
+alternating repetitions in equivalent fresh worktrees using the pre-commit
+hook's Python `3.12.13` disproved both alerts. Embedding total time changed by
+`-1.03%`, its single-cycle metric changed by `+1.11%` against a `5%` threshold,
+and audio changed by `-6.33%` against a `10%` threshold. These are
+non-reproducing measurement noise, not intentional regressions.
+
 ## Verification Results
 
 The final 2026-08-01 repository gates completed successfully against
-`origin/main` at `99c402a0`:
+`origin/main` at `dba0f70d`:
 
 - `make bootstrap`
 - `make proto`
