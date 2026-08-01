@@ -711,13 +711,11 @@ def test_local_job_followup_scan_probe_script_emits_metrics(
     assert metrics["projection_receipt_count_mean"] == 6.0
     assert metrics["scalar_copy_baseline_elapsed_ms_mean"] >= 0.0
     assert metrics["scalar_copy_optimized_elapsed_ms_mean"] >= 0.0
-    assert abs(
-        metrics["scalar_copy_delta_ms"]
-        - (
-            metrics["scalar_copy_optimized_elapsed_ms_mean"]
-            - metrics["scalar_copy_baseline_elapsed_ms_mean"]
-        )
-    ) <= 1e-6
+    assert metrics["scalar_copy_delta_ms"] == pytest.approx(
+        metrics["scalar_copy_optimized_elapsed_ms_mean"]
+        - metrics["scalar_copy_baseline_elapsed_ms_mean"],
+        abs=2e-6,
+    )
     assert metrics["scalar_copy_speedup"] >= 0.0
     assert metrics["scalar_copy_iterations"] == 2.0
 

@@ -448,10 +448,24 @@ deterministic OCR token counting changed from `793.868 ms` to `791.479 ms`
 (`-0.30%`). The sampled alerts are therefore recorded as non-reproducing
 measurement noise, not accepted regressions.
 
+The final-base report at
+`.runtime/pre-commit-performance/20260801-125020-a86f8a8c/report` completed all
+`148` probes with `0` verification failures. Backend identity, worker registry,
+performance registry, same-cohort batching, and both upstream token-counting
+probes were `ok`; OCR measured `819.743 ms` versus `830.158 ms`, and VLM
+completion counting measured `23.960 ms` versus `24.242 ms`. Because the shared
+performance test file was part of the staged snapshot, four otherwise unrelated
+probes were included in the direct gate and produced isolated alerts. Seven
+alternating `29d6f332`/merged-tree repetitions disproved all four: image digest
+was `-2.78%`, embedding duplicate-input reuse was `+0.79%`, rerank request
+processing was `+2.20%`, and audio local-URI preprocessing was `-7.63%`. None
+crossed its `5%` threshold on repeat. These alerts are recorded as
+non-reproducing measurement noise rather than intentional regressions.
+
 ## Verification Results
 
 The final 2026-08-01 repository gates completed successfully against
-`origin/main` at `a501bbb6`:
+`origin/main` at `29d6f332`:
 
 - `make bootstrap`
 - `make proto`
@@ -468,7 +482,13 @@ passed (`15` tests). The remote-review corrections additionally passed all `14`
 backend identity tests, all `254` OpenAI handler tests, the stale-generation
 snapshot restore regression, the stream-consumption and phase-aware replay
 regressions, and the in-process worker handler performance tests. The three
-changed-line coverage totals are `96.79%`, `96.19%`, and `99.16%`.
+changed-line coverage totals are `96.98%`, `96.19%`, and `99.16%`.
+
+The final-base pre-commit run also exposed an unrelated pre-existing flaky
+assertion in the shared performance test: independently rounded six-decimal
+scalar-copy metrics could differ by slightly more than `1e-6`. The assertion
+now uses a `2e-6` absolute tolerance, matching the metric serialization
+precision without weakening any measured performance threshold.
 
 ## Known Boundaries
 
