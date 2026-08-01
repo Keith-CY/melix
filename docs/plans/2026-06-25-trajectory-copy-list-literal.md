@@ -203,3 +203,14 @@ preserve nested container isolation. The registered
 `trajectory-provenance-copy-elision` probe now reports focused `scalar_tuple_*`
 metrics alongside the broader provenance-copy guardrails and remains the local
 Linux plus CI validation gate for this small Python-only slice.
+
+## 2026-08-01 follow-up: token alias type binding
+
+This follow-up remains limited to `_agentic_sft_token_metric_aliases(...)` in
+`worker.trajectory_provenance`. The exact-dict token-alias fast path now reuses
+the module-level `_TYPE` binding for the metrics payload and estimator checks,
+matching the existing token count guards and avoiding builtin `type` resolution in
+the registered adapter-manifest micro path. Alias key order, clean-estimator
+fast-path behavior, fallback coercion, and blank-estimator omission remain
+unchanged. The registered `trajectory-provenance-copy-elision` probe remains the
+local Linux and CI validation gate for this small Python-only slice.
