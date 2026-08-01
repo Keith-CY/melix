@@ -3972,9 +3972,10 @@ class WorkerModelCatalog:
         stack = [resolved_root]
         while stack:
             current = stack.pop()
-            if current.name in _REGISTRY_SCAN_PRUNED_DIR_NAMES:
+            current_name = current.name
+            if current_name in _REGISTRY_SCAN_PRUNED_DIR_NAMES:
                 continue
-            if current.name in _HF_CACHE_PRUNED_SUBTREE_NAMES and _is_hf_cache_pruned_subtree(resolved_root, current):
+            if current_name in _HF_CACHE_PRUNED_SUBTREE_NAMES and _is_hf_cache_pruned_subtree(resolved_root, current):
                 continue
             try:
                 with os.scandir(os.fspath(current)) as entries:

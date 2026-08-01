@@ -492,10 +492,33 @@ hook's Python `3.12.13` disproved both alerts. Embedding total time changed by
 and audio changed by `-6.33%` against a `10%` threshold. These are
 non-reproducing measurement noise, not intentional regressions.
 
+After synchronizing the changed-scope and model-registry optimizations from
+`origin/main` at `4fb0226b`, the exact staged-tree report at
+`.runtime/pre-commit-performance/20260801-162645-9f721311/report` completed all
+`148` probes with `20` direct probes and `0` verification failures. The backend
+identity probe remained `ok`: it rejected `140,000` mismatches with `0` output
+events before mismatch, recorded retry counts `3/2/1`, coalesced one recovery
+caller into two fresh bindings, and measured matched-worker p95 at
+`0.000450 ms` and control-plane p95 at `0.001422 ms`.
+
+Four unrelated direct timing samples crossed their thresholds in the single
+full-registry pass: deterministic embedding duplicate-input reuse, rerank
+request processing, audio local-URI preprocessing, and Swift binary
+resolution. Seven alternating base/head repetitions in equivalent fresh
+worktrees using Python `3.12.13` disproved all four alerts. Embedding total time
+changed by `+1.36%` and its single-cycle metric by `+3.41%`, both below the
+`5%` threshold; rerank request processing changed by `-1.82%`; audio changed by
+`-0.72%` against its `10%` threshold; and Swift binary resolution changed by
+`-2.00%`. The bundled remove-tree mean also improved from `-101.44 ms` to
+`-107.82 ms`. The report's `32` context-only timing alerts had no verification
+failures and do not gate this change. These sampled direct alerts are
+non-reproducing measurement noise, not intentional regressions. Only this
+evidence paragraph changed after the exact staged-tree report.
+
 ## Verification Results
 
 The final 2026-08-01 repository gates completed successfully against
-`origin/main` at `dba0f70d`:
+`origin/main` at `4fb0226b`:
 
 - `make bootstrap`
 - `make proto`
