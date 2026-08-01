@@ -22,6 +22,7 @@ _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 _ASCII_SPLITLINE_BOUNDARIES = frozenset("\n\r\v\f\x1c\x1d\x1e")
 _ASCII_NON_LINE_WHITESPACE = frozenset(" \t\x1f")
+_ASCII_WHITESPACE_FLAGS = tuple(chr(value).isspace() for value in range(128))
 _ORD_ZERO = ord("0")
 _ORD_MINUS = ord("-")
 _ORD_QUOTE = ord('"')
@@ -92,7 +93,16 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
 
 
 def _stripped_slice(text: str, start: int, end: int) -> str:
-    while end > start and text[end - 1].isspace():
+    ascii_whitespace_flags = _ASCII_WHITESPACE_FLAGS
+    ord_ = ord
+    while end > start:
+        char = text[end - 1]
+        char_ord = ord_(char)
+        if char_ord < 128:
+            if not ascii_whitespace_flags[char_ord]:
+                break
+        elif not char.isspace():
+            break
         end -= 1
     return text[start:end]
 
