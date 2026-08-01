@@ -281,14 +281,14 @@ def compare_versions(left: str, right: str) -> int:
     ascii_whitespace_flags = _ASCII_WHITESPACE_FLAGS
     left_length = len(left)
     right_length = len(right)
-    if left_length == right_length + 1 and left[0] == "v" and left.startswith(right, 1):
-        return 0
-    if right_length == left_length + 1 and right[0] == "v" and right.startswith(left, 1):
-        return 0
     if left and right:
         left_start_code = ord_(left[0])
-        left_end_code = ord_(left[-1])
         right_start_code = ord_(right[0])
+        if left_length == right_length + 1 and left_start_code == 118 and left.startswith(right, 1):
+            return 0
+        if right_length == left_length + 1 and right_start_code == 118 and right.startswith(left, 1):
+            return 0
+        left_end_code = ord_(left[-1])
         right_end_code = ord_(right[-1])
         left_boundary_clean = (
             left_start_code < 128
