@@ -25,3 +25,17 @@ This slice updates the probe fixture to include stray snapshot files alongside o
 - Focused cold-prefix tests pass, including balanced orphan metadata with unrelated stray snapshots.
 - Changed-scope coverage for touched Python/test/probe/registry files remains at or above 95%.
 - Local registered probe should keep `path_glob_calls_mean=0`, `scandir_calls_mean=1`, and reduce `json_load_calls_mean` in the balanced orphan fixture from all metadata rows to valid metadata rows only; CI remains the merge-gate source of truth for the registered probe report.
+
+## Follow-up Slice: Direct Suffix Slicing
+
+The 2026-08-02 follow-up keeps the same registered `prefix-cold-index-scandir`
+probe and narrows to cold-index reload suffix classification inside the single
+`os.scandir()` pass. `ColdPrefixStore._ensure_loaded_locked()` now compares the
+fixed suffix slices for `.meta.json` and `.kv.safetensors` entries before calling
+`DirEntry.is_file(follow_symlinks=False)`, preserving the same sidecar and
+snapshot eligibility while avoiding the per-entry `str.endswith()` method call
+in cold directories with many valid files and distractors.
+
+Success is accepted only if focused cold-prefix tests, changed-scope coverage,
+and the local registered Linux probe pass with lower elapsed time, and if the
+PR-scoped CI probe completes successfully before merge.
