@@ -60,6 +60,19 @@ def test_callable_cache_target_fast_paths_plain_functions() -> None:
     assert skip_first_parameter is False
 
 
+def test_callable_cache_target_fast_paths_bound_methods() -> None:
+    class SampleRuntime:
+        def generate(self, prompt: str, *, temperature: float = 0.0) -> str:
+            return f"{prompt}:{temperature}"
+
+    method = SampleRuntime().generate
+    cache_target, skip_first_parameter = runtime_utils._callable_cache_target(method)
+
+    assert method("hello") == "hello:0.0"
+    assert cache_target is SampleRuntime.generate
+    assert skip_first_parameter is True
+
+
 def test_callable_accepts_kwarg_caches_bound_methods_by_underlying_function(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

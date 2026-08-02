@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 import stat
-from types import FunctionType
+from types import FunctionType, MethodType
 from typing import Any
 
 
@@ -68,6 +68,8 @@ def _callable_kwarg_signature_uncached(
 def _callable_cache_target(callable_obj: Any) -> tuple[Any, bool]:
     if type(callable_obj) is FunctionType:
         return callable_obj, False
+    if type(callable_obj) is MethodType:
+        return callable_obj.__func__, True
     bound_function = getattr(callable_obj, "__func__", None)
     if bound_function is not None and getattr(callable_obj, "__self__", None) is not None:
         return bound_function, True
@@ -83,6 +85,8 @@ def _callable_kwarg_signature_cached(
 
 
 def callable_kwarg_signature(callable_obj: Any) -> CallableKwargSignature:
+    if type(callable_obj) is MethodType:
+        return _callable_kwarg_signature_cached(callable_obj.__func__, True)
     cache_callable, skip_first_parameter = _callable_cache_target(callable_obj)
     try:
         return _callable_kwarg_signature_cached(cache_callable, skip_first_parameter)
@@ -97,6 +101,8 @@ def callable_declares_kwarg(callable_obj: Any, keyword: str) -> bool:
 def callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
     if type(callable_obj) is FunctionType:
         signature = _callable_kwarg_signature_cached(callable_obj, False)
+    elif type(callable_obj) is MethodType:
+        signature = _callable_kwarg_signature_cached(callable_obj.__func__, True)
     else:
         signature = callable_kwarg_signature(callable_obj)
     return keyword in signature.keyword_accessible_params or signature.accepts_var_keyword
