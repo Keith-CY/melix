@@ -667,10 +667,61 @@ The report's `16` context-only timing alerts had no verification failures. This
 direct alert is non-reproducing measurement noise, not an accepted regression,
 and no performance-regression override is used.
 
+After synchronizing the code-fence tail-trim change from `origin/main` at
+`dd57f6b4`, the code-evaluation and performance-registry focused suites passed
+`83` tests. The registered code-block coverage command passed its `4` tests and
+measured `100%` coverage over zero changed lines, and the standalone extraction
+probe preserved `2,500` blocks, a `198`-byte peak allocation, and bounded empty
+fallback behavior. The exact staged-tree hook then completed every functional
+gate again: all Swift suites, `5,496` Python tests with `14` skips, and `132`
+integration tests with one skip. The report at
+`.runtime/pre-commit-performance/20260802-005537-91796e64/report` ran all `148`
+probes with `20` direct probes, `0` direct regressions, and `0` verification
+failures.
+
+The backend identity probe remained `ok`: matched-worker p95 was `0.000446 ms`,
+control-plane stamping/recovery p95 was `0.001392 ms`, `140,000` mismatches
+produced zero output events, retry counts remained `3/2/1`, one recovery caller
+was coalesced into two fresh bindings, and duplicate completed-tool output
+remained zero. The newly synchronized code-block probe was `ok` at `0.0591 ms`
+mean extraction time and `0.1656 ms` empty-fallback mean, with the same `198`-byte
+peak allocation. Startup-signal probes, trajectory provenance, changed-scope
+coverage, rerank, and vision-family token counting were all `ok`; the vision
+config-resolution delta was only `+0.26%`. The report recorded `14` context-only
+timing alerts, none with verification failures, and no performance-regression
+override was used.
+
+After synchronizing the ASCII code-fence prefix fast path from `origin/main` at
+`ebbf7f85`, the code-evaluation and performance-registry focused suites passed
+`84` tests. The registered code-block coverage command passed its `4` tests and
+measured `100%` coverage over zero changed lines. The standalone extraction
+probe preserved `2,500` blocks and a `198`-byte peak allocation while measuring
+`0.0562 ms` mean extraction and `0.1641 ms` mean empty-fallback latency. The
+exact staged-tree hook again completed every functional gate: all Swift suites,
+`5,496` Python tests with `14` skips, and `132` integration tests with one skip.
+The report at
+`.runtime/pre-commit-performance/20260802-020233-13fb927d/report` ran all `148`
+probes with `20` direct probes and `0` verification failures.
+
+The backend identity probe remained `ok`: matched-worker p95 was `0.000492 ms`,
+control-plane stamping/recovery p95 was `0.001466 ms`, `140,000` mismatches
+produced zero output events, retry counts remained `3/2/1`, one recovery caller
+was coalesced into two fresh bindings, and duplicate completed-tool output
+remained zero. One unrelated direct rerank request sample crossed its threshold,
+from `281.953 ms` to `298.356 ms` (`+5.82%`), even though total probe elapsed
+improved by `1.43%` and the rerank implementation and probe are byte-identical
+to `origin/main`. Seven alternating Python 3.12 measurements did not reproduce
+the alert: request means were `287.883 ms` and `287.707 ms` (`-0.06%`), medians
+were `288.146 ms` and `287.790 ms`, and total elapsed means changed by `-0.04%`.
+All structural and memory invariants matched. The report's `6` context-only
+timing alerts had no verification failures. The rerank alert is non-reproducing
+measurement noise, not an accepted regression, and no performance-regression
+override is used.
+
 ## Verification Results
 
 The final post-merge repository gates completed successfully against
-`origin/main` at `02214a49` on 2026-08-02:
+`origin/main` at `ebbf7f85` on 2026-08-02:
 
 - `make bootstrap`
 - `make proto`
@@ -680,9 +731,12 @@ The final post-merge repository gates completed successfully against
 - `make py-test` (`5496` passed, `14` skipped)
 - `make integration-test` (`132` passed, `1` skipped)
 
-The final mainline merge also passed the combined startup-signals, trajectory,
-and relevant performance-registry focused suites (`144` tests), plus both new
-probe scripts. The preceding merge passed the changed-scope coverage and
+The final mainline merge also passed the code-evaluation and relevant
+performance-registry focused suites (`84` tests), the registered coverage
+command (`4` tests), and the code-block extraction probe. The preceding merge
+passed the combined startup-signals, trajectory, and relevant
+performance-registry focused suites (`144` tests), plus both new probe scripts.
+The merge before that passed the changed-scope coverage and
 registered coverage/probe focused suites (`69` tests). The merge before that passed the
 changed-scope coverage, backend identity, and identity-probe focused suites
 (`73` tests). The merge before that
