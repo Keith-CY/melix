@@ -138,10 +138,12 @@ Melix CLI.
 - A clean Xcode 26.6 / Swift 6.3.3 build exposed a typed-throws compiler
   incompatibility in the transitive `swift-collections 1.5.0`
   `ContainersPreview` target before Melix sources compiled.
-- gRPC Swift declares compatibility from `swift-collections 1.1.3`. The five
-  committed SwiftPM workspaces are therefore resolved consistently to
-  `swift-collections 1.3.0`, whose `DequeModule` does not pull
-  `ContainersPreview` into this build path.
+- gRPC Swift declares compatibility from `swift-collections 1.1.3`. The shared
+  protocol manifest now adds an exact `swift-collections 1.3.0` compatibility
+  constraint; every committed SwiftPM workspace consumes that local package,
+  so one durable manifest constraint governs all five resolution graphs.
+  Version 1.3.0's `DequeModule` does not pull `ContainersPreview` into this
+  build path.
 - The lockfiles were regenerated with SwiftPM. Hosted macOS 15 verification
   with automatic resolution disabled proved that its older resolver still
   reaches five text-worker transitive pins that Xcode 26.6 prunes locally, so
@@ -158,10 +160,15 @@ Melix CLI.
 - The readiness regressions live beside the existing integration-helper tests
   selected by the registered probe. This keeps changed-line coverage for the
   shared helper measurable without widening the performance-registry scope.
-- This follow-up changes neither package manifests nor protobuf schemas. The
-  protocol package and control-plane core passed clean default-parallel Xcode
-  26.6 builds with the compatibility resolution. The repository pre-commit
-  test and performance gate remains the commit condition.
+- The existing idle-unload non-blocking regression retains its strict
+  two-second response assertion. Its test-only observation of the detached
+  background sweep now allows ten seconds to start, because `.background` work
+  can be starved by concurrent multi-worktree Swift compilers even after the
+  response has completed; production behavior remains unchanged.
+- This follow-up changes the shared protocol package manifest but no protobuf
+  schemas. The protocol package and control-plane core passed clean
+  default-parallel Xcode 26.6 builds with the compatibility resolution. The
+  repository pre-commit test and performance gate remains the commit condition.
 - The lockfile resolution and test-only readiness backoff change no production
   runtime request path, so their production observability and performance-probe
   overhead are `N/A`.
