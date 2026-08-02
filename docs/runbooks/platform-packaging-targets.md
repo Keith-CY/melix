@@ -25,7 +25,9 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 | --- | --- | --- | --- | --- | --- |
 | `launch_agents_checkout` | `launch_agents` | local checkout | `repo_checkout` | `install_manifest_v1` | repository update channel |
 | `homebrew_service` | `homebrew` | Homebrew formula | `repo_checkout_with_installed_binaries` | `service_manifest_v1` | `brew upgrade` plus repository update metadata |
-| `macos_app_bundle_preview` | `app_bundle` | archive or drag install | `self_contained_bundle` | `embedded_target_manifest_v1` | manual bundle refresh with embedded update metadata |
+| `macos_app_bundle_preview` | `app_bundle` | archive or drag install | `self_contained_bundle` | `embedded_target_manifest_v1` | manual refresh only; ad-hoc signature and no update feed |
+| `macos_app_bundle_github_release_candidate` | `app_bundle` | protected-workflow input only | `self_contained_bundle` | `embedded_target_manifest_v1` plus candidate receipt | isolated ad-hoc candidate; never install or publish |
+| `macos_app_bundle_github_release` | `app_bundle` | GitHub Release | `self_contained_bundle` | `embedded_target_manifest_v1` | stable self-signed code identity plus signed Sparkle EdDSA appcast |
 | `homebrew_release_cask` | `homebrew_cask` | published Homebrew tap | `self_contained_bundle` | `release_asset_digest_v1` | GitHub Release published workflow |
 | `nix_release_flake` | `nix_flake` | published Nix flake repository | `self_contained_bundle` | `release_asset_digest_v1` | GitHub Release published workflow |
 
@@ -100,6 +102,69 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
   `Resources/packaging-target-manifest.json`
 - keeps the same logical Melix identity while making the bundle-specific distribution and update
   strategy explicit
+- bundles Sparkle `2.9.4` under `Contents/Frameworks` and verifies the menu-bar executable's
+  framework rpath before archiving
+- omits the update feed and public key from branch, pull-request, scheduled, and manually
+  dispatched preview artifacts, so those artifacts cannot enter the signed release update chain
+- uses bundle ID `io.melix.menubar.preview`, the
+  `macos_app_bundle_preview` target, and an ad-hoc code signature; it must never
+  be described as update-enabled
+- derives `LSMinimumSystemVersion=15.0` from the menu-bar package's
+  `.macOS(.v15)` declaration
+
+### `macos_app_bundle_github_release_candidate`
+
+- is produced only after a non-secret validator accepts an exact canonical
+  stable SemVer tag, confirms its source SHA, proves ancestry from current
+  `origin/main`, and proves strict numeric version monotonicity
+- uses bundle ID `io.melix.menubar.release-candidate`, target
+  `macos_app_bundle_github_release_candidate`, and an independently named
+  `-release-candidate.zip` workflow artifact
+- contains the complete self-contained runtime and Sparkle layout, but omits
+  `SUFeedURL`, `SUPublicEDKey`, all certificate pins, and all private inputs
+- is bound by a receipt containing the tag, source SHA, bundle-tree digest, and
+  archive digest; protected finalization rechecks all four against extracted
+  bytes before protected variables or secrets are referenced
+- is never an installable distribution class and cannot be uploaded by the
+  preview artifact path or any legacy release-attachment path
+
+### `macos_app_bundle_github_release`
+
+- is produced only by a `v*` tag push, never by branch, pull-request,
+  scheduled, or manually dispatched preview packaging
+- uses bundle ID `io.melix.menubar` and the
+  `macos_app_bundle_github_release` target
+- inherits the self-contained runtime and complete Sparkle framework contract
+  from the preview bundle
+- embeds the stable GitHub Release feed and independent Melix EdDSA public key
+- records the expected public certificate SHA-1, independently supplied
+  SHA-256, authority, and `stable_self_signed` mode in the embedded
+  packaging-target manifest before the bundle is signed and verified
+- signs every nested component and the complete App with the stable self-signed
+  identity `Melix GitHub Release Signing`
+- signs Sparkle inside-out (`Installer.xpc`, `Downloader.xpc` with its legal
+  empty entitlement plist preserved, `Autoupdate`, `Updater.app`,
+  `Sparkle.framework`, remaining Mach-O, outer App) with hardened runtime and
+  explicit strict verification; it never uses `codesign --deep`
+- verifies exact code-signing authority, both certificate hashes, designated
+  requirement, helper entitlements/runtime, extracted archive layout, archive
+  EdDSA signature, both receipt-bound appcast version attributes, signed
+  appcast, and appcast minimum system version `15.0` before any release asset
+  is uploaded
+- serializes every protected tag publication, force-fetches stable tags and
+  revalidates monotonicity immediately before upload, then verifies GitHub's
+  latest release and its downloaded appcast before downstream dispatch
+- is finalized only in the fixed `github-release` protected environment after
+  tag and candidate revalidation, and fails closed unless the EdDSA public
+  variable, independent certificate SHA-256/SHA-1 variables, EdDSA private
+  secret, self-signed PKCS#12 secret, and PKCS#12 password secret are available
+- never calls `sudo` or mutates user, administrator, or system certificate
+  trust; the self-signed identity remains confined to an ephemeral keychain
+- permits publication only after the original keychain search list is restored
+  and the ephemeral keychain, PKCS#12, PEM, and sentinel are confirmed absent
+
+See [GitHub Release App Updates](github-release-app-updates.md) for the trust boundary,
+credential interface, bootstrap sequence, release acceptance, and recovery procedure.
 
 ### Private HTTP Remote Providers
 
@@ -137,8 +202,10 @@ needs a fresh downloadable `Melix.app` archive from the repository `main` branch
 5. Download the archive from the run summary under **Download packaged Melix.app** or from the
    workflow run's **Artifacts** section.
 
-The manual archive uses the same self-contained app-bundle packaging path as push and tag runs.
-GitHub authentication may be required to download workflow artifacts.
+The manual archive uses the preview self-contained app-bundle path. It never
+uses the tag-only candidate target, protected `github-release` environment, or
+signed-update credentials. GitHub authentication may be required to download
+workflow artifacts.
 
 ## Daily App Archive From `main`
 
@@ -149,8 +216,8 @@ finishes successfully without packaging and records the skipped decision in the 
 
 When `main` has changed since the last successful scheduled app artifact, the workflow packages the
 self-contained `Melix.app` archive and uploads it as a workflow artifact. These scheduled artifacts
-are retained for 14 days. Release assets attached to version tags use the GitHub Release path and are
-not governed by the scheduled artifact retention period.
+are retained for 14 days. Release assets finalized from validated version tags use the protected
+GitHub Release path and are not governed by the scheduled artifact retention period.
 
 ## Deterministic Validation
 

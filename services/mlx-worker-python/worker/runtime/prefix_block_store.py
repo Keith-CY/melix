@@ -508,13 +508,11 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
         else:
             state_type = type_of(state)
             if state_type is list or state_type is tuple:
-                try:
-                    first_state, second_state = state  # type: ignore[misc]
-                except ValueError:
+                if len(state) == 2:
+                    total += tensor_pair_nbytes(state[0], state[1], get_attr)
+                else:
                     for tensor in state:  # type: ignore[misc]
                         total += tensor_nbytes(tensor, get_attr)
-                else:
-                    total += tensor_pair_nbytes(first_state, second_state, get_attr)
             else:
                 total += tensor_nbytes(state, get_attr)
     return total if type_of(total) is int else int(total)

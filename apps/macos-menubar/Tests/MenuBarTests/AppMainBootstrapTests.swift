@@ -162,6 +162,28 @@ struct AppMainBootstrapTests {
         #expect(editMenu?.items.contains { $0.action == #selector(NSText.selectAll(_:)) } == true)
     }
 
+    @Test("main menu exposes an explicitly enabled software update command")
+    @MainActor
+    func mainMenuExposesSoftwareUpdateCommand() throws {
+        let terminationTarget = MenuActionTarget()
+        let updateTarget = MenuActionTarget()
+        let menu = MenuBarApplicationMenuBuilder.makeMainMenu(
+            target: terminationTarget,
+            action: #selector(MenuActionTarget.performAction(_:)),
+            updateTarget: updateTarget,
+            updateAction: #selector(MenuActionTarget.performAction(_:)),
+            updateEnabled: true
+        )
+
+        let appMenu = try #require(menu.items.first?.submenu)
+        let updateItem = try #require(appMenu.items.first { $0.title == "Check for Updates…" })
+
+        #expect(updateItem.target === updateTarget)
+        #expect(updateItem.action == #selector(MenuActionTarget.performAction(_:)))
+        #expect(updateItem.isEnabled)
+        #expect(appMenu.items.last?.title == "Quit Melix")
+    }
+
     @Test("launchLive uses the shared launcher path")
     @MainActor
     func launchLiveUsesSharedLauncherPath() async throws {

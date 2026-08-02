@@ -40,3 +40,4 @@ Current runbooks:
 - `phase-8-lora-adapter-workflow.md`
 - `phase-8-release-gates.md`
 - `phase-8-product-acceptance.md`
+- `github-release-app-updates.md`
