@@ -849,10 +849,43 @@ tests and reported `100%` changed-line coverage over zero task-owned lines. The
 standalone probe retained checksum `68071200`, `80` iterations, `4,096` layers,
 and `702` peak bytes while measuring `554.121 ms` mean and `558.518 ms` p95.
 
+After synchronizing the pipe channel header parsing simplification from
+`origin/main` at `03cf747a`, the registered stream-assembler parser-mode command
+passed `109` tests and reported `100%` changed-line coverage over zero task-owned
+lines. The standalone probe retained `13` channel-name parses, checksum `86`,
+and `10` tool calls while measuring `1.567 ms` across `512` samples.
+
+The exact staged-tree pre-commit report after that merge is
+`.runtime/pre-commit-performance/20260802-094319-a4b68f56/report`. The full
+Swift gate, `5652` Python tests with `14` skips, and `132` integration tests
+with one skip passed. All `148` performance probes completed with zero
+verification failures. The backend identity probe remained `ok`: matched
+worker-boundary p95 was `0.000451 ms`, control-plane stamping and recovery p95
+was `0.001381 ms`, all `140000` mismatches produced zero output, retry counts
+remained `3/2/1`, and coalesced/fresh/duplicate-tool counts remained `1/2/0`.
+The synchronized parser-mode and structural-prefix probes were also `ok` at
+`1.613 ms` and `449.201 ms`, respectively, with their structural counters
+unchanged.
+
+Four direct timing samples crossed their `5%` thresholds in that report. Ten
+alternating equivalent-worktree repetitions using Python `3.12.13` returned
+the deterministic VLM mean to `+2.00%`, vision-family config resolution to
+`+3.30%`, and integration binary resolution to `+1.64%`. The image probe had
+one large outlier on each side; its minimum/maximum-trimmed means were
+`21.588 ms` and `22.549 ms` (`+4.45%`). All production runtime modules and
+probe scripts watched by the three inference probes are byte-identical to
+`origin/main`; they were selected because identity-aware tests changed. The
+integration helper changed only worker-start orchestration, while the measured
+binary-resolution and remove-tree implementations are unchanged. Every
+repetition retained the same output counts, byte totals, token counts,
+checksums, candidate count, directory count, and memory invariants. These are
+non-reproducing sampled alerts rather than accepted regressions, so no
+performance-regression override is used.
+
 ## Verification Results
 
 The latest post-merge repository gates completed successfully against
-`origin/main` at `1b10925c` on 2026-08-02:
+`origin/main` at `03cf747a` on 2026-08-02:
 
 - `make swift-test` (`301` text-worker and `907` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)

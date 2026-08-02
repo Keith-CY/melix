@@ -1688,33 +1688,8 @@ class RequestStreamAssembler:
     @staticmethod
     @lru_cache(maxsize=16)
     def _pipe_channel_name(header: str) -> str:
-        if header and not header[0].isspace():
-            space_index = header.find(" ")
-            if space_index >= 0:
-                newline_index = header.find("\n", 0, space_index)
-                if newline_index >= 0:
-                    return header[:newline_index].lower()
-                tab_index = header.find("\t", 0, space_index)
-                if tab_index >= 0:
-                    return header[:tab_index].lower()
-                return header[:space_index].lower()
-            newline_index = header.find("\n")
-            if newline_index >= 0:
-                return header[:newline_index].lower()
-            tab_index = header.find("\t")
-            if tab_index >= 0:
-                return header[:tab_index].lower()
-            return header.lower()
-        start = 0
-        header_len = len(header)
-        while start < header_len and header[start].isspace():
-            start += 1
-        if start == header_len:
-            return ""
-        end = start + 1
-        while end < header_len and not header[end].isspace():
-            end += 1
-        return header[start:end].lower()
+        parts = header.split(None, 1)
+        return parts[0].lower() if parts else ""
 
     @classmethod
     def _legacy_pipe_channel_header_body(cls, header: str, channel_name: str) -> str | None:
