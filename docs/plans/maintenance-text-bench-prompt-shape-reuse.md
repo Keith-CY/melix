@@ -28,3 +28,12 @@ For one case, one context length, and three repeats, `_shape_benchmark_prompt(..
 Some maintenance benchmark matrix cases request a one-token context length. In that case, the full prompt token vector does not need to be materialized just to return the first token. This slice keeps normal `str.split()` semantics for blank and Unicode-whitespace prompts by using `split(maxsplit=1)`, then returns a `ShapedBenchmarkPrompt` with a one-token tuple.
 
 The registered `maintenance-prompt-shape-vector-repeat` probe now also reports `single_context_elapsed_ms_mean` for repeated one-token shaping of long prompts so the PR-scoped workflow can compare the new fast path against `origin/main`.
+
+## 2026-08-02 single-token first-space slice
+
+The one-token shaping path now adds a narrow ASCII first-space fast path for
+normalized prompts. This avoids the per-character `isspace()` loop for the common
+benchmark prompt form while falling back to the existing whitespace scan when the
+candidate prefix contains tabs, newlines, or non-ASCII whitespace before the
+first ordinary space. The registered `maintenance-prompt-shape-vector-repeat`
+probe's `single_context_elapsed_ms_mean` metric is the acceptance signal.

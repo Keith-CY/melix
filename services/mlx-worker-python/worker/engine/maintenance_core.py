@@ -5450,6 +5450,19 @@ class MaintenanceCore:
     @lru_cache(maxsize=256)
     def _shape_benchmark_prompt(prompt: str, *, context_length: int) -> str:
         if context_length == 1:
+            if prompt and prompt[0] > " ":
+                first_space = prompt.find(" ")
+                if first_space >= 0:
+                    first_token = prompt[:first_space]
+                    if (
+                        first_token.isascii()
+                        and "\t" not in first_token
+                        and "\n" not in first_token
+                        and "\r" not in first_token
+                        and "\v" not in first_token
+                        and "\f" not in first_token
+                    ):
+                        return ShapedBenchmarkPrompt(first_token, (first_token,), 1)
             stripped_prompt = prompt.lstrip()
             if not stripped_prompt:
                 return ShapedBenchmarkPrompt("benchmark", ("benchmark",), 1)
