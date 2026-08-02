@@ -1005,6 +1005,16 @@ Settings reserves IA for:
 - Update Channel;
 - Retention.
 
+The implemented Software Updates card owns signed App update preferences and
+status. It shows the installed version, automatic-check preference, last check,
+manual **Check for Updates** action, and a redacted typed failure state. Preview
+bundles without the stable feed and public key show an unavailable explanation
+and a GitHub Releases recovery link. Installation remains user-confirmed; this
+surface must not introduce silent download or install behavior.
+Only the `macos_app_bundle_github_release` target may enable this surface; it
+must carry both the stable self-signed Melix code identity and the independent
+EdDSA update identity. Ad-hoc preview bundles remain visibly unavailable.
+
 The first implementation does not need full forms for every category. It must
 reserve space for the highest-risk policies:
 

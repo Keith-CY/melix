@@ -2055,14 +2055,21 @@ func desktopModelInfoSummaryContent(
 struct DesktopSettingsTabView: View {
     let foundation: DesktopFoundationState
     let viewModel: RuntimeViewModel?
+    let softwareUpdates: SoftwareUpdateController
 
-    init(foundation: DesktopFoundationState, viewModel: RuntimeViewModel? = nil) {
+    init(
+        foundation: DesktopFoundationState,
+        viewModel: RuntimeViewModel? = nil,
+        softwareUpdates: SoftwareUpdateController = .shared
+    ) {
         self.foundation = foundation
         self.viewModel = viewModel
+        self.softwareUpdates = softwareUpdates
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            softwareUpdatesCard
             if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
                 runtimeSettingsControls(viewModel)
                 Text("Provider Settings")
@@ -2144,6 +2151,142 @@ struct DesktopSettingsTabView: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var softwareUpdatesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Label("Software Updates", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.headline)
+                Spacer()
+                Text("Version \(softwareUpdates.version.displayName)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: softwareUpdateStatusSymbol)
+                    .foregroundStyle(softwareUpdateStatusColor)
+                Text(softwareUpdates.stage.displayTitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if softwareUpdateIsBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Spacer()
+                if let lastCheckDate = softwareUpdates.lastCheckDate {
+                    Text("Last checked \(lastCheckDate.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Toggle(
+                "Check for updates automatically",
+                isOn: softwareUpdateAutomaticChecksBinding
+            )
+            .toggleStyle(.switch)
+            .disabled(softwareUpdates.stage == .unavailable)
+
+            Text("Checks GitHub Releases once per day. Downloading and installing always require your confirmation.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Button("Check for Updates", action: requestSoftwareUpdateCheck)
+                .buttonStyle(.borderedProminent)
+                .disabled(softwareUpdates.canCheckForUpdates == false)
+
+                Button("View Releases", action: openSoftwareUpdateReleases)
+                .buttonStyle(.bordered)
+
+                Spacer()
+            }
+
+            if let configurationMessage = softwareUpdates.configurationMessage {
+                Label(configurationMessage, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Label(
+                    "Archives and the update feed are verified with Melix's independent EdDSA update key.",
+                    systemImage: "checkmark.shield"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            if let failure = softwareUpdates.lastFailure {
+                Label(failure.displayMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .background(
+            Color(nsColor: .controlBackgroundColor).opacity(0.55),
+            in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg, style: .continuous)
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+        )
+    }
+
+    var softwareUpdateAutomaticChecksBinding: Binding<Bool> {
+        Binding(
+            get: { softwareUpdates.automaticChecksEnabled },
+            set: { softwareUpdates.setAutomaticChecksEnabled($0) }
+        )
+    }
+
+    func requestSoftwareUpdateCheck() {
+        softwareUpdates.checkForUpdates()
+    }
+
+    func openSoftwareUpdateReleases() {
+        softwareUpdates.openReleasesPage()
+    }
+
+    private var softwareUpdateIsBusy: Bool {
+        switch softwareUpdates.stage {
+        case .checking, .downloading, .verifying, .installing, .relaunching:
+            return true
+        case .unavailable, .idle, .upToDate, .updateAvailable:
+            return false
+        }
+    }
+
+    private var softwareUpdateStatusSymbol: String {
+        if softwareUpdates.lastFailure != nil {
+            return "exclamationmark.triangle.fill"
+        }
+        switch softwareUpdates.stage {
+        case .unavailable:
+            return "minus.circle"
+        case .upToDate:
+            return "checkmark.circle.fill"
+        case .updateAvailable, .downloading, .verifying, .installing, .relaunching:
+            return "arrow.down.circle.fill"
+        case .idle, .checking:
+            return "arrow.clockwise.circle"
+        }
+    }
+
+    private var softwareUpdateStatusColor: Color {
+        if softwareUpdates.lastFailure != nil {
+            return MelixDesignTokens.StatusColor.error
+        }
+        switch softwareUpdates.stage {
+        case .upToDate:
+            return MelixDesignTokens.StatusColor.success
+        case .updateAvailable, .downloading, .verifying, .installing, .relaunching:
+            return MelixDesignTokens.accent
+        case .unavailable, .idle, .checking:
+            return .secondary
+        }
     }
 
     private func runtimeSettingsControls(_ viewModel: RuntimeViewModel) -> some View {
@@ -2436,8 +2579,18 @@ struct DesktopSettingsTabView: View {
 
     // Deterministic smoke-test projection; rendered accessibility is grouped from child views.
     var accessibilitySummary: String {
+        let softwareUpdateValues = [
+            "Software Updates",
+            "Version \(softwareUpdates.version.displayName)",
+            softwareUpdates.stage.displayTitle,
+            "Check for updates automatically",
+            "Check for Updates",
+            "View Releases",
+            softwareUpdates.configurationMessage ?? "",
+            softwareUpdates.lastFailure?.displayMessage ?? "",
+        ]
         if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
-            var values = [
+            var values = softwareUpdateValues + [
                 "Setting key",
                 "Setting value",
                 "Set Setting",
@@ -2473,7 +2626,7 @@ struct DesktopSettingsTabView: View {
             return values.filter { $0.isEmpty == false }.joined(separator: " ")
         }
 
-        var values = foundation.settings.flatMap { [$0.key, $0.value] }
+        var values = softwareUpdateValues + foundation.settings.flatMap { [$0.key, $0.value] }
         if let viewModel {
             values.append(contentsOf: runtimeDiscoveryAccessibilityValues(viewModel))
         }

@@ -5,14 +5,31 @@ import json
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+import worker.productization.macos_app_bundle as macos_app_bundle_module
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODULE_PATH = REPO_ROOT / "scripts" / "package_macos_menubar_app.py"
 PACKAGE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "package-self-contained-app.yml"
 PACKAGING_RUNBOOK_PATH = REPO_ROOT / "docs" / "runbooks" / "platform-packaging-targets.md"
+
+
+@pytest.fixture(autouse=True)
+def stable_codesign_detail_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_codesign_details",
+        lambda codesign, target: "flags=0x10000(runtime)\n",
+    )
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_verify_codesign_identity_evidence",
+        lambda *args, **kwargs: None,
+    )
 
 
 def find_named_workflow_step(workflow: str, name: str) -> re.Match[str]:
@@ -90,6 +107,124 @@ def load_package_macos_app_module():
     return module
 
 
+def test_resolve_app_code_signing_configuration_separates_preview_and_release(
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    preview = module.resolve_app_code_signing_configuration(
+        sparkle_feed_url="",
+        sparkle_public_ed_key="",
+        bundle_id="io.melix.menubar.preview",
+        packaging_target_id="macos_app_bundle_preview",
+        codesign_identity="-",
+        codesign_keychain="",
+    )
+    assert preview.mode == "adhoc"
+    assert preview.identity == "-"
+    assert preview.expected_certificate_sha256 is None
+    assert preview.expected_certificate_sha1 is None
+
+    keychain_path = tmp_path / "melix-release-signing.keychain-db"
+    keychain_path.write_bytes(b"fixture")
+    certificate_sha1 = "0123456789ABCDEF0123456789ABCDEF01234567"
+    certificate_sha256 = "AB" * 32
+    release = module.resolve_app_code_signing_configuration(
+        sparkle_feed_url=(
+            "https://github.com/Keith-CY/melix/releases/latest/download/appcast.xml"
+        ),
+        sparkle_public_ed_key="public-key-fixture",
+        bundle_id="io.melix.menubar",
+        packaging_target_id="macos_app_bundle_github_release",
+        codesign_identity=certificate_sha1,
+        codesign_keychain=str(keychain_path),
+        codesign_certificate_sha256=certificate_sha256,
+    )
+    assert release.mode == "stable_self_signed"
+    assert release.identity == certificate_sha1.lower()
+    assert release.keychain_path == keychain_path.resolve()
+    assert release.expected_certificate_sha256 == certificate_sha256.lower()
+    assert release.expected_certificate_sha1 == certificate_sha1.lower()
+    assert release.expected_authority == "Melix GitHub Release Signing"
+
+
+@pytest.mark.parametrize(
+    (
+        "feed_url",
+        "public_key",
+        "bundle_id",
+        "target_id",
+        "identity",
+        "keychain",
+        "message",
+    ),
+    [
+        ("feed", "", "io.melix.menubar.preview", "macos_app_bundle_preview", "-", "", "provided together"),
+        ("feed", "key", "io.melix.menubar.preview", "macos_app_bundle_preview", "-", "", "release bundle ID"),
+        ("", "", "io.melix.menubar", "macos_app_bundle_github_release", "-", "", "must not be used"),
+        ("feed", "key", "io.melix.menubar", "macos_app_bundle_github_release", "-", "", "stable self-signed"),
+        ("", "", "io.melix.menubar.preview", "macos_app_bundle_preview", "-", "/tmp/keychain", "must not receive"),
+        ("", "", "io.melix.menubar.preview", "macos_app_bundle_preview", "0" * 40, "/tmp/keychain", "must not be used"),
+        ("feed", "key", "io.melix.menubar", "macos_app_bundle_github_release", "not-a-sha", "/tmp/keychain", "40 hex digits"),
+        ("feed", "key", "io.melix.menubar", "macos_app_bundle_github_release", "0" * 40, "", "explicit ephemeral keychain"),
+        ("feed", "key", "io.melix.menubar", "macos_app_bundle_github_release", "0" * 40, "/tmp/missing-keychain", "keychain is missing"),
+    ],
+)
+def test_resolve_app_code_signing_configuration_fails_closed(
+    feed_url: str,
+    public_key: str,
+    bundle_id: str,
+    target_id: str,
+    identity: str,
+    keychain: str,
+    message: str,
+) -> None:
+    module = load_package_macos_app_module()
+
+    with pytest.raises((ValueError, FileNotFoundError), match=message):
+        module.resolve_app_code_signing_configuration(
+            sparkle_feed_url=feed_url,
+            sparkle_public_ed_key=public_key,
+            bundle_id=bundle_id,
+            packaging_target_id=target_id,
+            codesign_identity=identity,
+            codesign_keychain=keychain,
+            codesign_certificate_sha256="0" * 64,
+        )
+
+
+def test_main_rejects_signed_update_release_without_archive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    keychain_path = tmp_path / "melix-release-signing.keychain-db"
+    keychain_path.write_bytes(b"fixture")
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "package_macos_menubar_app.py",
+            "--bundle-id",
+            "io.melix.menubar",
+            "--packaging-target-id",
+            "macos_app_bundle_github_release",
+            "--sparkle-feed-url",
+            "https://github.com/Keith-CY/melix/releases/latest/download/appcast.xml",
+            "--sparkle-public-ed-key",
+            "public-key-fixture",
+            "--codesign-identity",
+            "0" * 40,
+            "--codesign-keychain",
+            str(keychain_path),
+            "--codesign-certificate-sha256",
+            "0" * 64,
+        ],
+    )
+
+    with pytest.raises(ValueError, match="require an archive path"):
+        module.main()
+
+
 def test_main_forwards_packaging_target_and_update_channel(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -116,6 +251,11 @@ def test_main_forwards_packaging_target_and_update_channel(
         module,
         "resolve_swift_mlx_metallib",
         lambda repo_root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_sparkle_framework",
+        lambda repo_root, configured_path=None: tmp_path / "Sparkle.framework",
     )
 
     def fake_write_unsigned_macos_app_bundle(**kwargs):
@@ -152,6 +292,10 @@ def test_main_forwards_packaging_target_and_update_channel(
     assert seen["control_plane_executable_path"] == tmp_path / "melix-control-plane"
     assert seen["swift_mlx_metallib_path"] == tmp_path / "mlx.metallib"
     assert seen["swift_mlx_metallib_version"] == "0.31.1"
+    assert seen["sparkle_framework_path"] == tmp_path / "Sparkle.framework"
+    assert seen["code_signing_mode"] == "adhoc"
+    assert seen["code_signing_certificate_sha1"] is None
+    assert seen["code_signing_authority"] is None
     assert seen["packaging_target_id"] == "macos_app_bundle_preview"
     assert seen["update_channel_path"] == str(tmp_path / "stable.json")
     assert seen["icon_source_path"] == str(tmp_path / "MelixAppIcon.icns")
@@ -197,6 +341,53 @@ def test_resolve_built_control_plane_requires_built_product(tmp_path: Path) -> N
 
     with pytest.raises(FileNotFoundError, match="Unable to find built `melix-control-plane`"):
         module.resolve_built_control_plane_binary(tmp_path / "repo")
+
+
+def _write_complete_sparkle_framework(framework_path: Path) -> None:
+    for relative_path in (
+        "Versions/B/Sparkle",
+        "Versions/B/Autoupdate",
+        "Versions/B/Updater.app",
+        "Versions/B/XPCServices/Downloader.xpc",
+        "Versions/B/XPCServices/Installer.xpc",
+    ):
+        path = framework_path / relative_path
+        if path.suffix in {".app", ".xpc"}:
+            path.mkdir(parents=True, exist_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"sparkle")
+
+
+def test_resolve_sparkle_framework_accepts_complete_default_artifact(tmp_path: Path) -> None:
+    module = load_package_macos_app_module()
+    repo_root = tmp_path / "repo"
+    framework_path = (
+        repo_root
+        / "apps/macos-menubar/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework"
+        / "macos-arm64_x86_64/Sparkle.framework"
+    )
+    _write_complete_sparkle_framework(framework_path)
+
+    assert module.resolve_sparkle_framework(repo_root) == framework_path.resolve()
+
+
+def test_resolve_sparkle_framework_requires_existing_artifact(tmp_path: Path) -> None:
+    module = load_package_macos_app_module()
+
+    with pytest.raises(FileNotFoundError, match="Unable to find the complete Sparkle framework"):
+        module.resolve_sparkle_framework(tmp_path / "repo")
+
+
+def test_resolve_sparkle_framework_rejects_incomplete_configured_artifact(
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    framework_path = tmp_path / "Sparkle.framework"
+    framework_path.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="Sparkle framework is incomplete"):
+        module.resolve_sparkle_framework(tmp_path / "repo", framework_path)
 
 
 def test_resolve_swift_mlx_metallib_requires_a_compatible_version(
@@ -624,7 +815,11 @@ def test_package_workflow_installs_matching_swift_mlx_metallib() -> None:
         "scripts/ci_progress.sh",
         "scripts/compute_build_metadata.py",
         "scripts/dev_up.py",
+        "scripts/finalize_macos_release_candidate.py",
         "scripts/m8_packaging_target_smoke.py",
+        "scripts/macos_release_candidate.py",
+        "scripts/macos_self_signed_identity.py",
+        "scripts/validate_macos_release_tag.py",
     ],
 )
 def test_package_workflow_triggers_for_direct_packaging_inputs(path: str) -> None:
@@ -666,6 +861,153 @@ def test_package_workflow_builds_required_swift_products_before_packaging_app() 
         assert build_step.end() < package_step.start()
         assert "scripts/ci_progress.sh" in build_step.group(0)
         previous_step_end = build_step.end()
+
+
+def test_package_workflow_builds_isolated_tag_candidate_without_release_trust() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    package_step = find_workflow_step(workflow, "Package self-contained Melix.app")
+    assert "IS_RELEASE_CANDIDATE:" in package_step
+    assert 'if [ "$IS_RELEASE_CANDIDATE" = "true" ]; then' in package_step
+    assert '"io.melix.menubar.release-candidate"' in package_step
+    assert '"macos_app_bundle_github_release_candidate"' in package_step
+    for protected_input in ("secrets.", "vars.", "--sparkle-public-ed-key", "--codesign-identity"):
+        assert protected_input not in package_step
+
+
+def test_package_workflow_prepares_and_cleans_identity_only_in_protected_job() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    protected_job = find_workflow_job(workflow, "publish-signed-release")
+    assert "environment: github-release" in protected_job
+    assert "group: melix-protected-github-release" in protected_job
+    assert "cancel-in-progress: false" in protected_job
+    assert "Revalidate candidate receipt before protected inputs" in protected_job
+    secret_index = protected_job.index("secrets.MELIX_SIGNING_CERTIFICATE_P12")
+    variable_index = protected_job.index("vars.SPARKLE_EDDSA_PUBLIC_KEY")
+    receipt_index = protected_job.index("macos_release_candidate.py verify")
+    assert receipt_index < secret_index
+    assert receipt_index < variable_index
+    assert "vars.MELIX_SIGNING_CERTIFICATE_SHA256" in protected_job
+    assert "vars.MELIX_SIGNING_CERTIFICATE_SHA1" in protected_job
+    assert "macos_self_signed_identity.py prepare" in protected_job
+    assert "macos_self_signed_identity.py cleanup" in protected_job
+    assert "Prepare pinned release identity in isolated keychain" in protected_job
+    assert "Restore keychain search list and remove signing material" in protected_job
+    assert "sudo" not in protected_job
+    assert "add-trusted-cert" not in protected_job
+    assert "remove-trusted-cert" not in protected_job
+    assert "cleanup_confirmed=true" in protected_job
+    assert protected_job.index("cleanup_confirmed=true") < protected_job.index("softprops/action-gh-release")
+    package_job = find_workflow_job(workflow, "package-app")
+    assert "secrets." not in package_job
+    assert "vars." not in package_job
+
+
+def test_package_workflow_exercises_isolated_keychain_without_apple_trust() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    smoke_job = find_workflow_job(workflow, "self-signed-keychain-smoke")
+    assert "if: github.event_name == 'pull_request'" in smoke_job
+    assert "runs-on: macos-15" in smoke_job
+    assert "Exercise isolated keychain import and hardened-runtime signing" in smoke_job
+    assert "Prove keychain restoration and material cleanup" in smoke_job
+    assert "macos_self_signed_identity.py prepare" in smoke_job
+    assert "macos_self_signed_identity.py cleanup" in smoke_job
+    assert "cleanup_confirmed" in smoke_job
+    assert "sudo" not in smoke_job
+    assert "add-trusted-cert" not in workflow
+    assert "remove-trusted-cert" not in workflow
+
+
+def test_protected_release_requires_source_minimum_system_version_in_appcast() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    signed_feed_step = find_workflow_step(workflow, "Generate and verify signed update feed")
+    assert 'test "$EXPECTED_TAG" = "v$EXPECTED_VERSION"' in signed_feed_step
+    assert 'local-name()="item"]/*[local-name()="version"' in signed_feed_step
+    assert 'test "$appcast_version" = "$EXPECTED_VERSION"' in signed_feed_step
+    assert 'local-name()="item"]/*[local-name()="shortVersionString"' in signed_feed_step
+    assert 'test "$appcast_short_version" = "$EXPECTED_VERSION"' in signed_feed_step
+    assert "minimumSystemVersion" in signed_feed_step
+    assert 'test "$minimum_system_version" = "15.0"' in signed_feed_step
+
+
+def test_package_workflow_keeps_preview_archives_adhoc_and_update_disabled() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+    package_step = find_workflow_step(workflow, "Package self-contained Melix.app")
+    release_condition = package_step.index('if [ "$IS_RELEASE_CANDIDATE" = "true" ]; then')
+    package_command = package_step.index(
+        'bash scripts/ci_progress.sh "Package app bundle assembly"',
+        release_condition,
+    )
+    release_only_block = package_step[release_condition:package_command]
+
+    for release_only_argument in (
+        "io.melix.menubar.release-candidate",
+        "macos_app_bundle_github_release_candidate",
+    ):
+        assert release_only_argument in release_only_block
+        assert package_step.count(release_only_argument) == 1
+
+
+def test_protected_release_generates_and_verifies_appcast_without_key_files() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    signed_feed_step = find_workflow_step(
+        workflow,
+        "Generate and verify signed update feed",
+    )
+    assert "SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}" in signed_feed_step
+    assert "SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_EDDSA_PUBLIC_KEY }}" in signed_feed_step
+    assert "private_key_bytes" in signed_feed_step
+    assert "openssl pkey -inform DER -pubout -outform DER" in signed_feed_step
+    assert 'test "$derived_public_key" = "$SPARKLE_PUBLIC_KEY"' in signed_feed_step
+    assert '"$sparkle_bin/generate_appcast"' in signed_feed_step
+    assert signed_feed_step.count("--ed-key-file -") == 3
+    assert 'xmllint --noout "$appcast_path"' in signed_feed_step
+    assert "edSignature" in signed_feed_step
+    assert "private_key_path" not in signed_feed_step
+    assert "> \"$private" not in signed_feed_step
+
+
+def test_package_workflow_publishes_only_final_archive_after_cleanup() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    release_job = find_workflow_job(workflow, "publish-signed-release")
+    assert "attach-release-artifact:" not in workflow
+    assert "environment: github-release" in release_job
+    assert "steps.release-cleanup.outputs.cleanup_confirmed == 'true'" in release_job
+    assert "signed-update-release/${{ needs.package-app.outputs.artifact_name }}.zip" in release_job
+    assert "release-candidate/${{ needs.package-app.outputs.archive_name }}" in release_job
+    assert release_job.index("macos_release_candidate.py verify") < release_job.index("secrets.")
+    cleanup_index = release_job.index("cleanup_confirmed=true")
+    final_tag_fetch_index = release_job.index("git fetch --force --tags origin", cleanup_index)
+    final_validation_index = release_job.index(
+        "python3 scripts/validate_macos_release_tag.py", final_tag_fetch_index
+    )
+    publish_index = release_job.index("softprops/action-gh-release")
+    assert cleanup_index < final_tag_fetch_index < final_validation_index < publish_index
+    assert release_job.count("python3 scripts/validate_macos_release_tag.py") == 2
+    assert "make_latest: true" in release_job
+
+
+def test_package_workflow_verifies_latest_release_and_published_appcast_before_dispatch() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    release_job = find_workflow_job(workflow, "publish-signed-release")
+    publish_index = release_job.index("softprops/action-gh-release")
+    latest_index = release_job.index('repos/$RELEASE_REPOSITORY/releases/latest', publish_index)
+    download_index = release_job.index('gh release download "$EXPECTED_TAG"', latest_index)
+    dispatch_index = release_job.index("melix-release-asset-published", download_index)
+    assert publish_index < latest_index < download_index < dispatch_index
+    assert 'test "$latest_tag" = "$EXPECTED_TAG"' in release_job
+    assert 'test "$appcast_version" = "$EXPECTED_VERSION"' in release_job
+    assert 'test "$appcast_short_version" = "$EXPECTED_VERSION"' in release_job
+    assert 'test "$minimum_system_version" = "15.0"' in release_job
+    assert (
+        'releases/download/$EXPECTED_TAG/$RELEASE_ARCHIVE_NAME' in release_job
+    )
 
 
 def test_package_workflow_wraps_long_packaging_steps_with_ci_progress() -> None:
@@ -775,7 +1117,10 @@ def test_package_workflow_publishes_download_summary_for_uploaded_app_artifact()
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
     summary_step = find_workflow_step(workflow, "Publish app artifact download summary")
-    assert "github.event_name != 'pull_request' && success()" in summary_step
+    assert (
+        "github.event_name != 'pull_request' && github.ref_type != 'tag' && success()"
+        in summary_step
+    )
     assert "github.rest.actions.listWorkflowRunArtifacts" in summary_step
     assert "process.env.GITHUB_STEP_SUMMARY" in summary_step
     assert "Download packaged Melix.app" in summary_step
@@ -783,6 +1128,33 @@ def test_package_workflow_publishes_download_summary_for_uploaded_app_artifact()
     assert "Download:" in summary_step
     assert "Workflow run:" in summary_step
     assert "artifacts/${artifact.id}" in summary_step
+
+
+def test_package_workflow_labels_tag_candidate_as_protected_finalizer_input() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    candidate_summary = find_workflow_step(
+        workflow,
+        "Publish isolated release candidate summary",
+    )
+    assert (
+        "github.event_name == 'push' && github.ref_type == 'tag' && success()"
+        in candidate_summary
+    )
+    assert (
+        "CANDIDATE_ARTIFACT_NAME: "
+        "${{ steps.package-names.outputs.candidate_artifact_name }}"
+        in candidate_summary
+    )
+    assert (
+        "CANDIDATE_ARTIFACT_URL: "
+        "${{ steps.upload-release-candidate.outputs.artifact-url }}"
+        in candidate_summary
+    )
+    assert "Candidate artifact link: ${candidateArtifactUrl}" in candidate_summary
+    assert "Protected finalizer input: Melix release candidate" in candidate_summary
+    assert "Do not install or distribute this artifact" in candidate_summary
+    assert "Download packaged Melix.app" not in candidate_summary
 
 
 def test_package_workflow_runs_daily_at_midnight_utc() -> None:
@@ -843,7 +1215,7 @@ def test_package_workflow_gates_package_job_only_for_scheduled_skip_and_pr_label
     package_app_job = find_workflow_job(workflow, "package-app")
     assert "github.event_name != 'schedule' || needs.detect-main-update.outputs.should_package == 'true'" in package_app_job
     assert "github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app')" in package_app_job
-    assert "startsWith(github.ref, 'refs/tags/v')" in workflow
+    assert "github.ref_type != 'tag' || needs.validate-release-tag.result == 'success'" in package_app_job
 
 
 def test_package_workflow_sets_nightly_artifact_retention() -> None:
@@ -902,6 +1274,11 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
         lambda root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
     )
     monkeypatch.setattr(
+        module,
+        "resolve_sparkle_framework",
+        lambda root, configured_path=None: tmp_path / "Sparkle.framework",
+    )
+    monkeypatch.setattr(
         module.sys,
         "argv",
         [
@@ -922,6 +1299,7 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
     assert seen["swift_text_worker_executable_path"] == swift_worker_binary.resolve()
     assert seen["swift_mlx_metallib_path"] == tmp_path / "mlx.metallib"
     assert seen["swift_mlx_metallib_version"] == "0.31.1"
+    assert seen["sparkle_framework_path"] == tmp_path / "Sparkle.framework"
     assert seen["python_runtime_root"] == python_executable.resolve().parent.parent
     assert seen["python_site_packages_path"] == site_packages.resolve()
 
@@ -954,6 +1332,11 @@ def test_main_records_archive_timing_in_json_manifest(
         "resolve_swift_mlx_metallib",
         lambda repo_root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
     )
+    monkeypatch.setattr(
+        module,
+        "resolve_sparkle_framework",
+        lambda repo_root, configured_path=None: tmp_path / "Sparkle.framework",
+    )
     call_order: list[str] = []
 
     def fake_write_unsigned_macos_app_bundle(**kwargs):
@@ -965,9 +1348,10 @@ def test_main_records_archive_timing_in_json_manifest(
             },
         }
 
-    def fake_adhoc_sign_macos_app_bundle(app_path):
+    def fake_sign_macos_app_bundle(app_path, **kwargs):
         call_order.append("sign")
         seen["signed_app_path"] = app_path
+        seen["signing_identity"] = kwargs["identity"]
         return True
 
     def fake_archive_macos_app_bundle(app_path, requested_archive_path):
@@ -976,13 +1360,25 @@ def test_main_records_archive_timing_in_json_manifest(
         seen["archive_path"] = requested_archive_path
         return Path(requested_archive_path)
 
-    def fake_verify_archived_macos_app_bundle(requested_archive_path, expected_app_name):
+    def fake_verify_archived_macos_app_bundle(
+        requested_archive_path,
+        *,
+            expected_app_name,
+            require_sparkle_framework=False,
+            expected_signing_certificate_sha256=None,
+            expected_signing_certificate_sha1=None,
+        expected_signing_authority=None,
+    ):
         call_order.append("verify")
         seen["verified_archive_path"] = requested_archive_path
         seen["expected_app_name"] = expected_app_name
+        seen["require_sparkle_framework"] = require_sparkle_framework
+        seen["expected_signing_certificate_sha256"] = expected_signing_certificate_sha256
+        seen["expected_signing_certificate_sha1"] = expected_signing_certificate_sha1
+        seen["expected_signing_authority"] = expected_signing_authority
 
     monkeypatch.setattr(module, "write_unsigned_macos_app_bundle", fake_write_unsigned_macos_app_bundle)
-    monkeypatch.setattr(module, "adhoc_sign_macos_app_bundle", fake_adhoc_sign_macos_app_bundle)
+    monkeypatch.setattr(module, "sign_macos_app_bundle", fake_sign_macos_app_bundle)
     monkeypatch.setattr(module, "archive_macos_app_bundle", fake_archive_macos_app_bundle)
     monkeypatch.setattr(
         module,
@@ -1009,20 +1405,146 @@ def test_main_records_archive_timing_in_json_manifest(
     payload = json.loads(capsys.readouterr().out)
     assert payload["archive_path"] == str(archive_path)
     assert payload["adhoc_signed"] is True
+    assert payload["code_signed"] is True
+    assert payload["code_signing_mode"] == "adhoc"
+    assert payload["code_signing_certificate_sha1"] is None
+    assert payload["code_signing_authority"] is None
     assert seen["signed_app_path"] == str(tmp_path / "Melix.app")
+    assert seen["signing_identity"] == "-"
     assert seen["archive_path"] == str(archive_path)
     assert seen["verified_archive_path"] == str(archive_path)
     assert seen["expected_app_name"] == "Melix.app"
+    assert seen["require_sparkle_framework"] is True
+    assert seen["expected_signing_certificate_sha1"] is None
+    assert seen["expected_signing_authority"] is None
     assert call_order == ["sign", "archive", "verify"]
     assert payload["archive_verified"] is True
     assert payload["timings"]["write_total_seconds"] == 0.25
     assert isinstance(payload["timings"]["adhoc_sign_seconds"], float)
     assert payload["timings"]["adhoc_sign_seconds"] >= 0.0
+    assert payload["timings"]["code_sign_seconds"] == payload["timings"]["adhoc_sign_seconds"]
     assert isinstance(payload["timings"]["archive_seconds"], float)
     assert payload["timings"]["archive_seconds"] >= 0.0
     assert isinstance(payload["timings"]["archive_verify_seconds"], float)
     assert payload["timings"]["archive_verify_seconds"] >= 0.0
     assert payload["timings"]["total_seconds"] >= payload["timings"]["write_total_seconds"]
+
+
+def test_main_stable_release_signs_and_reverifies_certificate_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    keychain_path = tmp_path / "melix-release-signing.keychain-db"
+    keychain_path.write_bytes(b"fixture")
+    certificate_sha1 = "0123456789ABCDEF0123456789ABCDEF01234567"
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(module, "resolve_built_binary", lambda repo_root: tmp_path / "melix-menubar")
+    monkeypatch.setattr(module, "resolve_built_cli_binary", lambda repo_root: tmp_path / "melix")
+    monkeypatch.setattr(
+        module,
+        "resolve_built_control_plane_binary",
+        lambda repo_root: tmp_path / "melix-control-plane",
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_built_swift_text_worker_binary",
+        lambda repo_root: tmp_path / "melix-text-worker-swift",
+    )
+    monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
+    monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
+    monkeypatch.setattr(
+        module,
+        "resolve_swift_mlx_metallib",
+        lambda repo_root, configured_path=None: (tmp_path / "mlx.metallib", "0.31.1"),
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_sparkle_framework",
+        lambda repo_root, configured_path=None: tmp_path / "Sparkle.framework",
+    )
+
+    def fake_write(**kwargs):
+        seen["write"] = kwargs
+        return {
+            "app_path": str(tmp_path / "Melix.app"),
+            "timings": {"write_total_seconds": 0.1},
+        }
+
+    def fake_sign(app_path: str, **kwargs: object) -> bool:
+        seen["sign"] = kwargs
+        return True
+
+    def fake_archive(app_path: str, requested_archive_path: str) -> Path:
+        return Path(requested_archive_path)
+
+    def fake_verify(requested_archive_path: str, **kwargs: object) -> None:
+        seen["verify"] = kwargs
+
+    monkeypatch.setattr(module, "write_unsigned_macos_app_bundle", fake_write)
+    monkeypatch.setattr(module, "sign_macos_app_bundle", fake_sign)
+    monkeypatch.setattr(module, "archive_macos_app_bundle", fake_archive)
+    monkeypatch.setattr(module, "verify_archived_macos_app_bundle", fake_verify)
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "package_macos_menubar_app.py",
+            "--repo-root",
+            str(tmp_path / "repo"),
+            "--output-path",
+            str(tmp_path / "Melix.app"),
+            "--archive-path",
+            str(archive_path),
+            "--bundle-id",
+            "io.melix.menubar",
+            "--packaging-target-id",
+            "macos_app_bundle_github_release",
+            "--sparkle-feed-url",
+            "https://github.com/Keith-CY/melix/releases/latest/download/appcast.xml",
+            "--sparkle-public-ed-key",
+            "public-key-fixture",
+            "--codesign-identity",
+            certificate_sha1,
+            "--codesign-keychain",
+            str(keychain_path),
+            "--codesign-certificate-sha256",
+            "a" * 64,
+            "--json",
+        ],
+    )
+
+    assert module.main() == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    normalized_sha1 = certificate_sha1.lower()
+    assert payload["code_signed"] is True
+    assert payload["adhoc_signed"] is False
+    assert payload["code_signing_mode"] == "stable_self_signed"
+    assert payload["code_signing_certificate_sha256"] == "a" * 64
+    assert payload["code_signing_certificate_sha1"] == normalized_sha1
+    assert payload["code_signing_authority"] == "Melix GitHub Release Signing"
+    assert seen["write"]["bundle_id"] == "io.melix.menubar"
+    assert seen["write"]["packaging_target_id"] == "macos_app_bundle_github_release"
+    assert seen["write"]["code_signing_mode"] == "stable_self_signed"
+    assert seen["write"]["code_signing_certificate_sha256"] == "a" * 64
+    assert seen["write"]["code_signing_certificate_sha1"] == normalized_sha1
+    assert seen["write"]["code_signing_authority"] == "Melix GitHub Release Signing"
+    assert seen["sign"] == {
+        "identity": normalized_sha1,
+        "keychain_path": keychain_path.resolve(),
+        "expected_certificate_sha256": "a" * 64,
+        "expected_certificate_sha1": normalized_sha1,
+        "expected_authority": "Melix GitHub Release Signing",
+    }
+    assert seen["verify"]["expected_signing_certificate_sha256"] == "a" * 64
+    assert seen["verify"]["expected_signing_certificate_sha1"] == normalized_sha1
+    assert seen["verify"]["expected_signing_authority"] == "Melix GitHub Release Signing"
+    assert "adhoc_sign_seconds" not in payload["timings"]
+    assert payload["timings"]["code_sign_seconds"] >= 0.0
 
 
 def test_main_stops_before_archive_when_adhoc_signing_or_deep_verification_fails(
@@ -1053,13 +1575,18 @@ def test_main_stops_before_archive_when_adhoc_signing_or_deep_verification_fails
     )
     monkeypatch.setattr(
         module,
+        "resolve_sparkle_framework",
+        lambda repo_root, configured_path=None: tmp_path / "Sparkle.framework",
+    )
+    monkeypatch.setattr(
+        module,
         "write_unsigned_macos_app_bundle",
         lambda **kwargs: {
             "app_path": str(tmp_path / "Melix.app"),
             "timings": {"write_total_seconds": 0.1},
         },
     )
-    monkeypatch.setattr(module, "adhoc_sign_macos_app_bundle", lambda app_path: False)
+    monkeypatch.setattr(module, "sign_macos_app_bundle", lambda app_path, **kwargs: False)
     monkeypatch.setattr(
         module,
         "archive_macos_app_bundle",
@@ -1082,7 +1609,7 @@ def test_main_stops_before_archive_when_adhoc_signing_or_deep_verification_fails
         ],
     )
 
-    with pytest.raises(RuntimeError, match="Ad-hoc signing and deep verification failed"):
+    with pytest.raises(RuntimeError, match="Code signing or signature verification failed"):
         module.main()
 
     assert archive_path.exists() is False
@@ -1117,13 +1644,18 @@ def test_main_propagates_extracted_archive_verification_failure_before_success_o
     )
     monkeypatch.setattr(
         module,
+        "resolve_sparkle_framework",
+        lambda repo_root, configured_path=None: tmp_path / "Sparkle.framework",
+    )
+    monkeypatch.setattr(
+        module,
         "write_unsigned_macos_app_bundle",
         lambda **kwargs: {
             "app_path": str(tmp_path / "Melix.app"),
             "timings": {"write_total_seconds": 0.1},
         },
     )
-    monkeypatch.setattr(module, "adhoc_sign_macos_app_bundle", lambda app_path: True)
+    monkeypatch.setattr(module, "sign_macos_app_bundle", lambda app_path, **kwargs: True)
 
     def fake_archive_macos_app_bundle(app_path: str, requested_archive_path: str) -> Path:
         archive_path.write_bytes(b"zip")
@@ -1133,7 +1665,7 @@ def test_main_propagates_extracted_archive_verification_failure_before_success_o
     monkeypatch.setattr(
         module,
         "verify_archived_macos_app_bundle",
-        lambda requested_archive_path, expected_app_name: (_ for _ in ()).throw(
+        lambda requested_archive_path, expected_app_name, **kwargs: (_ for _ in ()).throw(
             RuntimeError("Archived macOS app deep signature verification failed")
         ),
     )
@@ -1178,7 +1710,7 @@ def _write_extracted_archive_fixture(
     return app_path
 
 
-def test_verify_archived_macos_app_bundle_requires_relative_metallib_link_and_deep_signature(
+def test_verify_archived_macos_app_bundle_requires_relative_metallib_link_and_strict_signature(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1208,11 +1740,290 @@ def test_verify_archived_macos_app_bundle_requires_relative_metallib_link_and_de
     assert calls[-1] == [
         "/usr/bin/codesign",
         "--verify",
-        "--deep",
         "--strict",
         "--verbose=4",
         str((Path(calls[0][-1]) / "Melix.app").resolve()),
     ]
+
+
+def test_verify_archived_macos_app_bundle_requires_complete_sparkle_linkage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(module.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(command: list[str], check: bool, **kwargs: object):
+        calls.append(command)
+        if command[0] == "/usr/bin/ditto":
+            app_path = _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+            )
+            framework = app_path / "Contents/Frameworks/Sparkle.framework/Versions/B"
+            (framework / "XPCServices/Downloader.xpc").mkdir(parents=True)
+            (framework / "XPCServices/Installer.xpc").mkdir()
+            (framework / "Updater.app").mkdir()
+            (framework / "Autoupdate").write_bytes(b"autoupdate")
+            (framework / "Sparkle").write_bytes(b"framework")
+            return None
+        if command[:2] == ["/usr/bin/otool", "-L"]:
+            return SimpleNamespace(
+                stdout="@rpath/Sparkle.framework/Versions/B/Sparkle\n"
+            )
+        if command[:2] == ["/usr/bin/otool", "-l"]:
+            return SimpleNamespace(stdout="path @loader_path/../Frameworks\n")
+        return None
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module.verify_archived_macos_app_bundle(
+        archive_path,
+        expected_app_name="Melix.app",
+        require_sparkle_framework=True,
+    )
+
+    assert any(command[:2] == ["/usr/bin/otool", "-L"] for command in calls)
+    assert any(command[:2] == ["/usr/bin/otool", "-l"] for command in calls)
+    assert calls[-1][0] == "/usr/bin/codesign"
+
+
+def test_verify_archived_macos_app_bundle_verifies_stable_designated_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    certificate_sha1 = "0123456789abcdef0123456789abcdef01234567"
+    calls: list[list[str]] = []
+    verified_targets: list[Path] = []
+    entitlement_targets: list[Path] = []
+    monkeypatch.setattr(module.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(command: list[str], check: bool, **kwargs: object):
+        calls.append(command)
+        if command[0] == "/usr/bin/ditto":
+            app_path = _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+            )
+            _write_complete_sparkle_framework(
+                app_path / "Contents/Frameworks/Sparkle.framework"
+            )
+            return SimpleNamespace(stdout="", stderr="")
+        if command[:2] == ["/usr/bin/otool", "-L"]:
+            return SimpleNamespace(
+                stdout="@rpath/Sparkle.framework/Versions/B/Sparkle\n",
+                stderr="",
+            )
+        if command[:2] == ["/usr/bin/otool", "-l"]:
+            return SimpleNamespace(
+                stdout="path @loader_path/../Frameworks\n",
+                stderr="",
+            )
+        if command[1:3] == ["--display", "--verbose=4"]:
+            return SimpleNamespace(
+                stdout="",
+                stderr="Authority=Melix GitHub Release Signing\n",
+            )
+        if command[1:3] == ["-d", "-r-"]:
+            return SimpleNamespace(
+                stdout="",
+                stderr=f'designated => certificate root = H"{certificate_sha1}"\n',
+            )
+        return SimpleNamespace(stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_verify_codesign_identity_evidence",
+        lambda codesign, target, **kwargs: verified_targets.append(target),
+    )
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_canonical_codesign_entitlements",
+        lambda codesign, target: entitlement_targets.append(target) or b"entitlements",
+    )
+
+    module.verify_archived_macos_app_bundle(
+        archive_path,
+        expected_app_name="Melix.app",
+        require_sparkle_framework=True,
+        expected_signing_certificate_sha256="a" * 64,
+        expected_signing_certificate_sha1=certificate_sha1.upper(),
+        expected_signing_authority="Melix GitHub Release Signing",
+    )
+
+    assert verified_targets
+    assert verified_targets[-1].name == "Melix.app"
+    assert [target.name for target in entitlement_targets] == [
+        "Downloader.xpc",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("authority", "requirement", "message"),
+    [
+        (
+            "Different Signing Authority",
+            'certificate root = H"0123456789abcdef0123456789abcdef01234567"',
+            "signature verification failed",
+        ),
+        (
+            "Melix GitHub Release Signing",
+            "identifier io.melix.menubar",
+            "signature verification failed",
+        ),
+    ],
+)
+def test_verify_archived_macos_app_bundle_rejects_unstable_designated_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    authority: str,
+    requirement: str,
+    message: str,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    certificate_sha1 = "0123456789abcdef0123456789abcdef01234567"
+    monkeypatch.setattr(module.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(command: list[str], check: bool, **kwargs: object):
+        if command[0] == "/usr/bin/ditto":
+            _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+            )
+            return SimpleNamespace(stdout="", stderr="")
+        if command[1:3] == ["--display", "--verbose=4"]:
+            return SimpleNamespace(stdout="", stderr=f"Authority={authority}\n")
+        if command[1:3] == ["-d", "-r-"]:
+            return SimpleNamespace(stdout="", stderr=requirement)
+        return SimpleNamespace(stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_verify_codesign_identity_evidence",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("identity mismatch")),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+            expected_signing_certificate_sha256="a" * 64,
+            expected_signing_certificate_sha1=certificate_sha1,
+            expected_signing_authority="Melix GitHub Release Signing",
+        )
+
+
+def test_verify_archived_macos_app_bundle_requires_complete_signing_expectations(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+
+    monkeypatch.setattr(module.shutil, "which", lambda name: None)
+
+    with pytest.raises(ValueError, match="must be provided together"):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+            expected_signing_certificate_sha1="0" * 40,
+        )
+
+
+def test_verify_archived_macos_app_bundle_rejects_incomplete_sparkle_framework(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    monkeypatch.setattr(module.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(command: list[str], check: bool, **kwargs: object) -> None:
+        if command[0] == "/usr/bin/ditto":
+            _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+            )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="Archived Sparkle framework is incomplete"):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+            require_sparkle_framework=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("otool_available", "linked_libraries", "load_commands", "message"),
+    [
+        (False, "", "", "otool is required"),
+        (True, "", "path @loader_path/../Frameworks", "not linked to Sparkle"),
+        (
+            True,
+            "@rpath/Sparkle.framework/Versions/B/Sparkle",
+            "",
+            "cannot resolve Contents/Frameworks",
+        ),
+    ],
+)
+def test_verify_archived_macos_app_bundle_rejects_invalid_sparkle_linkage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    otool_available: bool,
+    linked_libraries: str,
+    load_commands: str,
+    message: str,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+
+    def fake_which(name: str) -> str | None:
+        if name == "otool" and not otool_available:
+            return None
+        return f"/usr/bin/{name}"
+
+    monkeypatch.setattr(module.shutil, "which", fake_which)
+
+    def fake_run(command: list[str], check: bool, **kwargs: object):
+        if command[0] == "/usr/bin/ditto":
+            app_path = _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+            )
+            _write_complete_sparkle_framework(
+                app_path / "Contents/Frameworks/Sparkle.framework"
+            )
+            return None
+        if command[:2] == ["/usr/bin/otool", "-L"]:
+            return SimpleNamespace(stdout=linked_libraries)
+        if command[:2] == ["/usr/bin/otool", "-l"]:
+            return SimpleNamespace(stdout=load_commands)
+        return None
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match=message):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+            require_sparkle_framework=True,
+        )
 
 
 def test_verify_archived_macos_app_bundle_rejects_absolute_metallib_link(
@@ -1244,7 +2055,7 @@ def test_verify_archived_macos_app_bundle_rejects_absolute_metallib_link(
         )
 
 
-def test_verify_archived_macos_app_bundle_propagates_deep_signature_failure(
+def test_verify_archived_macos_app_bundle_propagates_strict_signature_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1265,7 +2076,37 @@ def test_verify_archived_macos_app_bundle_propagates_deep_signature_failure(
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
 
-    with pytest.raises(RuntimeError, match="deep signature verification failed"):
+    with pytest.raises(RuntimeError, match="signature verification failed"):
+        module.verify_archived_macos_app_bundle(
+            archive_path,
+            expected_app_name="Melix.app",
+        )
+
+
+def test_verify_archived_macos_app_bundle_rejects_missing_hardened_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    archive_path = tmp_path / "Melix.zip"
+    archive_path.write_bytes(b"zip")
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/codesign")
+    monkeypatch.setattr(
+        module.macos_app_bundle_module,
+        "_codesign_details",
+        lambda codesign, target: "flags=none",
+    )
+
+    def fake_run(command: list[str], check: bool, **kwargs: object) -> None:
+        if command[0] == "/usr/bin/ditto":
+            _write_extracted_archive_fixture(
+                Path(command[-1]),
+                expected_app_name="Melix.app",
+            )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="signature verification failed"):
         module.verify_archived_macos_app_bundle(
             archive_path,
             expected_app_name="Melix.app",
@@ -1408,10 +2249,15 @@ def test_main_requires_write_timing_when_archive_is_requested(
     )
     monkeypatch.setattr(
         module,
+        "resolve_sparkle_framework",
+        lambda repo_root, configured_path=None: tmp_path / "Sparkle.framework",
+    )
+    monkeypatch.setattr(
+        module,
         "write_unsigned_macos_app_bundle",
         lambda **kwargs: {"app_path": str(tmp_path / "Melix.app"), "timings": {}},
     )
-    monkeypatch.setattr(module, "adhoc_sign_macos_app_bundle", lambda app_path: True)
+    monkeypatch.setattr(module, "sign_macos_app_bundle", lambda app_path, **kwargs: True)
     monkeypatch.setattr(module, "archive_macos_app_bundle", lambda app_path, requested_archive_path: archive_path)
     monkeypatch.setattr(
         module.sys,
