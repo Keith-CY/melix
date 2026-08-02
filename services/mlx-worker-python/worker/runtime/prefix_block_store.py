@@ -506,8 +506,7 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
             elif values is not None:
                 total += tensor_nbytes(values, get_attr)
         else:
-            state_type = type_of(state)
-            if state_type is list or state_type is tuple:
+            if type_of(state) is list or type_of(state) is tuple:
                 if len(state) == 2:
                     total += tensor_pair_nbytes(state[0], state[1], get_attr)
                 else:
