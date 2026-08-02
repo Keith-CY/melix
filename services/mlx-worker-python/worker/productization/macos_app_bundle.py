@@ -14,6 +14,7 @@ import tempfile
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from operator import itemgetter
 from pathlib import Path
 from typing import Any
 from xml.parsers.expat import ExpatError
@@ -1337,7 +1338,7 @@ def _copy_swiftpm_resource_bundles(source_root: Path, target_roots: list[Path]) 
                 except OSError:
                     continue
                 bundles.append((bundle_name, entry.path))
-            bundles.sort(key=lambda bundle: bundle[0])
+            bundles.sort(key=itemgetter(0))
     except OSError:
         return copied_paths
 
