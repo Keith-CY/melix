@@ -860,6 +860,18 @@ def test_longest_marker_prefix_suffix_reuses_precomputed_marker_prefixes() -> No
         )
         is prefixes[2]
     )
+    assert RequestStreamAssembler._longest_marker_prefix_suffix(
+        "tool body </tool",
+        RequestStreamAssembler._TOOL_CLOSE,
+    ) == "</tool"
+    assert RequestStreamAssembler._longest_marker_prefix_suffix(
+        "pipe tool body <tool_call|",
+        RequestStreamAssembler._PIPE_TOOL_CLOSE,
+    ) == "<tool_call|"
+    assert RequestStreamAssembler._longest_marker_prefix_suffix(
+        "pipe channel header <channel|",
+        RequestStreamAssembler._PIPE_CHANNEL_HEADER_CLOSE,
+    ) == "<channel|"
     assert (
         RequestStreamAssembler._longest_marker_prefix_suffix(
             "body <custom",

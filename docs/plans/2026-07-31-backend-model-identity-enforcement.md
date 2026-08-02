@@ -882,10 +882,19 @@ checksums, candidate count, directory count, and memory invariants. These are
 non-reproducing sampled alerts rather than accepted regressions, so no
 performance-regression override is used.
 
+After synchronizing the prefix cold-index suffix checks and direct close-marker
+prefix tuples from `origin/main` at `f5c05870`, the registered structural-prefix
+slice passed `9` focused tests and `110` coverage tests, while the cold-index
+slice passed `17` focused and `17` coverage tests. Both changed-line coverage
+commands reported `100%` over zero task-owned lines. The standalone structural
+probe retained `1,750,000` close-marker, held-suffix, and prefix-identity hits;
+the cold-index probe retained `600` loaded entries, `600` filename-pruned
+orphans, zero path-glob calls, and one scandir call.
+
 ## Verification Results
 
 The latest post-merge repository gates completed successfully against
-`origin/main` at `03cf747a` on 2026-08-02:
+`origin/main` at `f5c05870` on 2026-08-02:
 
 - `make swift-test` (`301` text-worker and `907` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
@@ -960,6 +969,38 @@ with `1200` directories and identical memory invariants throughout. Both
 alerts are non-reproducing measurement noise, not accepted regressions; no
 performance-regression override was used. The report's `17` context-only
 timing alerts had no verification failures.
+
+After synchronizing the prefix cold-index and stream close-marker tuple
+optimizations from `origin/main` at `f5c05870`, the exact staged-tree report at
+`.runtime/pre-commit-performance/20260802-105538-4ee86133/report` completed the
+full Swift gate, `5652` Python tests with `14` skips, and `132` integration
+tests with one skip. All `148` performance probes ran, all `20` direct probes
+passed their targeted tests and coverage commands, and there were `0`
+verification failures. The newly synchronized prefix cold-index probe improved
+from `36.090 ms` to `35.593 ms` (`-1.38%`) with `600` entries, `600` orphans,
+zero glob calls, and one scandir call. The stream structural-prefix probe
+improved from `468.160 ms` to `464.371 ms` (`-0.81%`) with `1,750,000` identity
+hits. Its close-marker submetric remained within threshold at `+3.09%`.
+
+Three direct timing samples crossed their `5%` thresholds in the single report:
+deterministic VLM completion scanning (`+6.21%`), Generate fallback accounting
+(`+7.57%`), and integration Swift binary resolution (`+11.59%`). Ten
+base/head-alternating repetitions in equivalent fresh worktrees using Python
+`3.12.13` disproved all three alerts. VLM means changed from `24.911 ms` to
+`24.589 ms` (`-1.29%`), Generate fallback means changed from `64.178 ms` to
+`64.817 ms` (`+1.00%`), and integration means changed from `14.537 ms` to
+`14.405 ms` (`-0.91%`). Minimum/maximum-trimmed means produced the same
+conclusion: `-1.53%`, `+1.04%`, and `-0.78%`, respectively. Every repetition
+retained `6000` VLM completion tokens with zero split calls, zero Generate
+fallback native-parser calls, and `1501` integration candidates with `1200`
+removed directories. These alerts are non-reproducing measurement noise, not
+accepted regressions; no performance-regression override was used. The report's
+`29` context-only timing alerts had no verification failures. The backend
+identity probe remained `ok`: matched worker-boundary p95 was `0.000523 ms`,
+control-plane stamping and recovery p95 was `0.001566 ms`, all `140000`
+mismatches produced zero output, retry counts remained `3/2/1`, and
+coalesced/fresh/duplicate-tool counts remained `1/2/0`. Only these evidence
+paragraphs changed after the exact staged-tree report.
 
 ## Known Boundaries
 

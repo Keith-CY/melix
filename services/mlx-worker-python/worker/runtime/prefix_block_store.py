@@ -347,11 +347,11 @@ class ColdPrefixStore:
                 for entry in entries:
                     entry_name = entry.name
                     try:
-                        if entry_name.endswith(".meta.json") and entry.is_file(
+                        if entry_name[-10:] == ".meta.json" and entry.is_file(
                             follow_symlinks=False
                         ):
                             meta_paths.append((entry.path, entry_name))
-                        elif entry_name.endswith(".kv.safetensors") and entry.is_file(
+                        elif entry_name[-15:] == ".kv.safetensors" and entry.is_file(
                             follow_symlinks=False
                         ):
                             snapshot_file_names.add(entry_name)
