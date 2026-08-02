@@ -894,7 +894,7 @@ orphans, zero path-glob calls, and one scandir call.
 ## Verification Results
 
 The latest post-merge repository gates completed successfully against
-`origin/main` at `f5c05870` on 2026-08-02:
+`origin/main` at `0545580e` on 2026-08-02:
 
 - `make swift-test` (`301` text-worker and `907` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
@@ -1001,6 +1001,34 @@ control-plane stamping and recovery p95 was `0.001566 ms`, all `140000`
 mismatches produced zero output, retry counts remained `3/2/1`, and
 coalesced/fresh/duplicate-tool counts remained `1/2/0`. Only these evidence
 paragraphs changed after the exact staged-tree report.
+
+After synchronizing the macOS SwiftPM resource-bundle tuple sort from
+`origin/main` at `0545580e`, its registered slice passed `5` focused tests and
+`94` coverage tests. Changed-line coverage was `100%` over zero task-owned lines,
+and the standalone probe copied all `900` bundles with a `106.406 ms` mean and
+`98.234 ms` minimum. The exact staged-tree report at
+`.runtime/pre-commit-performance/20260802-120702-8f83ecc1/report` completed the
+full Swift gate, `5652` Python tests with `14` skips, and `132` integration tests
+with one skip. All `148` performance probes ran, all `20` direct probes passed
+their targeted tests and coverage commands, and there were `0` verification
+failures. The resource-bundle probe retained all `900` copied bundles and its
+mean stayed within threshold at `+1.25%`; its context-only minimum sample was
+`+7.56%`.
+
+The report's only direct timing alert was deterministic VLM completion scanning,
+which sampled `22.727 ms` and `25.782 ms` (`+13.44%`) while retaining `6000`
+completion tokens, zero split calls, and `400` prompt-count calls. Ten alternating
+equivalent-worktree repetitions against `origin/main@0545580e` disproved the
+alert: means were `24.566 ms` and `24.672 ms` (`+0.43%`), while minimum/maximum-
+trimmed means were `24.665 ms` and `24.393 ms` (`-1.10%`). Every repetition
+retained the same token and call-count invariants. This is non-reproducing
+measurement noise, not an accepted regression; no performance-regression
+override was used. The report's `32` context-only timing alerts had no
+verification failures. The backend identity probe remained `ok`: matched
+worker-boundary p95 was `0.000479 ms`, control-plane stamping and recovery p95
+was `0.001642 ms`, all `140000` mismatches produced zero output, retry counts
+remained `3/2/1`, and coalesced/fresh/duplicate-tool counts remained `1/2/0`.
+Only these evidence paragraphs changed after the exact staged-tree report.
 
 ## Known Boundaries
 
