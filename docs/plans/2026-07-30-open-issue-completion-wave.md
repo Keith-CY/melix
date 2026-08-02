@@ -8,11 +8,29 @@ full acceptance contract against merged behavior, implements the remaining
 gap, and ends only after its pull request is reviewed, verified, and squash
 merged.
 
-This plan covers the 25 issues that were open on 2026-07-30. It does not treat a
+This plan originally covered the 25 issues that were open on 2026-07-30. The
+live queue was reconciled on 2026-08-03: three original issues are complete and
+one new issue entered the queue, leaving 23 open issues. It does not treat a
 recent watch note, an earlier merged slice, or a checked-off child issue as
 proof that the parent issue is complete. Each issue needs a fresh completion
 audit against its body, all comments, governing specifications, and current
 code.
+
+## Live Queue Reconciliation
+
+The following original tracks reached the delivery contract and are no longer
+active work:
+
+- Issue #2605 closed through PR #2777 at squash commit
+  `b1c9241da7a1976a6865520e527131d6eb854a5a`.
+- Issue #2606 closed through PR #3154 at squash commit
+  `adf38f4ee693ef99eb08750428c9f70724fc47a8`.
+- Issue #2945 closed through PR #3179 at squash commit
+  `ce87f9b365f6ae729401f3298a317b538eee6d27`.
+
+Issue #3166 was opened after the original capture. It joins Wave B because its
+artifact-backed embedding backend depends on issue #1258's trust boundary and
+issue #2945's now-merged backend identity boundary.
 
 ## Delivery Contract
 
@@ -73,22 +91,6 @@ track starts.
 
 ## Wave A: In-Flight And Fail-Closed Boundaries
 
-### Issue #2605
-
-Finish the existing schema-constrained decoding pull request. Reconcile it with
-current `origin/main`, resolve all live review findings, prove bounded schema
-compilation and fail-closed behavior for caller-controlled schemas, and retain
-the issue's sampler-enforcement and conformance requirements. Performance
-evidence must cover both fixed-value and free-text constrained generation.
-
-### Issue #2945
-
-Complete backend-owned model identity enforcement across every dispatched
-modality. Requests must carry untranslated model identity, adapter identity, and
-route generation; stale routes must yield no output, invalidate routing state,
-and permit at most one replay-safe pre-response retry. Metrics must measure
-mismatch counts, retry decisions, and added request-boundary latency.
-
 ### Issue #1258
 
 Audit the previously merged artifact-integrity slices and close all remaining
@@ -114,7 +116,17 @@ the exposed capability wherever execution cannot prove it. Metrics must compare
 actual allocated KV bytes, shared-prefix savings, restore parity, and warm-path
 latency.
 
-## Wave B: Serving And Cache Foundations
+## Wave B: Serving, Embedding, And Cache Foundations
+
+### Issue #3166
+
+Replace the product-facing deterministic embedding projection with an explicit
+artifact-backed MLX backend for the initial BERT and XLM-R families. Preserve
+the deterministic backend only as a named fixture path; prove tokenizer and
+weight identity, pooling, normalization, vector shape, dtype-safe masking,
+one-forward batching, residency, and typed refusal of unsupported multi-vector
+or media artifacts. Golden parity, finite outputs, and batch throughput are
+acceptance gates.
 
 ### Issue #1384
 
@@ -144,12 +156,6 @@ Generalize native multi-token prediction through the strategy and capability
 contracts landed above. Cover artifact topology, family adapters, batch
 reshaping, device policy, and explicit fallback receipts. Measure greedy
 identity, acceptance rate, and net throughput for batch sizes 1, 2, and 4.
-
-### Issue #2606
-
-Add prompt-lookup acceleration through the shared strategy router without a
-draft model asset. Greedy identity, overlap-workload throughput, adversarial
-fallback, cache rollback, and bounded no-overlap overhead must all be proven.
 
 ### Issue #1394
 
@@ -281,7 +287,7 @@ At the end of every wave, record:
 - external blockers that remain, with live evidence rather than remembered
   status.
 
-The overall wave is complete only when all 24 initially agent-actionable issues
+The overall wave is complete only when all 22 currently agent-actionable issues
 are closed with verified merged behavior and issue #1620 has also completed
 after its administrator prerequisites are provided. While those prerequisites
 are absent, the overall wave remains active and the live external-state report
