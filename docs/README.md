@@ -75,7 +75,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 
 | Plan | What It Covers |
 |---|---|
-| [Open Issue Completion Wave](plans/2026-07-30-open-issue-completion-wave.md) | Ordered completion, review, verification, and merge contract for the open issue queue captured on 2026-07-30 |
+| [Open Issue Completion Wave](plans/2026-07-30-open-issue-completion-wave.md) | Living ordered completion, review, verification, and merge contract for the open issue queue |
 | [Backend Model Identity Enforcement](plans/2026-07-31-backend-model-identity-enforcement.md) | Backend-owned loaded identity, route generations, fail-closed inference guards, replay-safe recovery, diagnostics, and performance evidence for issue #2945 |
 | [Remote Provider Usage-Only SSE Compatibility](plans/2026-08-01-remote-provider-usage-only-sse.md) | Strict compatibility for OpenAI-style terminal usage chunks whose `choices` array is empty |
 | [Remote Provider Desktop Chat](plans/2026-07-31-remote-provider-desktop-chat.md) | Native Chat binding, readiness, credential safety, packaging policy, and real-App acceptance for local and remote Provider targets |
