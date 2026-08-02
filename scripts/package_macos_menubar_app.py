@@ -184,12 +184,14 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
     if is_file(lex_first_debug_candidate):
         return path_type(lex_first_debug_candidate)
 
-    remaining_triple_names = sorted(name for name in triple_names if name != lex_first_triple_name)
+    triple_names.sort()
     remaining_debug_candidate: str | None = None
     build_root_prefix = build_root_path + os.sep
     release_candidate_suffix = os.sep + _RELEASE_BUILD_CONFIGURATION + os.sep + product_name
     debug_candidate_suffix = os.sep + _DEBUG_BUILD_CONFIGURATION + os.sep + product_name
-    for triple_name in remaining_triple_names:
+    for triple_name in triple_names:
+        if triple_name == lex_first_triple_name:
+            continue
         triple_candidate_prefix = build_root_prefix + triple_name
         candidate = triple_candidate_prefix + release_candidate_suffix
         if is_file(candidate):
