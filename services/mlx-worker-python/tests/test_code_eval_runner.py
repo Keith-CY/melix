@@ -68,6 +68,18 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
         "",
         "parsed_code_block",
     )
+    assert code_eval_runner.extract_candidate_code("```python\r\t  print('ascii-leading')\n```") == (
+        "print('ascii-leading')",
+        "parsed_code_block",
+    )
+    assert code_eval_runner.extract_candidate_code("```python\u2003print('unicode-leading')\n```") == (
+        "print('unicode-leading')",
+        "parsed_code_block",
+    )
+    assert code_eval_runner.extract_candidate_code("```pythonéprint('unicode-non-space')\n```") == (
+        "éprint('unicode-non-space')",
+        "parsed_code_block",
+    )
     assert code_eval_runner.extract_candidate_code("```\n   print('trimmed')\n```") == (
         "print('trimmed')",
         "parsed_code_block",

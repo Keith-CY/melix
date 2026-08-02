@@ -19,6 +19,8 @@ The case-insensitive Python fence helper now checks each character with direct e
 
 This follow-up slice remains within the same registered code-block extraction probe and narrows the trailing-strip helper used after a fenced block is selected. ASCII tail whitespace now uses a precomputed ordinal lookup, while non-ASCII tail characters still fall back to `str.isspace()` so Unicode whitespace trimming semantics remain unchanged. The probe's main extraction workload exercises the common single trailing newline before the closing fence; behavior parity is guarded by the focused extraction test, including Unicode whitespace.
 
+This 2026-08-02 follow-up slice stays in the same registered code-block extraction probe and applies the same ASCII whitespace lookup pattern to the leading content-start skip after a code fence tag. The common ASCII whitespace prefix now avoids repeated `str.isspace()` calls while non-ASCII leading whitespace still falls back to Unicode `str.isspace()` semantics. Focused extraction tests cover ASCII and Unicode leading whitespace after the `python` tag.
+
 ## Verification plan
 
 Run the focused registered test command, changed-scope coverage command, and registered probe locally on Linux before opening the PR. GitHub Actions PR-scoped performance remains the merge gate for the registered probe report.
