@@ -35,3 +35,9 @@ GitHub Actions PR-scoped performance remains the merge gate for the registered p
 ## Success Criteria
 
 Accept the slice only if focused tests pass, changed-scope coverage is at least 95 percent, the local registered probe shows non-regressing binary-resolution elapsed time, and CI's registered PR-scoped performance workflow completes successfully.
+
+## 2026-08-02 Scoped Debug Suffix Follow-up
+
+This Python-only follow-up keeps the same `tests/integration/helpers.py` boundary and the registered `integration-swift-binary-resolution-scandir` probe. `_newest_executable_swift_product_binary()` now precomputes the scoped `/debug/<product>` suffix once per resolution call and appends it to each `os.DirEntry.path` while scanning architecture-specific build directories. The flat candidate still uses `os.path.join`, and executable selection semantics, mtime ordering, depth tie-breaker behavior, and final `Path` return type remain unchanged.
+
+Expected metrics are lower `elapsed_ms_mean` and unchanged candidate counts in `scripts/integration_swift_binary_resolution_probe.py`; remove-tree metrics are reported by the same registered probe but are not in this slice's affected path.

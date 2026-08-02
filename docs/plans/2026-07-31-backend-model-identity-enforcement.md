@@ -1138,6 +1138,41 @@ context-only timing alerts had no verification failures. The approximately
 performance tradeoff and is outside inference dispatch. Only these evidence
 paragraphs changed after the exact staged-tree report.
 
+After synchronizing the Swift binary debug-suffix fast path from `origin/main`
+at `894df9e3`, its registered slice passed `30` focused tests and `30` coverage
+tests at `100%` over zero task-owned lines. The standalone merged-tree probe
+retained `1501` candidates, `1200` removal directories, and the expected memory
+invariants while measuring binary resolution at `12.294 ms`. The exact staged
+tree report at
+`.runtime/pre-commit-performance/20260802-170956-d15f6d9f/report` completed the
+full Swift gate including `907` menu-bar tests, `5653` Python tests with `14`
+skips, and `132` integration tests with one skip. All `148` probes ran, all `20`
+direct targeted test and coverage commands passed, and there were `0`
+verification failures. The backend identity probe remained `ok`: matched
+worker-boundary p95 was `0.000443 ms`, control-plane stamping and recovery p95
+was `0.001408 ms`, all `140000` mismatches produced zero output, retry counts
+remained `3/2/1`, and coalesced/fresh/duplicate-tool counts remained `1/2/0`.
+
+Five direct timing samples crossed thresholds in that single report:
+multimodal local URI preprocessing (`+8.78%`), deterministic embedding's
+single-cycle submetric (`+5.26%`), performance-registry cold loading (`+10.42%`),
+deterministic VLM completion scanning (`+17.35%`), and integration binary
+resolution (`+16.76%`). Immediate reverse-order and forward-order measurements
+returned the multimodal, embedding, and registry aggregate changes to `+2.54%`,
+`+0.21%`, and `+0.50%`, respectively, with unchanged call, checksum, and memory
+counters. Ten alternating VLM repetitions measured `24.220 ms` and `25.094 ms`
+(`+3.61%`); minimum/maximum-trimmed means changed by `+4.48%`, and every run
+retained `6000` completion tokens, zero split calls, and `400` prompt-count calls.
+Five alternating equal-length-worktree comparisons of the synchronized
+integration change measured `14.231 ms` before and `11.864 ms` after
+(`-16.63%`), while the removal-savings metric improved by `3.534 ms`; all runs
+retained `1501` candidates, `1200` directories, and identical memory invariants.
+These alerts are sampled noise, not accepted regressions. The report's `25`
+context-only timing alerts had no verification failures. The approximately
+`0.0011 ms` identity-construction cost per model load remains the only accepted
+performance tradeoff and is outside inference dispatch. Only these evidence
+paragraphs changed after the exact staged-tree report.
+
 ## Known Boundaries
 
 - Process respawn is not implemented by current request-path production code.
