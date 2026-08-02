@@ -9,6 +9,7 @@ from threading import Event
 from threading import Lock
 import time
 from typing import Any
+from uuid import uuid4
 
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, runtime_pb2
 
@@ -74,8 +75,16 @@ class LoadedModel:
     runtime_kind: str
     residency: common_pb2.ResidencyInfo
     load_trust: common_pb2.ModelLoadTrustPolicy
+    backend_identity: common_pb2.BackendModelIdentity
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class DecodeSessionBinding:
+    request_id: str
+    model_handle: str
+    backend_identity: common_pb2.BackendModelIdentity
 
 
 @dataclass
@@ -85,6 +94,7 @@ class ModelUnloadReceipt:
     unloaded: bool
     pending_unload: bool
     abort_requested: bool = False
+    identity_mismatch: bool = False
     released_at: str = ""
     unloaded_at: str = ""
 
@@ -96,6 +106,7 @@ class ModelUnloadReceipt:
             "unloaded": _bool_text(self.unloaded),
             "pending_unload": _bool_text(self.pending_unload),
             "abort_requested": _bool_text(self.abort_requested),
+            "identity_mismatch": _bool_text(self.identity_mismatch),
             "released_at": self.released_at,
             "unloaded_at": self.unloaded_at,
         }
@@ -137,6 +148,23 @@ def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> in
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _diagnostic_identity(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    lower = normalized.lower()
+    is_local_path = (
+        normalized.startswith(("/", "~/", "./", "../", "\\\\", ".\\", "..\\"))
+        or lower.startswith("file:")
+        or (len(normalized) >= 3 and normalized[1:3] in {":\\", ":/"})
+    )
+    if is_local_path:
+        return "[local-path-redacted]"
+    if len(normalized) > 128:
+        return normalized[:125] + "..."
+    return normalized
 
 
 class RequestRuntimeLease:
@@ -237,6 +265,15 @@ class DiskStreamingUnsupported(Exception):
         }
 
 
+@dataclass
+class WorkerInstanceMismatch(Exception):
+    requested_worker_instance_id: str
+    current_worker_instance_id: str
+
+    def __str__(self) -> str:
+        return "The load reservation belongs to a different worker process."
+
+
 class WorkerRegistry:
     def __init__(
         self,
@@ -253,6 +290,7 @@ class WorkerRegistry:
         image_generation_runtime: DeterministicImageGenerationRuntime | None = None,
         model_catalog: WorkerModelCatalog | None = None,
         worker_id: str = "worker-text-001",
+        worker_instance_id: str | None = None,
         process_memory_budget_bytes: int = 0,
         memory_headroom_bytes: int = 0,
         mlx_executor: MLXRuntimeExecutor | None = None,
@@ -276,6 +314,11 @@ class WorkerRegistry:
         self.image_generation_runtime = image_generation_runtime or DeterministicImageGenerationRuntime()
         self.model_catalog = model_catalog or WorkerModelCatalog()
         self.worker_id = worker_id
+        self.worker_instance_id = (
+            worker_instance_id.strip()
+            if worker_instance_id is not None and worker_instance_id.strip()
+            else str(uuid4())
+        )
         self._process_memory_budget_bytes = max(0, process_memory_budget_bytes)
         self._memory_headroom_bytes = max(0, memory_headroom_bytes)
         self._lock = Lock()
@@ -288,6 +331,8 @@ class WorkerRegistry:
         self._requests: dict[str, RequestState] = {}
         self._request_model_handles: dict[str, str] = {}
         self._request_lease_tokens: dict[str, object] = {}
+        self._decode_session_bindings: dict[str, DecodeSessionBinding] = {}
+        self._request_decode_handles: dict[str, str] = {}
         self._active_model_lease_counts: dict[str, int] = {}
         self._pending_unload_receipts: dict[str, ModelUnloadReceipt] = {}
         self._completed_unload_receipt_limit = _COMPLETED_UNLOAD_RECEIPT_LIMIT
@@ -369,6 +414,8 @@ class WorkerRegistry:
         self._last_image_peak_memory_bytes = 0
         self._last_model_load_trust_policy_resolution_ms = 0.0
         self._model_load_trust_blocked_count = 0
+        self._model_identity_mismatch_count = 0
+        self._last_model_identity_mismatch = common_pb2.BackendIdentityMismatchReceipt()
         self._default_text_load_trust_policy = default_not_applicable_load_trust_policy(
             runtime_kind="text",
             runtime=self.runtime,
@@ -418,7 +465,17 @@ class WorkerRegistry:
         memory_budget_bytes: int = 0,
         disk_streaming_mode: int = common_pb2.DISK_STREAMING_MODE_UNSPECIFIED,
         load_trust: common_pb2.ModelLoadTrustPolicy | None = None,
+        backend_identity: common_pb2.BackendModelIdentity | None = None,
     ) -> LoadedModel:
+        if (
+            backend_identity is not None
+            and backend_identity.worker_instance_id
+            and backend_identity.worker_instance_id != self.worker_instance_id
+        ):
+            raise WorkerInstanceMismatch(
+                requested_worker_instance_id=backend_identity.worker_instance_id,
+                current_worker_instance_id=self.worker_instance_id,
+            )
         resolved = self._resolved_model_spec(model_spec)
         has_settings = resolved.HasField("settings")
         if disk_streaming_mode != common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
@@ -539,6 +596,10 @@ class WorkerRegistry:
                 runtime_kind=runtime_kind,
                 residency=residency,
                 load_trust=load_trust_policy,
+                backend_identity=self._resolved_backend_identity(
+                    resolved,
+                    backend_identity,
+                ),
             )
             self._loaded_models[handle] = loaded
             self._invalidate_loaded_model_order_locked()
@@ -618,7 +679,13 @@ class WorkerRegistry:
         self._close_loaded_model(loaded_to_close)
         return True
 
-    def request_model_unload(self, handle: str, *, force: bool = False) -> ModelUnloadReceipt:
+    def request_model_unload(
+        self,
+        handle: str,
+        *,
+        force: bool = False,
+        expected_backend_identity: common_pb2.BackendModelIdentity | None = None,
+    ) -> ModelUnloadReceipt:
         loaded_to_close: LoadedModel | None = None
         with self._lock:
             loaded = self._loaded_models.get(handle)
@@ -629,6 +696,18 @@ class WorkerRegistry:
                     unloaded=False,
                     pending_unload=False,
                     abort_requested=bool(force),
+                )
+            if (
+                expected_backend_identity is not None
+                and expected_backend_identity != loaded.backend_identity
+            ):
+                return ModelUnloadReceipt(
+                    model_handle=handle,
+                    found=True,
+                    unloaded=False,
+                    pending_unload=False,
+                    abort_requested=bool(force),
+                    identity_mismatch=True,
                 )
 
             active_lease_count = self._active_model_lease_counts.get(handle, 0)
@@ -771,6 +850,174 @@ class WorkerRegistry:
         with self._lock:
             return self._loaded_models.get(handle)
 
+    def validate_backend_identity(
+        self,
+        handle: str,
+        requested: common_pb2.BackendModelIdentity | None,
+    ) -> common_pb2.ErrorStatus | None:
+        with self._lock:
+            return self._validate_backend_identity_locked(handle, requested)
+
+    def bind_decode_session(
+        self,
+        *,
+        request_id: str,
+        decode_handle: str,
+        loaded_model: LoadedModel,
+    ) -> None:
+        backend_identity = common_pb2.BackendModelIdentity()
+        backend_identity.CopyFrom(loaded_model.backend_identity)
+        with self._lock:
+            if self._request_model_handles.get(request_id) != loaded_model.handle:
+                raise RuntimeError("Prefill request lease no longer owns the loaded model.")
+            self._remove_decode_session_binding_locked(request_id)
+            self._decode_session_bindings[decode_handle] = DecodeSessionBinding(
+                request_id=request_id,
+                model_handle=loaded_model.handle,
+                backend_identity=backend_identity,
+            )
+            self._request_decode_handles[request_id] = decode_handle
+
+    def validate_decode_backend_identity(
+        self,
+        *,
+        request_id: str,
+        decode_handle: str,
+        model_handle: str,
+        requested: common_pb2.BackendModelIdentity | None,
+    ) -> common_pb2.ErrorStatus | None:
+        with self._lock:
+            binding = self._decode_session_bindings.get(decode_handle)
+            if binding is None:
+                return self._validate_backend_identity_locked(model_handle, requested)
+            forced_mismatch_reason: str | None = None
+            if binding.request_id != request_id:
+                forced_mismatch_reason = "decode_request_id_mismatch"
+            elif binding.model_handle != model_handle:
+                forced_mismatch_reason = "decode_model_handle_mismatch"
+            return self._validate_backend_identity_locked(
+                binding.model_handle,
+                requested,
+                forced_mismatch_reason=forced_mismatch_reason,
+                requested_model_handle=model_handle,
+                bound_identity=binding.backend_identity,
+            )
+
+    def _validate_backend_identity_locked(
+        self,
+        handle: str,
+        requested: common_pb2.BackendModelIdentity | None,
+        *,
+        forced_mismatch_reason: str | None = None,
+        requested_model_handle: str | None = None,
+        bound_identity: common_pb2.BackendModelIdentity | None = None,
+    ) -> common_pb2.ErrorStatus | None:
+        loaded = self._loaded_models.get(handle)
+        request_missing = requested is None or not (
+            requested.requested_model_id.strip()
+            and requested.route_generation > 0
+            and requested.worker_instance_id.strip()
+        )
+        bound = (
+            bound_identity
+            if bound_identity is not None
+            else loaded.backend_identity
+            if loaded is not None
+            else common_pb2.BackendModelIdentity()
+        )
+        if request_missing:
+            observed = common_pb2.BackendModelIdentity()
+            code = "model_identity_missing"
+        else:
+            observed = requested
+            code = "model_identity_mismatch"
+            if loaded is not None and observed == bound and forced_mismatch_reason is None:
+                return None
+        mismatch_reason = forced_mismatch_reason or (
+            "model_handle_missing"
+            if loaded is None
+            else self._backend_identity_mismatch_reason(
+                observed,
+                bound,
+                request_missing=request_missing,
+            )
+        )
+        receipt = self._record_model_identity_mismatch_locked(
+            observed,
+            bound,
+            mismatch_reason=mismatch_reason,
+        )
+        details = {
+            "requested_route_generation": str(observed.route_generation),
+            "loaded_route_generation": str(bound.route_generation),
+        }
+        if requested_model_handle is not None:
+            details["requested_model_handle"] = requested_model_handle
+            details["loaded_model_handle"] = handle
+
+        return common_pb2.ErrorStatus(
+            code=code,
+            message="Backend model identity did not match the loaded residency.",
+            retriable=code == "model_identity_mismatch",
+            details=details,
+            backend_identity_mismatch=receipt,
+        )
+
+    def _resolved_backend_identity(
+        self,
+        model: common_pb2.ModelSpec,
+        requested: common_pb2.BackendModelIdentity | None,
+    ) -> common_pb2.BackendModelIdentity:
+        return common_pb2.BackendModelIdentity(
+            requested_model_id=model.model_id,
+            requested_adapter_id=model.ext.get("melix.adapter_set_hash", ""),
+            route_generation=requested.route_generation if requested is not None else 0,
+            worker_instance_id=self.worker_instance_id,
+        )
+
+    def _record_model_identity_mismatch_locked(
+        self,
+        requested: common_pb2.BackendModelIdentity,
+        loaded: common_pb2.BackendModelIdentity,
+        *,
+        mismatch_reason: str,
+    ) -> common_pb2.BackendIdentityMismatchReceipt:
+        self._model_identity_mismatch_count += 1
+        receipt = common_pb2.BackendIdentityMismatchReceipt(
+            requested_model_id=_diagnostic_identity(requested.requested_model_id),
+            loaded_model_id=_diagnostic_identity(loaded.requested_model_id),
+            requested_adapter_id=_diagnostic_identity(requested.requested_adapter_id),
+            loaded_adapter_id=_diagnostic_identity(loaded.requested_adapter_id),
+            requested_route_generation=requested.route_generation,
+            loaded_route_generation=loaded.route_generation,
+            observed_at_unix_ms=int(time.time() * 1000),
+            mismatch_reason=mismatch_reason,
+            requested_worker_instance_id=_diagnostic_identity(requested.worker_instance_id),
+            loaded_worker_instance_id=_diagnostic_identity(loaded.worker_instance_id),
+        )
+        self._last_model_identity_mismatch = receipt
+        return receipt
+
+    @staticmethod
+    def _backend_identity_mismatch_reason(
+        requested: common_pb2.BackendModelIdentity,
+        loaded: common_pb2.BackendModelIdentity,
+        *,
+        request_missing: bool,
+    ) -> str:
+        if request_missing:
+            return "identity_missing"
+        mismatches = []
+        if requested.requested_model_id != loaded.requested_model_id:
+            mismatches.append("model_id")
+        if requested.requested_adapter_id != loaded.requested_adapter_id:
+            mismatches.append("adapter_id")
+        if requested.route_generation != loaded.route_generation:
+            mismatches.append("route_generation")
+        if requested.worker_instance_id != loaded.worker_instance_id:
+            mismatches.append("worker_instance_id")
+        return ",".join(mismatches) or "identity_mismatch"
+
     def list_loaded_models(self) -> list[str]:
         with self._lock:
             return list(self._sorted_loaded_model_handles_locked())
@@ -817,6 +1064,7 @@ class WorkerRegistry:
             existing = self._requests.get(request_id)
             if existing is not None:
                 self._remove_request_from_counters(existing)
+                self._remove_decode_session_binding_locked(request_id)
                 old_handle = self._request_model_handles.pop(request_id, None)
                 self._request_lease_tokens.pop(request_id, None)
                 if old_handle is not None:
@@ -874,6 +1122,7 @@ class WorkerRegistry:
             existing = self._requests.get(request_id)
             if existing is not None:
                 self._remove_request_from_counters(existing)
+                self._remove_decode_session_binding_locked(request_id)
                 old_handle = self._request_model_handles.pop(request_id, None)
                 self._request_lease_tokens.pop(request_id, None)
                 if old_handle is not None:
@@ -900,6 +1149,7 @@ class WorkerRegistry:
             state = self._requests.pop(request_id, None)
             if state is not None:
                 self._remove_request_from_counters(state)
+            self._remove_decode_session_binding_locked(request_id)
             self._request_model_handles.pop(request_id, None)
             self._request_lease_tokens.pop(request_id, None)
             self._decrement_model_lease_count_locked(handle)
@@ -961,12 +1211,21 @@ class WorkerRegistry:
             state = self._requests.pop(request_id, None)
             if state is not None:
                 self._remove_request_from_counters(state)
+            self._remove_decode_session_binding_locked(request_id)
             handle = self._request_model_handles.pop(request_id, None)
             self._request_lease_tokens.pop(request_id, None)
             if handle is not None:
                 self._decrement_model_lease_count_locked(handle)
                 loaded_to_close = self._complete_pending_unload_if_unleased_locked(handle)
         self._close_loaded_model(loaded_to_close)
+
+    def _remove_decode_session_binding_locked(self, request_id: str) -> None:
+        decode_handle = self._request_decode_handles.pop(request_id, None)
+        if decode_handle is None:
+            return
+        binding = self._decode_session_bindings.get(decode_handle)
+        if binding is not None and binding.request_id == request_id:
+            self._decode_session_bindings.pop(decode_handle, None)
 
     def abort_request(self, request_id: str) -> bool:
         with self._lock:
@@ -1010,6 +1269,12 @@ class WorkerRegistry:
                 peak_allocation_bytes = 0
                 memory_headroom_bytes = self._memory_headroom_bytes
                 resident_bytes = model_resident_bytes + cache_resident_bytes + kv_cache_bytes
+                model_identity_mismatch_count = self._model_identity_mismatch_count
+                last_model_identity_mismatch = (
+                    self._last_model_identity_mismatch
+                    if model_identity_mismatch_count
+                    else None
+                )
                 has_probe_receipts = self._has_runtime_probe_receipts
                 if has_probe_receipts:
                     last_probe_kind = self._last_probe_kind
@@ -1137,6 +1402,9 @@ class WorkerRegistry:
         stats.kv_cache_bytes = kv_cache_bytes
         stats.peak_allocation_bytes = peak_allocation_bytes
         stats.memory_headroom_bytes = memory_headroom_bytes
+        if last_model_identity_mismatch is not None:
+            stats.model_identity_mismatch_count = model_identity_mismatch_count
+            stats.last_model_identity_mismatch.CopyFrom(last_model_identity_mismatch)
         return stats
 
     @staticmethod
@@ -1760,6 +2028,7 @@ class WorkerRegistry:
             summary.prompt_tps = loaded.prompt_tps
         if loaded.generation_tps != 0.0:
             summary.generation_tps = loaded.generation_tps
+        summary.backend_identity.CopyFrom(loaded.backend_identity)
         return summary
 
     @staticmethod

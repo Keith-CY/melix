@@ -6,10 +6,21 @@ from urllib.error import URLError
 
 import pytest
 
-from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, inference_pb2, maintenance_pb2, runtime_pb2
+from packages.protocol.python.worker.v1 import (
+    cache_pb2,
+    common_pb2,
+    inference_pb2,
+    maintenance_pb2,
+    runtime_pb2,
+)
 
 from worker.engine.maintenance_core import MaintenanceCore
-from worker.grpc_server import WorkerCacheService, WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
+from worker.grpc_server import WorkerCacheService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime import deterministic_ocr_runtime as deterministic_ocr_runtime_module
@@ -56,11 +67,15 @@ def build_services():
     )
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
-    maintenance_core = MaintenanceCore(registry, jobs_root=Path(".runtime/test-model-ops"))
+    maintenance_core = MaintenanceCore(
+        registry, jobs_root=Path(".runtime/test-model-ops")
+    )
     return runtime_service, inference_service, maintenance_core
 
 
-def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
+def load_model(
+    runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec
+) -> str:
     response = runtime_service.LoadModel(
         runtime_pb2.LoadModelRequest(model=model),
         context=None,
@@ -173,14 +188,14 @@ def test_generate_streams_ocr_text_from_inline_image_bytes() -> None:
                 role="user",
                 parts=[
                     common_pb2.MessagePart(text="Extract the receipt text."),
-                        common_pb2.MessagePart(
-                            image_bytes=b"Receipt Total 42",
-                            media=common_pb2.MediaMetadata(
-                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
-                                mime_type="image/png",
-                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
-                                filename="receipt.png",
-                            ),
+                    common_pb2.MessagePart(
+                        image_bytes=b"Receipt Total 42",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            mime_type="image/png",
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="receipt.png",
+                        ),
                     ),
                 ],
             )
@@ -190,8 +205,14 @@ def test_generate_streams_ocr_text_from_inline_image_bytes() -> None:
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = "".join(
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
     model_info = maintenance_core.get_model_info(
         maintenance_pb2.GetModelInfoRequest(source_model="melix-dev-ocr")
@@ -259,7 +280,9 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
         prompt_hash_hex="p" * 64,
         multimodal_hash_hex="m" * 64,
     )
-    assert runtime.prompt_token_count(fallback_request) == len(prompt_text.split()) + max(
+    assert runtime.prompt_token_count(fallback_request) == len(
+        prompt_text.split()
+    ) + max(
         1,
         fallback_request.images[0].byte_length // 8,
     ) + max(1, fallback_request.images[1].byte_length // 8)
@@ -344,9 +367,10 @@ def test_ocr_single_image_token_count_reuses_precomputed_input_bytes() -> None:
         prompt_hash_hex="p" * 64,
         multimodal_hash_hex="m" * 64,
     )
-    assert runtime.prompt_token_count(changed_input_request) == len(
-        changed_input_request.prompt_text.split()
-    ) + 8
+    assert (
+        runtime.prompt_token_count(changed_input_request)
+        == len(changed_input_request.prompt_text.split()) + 8
+    )
 
 
 def test_ocr_single_image_token_count_reuses_same_request_cache(
@@ -393,10 +417,14 @@ def test_ocr_single_image_token_count_reuses_same_request_cache(
 
     class ExplodingMediaList(list):
         def __bool__(self) -> bool:  # pragma: no cover - exercised only on regression
-            raise AssertionError("identity cache hits should not re-read request videos")
+            raise AssertionError(
+                "identity cache hits should not re-read request videos"
+            )
 
         def __len__(self) -> int:  # pragma: no cover - exercised only on regression
-            raise AssertionError("identity cache hits should not re-read request images")
+            raise AssertionError(
+                "identity cache hits should not re-read request images"
+            )
 
     object.__setattr__(request, "images", ExplodingMediaList(request.images))
     object.__setattr__(request, "videos", ExplodingMediaList(request.videos))
@@ -423,8 +451,12 @@ def test_ocr_single_image_token_count_reuses_same_request_cache(
         prompt_hash_hex="q" * 64,
         multimodal_hash_hex="n" * 64,
     )
-    assert runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
-    assert runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
+    assert (
+        runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
+    )
+    assert (
+        runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
+    )
     assert token_count_calls == 1
 
 
@@ -432,7 +464,9 @@ def test_vlm_cache_identity_fingerprint_uses_tail_scan_without_split_list() -> N
     class SplitTrackingIdentity(str):
         rsplit_calls = 0
 
-        def rsplit(self, sep: str | None = None, maxsplit: SupportsIndex = -1) -> list[str]:
+        def rsplit(
+            self, sep: str | None = None, maxsplit: SupportsIndex = -1
+        ) -> list[str]:
             type(self).rsplit_calls += 1
             return super().rsplit(sep, maxsplit)
 
@@ -469,7 +503,9 @@ def test_vlm_cache_identity_fingerprint_uses_tail_scan_without_split_list() -> N
     assert SplitTrackingIdentity.rsplit_calls == 1
 
 
-def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vlm_completion_token_count_scans_without_split_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class SplitTrackingText(str):
         split_calls = 0
 
@@ -550,7 +586,9 @@ def test_vlm_generate_reuses_prompt_token_count_for_probe_and_event(
     original_prompt_token_count = runtime.prompt_token_count
     call_count = 0
 
-    def counted_prompt_token_count(prepared_request, loaded_model=None, family_config=None):
+    def counted_prompt_token_count(
+        prepared_request, loaded_model=None, family_config=None
+    ):
         nonlocal call_count
         call_count += 1
         return original_prompt_token_count(
@@ -569,7 +607,9 @@ def test_vlm_generate_reuses_prompt_token_count_for_probe_and_event(
             cancel_event=Event(),
         )
     )
-    token_event = next(event for event in token_events if isinstance(event, RuntimeTokenEvent))
+    token_event = next(
+        event for event in token_events if isinstance(event, RuntimeTokenEvent)
+    )
 
     assert token_event.prompt_tokens == 3
     assert call_count == 1
@@ -618,7 +658,9 @@ def test_vlm_completion_token_count_reuses_last_response_scan(
                 cancel_event=Event(),
             )
         )
-        token_event = next(event for event in token_events if isinstance(event, RuntimeTokenEvent))
+        token_event = next(
+            event for event in token_events if isinstance(event, RuntimeTokenEvent)
+        )
         assert token_event.completion_tokens == 4
 
     monkeypatch.setattr(
@@ -635,7 +677,9 @@ def test_vlm_completion_token_count_reuses_last_response_scan(
         )
     )
 
-    token_event = next(event for event in token_events if isinstance(event, RuntimeTokenEvent))
+    token_event = next(
+        event for event in token_events if isinstance(event, RuntimeTokenEvent)
+    )
     assert token_event.completion_tokens == 5
     assert call_count == 2
 
@@ -721,14 +765,14 @@ def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> No
                 role="user",
                 parts=[
                     common_pb2.MessagePart(text="Describe the image."),
-                        common_pb2.MessagePart(
-                            image_uri=image_path.as_uri(),
-                            media=common_pb2.MediaMetadata(
-                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
-                                mime_type="image/png",
-                                source_kind=common_pb2.MEDIA_SOURCE_URI,
-                                filename=image_path.name,
-                            ),
+                    common_pb2.MessagePart(
+                        image_uri=image_path.as_uri(),
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            mime_type="image/png",
+                            source_kind=common_pb2.MEDIA_SOURCE_URI,
+                            filename=image_path.name,
+                        ),
                     ),
                 ],
             )
@@ -738,15 +782,24 @@ def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> No
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = "".join(
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
     model_info = maintenance_core.get_model_info(
         maintenance_pb2.GetModelInfoRequest(source_model="melix-dev-vlm")
     )
 
     assert token_text == "Image content: cat on mat\nPrompt: Describe the image."
-    assert completed.assistant_text == "Image content: cat on mat\nPrompt: Describe the image."
+    assert (
+        completed.assistant_text
+        == "Image content: cat on mat\nPrompt: Describe the image."
+    )
     assert model_info.ok is True
     assert model_info.supported_tasks == ["vlm", "generate"]
     assert model_info.supported_parsers == ["text", "qwen"]
@@ -783,15 +836,23 @@ def test_generate_streams_vlm_response_from_image_only_prompt(tmp_path: Path) ->
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = "".join(
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == "Image content: standalone image\nPrompt: Describe the image."
     assert completed.assistant_text == token_text
 
 
-def test_prepare_vision_request_accepts_video_only_inputs_and_exposes_frame_policy() -> None:
+def test_prepare_vision_request_accepts_video_only_inputs_and_exposes_frame_policy() -> (
+    None
+):
     request = prepare_vision_request(
         [
             common_pb2.ChatMessage(
@@ -868,7 +929,9 @@ def test_prepare_vision_request_uses_duration_when_video_end_is_missing() -> Non
     assert request.effective_video_window_ms == 12_000
 
 
-def test_prepare_vision_request_defaults_video_frame_budget_when_window_is_unknown() -> None:
+def test_prepare_vision_request_defaults_video_frame_budget_when_window_is_unknown() -> (
+    None
+):
     request = prepare_vision_request(
         [
             common_pb2.ChatMessage(
@@ -898,7 +961,9 @@ def test_prepare_vision_request_defaults_video_frame_budget_when_window_is_unkno
 
 
 def test_prepare_vision_request_rejects_requests_without_image_or_video() -> None:
-    with pytest.raises(MultimodalPreprocessError, match="No image or video input provided."):
+    with pytest.raises(
+        MultimodalPreprocessError, match="No image or video input provided."
+    ):
         prepare_vision_request(
             [
                 common_pb2.ChatMessage(
@@ -944,10 +1009,18 @@ def test_generate_streams_vlm_response_from_video_only_prompt() -> None:
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = "".join(
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
-    stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
 
     assert token_text == (
         "Video content: clip.mp4\n"
@@ -1100,7 +1173,9 @@ def test_vlm_render_prompt_reuses_prepared_prompt_metadata() -> None:
     assert loaded_model["_vision_family_config"].family_id == "paligemma-v1"
 
 
-def test_vlm_prefill_reuses_prompt_metadata_without_recomputing_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vlm_prefill_reuses_prompt_metadata_without_recomputing_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = DeterministicVLMRuntime()
     loaded_model = runtime.load_model(paligemma_vlm_model())
     messages = [
@@ -1135,9 +1210,13 @@ def test_vlm_prefill_reuses_prompt_metadata_without_recomputing_helpers(monkeypa
 
     def counted_cache_identity(prepared_request, model, execution_ext=None):
         call_counts["cache_identity"] += 1
-        return original_cache_identity(prepared_request, model, execution_ext=execution_ext)
+        return original_cache_identity(
+            prepared_request, model, execution_ext=execution_ext
+        )
 
-    def counted_prompt_token_count(prepared_request, loaded_model=None, family_config=None):
+    def counted_prompt_token_count(
+        prepared_request, loaded_model=None, family_config=None
+    ):
         call_counts["prompt_token_count"] += 1
         return original_prompt_token_count(
             prepared_request,
@@ -1150,7 +1229,9 @@ def test_vlm_prefill_reuses_prompt_metadata_without_recomputing_helpers(monkeypa
     monkeypatch.setattr(runtime, "prompt_token_count", counted_prompt_token_count)
 
     session = runtime.prefill("prefill-reuse", loaded_model, messages)
-    events = list(runtime.decode_tokens(loaded_model, session.decode_handle, None, Event()))
+    events = list(
+        runtime.decode_tokens(loaded_model, session.decode_handle, None, Event())
+    )
 
     assert session.cache_hit is False
     assert session.prompt_tokens > 0
@@ -1161,7 +1242,10 @@ def test_vlm_prefill_reuses_prompt_metadata_without_recomputing_helpers(monkeypa
         "prompt_token_count": 1,
     }
     assert len(events) == 1
-    assert events[0].text == "Image content: phase aware image\nPrompt: Summarize the image."
+    assert (
+        events[0].text
+        == "Image content: phase aware image\nPrompt: Summarize the image."
+    )
 
 
 def test_resolve_vision_family_config_handles_invalid_family_overrides() -> None:
@@ -1180,10 +1264,14 @@ def test_resolve_vision_family_config_handles_invalid_family_overrides() -> None
     assert family_config.supports_tool_calls is False
 
 
-def test_vision_family_prompt_token_count_matches_split_without_materializing_tokens() -> None:
+def test_vision_family_prompt_token_count_matches_split_without_materializing_tokens() -> (
+    None
+):
     class NoSplitPrompt(str):
         def split(self, *args: object, **kwargs: object) -> list[str]:
-            raise AssertionError("prompt token counting should not materialize split tokens")
+            raise AssertionError(
+                "prompt token counting should not materialize split tokens"
+            )
 
     prompt_text = NoSplitPrompt("  alpha beta\tgamma\n\nΔelta  ")
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
@@ -1325,12 +1413,18 @@ def test_vision_family_prompt_token_count_reuses_same_media_request_cache(
             raise AssertionError("identity cache hits should not re-read request media")
 
     object.__setattr__(request, "images", ExplodingMediaList(request.images))
-    object.__setattr__(request, "video_frame_policies", ExplodingMediaList(request.video_frame_policies))
+    object.__setattr__(
+        request,
+        "video_frame_policies",
+        ExplodingMediaList(request.video_frame_policies),
+    )
     assert family_config.prompt_token_count(request) == expected
     assert token_count_calls == 1
 
 
-def test_resolve_vision_family_config_rejects_multi_video_requests_for_single_video_families() -> None:
+def test_resolve_vision_family_config_rejects_multi_video_requests_for_single_video_families() -> (
+    None
+):
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
     request = prepare_vision_request(
         [
@@ -1362,7 +1456,9 @@ def test_resolve_vision_family_config_rejects_multi_video_requests_for_single_vi
         family_config.shape_request(request)
 
 
-def test_generate_streams_vlm_response_uses_family_specific_image_only_prompt_default() -> None:
+def test_generate_streams_vlm_response_uses_family_specific_image_only_prompt_default() -> (
+    None
+):
     runtime_service, inference_service, _ = build_services()
     model_handle = load_model(runtime_service, paligemma_vlm_model())
 
@@ -1391,8 +1487,14 @@ def test_generate_streams_vlm_response_uses_family_specific_image_only_prompt_de
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = "".join(
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == "Image content: paligemma image\nPrompt: Caption the image."
@@ -1433,7 +1535,11 @@ def test_generate_streams_vlm_family_disables_tool_call_delta() -> None:
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     assert not any(event.HasField("tool_call_delta") for event in events)
 
@@ -1443,37 +1549,40 @@ def test_prefill_rejects_multi_image_for_single_image_family() -> None:
     model_handle = load_model(runtime_service, paligemma_vlm_model())
 
     response = inference_service.Prefill(
-        inference_pb2.PrefillRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id="paligemma-multi-image"),
-                model_handle=model_handle,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.PrefillRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="paligemma-multi-image"),
+                    model_handle=model_handle,
+                ),
+                messages=[
+                    common_pb2.ChatMessage(
+                        role="user",
+                        parts=[
+                            common_pb2.MessagePart(text="Compare both images."),
+                            common_pb2.MessagePart(
+                                image_bytes=b"first image",
+                                media=common_pb2.MediaMetadata(
+                                    media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                    source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                    filename="first.png",
+                                ),
+                            ),
+                            common_pb2.MessagePart(
+                                image_bytes=b"second image",
+                                media=common_pb2.MediaMetadata(
+                                    media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                                    source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                                    filename="second.png",
+                                ),
+                            ),
+                        ],
+                    )
+                ],
+                return_decode_handle=True,
+                prefill_step_size=16,
             ),
-            messages=[
-                common_pb2.ChatMessage(
-                    role="user",
-                    parts=[
-                        common_pb2.MessagePart(text="Compare both images."),
-                        common_pb2.MessagePart(
-                            image_bytes=b"first image",
-                            media=common_pb2.MediaMetadata(
-                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
-                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
-                                filename="first.png",
-                            ),
-                        ),
-                        common_pb2.MessagePart(
-                            image_bytes=b"second image",
-                            media=common_pb2.MediaMetadata(
-                                media_type=common_pb2.MEDIA_TYPE_IMAGE,
-                                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
-                                filename="second.png",
-                            ),
-                        ),
-                    ],
-                )
-            ],
-            return_decode_handle=True,
-            prefill_step_size=16,
         ),
         context=None,
     )
@@ -1525,8 +1634,14 @@ def test_generate_streams_vlm_response_from_multi_image_prompt(tmp_path: Path) -
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = "".join(
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == (
@@ -1572,15 +1687,29 @@ def test_generate_streams_vlm_tool_call_delta_when_tool_parser_is_enabled() -> N
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    tool_call = next(event.tool_call_delta for event in events if event.HasField("tool_call_delta"))
-    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    tool_call = next(
+        event.tool_call_delta for event in events if event.HasField("tool_call_delta")
+    )
+    token_text = "".join(
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert tool_call.tool_name == "tools.vision"
     assert tool_call.call_id.startswith("tool:")
-    assert tool_call.arguments_json_fragment == '{"prompt":"Call the tool for this image.","image_count":1}'
-    assert token_text == "Image content: vision tool image\nPrompt: Call the tool for this image."
+    assert (
+        tool_call.arguments_json_fragment
+        == '{"prompt":"Call the tool for this image.","image_count":1}'
+    )
+    assert (
+        token_text
+        == "Image content: vision tool image\nPrompt: Call the tool for this image."
+    )
     assert completed.assistant_text == token_text
 
 
@@ -1613,14 +1742,17 @@ def test_vlm_prefill_and_decode_expose_explicit_runtime_lifecycle() -> None:
     ]
 
     prefill_response = inference_service.Prefill(
-        inference_pb2.PrefillRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id=request_id),
-                model_handle=model_handle,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.PrefillRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id=request_id),
+                    model_handle=model_handle,
+                ),
+                messages=messages,
+                return_decode_handle=True,
+                prefill_step_size=16,
             ),
-            messages=messages,
-            return_decode_handle=True,
-            prefill_step_size=16,
         ),
         context=None,
     )
@@ -1632,22 +1764,30 @@ def test_vlm_prefill_and_decode_expose_explicit_runtime_lifecycle() -> None:
     assert prefill_response.prompt_tokens > 0
     assert prefill_response.lifecycle_phase == common_pb2.EXECUTION_PREFILLING
     assert prefill_response.admission_state == common_pb2.ADMISSION_ADMITTED
-    assert prefill_response.applied_acceleration.mode == common_pb2.ACCELERATION_MODE_BASELINE
+    assert (
+        prefill_response.applied_acceleration.mode
+        == common_pb2.ACCELERATION_MODE_BASELINE
+    )
 
-    prefill_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    prefill_stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
     assert prefill_stats.active_prefills == 1
     assert prefill_stats.active_decodes == 0
 
     decode_events = inference_service.Decode(
-        inference_pb2.DecodeRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id=request_id),
-                model_handle=model_handle,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.DecodeRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id=request_id),
+                    model_handle=model_handle,
+                ),
+                decode_handle=prefill_response.decode_handle,
+                sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+                max_output_tokens=64,
+                return_usage=True,
             ),
-            decode_handle=prefill_response.decode_handle,
-            sampling=common_pb2.SamplingConfig(max_output_tokens=64),
-            max_output_tokens=64,
-            return_usage=True,
         ),
         context=None,
     )
@@ -1658,28 +1798,44 @@ def test_vlm_prefill_and_decode_expose_explicit_runtime_lifecycle() -> None:
     assert first_event.decode_started.resumed_from_prefill is True
     assert first_event.phase == common_pb2.EXECUTION_DECODING
 
-    decode_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    decode_stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
     assert decode_stats.active_prefills == 0
     assert decode_stats.active_decodes == 1
 
     remaining_events = list(decode_events)
-    token_text = "".join(event.token_delta.text for event in remaining_events if event.HasField("token_delta"))
-    usage = next(event.usage_delta for event in remaining_events if event.HasField("usage_delta"))
-    completed = next(event.completed for event in remaining_events if event.HasField("completed"))
+    token_text = "".join(
+        event.token_delta.text
+        for event in remaining_events
+        if event.HasField("token_delta")
+    )
+    usage = next(
+        event.usage_delta for event in remaining_events if event.HasField("usage_delta")
+    )
+    completed = next(
+        event.completed for event in remaining_events if event.HasField("completed")
+    )
 
-    assert token_text == "Image content: phase aware image\nPrompt: Summarize the image."
+    assert (
+        token_text == "Image content: phase aware image\nPrompt: Summarize the image."
+    )
     assert usage.prompt_tokens == prefill_response.prompt_tokens
     assert usage.completion_tokens > 0
     assert completed.finish_reason == "stop"
     assert completed.assistant_text == token_text
 
-    final_stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    final_stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
     assert final_stats.active_prefills == 0
     assert final_stats.active_decodes == 0
     assert final_stats.last_probe_kind == "vlm"
 
 
-def test_vlm_phase_aware_decode_streams_tool_call_delta_when_tool_parser_is_enabled() -> None:
+def test_vlm_phase_aware_decode_streams_tool_call_delta_when_tool_parser_is_enabled() -> (
+    None
+):
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=PassiveTextBackend()),
         model_catalog=WorkerModelCatalog(),
@@ -1708,18 +1864,21 @@ def test_vlm_phase_aware_decode_streams_tool_call_delta_when_tool_parser_is_enab
     ]
 
     prefill_response = inference_service.Prefill(
-        inference_pb2.PrefillRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id=request_id),
-                model_handle=model_handle,
-                ext={
-                    "melix.tool_parser.mode": "qwen",
-                    "melix.tool_parser.namespaces": "tools.vision",
-                },
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.PrefillRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id=request_id),
+                    model_handle=model_handle,
+                    ext={
+                        "melix.tool_parser.mode": "qwen",
+                        "melix.tool_parser.namespaces": "tools.vision",
+                    },
+                ),
+                messages=messages,
+                return_decode_handle=True,
+                prefill_step_size=16,
             ),
-            messages=messages,
-            return_decode_handle=True,
-            prefill_step_size=16,
         ),
         context=None,
     )
@@ -1728,25 +1887,41 @@ def test_vlm_phase_aware_decode_streams_tool_call_delta_when_tool_parser_is_enab
 
     decode_events = list(
         inference_service.Decode(
-            inference_pb2.DecodeRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id=request_id),
-                    model_handle=model_handle,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.DecodeRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id=request_id),
+                        model_handle=model_handle,
+                    ),
+                    decode_handle=prefill_response.decode_handle,
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=64),
+                    max_output_tokens=64,
                 ),
-                decode_handle=prefill_response.decode_handle,
-                sampling=common_pb2.SamplingConfig(max_output_tokens=64),
-                max_output_tokens=64,
             ),
             context=None,
         )
     )
 
-    tool_call = next(event.tool_call_delta for event in decode_events if event.HasField("tool_call_delta"))
-    token_text = "".join(event.token_delta.text for event in decode_events if event.HasField("token_delta"))
-    completed = next(event.completed for event in decode_events if event.HasField("completed"))
+    tool_call = next(
+        event.tool_call_delta
+        for event in decode_events
+        if event.HasField("tool_call_delta")
+    )
+    token_text = "".join(
+        event.token_delta.text
+        for event in decode_events
+        if event.HasField("token_delta")
+    )
+    completed = next(
+        event.completed for event in decode_events if event.HasField("completed")
+    )
 
     assert tool_call.tool_name == "tools.vision"
-    assert token_text == "Image content: phase aware tool image\nPrompt: Call the tool for this image."
+    assert (
+        token_text
+        == "Image content: phase aware tool image\nPrompt: Call the tool for this image."
+    )
     assert completed.assistant_text == token_text
 
 
@@ -1814,15 +1989,23 @@ def test_generate_streams_ocr_text_from_image_only_prompt() -> None:
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = "".join(event.token_delta.text for event in events if event.HasField("token_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = "".join(
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == "image only ocr"
     assert completed.assistant_text == "image only ocr"
 
 
-def test_generate_streams_ocr_text_with_default_stop_sequence_and_request_override() -> None:
+def test_generate_streams_ocr_text_with_default_stop_sequence_and_request_override() -> (
+    None
+):
     runtime_service, inference_service, _ = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_ocr_model())
     messages = [
@@ -1845,37 +2028,57 @@ def test_generate_streams_ocr_text_with_default_stop_sequence_and_request_overri
 
     default_events = list(
         inference_service.Generate(
-            inference_pb2.GenerateRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="ocr-default-stop"),
-                    model_handle=model_handle,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id="ocr-default-stop"),
+                        model_handle=model_handle,
+                    ),
+                    messages=messages,
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=32),
+                    stream=True,
                 ),
-                messages=messages,
-                sampling=common_pb2.SamplingConfig(max_output_tokens=32),
-                stream=True,
             ),
             context=None,
         )
     )
     override_events = list(
         inference_service.Generate(
-            inference_pb2.GenerateRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="ocr-request-stop"),
-                    model_handle=model_handle,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id="ocr-request-stop"),
+                        model_handle=model_handle,
+                    ),
+                    messages=messages,
+                    sampling=common_pb2.SamplingConfig(
+                        max_output_tokens=32, stop=["body"]
+                    ),
+                    stream=True,
                 ),
-                messages=messages,
-                sampling=common_pb2.SamplingConfig(max_output_tokens=32, stop=["body"]),
-                stream=True,
             ),
             context=None,
         )
     )
 
-    default_text = "".join(event.token_delta.text for event in default_events if event.HasField("token_delta"))
-    override_text = "".join(event.token_delta.text for event in override_events if event.HasField("token_delta"))
-    default_completed = next(event.completed for event in default_events if event.HasField("completed"))
-    override_completed = next(event.completed for event in override_events if event.HasField("completed"))
+    default_text = "".join(
+        event.token_delta.text
+        for event in default_events
+        if event.HasField("token_delta")
+    )
+    override_text = "".join(
+        event.token_delta.text
+        for event in override_events
+        if event.HasField("token_delta")
+    )
+    default_completed = next(
+        event.completed for event in default_events if event.HasField("completed")
+    )
+    override_completed = next(
+        event.completed for event in override_events if event.HasField("completed")
+    )
 
     assert default_text == "title"
     assert default_completed.assistant_text == "title"
@@ -1883,7 +2086,9 @@ def test_generate_streams_ocr_text_with_default_stop_sequence_and_request_overri
     assert override_completed.assistant_text == "title<ocr:end>"
 
 
-def test_prepare_vision_request_accepts_remote_http_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prepare_vision_request_accepts_remote_http_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeHeaders:
         def get_content_type(self) -> str:
             return "image/png"
@@ -1900,7 +2105,9 @@ def test_prepare_vision_request_accepts_remote_http_inputs(monkeypatch: pytest.M
         def read(self) -> bytes:
             return b"remote diagram text"
 
-    monkeypatch.setattr(multimodal_preprocessing, "urlopen", lambda url, timeout=5.0: FakeResponse())
+    monkeypatch.setattr(
+        multimodal_preprocessing, "urlopen", lambda url, timeout=5.0: FakeResponse()
+    )
 
     request = prepare_vision_request(
         [
@@ -1932,17 +2139,23 @@ def test_prepare_vision_request_accepts_remote_http_inputs(monkeypatch: pytest.M
 
 
 def test_prepare_vision_request_rejects_http_and_private_remote_image_inputs() -> None:
-    with pytest.raises(MultimodalPreprocessError, match="Unsupported image URI scheme: http"):
+    with pytest.raises(
+        MultimodalPreprocessError, match="Unsupported image URI scheme: http"
+    ):
         prepare_vision_request(
             [
                 common_pb2.ChatMessage(
                     role="user",
-                    parts=[common_pb2.MessagePart(image_uri="http://example.com/cat.png")],
+                    parts=[
+                        common_pb2.MessagePart(image_uri="http://example.com/cat.png")
+                    ],
                 )
             ]
         )
 
-    with pytest.raises(MultimodalPreprocessError, match="Remote image URI requires a host."):
+    with pytest.raises(
+        MultimodalPreprocessError, match="Remote image URI requires a host."
+    ):
         prepare_vision_request(
             [
                 common_pb2.ChatMessage(
@@ -1960,7 +2173,9 @@ def test_prepare_vision_request_rejects_http_and_private_remote_image_inputs() -
             [
                 common_pb2.ChatMessage(
                     role="user",
-                    parts=[common_pb2.MessagePart(image_uri="https://localhost/cat.png")],
+                    parts=[
+                        common_pb2.MessagePart(image_uri="https://localhost/cat.png")
+                    ],
                 )
             ]
         )
@@ -1973,7 +2188,9 @@ def test_prepare_vision_request_rejects_http_and_private_remote_image_inputs() -
             [
                 common_pb2.ChatMessage(
                     role="user",
-                    parts=[common_pb2.MessagePart(image_uri="https://127.0.0.1/cat.png")],
+                    parts=[
+                        common_pb2.MessagePart(image_uri="https://127.0.0.1/cat.png")
+                    ],
                 )
             ]
         )
@@ -2018,7 +2235,10 @@ def test_prepare_vision_request_parses_each_image_uri_once(
         ]
     )
 
-    assert [prepared.filename for prepared in request.images] == [image.name, image.name]
+    assert [prepared.filename for prepared in request.images] == [
+        image.name,
+        image.name,
+    ]
     assert parse_calls == []
 
     policy_request = prepare_vision_request(
@@ -2081,7 +2301,9 @@ def test_prepare_vision_request_parses_each_image_uri_once(
     assert runtime.cache_stats_response().stats.block_count == 0
 
 
-def test_prepare_vision_request_parses_remote_image_uri_once(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prepare_vision_request_parses_remote_image_uri_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeHeaders:
         def get_content_type(self) -> str:
             return "image/jpeg"
@@ -2106,13 +2328,19 @@ def test_prepare_vision_request_parses_remote_image_uri_once(monkeypatch: pytest
         return original_urlparse(uri)
 
     monkeypatch.setattr(multimodal_preprocessing, "urlparse", counting_urlparse)
-    monkeypatch.setattr(multimodal_preprocessing, "urlopen", lambda url, timeout=5.0: FakeResponse())
+    monkeypatch.setattr(
+        multimodal_preprocessing, "urlopen", lambda url, timeout=5.0: FakeResponse()
+    )
 
     request = prepare_vision_request(
         [
             common_pb2.ChatMessage(
                 role="user",
-                parts=[common_pb2.MessagePart(image_uri="https://example.com/fixtures/photo.jpg")],
+                parts=[
+                    common_pb2.MessagePart(
+                        image_uri="https://example.com/fixtures/photo.jpg"
+                    )
+                ],
             )
         ]
     )
@@ -2122,7 +2350,9 @@ def test_prepare_vision_request_parses_remote_image_uri_once(monkeypatch: pytest
     assert parse_calls == ["https://example.com/fixtures/photo.jpg"]
 
 
-def test_prepare_vision_request_hash_changes_when_prompt_or_image_changes(tmp_path: Path) -> None:
+def test_prepare_vision_request_hash_changes_when_prompt_or_image_changes(
+    tmp_path: Path,
+) -> None:
     image_a = tmp_path / "image-a.txt"
     image_b = tmp_path / "image-b.txt"
     image_a.write_text("diagram text")
@@ -2160,7 +2390,9 @@ def test_prepare_vision_request_hash_changes_when_prompt_or_image_changes(tmp_pa
     assert request_a.multimodal_hash_hex != request_d.multimodal_hash_hex
 
 
-def test_prepare_vision_request_preserves_multi_image_order_in_payload_and_hash(tmp_path: Path) -> None:
+def test_prepare_vision_request_preserves_multi_image_order_in_payload_and_hash(
+    tmp_path: Path,
+) -> None:
     image_a = tmp_path / "image-a.txt"
     image_b = tmp_path / "image-b.txt"
     image_a.write_text("first image")
@@ -2192,8 +2424,14 @@ def test_prepare_vision_request_preserves_multi_image_order_in_payload_and_hash(
     request_a = build_request([image_a, image_b])
     request_b = build_request([image_b, image_a])
 
-    assert [image.filename for image in request_a.images] == [image_a.name, image_b.name]
-    assert [image.filename for image in request_b.images] == [image_b.name, image_a.name]
+    assert [image.filename for image in request_a.images] == [
+        image_a.name,
+        image_b.name,
+    ]
+    assert [image.filename for image in request_b.images] == [
+        image_b.name,
+        image_a.name,
+    ]
     assert request_a.multimodal_hash_hex != request_b.multimodal_hash_hex
 
 
@@ -2240,13 +2478,21 @@ def test_prepare_vision_request_reuses_duplicate_local_image_uri_payload(
     )
 
     assert read_calls == [image_path]
-    assert [image.bytes_data for image in request.images] == [b"shared image payload", b"shared image payload"]
-    assert [image.filename for image in request.images] == ["first-name.txt", "second-name.txt"]
+    assert [image.bytes_data for image in request.images] == [
+        b"shared image payload",
+        b"shared image payload",
+    ]
+    assert [image.filename for image in request.images] == [
+        "first-name.txt",
+        "second-name.txt",
+    ]
     assert request.images[0].sha256_hex == request.images[1].sha256_hex
     assert request.preprocess_input_bytes == len(b"shared image payload") * 2
 
 
-def test_prepare_vision_request_does_not_cache_remote_image_fetches(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prepare_vision_request_does_not_cache_remote_image_fetches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeHeaders:
         def get_content_type(self) -> str:
             return "image/png"
@@ -2278,14 +2524,21 @@ def test_prepare_vision_request_does_not_cache_remote_image_fetches(monkeypatch:
             common_pb2.ChatMessage(
                 role="user",
                 parts=[
-                    common_pb2.MessagePart(image_uri="https://example.com/repeated.png"),
-                    common_pb2.MessagePart(image_uri="https://example.com/repeated.png"),
+                    common_pb2.MessagePart(
+                        image_uri="https://example.com/repeated.png"
+                    ),
+                    common_pb2.MessagePart(
+                        image_uri="https://example.com/repeated.png"
+                    ),
                 ],
             )
         ]
     )
 
-    assert [image.bytes_data for image in request.images] == [b"remote payload one", b"remote payload two"]
+    assert [image.bytes_data for image in request.images] == [
+        b"remote payload one",
+        b"remote payload two",
+    ]
     assert payloads == []
 
 
@@ -2314,7 +2567,9 @@ def test_prepare_vision_request_rejects_missing_remote_and_unsupported_inputs(
             [
                 common_pb2.ChatMessage(
                     role="user",
-                    parts=[common_pb2.MessagePart(image_uri="https://example.com/cat.png")],
+                    parts=[
+                        common_pb2.MessagePart(image_uri="https://example.com/cat.png")
+                    ],
                 )
             ]
         )
@@ -2324,7 +2579,9 @@ def test_prepare_vision_request_rejects_missing_remote_and_unsupported_inputs(
             [
                 common_pb2.ChatMessage(
                     role="user",
-                    parts=[common_pb2.MessagePart(image_uri="ftp://example.com/cat.png")],
+                    parts=[
+                        common_pb2.MessagePart(image_uri="ftp://example.com/cat.png")
+                    ],
                 )
             ]
         )
@@ -2336,7 +2593,9 @@ def test_path_from_uri_preserves_direct_helper_behavior(tmp_path: Path) -> None:
 
     assert _path_from_uri(str(image_path)) == image_path
     assert _path_from_uri(image_path.as_uri()) == image_path
-    with pytest.raises(MultimodalPreprocessError, match="Unsupported image URI scheme: ftp"):
+    with pytest.raises(
+        MultimodalPreprocessError, match="Unsupported image URI scheme: ftp"
+    ):
         _path_from_uri("ftp://example.com/cat.png")
 
 
@@ -2356,7 +2615,9 @@ def test_bytes_from_local_image_uri_reuses_single_parsed_uri(
     monkeypatch.setattr(multimodal_preprocessing, "urlparse", tracked_urlparse)
     monkeypatch.setattr(multimodal_preprocessing, "unquote", unquote_calls.append)
 
-    bytes_data, reference, mime_type, format_name, filename = _bytes_from_image_uri(image_path.as_uri())
+    bytes_data, reference, mime_type, format_name, filename = _bytes_from_image_uri(
+        image_path.as_uri()
+    )
 
     assert bytes_data == b"local image bytes"
     assert reference == image_path.as_uri()
@@ -2381,7 +2642,9 @@ def test_bytes_from_percent_encoded_local_image_uri_still_decodes_path(
 
     monkeypatch.setattr(multimodal_preprocessing, "unquote", tracked_unquote)
 
-    bytes_data, reference, mime_type, format_name, filename = _bytes_from_image_uri(image_path.as_uri())
+    bytes_data, reference, mime_type, format_name, filename = _bytes_from_image_uri(
+        image_path.as_uri()
+    )
 
     assert bytes_data == b"encoded local image bytes"
     assert reference == image_path.as_uri()
@@ -2391,7 +2654,9 @@ def test_bytes_from_percent_encoded_local_image_uri_still_decodes_path(
     assert unquote_calls == ["/" + image_path.as_uri().split("file:///")[1]]
 
 
-def test_prepare_image_part_preserves_direct_uri_helper_behavior(tmp_path: Path) -> None:
+def test_prepare_image_part_preserves_direct_uri_helper_behavior(
+    tmp_path: Path,
+) -> None:
     image_path = tmp_path / "direct-image-part.txt"
     image_path.write_bytes(b"direct image part bytes")
 
@@ -2409,7 +2674,9 @@ def test_prepare_image_part_rejects_parts_without_any_image_payload() -> None:
         _prepare_image_part(common_pb2.MessagePart())
 
 
-def test_ocr_and_vlm_runtimes_expose_probe_snapshots_after_cancelled_generation() -> None:
+def test_ocr_and_vlm_runtimes_expose_probe_snapshots_after_cancelled_generation() -> (
+    None
+):
     messages = [
         common_pb2.ChatMessage(
             role="user",
@@ -2493,14 +2760,19 @@ def test_ocr_runtime_applies_model_aware_auto_prompt_when_metadata_is_present() 
         loaded_model=loaded_model,
     )
 
-    assert prepared.prompt_text == "OCR instruction: Extract the text from the image exactly as written."
+    assert (
+        prepared.prompt_text
+        == "OCR instruction: Extract the text from the image exactly as written."
+    )
     assert prepared.images[0].decoded_text() == "ocr auto prompt"
 
 
 def test_ocr_runtime_rejects_multi_image_prompts() -> None:
     runtime = DeterministicOCRRuntime()
 
-    with pytest.raises(MultimodalPreprocessError, match="OCR only supports single-image requests"):
+    with pytest.raises(
+        MultimodalPreprocessError, match="OCR only supports single-image requests"
+    ):
         runtime.render_prompt(
             [
                 common_pb2.ChatMessage(
@@ -2591,7 +2863,9 @@ def test_vlm_runtime_reuses_cache_for_identical_multimodal_requests() -> None:
     assert cache_stats.snapshot.hot_prefixes[0].scope.model_id == "melix-dev-vlm"
 
 
-def test_vlm_runtime_reuses_cached_snapshot_between_stats_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vlm_runtime_reuses_cached_snapshot_between_stats_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = DeterministicVLMRuntime()
     loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
     messages = [
@@ -2621,7 +2895,10 @@ def test_vlm_runtime_reuses_cached_snapshot_between_stats_reads(monkeypatch: pyt
         prefix_ref_calls += 1
         return original_prefix_ref(*args, **kwargs)
 
-    monkeypatch.setattr("worker.runtime.deterministic_vlm_runtime.common_pb2.PrefixRef", counting_prefix_ref)
+    monkeypatch.setattr(
+        "worker.runtime.deterministic_vlm_runtime.common_pb2.PrefixRef",
+        counting_prefix_ref,
+    )
 
     first_stats = runtime.cache_stats_response()
     second_stats = runtime.cache_stats_response()
@@ -2649,7 +2926,9 @@ def test_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
             ],
         )
     ]
-    prepared = resolve_vision_family_config(loaded_model).shape_request(prepare_vision_request(messages))
+    prepared = resolve_vision_family_config(loaded_model).shape_request(
+        prepare_vision_request(messages)
+    )
 
     events = list(runtime.generate_tokens(loaded_model, prepared, None, Event()))
     probe = runtime.last_probe_snapshot()
@@ -2661,15 +2940,21 @@ def test_vlm_runtime_plans_fast_path_when_generate_is_called_directly() -> None:
     assert probe.quantized_load_mode == "native_quantized"
 
 
-def test_vlm_runtime_text_only_fast_path_skips_temp_media_session_and_emits_tool_call() -> None:
+def test_vlm_runtime_text_only_fast_path_skips_temp_media_session_and_emits_tool_call() -> (
+    None
+):
     session_creations = 0
 
     def temp_media_session_factory(*args, **kwargs):
         nonlocal session_creations
         session_creations += 1
-        raise AssertionError("text-only VLM generation should not create a temp media session")
+        raise AssertionError(
+            "text-only VLM generation should not create a temp media session"
+        )
 
-    runtime = DeterministicVLMRuntime(temp_media_session_factory=temp_media_session_factory)
+    runtime = DeterministicVLMRuntime(
+        temp_media_session_factory=temp_media_session_factory
+    )
     loaded_model = runtime.load_model(WorkerModelCatalog.dev_vlm_model())
     prepared = text_only_vlm_request("Call the tool")
 
@@ -2689,7 +2974,10 @@ def test_vlm_runtime_text_only_fast_path_skips_temp_media_session_and_emits_tool
 
     assert session_creations == 0
     assert events[0].tool_name == "tools.vision"
-    assert events[0].arguments_json_fragment == '{"prompt":"Call the tool","image_count":0}'
+    assert (
+        events[0].arguments_json_fragment
+        == '{"prompt":"Call the tool","image_count":0}'
+    )
     assert events[1].text == "Prompt: Call the tool"
     assert probe.temp_media_artifact_count == 0
 
@@ -2701,7 +2989,9 @@ def test_vlm_runtime_text_only_fast_path_honors_cancel_before_token() -> None:
     cancel_event = Event()
     cancel_event.set()
 
-    assert list(runtime.generate_tokens(loaded_model, prepared, None, cancel_event)) == []
+    assert (
+        list(runtime.generate_tokens(loaded_model, prepared, None, cancel_event)) == []
+    )
 
 
 def test_vlm_runtime_text_only_fast_path_honors_cancel_after_tool_call() -> None:
@@ -2791,29 +3081,43 @@ def test_cache_service_reports_vlm_cache_state_after_generation() -> None:
         return_usage=True,
     )
 
-    list(inference_service.Generate(request, context=None))
-    cache_stats = cache_service.GetCacheStats(cache_pb2.GetCacheStatsRequest(), context=None)
+    list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    cache_stats = cache_service.GetCacheStats(
+        cache_pb2.GetCacheStatsRequest(), context=None
+    )
 
     assert cache_stats.stats.l1_bytes > 0
     assert cache_stats.snapshot.hot_prefixes
 
 
-def test_cache_service_unimplemented_mutation_methods_return_structured_errors() -> None:
+def test_cache_service_unimplemented_mutation_methods_return_structured_errors() -> (
+    None
+):
     runtime_service, inference_service, _ = build_services()
     cache_service = WorkerCacheService(inference_service._registry)
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_vlm_model())
 
     pin_response = cache_service.PinPrefix(cache_pb2.PinPrefixRequest(), context=None)
-    unpin_response = cache_service.UnpinPrefix(cache_pb2.UnpinPrefixRequest(), context=None)
+    unpin_response = cache_service.UnpinPrefix(
+        cache_pb2.UnpinPrefixRequest(), context=None
+    )
     save_response = cache_service.SaveBoundarySnapshot(
-        cache_pb2.SaveBoundarySnapshotRequest(request_id="req", decode_handle=model_handle),
+        cache_pb2.SaveBoundarySnapshotRequest(
+            request_id="req", decode_handle=model_handle
+        ),
         context=None,
     )
     restore_response = cache_service.RestoreBoundarySnapshot(
         cache_pb2.RestoreBoundarySnapshotRequest(snapshot_id="snapshot-1"),
         context=None,
     )
-    purge_response = cache_service.PurgeCache(cache_pb2.PurgeCacheRequest(), context=None)
+    purge_response = cache_service.PurgeCache(
+        cache_pb2.PurgeCacheRequest(), context=None
+    )
 
     assert pin_response.ok is False
     assert pin_response.error.code == "unimplemented"

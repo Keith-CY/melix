@@ -353,6 +353,70 @@ The control plane should represent at least these states:
 - unloaded
 - failed
 
+### Backend Route Binding and Recovery
+
+The control plane owns an immutable backend route binding containing model ID,
+adapter ID, worker route, model handle, a positive route generation, and the
+exact worker instance identity returned by that route's health handshake. Model
+load success publishes the handle, generation, and worker instance atomically. Unload, failed
+load, missing-handle validation, and backend identity mismatch invalidate only
+the matching route generation; a stale completion cannot republish a handle
+after a newer invalidation. Recovery reload reservation uses a generation
+compare-and-swap against the invalidation receipt. An explicit unload between
+invalidation and reservation advances the generation and prevents recovery
+from reopening the route. Any explicit replacement that advances the binding
+also wins: recovery of the older binding fails closed instead of adopting the
+newer binding as its own result. Changes to backend residency inputs, including
+model path, revision, adapter-set hash, and tokenizer hash, invalidate every
+route binding for that model and require a fresh load.
+
+All inference entrypoints stamp the worker request from one binding receipt.
+They never derive the requested model identity from a rewritten local model
+path. When a `ModelCatalog` is configured, a route-specific binding is required;
+unstamped compatibility dispatch is available only when no catalog is present.
+A typed worker `model_identity_mismatch`, or a connect, read, write,
+protocol, or timeout failure before the first backend response event, may trigger
+one fresh route invalidation, admission, reload, and dispatch. Image generation
+and editing recover only from a typed identity mismatch, not an ambiguous
+transport failure. Concurrent failures
+for the same model, route, and generation share one recovery task. A second
+recoverable failure returns `backend_route_recovery_exhausted`.
+
+Once any backend stream event has been observed, including admission or envelope
+metadata, later failure returns `partial_stream_failure` and is never replayed.
+The HTTP gateway reads that first event before opening response headers. Stream
+object creation alone is not response output. A stream that ends without any
+event is a pre-response transport failure and may receive the single recovery
+attempt. A stream that emits output but ends without its required `completed`,
+`error`, or speech `finish` terminal event returns `partial_stream_failure`.
+The first typed terminal event ends control-plane consumption immediately;
+events emitted by a faulty worker after `completed`, speech `finish`, or a
+non-recoverable error are discarded and cannot reach HTTP or XPC consumers.
+Explicit unload or replacement advances the generation and wins over an
+in-flight recovery completion.
+
+Before reloading, recovery sends a conditional unload with the failed handle and
+all four expected identity fields. The worker compares and removes atomically.
+A missing handle or changed identity skips retirement so endpoint reuse cannot
+unload another residency; there is no list-then-unload observation window.
+When the target Swift residency is busy, the worker retains the conditional
+unload and retries it after the target handle's final inference lease ends.
+Recovery marks this identity-bound retirement as forced so shared residency
+bookkeeping cannot preserve a failed binding. Unrelated model activity does not
+delay that retirement.
+
+Bootstrap preparation selects the intended worker route from the structured
+request-route declarations associated with that bootstrap stage. At least one
+declaration must support the stage's target worker route; multiple tasks sharing
+one residency remain valid. A missing compatible declaration fails closed, and
+the deprecated model `route_class` field does not select or invalidate a
+bootstrap route.
+
+The request path does not currently own a worker process supervisor. Recovery
+therefore means fresh route rebind and model reload, not process respawn. The
+recovery coordinator exposes a `beforeReload` injection point for a future
+supervisor without claiming that current production code launches a process.
+
 ### RequestPhase
 
 - queued
@@ -620,6 +684,14 @@ Recommended fields:
 - resource snapshot
 - metrics summary
 - recent errors
+
+The authenticated `/v1/melix/health` projection also exposes bounded backend
+identity diagnostics: mismatch, retry, and exhausted-retry counters plus the
+last redacted mismatch receipt when present. Retry decisions are separated as
+`retry_allowed_count`, `retry_suppressed_count`, and
+`retry_exhausted_count`. These diagnostics never include
+local model paths, adapter manifest paths, socket paths, prompts, tool
+arguments, media payloads, or generated output.
 
 ### WorkerSummary
 

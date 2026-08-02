@@ -13,12 +13,13 @@ struct TextGenerationEngine: Sendable {
     ) async throws {
         let requestID = request.execution.id.requestID
         let startedAt = Date()
+        let modelHandle = request.execution.modelHandle
 
         let abortHandle = abortRegistry.register(requestID)
-        await registry.startRequest()
+        await registry.startRequest(modelHandle: modelHandle)
         defer {
             abortRegistry.remove(requestID)
-            Task { await registry.finishRequest() }
+            Task { await registry.finishRequest(modelHandle: modelHandle) }
         }
 
         do {

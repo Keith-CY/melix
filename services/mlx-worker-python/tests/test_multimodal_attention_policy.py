@@ -8,7 +8,11 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
 from worker.engine.engine_core import EngineCore
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime import deterministic_vlm_runtime as deterministic_vlm_runtime_module
@@ -41,7 +45,9 @@ def test_attention_policy_records_whole_prefill_when_cost_is_inside_budget() -> 
     assert decision.refusal_count == 0
 
 
-def test_attention_policy_selects_conservative_chunk_when_prompt_exceeds_budget() -> None:
+def test_attention_policy_selects_conservative_chunk_when_prompt_exceeds_budget() -> (
+    None
+):
     decision = choose_attention_prefill_policy(
         family_id="gemma4-v1",
         prompt_tokens=4096,
@@ -58,7 +64,9 @@ def test_attention_policy_selects_conservative_chunk_when_prompt_exceeds_budget(
     assert decision.refusal_count == 0
 
 
-def test_attention_policy_returns_typed_refusal_when_minimum_chunk_exceeds_budget() -> None:
+def test_attention_policy_returns_typed_refusal_when_minimum_chunk_exceeds_budget() -> (
+    None
+):
     decision = choose_attention_prefill_policy(
         family_id="paligemma-v1",
         prompt_tokens=512,
@@ -133,8 +141,12 @@ def test_attention_policy_handles_zero_tokens_and_invalid_requested_chunk() -> N
     assert decision.selected_prefill_step_size == 0
 
 
-def _load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
-    response = runtime_service.LoadModel(runtime_pb2.LoadModelRequest(model=model), context=None)
+def _load_model(
+    runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec
+) -> str:
+    response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=model), context=None
+    )
     assert response.ok is True
     return response.model_handle
 
@@ -157,7 +169,9 @@ def _vision_message() -> common_pb2.ChatMessage:
     )
 
 
-def test_deterministic_vlm_prefill_rejects_over_budget_attention_before_decode_session() -> None:
+def test_deterministic_vlm_prefill_rejects_over_budget_attention_before_decode_session() -> (
+    None
+):
     runtime = DeterministicVLMRuntime()
     registry = WorkerRegistry(vlm_runtime=runtime, model_catalog=WorkerModelCatalog())
     runtime_service = WorkerRuntimeService(registry)
@@ -168,14 +182,17 @@ def test_deterministic_vlm_prefill_rejects_over_budget_attention_before_decode_s
 
     request_id = "vlm-prefill-attention-budget"
     response = inference_service.Prefill(
-        inference_pb2.PrefillRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id=request_id),
-                model_handle=model_handle,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.PrefillRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id=request_id),
+                    model_handle=model_handle,
+                ),
+                messages=[_vision_message()],
+                return_decode_handle=True,
+                prefill_step_size=16,
             ),
-            messages=[_vision_message()],
-            return_decode_handle=True,
-            prefill_step_size=16,
         ),
         context=None,
     )
@@ -190,14 +207,17 @@ def test_deterministic_vlm_prefill_rejects_over_budget_attention_before_decode_s
 
     decode_events = list(
         inference_service.Decode(
-            inference_pb2.DecodeRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id=request_id),
-                    model_handle=model_handle,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.DecodeRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id=request_id),
+                        model_handle=model_handle,
+                    ),
+                    decode_handle=f"vlm:{request_id}",
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+                    max_output_tokens=8,
                 ),
-                decode_handle=f"vlm:{request_id}",
-                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
-                max_output_tokens=8,
             ),
             context=None,
         )
@@ -217,15 +237,20 @@ def test_engine_generate_emits_typed_attention_refusal_error() -> None:
 
     events = list(
         inference_service.Generate(
-            inference_pb2.GenerateRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="vlm-generate-attention-budget"),
-                    model_handle=model_handle,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(
+                            request_id="vlm-generate-attention-budget"
+                        ),
+                        model_handle=model_handle,
+                    ),
+                    messages=[_vision_message()],
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+                    stream=True,
+                    return_usage=True,
                 ),
-                messages=[_vision_message()],
-                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
-                stream=True,
-                return_usage=True,
             ),
             context=None,
         )
@@ -234,7 +259,10 @@ def test_engine_generate_emits_typed_attention_refusal_error() -> None:
     assert len(events) == 1
     assert events[0].HasField("error")
     assert events[0].error.error.code == "multimodal_prefill_attention_budget_exceeded"
-    assert events[0].error.error.details["auto_chunk_reason"] == "attention_budget_exceeded"
+    assert (
+        events[0].error.error.details["auto_chunk_reason"]
+        == "attention_budget_exceeded"
+    )
     assert int(events[0].error.error.details["predicted_attention_bytes"]) > int(
         events[0].error.error.details["attention_budget_bytes"]
     )
@@ -251,16 +279,21 @@ def test_engine_generate_applies_execution_ext_attention_budget_override() -> No
 
     events = list(
         inference_service.Generate(
-            inference_pb2.GenerateRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="vlm-generate-attention-budget-ext"),
-                    model_handle=model_handle,
-                    ext={"melix.vlm.attention_cost_budget_bytes": "1"},
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(
+                            request_id="vlm-generate-attention-budget-ext"
+                        ),
+                        model_handle=model_handle,
+                        ext={"melix.vlm.attention_cost_budget_bytes": "1"},
+                    ),
+                    messages=[_vision_message()],
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+                    stream=True,
+                    return_usage=True,
                 ),
-                messages=[_vision_message()],
-                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
-                stream=True,
-                return_usage=True,
             ),
             context=None,
         )
@@ -283,15 +316,20 @@ def test_deterministic_vlm_records_attention_policy_before_first_token() -> None
 
     first_event = next(
         inference_service.Generate(
-            inference_pb2.GenerateRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="vlm-generate-attention-policy"),
-                    model_handle=model_handle,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(
+                            request_id="vlm-generate-attention-policy"
+                        ),
+                        model_handle=model_handle,
+                    ),
+                    messages=[_vision_message()],
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+                    stream=True,
+                    return_usage=True,
                 ),
-                messages=[_vision_message()],
-                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
-                stream=True,
-                return_usage=True,
             ),
             context=None,
         )
@@ -310,7 +348,10 @@ def test_deterministic_vlm_records_attention_policy_before_first_token() -> None
 def test_attention_metadata_parsers_handle_invalid_values() -> None:
     assert deterministic_vlm_runtime_module._int_metadata([], "x") == 0
     assert deterministic_vlm_runtime_module._int_metadata({"x": "invalid"}, "x") == 0
-    assert deterministic_vlm_runtime_module._int_metadata({"x": "", "y": "32"}, "x", "y") == 32
+    assert (
+        deterministic_vlm_runtime_module._int_metadata({"x": "", "y": "32"}, "x", "y")
+        == 32
+    )
     assert mlx_vlm_runtime_module._int_metadata([], "x") == 0
     assert mlx_vlm_runtime_module._int_metadata({"x": "invalid"}, "x") == 0
     assert mlx_vlm_runtime_module._int_metadata({"x": "", "y": "32"}, "x", "y") == 32
@@ -319,7 +360,10 @@ def test_attention_metadata_parsers_handle_invalid_values() -> None:
 def test_attention_budget_configured_detects_top_level_and_nested_metadata() -> None:
     assert attention_budget_configured([]) is False
     assert attention_budget_configured({}) is False
-    assert attention_budget_configured({"melix.vlm.attention_cost_budget_bytes": "1000"}) is True
+    assert (
+        attention_budget_configured({"melix.vlm.attention_cost_budget_bytes": "1000"})
+        is True
+    )
     assert (
         attention_budget_configured(
             {"metadata": {"melix.vlm.prefill_attention_budget_bytes": "2000"}}
@@ -336,7 +380,9 @@ def test_attention_policy_resolves_top_level_budget_metadata() -> None:
             "melix.vlm.hidden_size": "1024",
             "melix.vlm.num_hidden_layers": "8",
         },
-        prepared_request=SimpleNamespace(prompt_hash_hex="prompt", multimodal_hash_hex="media"),
+        prepared_request=SimpleNamespace(
+            prompt_hash_hex="prompt", multimodal_hash_hex="media"
+        ),
         seq_len=128,
     )
 
@@ -355,7 +401,9 @@ def test_attention_policy_uses_execution_metadata_budget_override() -> None:
                 "melix.vlm.num_hidden_layers": "8",
             }
         },
-        prepared_request=SimpleNamespace(prompt_hash_hex="prompt", multimodal_hash_hex="media"),
+        prepared_request=SimpleNamespace(
+            prompt_hash_hex="prompt", multimodal_hash_hex="media"
+        ),
         seq_len=128,
         execution_ext={"melix.vlm.attention_cost_budget_bytes": "1"},
     )
@@ -387,17 +435,21 @@ def test_engine_error_event_preserves_attention_refusal_details() -> None:
     assert event.error.error.details["selected_prefill_step_size"] == "0"
 
 
-def test_mlx_vlm_runtime_keeps_attention_receipt_when_backend_lacks_chunk_kwarg() -> None:
+def test_mlx_vlm_runtime_keeps_attention_receipt_when_backend_lacks_chunk_kwarg() -> (
+    None
+):
     pre_forward_receipts: list[dict[str, object]] = []
 
     def fake_load(model_path: str, revision: str = "main"):
         _ = model_path
         _ = revision
-        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace(
-            image_processor=object()
-        )
+        return SimpleNamespace(
+            config=SimpleNamespace(model_type="gemma4")
+        ), SimpleNamespace(image_processor=object())
 
-    def fake_apply_chat_template(processor, config, prompt: str, num_images: int = 0, **kwargs):
+    def fake_apply_chat_template(
+        processor, config, prompt: str, num_images: int = 0, **kwargs
+    ):
         _ = processor
         _ = config
         _ = kwargs
@@ -423,8 +475,20 @@ def test_mlx_vlm_runtime_keeps_attention_receipt_when_backend_lacks_chunk_kwarg(
         top_k=0,
         verbose=False,
     ):
-        _ = (model, processor, prompt, image, max_tokens, temperature, top_p, top_k, verbose)
-        pre_forward_receipts.append(runtime.last_probe_snapshot().attention_budget_receipt)
+        _ = (
+            model,
+            processor,
+            prompt,
+            image,
+            max_tokens,
+            temperature,
+            top_p,
+            top_k,
+            verbose,
+        )
+        pre_forward_receipts.append(
+            runtime.last_probe_snapshot().attention_budget_receipt
+        )
         yield SimpleNamespace(text="ok", prompt_tokens=32, generation_tokens=1)
 
     runtime._backend.stream_generate_fn = fake_stream_generate
@@ -452,11 +516,13 @@ def test_mlx_vlm_runtime_refuses_before_backend_stream_generate() -> None:
     def fake_load(model_path: str, revision: str = "main"):
         _ = model_path
         _ = revision
-        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), SimpleNamespace(
-            image_processor=object()
-        )
+        return SimpleNamespace(
+            config=SimpleNamespace(model_type="gemma4")
+        ), SimpleNamespace(image_processor=object())
 
-    def fake_stream_generate(*args, **kwargs):  # pragma: no cover - must be blocked before backend.
+    def fake_stream_generate(
+        *args, **kwargs
+    ):  # pragma: no cover - must be blocked before backend.
         nonlocal stream_called
         stream_called = True
         _ = (args, kwargs)

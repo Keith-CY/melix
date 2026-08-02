@@ -6,7 +6,11 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtim
 from worker.engine import engine_core as engine_core_module
 from worker.engine.engine_core import EngineCore
 from worker.engine.request_state import RequestState
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime import mlx_text_runtime
@@ -73,7 +77,12 @@ class EmptyStreamingFakeBackend:
 
 def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
     assert engine_core_module._text_native_mtp_parser_metrics(None) == {}
-    assert engine_core_module._text_native_mtp_parser_metrics(RuntimeTokenEvent(text="plain")) == {}
+    assert (
+        engine_core_module._text_native_mtp_parser_metrics(
+            RuntimeTokenEvent(text="plain")
+        )
+        == {}
+    )
 
     metrics: dict[str, str] = {}
 
@@ -154,10 +163,15 @@ def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
         "media_feature_encoder_calls_saved": 5,
         "media_feature_work_saved_bytes": 4096,
     }
-    assert engine_core_module._last_media_feature_probe(BrokenProbeRuntime(), "vlm") is None
+    assert (
+        engine_core_module._last_media_feature_probe(BrokenProbeRuntime(), "vlm")
+        is None
+    )
 
 
-def test_text_native_mtp_parser_metrics_preserves_speculative_and_timing_values() -> None:
+def test_text_native_mtp_parser_metrics_preserves_speculative_and_timing_values() -> (
+    None
+):
     metrics = engine_core_module._text_native_mtp_parser_metrics(
         RuntimeTokenEvent(
             text="mtp",
@@ -213,7 +227,9 @@ class TemplateAwareStreamingBackend:
 
     def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
         self.prompts.append(prompt)
-        yield RuntimeTokenEvent(text="templated", prompt_tokens=7, completion_tokens=1, finish_reason="stop")
+        yield RuntimeTokenEvent(
+            text="templated", prompt_tokens=7, completion_tokens=1, finish_reason="stop"
+        )
 
 
 class StructuredStreamingBackend:
@@ -229,7 +245,7 @@ class StructuredStreamingBackend:
         yield RuntimeTokenEvent(
             text="",
             raw_text=(
-                '<think>trace</think>'
+                "<think>trace</think>"
                 '<tool_call>{"name":"search","arguments":{"q":"one"}}</tool_call>'
                 "visible"
             ),
@@ -387,7 +403,9 @@ class DecodeThroughputVLMRuntime:
         _ = decode_handle
         return True
 
-    def decode_tokens(self, loaded_model, decode_handle, sampling, cancel_event, execution_ext=None):
+    def decode_tokens(
+        self, loaded_model, decode_handle, sampling, cancel_event, execution_ext=None
+    ):
         _ = loaded_model
         _ = decode_handle
         _ = sampling
@@ -448,7 +466,9 @@ class AccelerationCapturingRuntime:
         _ = model_spec
         return 0
 
-    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+    def render_prompt(
+        self, messages, loaded_model=None, template_kwargs=None, execution_ext=None
+    ):
         _ = messages
         _ = loaded_model
         _ = template_kwargs
@@ -474,13 +494,20 @@ class AccelerationCapturingRuntime:
         _ = cancel_event
         _ = execution_ext
         self.seen_acceleration_policies.append(acceleration_policy)
-        yield RuntimeTokenEvent(text="accelerated", prompt_tokens=2, completion_tokens=1, finish_reason="stop")
+        yield RuntimeTokenEvent(
+            text="accelerated",
+            prompt_tokens=2,
+            completion_tokens=1,
+            finish_reason="stop",
+        )
 
 
 class UsageCountingRuntime:
     runtime_name = "fake-usage-counting-runtime"
 
-    def __init__(self, *, prompt_tokens: int = 0, recovered_prefix_tokens: int | None = None) -> None:
+    def __init__(
+        self, *, prompt_tokens: int = 0, recovered_prefix_tokens: int | None = None
+    ) -> None:
         self.prompt_tokens = prompt_tokens
         self.recovered_prefix_tokens = recovered_prefix_tokens
         self.prompt_token_count_calls = 0
@@ -493,7 +520,9 @@ class UsageCountingRuntime:
         _ = model_spec
         return 0
 
-    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+    def render_prompt(
+        self, messages, loaded_model=None, template_kwargs=None, execution_ext=None
+    ):
         _ = messages
         _ = loaded_model
         _ = template_kwargs
@@ -505,7 +534,9 @@ class UsageCountingRuntime:
         self.prompt_token_count_calls += 1
         return 1024
 
-    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+    def generate_tokens(
+        self, loaded_model, prompt, sampling, cancel_event, execution_ext=None
+    ):
         _ = loaded_model
         _ = prompt
         _ = sampling
@@ -518,6 +549,7 @@ class UsageCountingRuntime:
             recovered_prefix_tokens=self.recovered_prefix_tokens,
             finish_reason="stop",
         )
+
 
 class AttentionBudgetFailingRuntime:
     runtime_name = "fake-attention-budget-runtime"
@@ -532,7 +564,9 @@ class AttentionBudgetFailingRuntime:
         _ = model_spec
         return 0
 
-    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+    def render_prompt(
+        self, messages, loaded_model=None, template_kwargs=None, execution_ext=None
+    ):
         _ = messages
         _ = loaded_model
         _ = template_kwargs
@@ -543,7 +577,9 @@ class AttentionBudgetFailingRuntime:
         _ = prompt
         return 512
 
-    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+    def generate_tokens(
+        self, loaded_model, prompt, sampling, cancel_event, execution_ext=None
+    ):
         _ = (loaded_model, sampling, cancel_event, execution_ext)
         prompt_tokens = self.prompt_token_count(prompt)
         decision = choose_attention_prefill_policy(
@@ -553,7 +589,14 @@ class AttentionBudgetFailingRuntime:
         )
         raise MultimodalPrefillAttentionBudgetExceeded(decision)
 
-    def prefill(self, request_id, loaded_model, messages, execution_ext=None, prefill_step_size=0):
+    def prefill(
+        self,
+        request_id,
+        loaded_model,
+        messages,
+        execution_ext=None,
+        prefill_step_size=0,
+    ):
         _ = (request_id, loaded_model, messages, execution_ext)
         self.seen_prefill_step_size = prefill_step_size
         return SimpleNamespace(
@@ -582,11 +625,15 @@ class RuntimeStructuredOutputFailingRuntime:
         _ = model_spec
         return 0
 
-    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+    def render_prompt(
+        self, messages, loaded_model=None, template_kwargs=None, execution_ext=None
+    ):
         _ = (messages, loaded_model, template_kwargs, execution_ext)
         return "structured output prompt"
 
-    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+    def generate_tokens(
+        self, loaded_model, prompt, sampling, cancel_event, execution_ext=None
+    ):
         _ = (loaded_model, prompt, sampling, cancel_event, execution_ext)
         raise StructuredOutputConstraintError(
             "json_object constraints require sampler logits processor support.",
@@ -611,11 +658,15 @@ class RuntimeStructuredOutputAcceptingRuntime:
         _ = model_spec
         return 0
 
-    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+    def render_prompt(
+        self, messages, loaded_model=None, template_kwargs=None, execution_ext=None
+    ):
         _ = (messages, loaded_model, template_kwargs, execution_ext)
         return "structured output prompt"
 
-    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+    def generate_tokens(
+        self, loaded_model, prompt, sampling, cancel_event, execution_ext=None
+    ):
         _ = (loaded_model, prompt, sampling, cancel_event)
         self.seen_execution_ext = dict(execution_ext or {})
         yield RuntimeTokenEvent(
@@ -710,7 +761,9 @@ def media_rejection_request(model_handle: str) -> inference_pb2.GenerateRequest:
     )
 
 
-def generate_usage_request(model_handle: str, *, return_usage: bool) -> inference_pb2.GenerateRequest:
+def generate_usage_request(
+    model_handle: str, *, return_usage: bool
+) -> inference_pb2.GenerateRequest:
     return inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id="req-usage-count"),
@@ -734,14 +787,26 @@ def test_generate_plain_token_skips_native_metric_parser(monkeypatch) -> None:
     native_parser_calls = 0
     original_parser = engine_core_module._text_native_mtp_parser_metrics
 
-    def counted_native_parser(event):  # pragma: no cover - regression guard should stay unused.
+    def counted_native_parser(
+        event,
+    ):  # pragma: no cover - regression guard should stay unused.
         nonlocal native_parser_calls
         native_parser_calls += 1  # pragma: no cover
         return original_parser(event)  # pragma: no cover
 
-    monkeypatch.setattr(engine_core_module, "_text_native_mtp_parser_metrics", counted_native_parser)
+    monkeypatch.setattr(
+        engine_core_module, "_text_native_mtp_parser_metrics", counted_native_parser
+    )
 
-    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(
+                inference_service,
+                generate_usage_request(model_handle, return_usage=True),
+            ),
+            context=None,
+        )
+    )
 
     completed = next(event.completed for event in events if event.HasField("completed"))
     assert completed.finish_reason == "stop"
@@ -767,18 +832,47 @@ def test_generate_without_usage_skips_prompt_token_count_fallback(monkeypatch) -
         media_usage_calls += 1
         return original_media_usage(probe)
 
-    monkeypatch.setattr(EngineCore, "_media_admission_summary", staticmethod(counted_media_summary))
-    monkeypatch.setattr(engine_core_module, "_media_feature_usage_from_probe", counted_media_usage)
+    monkeypatch.setattr(
+        EngineCore, "_media_admission_summary", staticmethod(counted_media_summary)
+    )
+    monkeypatch.setattr(
+        engine_core_module, "_media_feature_usage_from_probe", counted_media_usage
+    )
 
-    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=False), context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(
+                inference_service,
+                generate_usage_request(model_handle, return_usage=False),
+            ),
+            context=None,
+        )
+    )
 
-    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["counted"]
     assert not any(event.HasField("usage_delta") for event in events)
     assert runtime.prompt_token_count_calls == 0
     assert media_usage_calls == 0
 
-    usage_events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
-    rejected_events = list(inference_service.Generate(media_rejection_request(model_handle), context=None))
+    usage_events = list(
+        inference_service.Generate(
+            bind_backend_identity(
+                inference_service,
+                generate_usage_request(model_handle, return_usage=True),
+            ),
+            context=None,
+        )
+    )
+    rejected_events = list(
+        inference_service.Generate(
+            bind_backend_identity(
+                inference_service, media_rejection_request(model_handle)
+            ),
+            context=None,
+        )
+    )
 
     assert any(event.HasField("usage_delta") for event in usage_events)
     assert media_usage_calls == 1
@@ -786,7 +880,10 @@ def test_generate_without_usage_skips_prompt_token_count_fallback(monkeypatch) -
     assert len(rejected_events) == 1
     assert rejected_events[0].HasField("error")
     assert rejected_events[0].error.error.code == "unsupported_media"
-    assert rejected_events[0].error.error.details["reason"] == "text_runtime_media_unsupported"
+    assert (
+        rejected_events[0].error.error.details["reason"]
+        == "text_runtime_media_unsupported"
+    )
     assert rejected_events[0].error.error.details["runtime_kind"] == "text"
     assert rejected_events[0].error.error.details["media_count"] == "3"
     assert rejected_events[0].error.error.details["media_types"] == "image,audio,video"
@@ -821,7 +918,9 @@ def test_generate_empty_completion_skips_empty_parser_metric_assembly() -> None:
 
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-generate-empty-parser-metrics"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-generate-empty-parser-metrics"
+            ),
             model_handle=model_handle,
         ),
         messages=[
@@ -835,7 +934,11 @@ def test_generate_empty_completion_skips_empty_parser_metric_assembly() -> None:
         return_usage=False,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert completed.assistant_text == ""
@@ -849,7 +952,9 @@ def test_resolve_generate_stop_contract_uses_empty_tuple_key_without_stops() -> 
     loaded_model: dict[str, object] = {"model_id": "test"}
     sampling = common_pb2.SamplingConfig(max_output_tokens=4)
 
-    contract = engine_core_module._resolve_generate_stop_contract(loaded_model, sampling, {})
+    contract = engine_core_module._resolve_generate_stop_contract(
+        loaded_model, sampling, {}
+    )
 
     cache = loaded_model[engine_core_module._ENGINE_STOP_CONTRACT_CACHE_FIELD]
     assert isinstance(cache, dict)
@@ -867,18 +972,28 @@ def test_generate_reuses_stop_contract_for_empty_execution_ext(monkeypatch) -> N
         resolve_calls += 1
         return original_resolve(loaded_model, sampling, execution_ext)
 
-    monkeypatch.setattr(engine_core_module, "resolve_text_stop_contract", counting_resolve)
+    monkeypatch.setattr(
+        engine_core_module, "resolve_text_stop_contract", counting_resolve
+    )
 
     for index in range(2):
         request = generate_usage_request(model_handle, return_usage=False)
         request.execution.id.request_id = f"req-stop-contract-cache-{index}"
-        events = list(inference_service.Generate(request, context=None))
-        assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
+        events = list(
+            inference_service.Generate(
+                bind_backend_identity(inference_service, request), context=None
+            )
+        )
+        assert [
+            event.token_delta.text for event in events if event.HasField("token_delta")
+        ] == ["counted"]
 
     assert resolve_calls == 1
 
 
-def test_generate_builds_routing_ext_for_empty_execution_ext_without_mutating_request() -> None:
+def test_generate_builds_routing_ext_for_empty_execution_ext_without_mutating_request() -> (
+    None
+):
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
     request = generate_usage_request(model_handle, return_usage=False)
@@ -886,9 +1001,15 @@ def test_generate_builds_routing_ext_for_empty_execution_ext_without_mutating_re
     request.execution.scope.model_id = "model-routing-empty"
     request.execution.scope.revision = "revision-routing-empty"
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
-    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["counted"]
     assert dict(request.execution.ext) == {}
     assert runtime.execution_exts == [
         {
@@ -901,7 +1022,9 @@ def test_generate_builds_routing_ext_for_empty_execution_ext_without_mutating_re
     ]
 
 
-def test_generate_empty_ext_plain_path_uses_default_allowed_tools_receipt(monkeypatch) -> None:
+def test_generate_empty_ext_plain_path_uses_default_allowed_tools_receipt(
+    monkeypatch,
+) -> None:
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
     calls = 0
@@ -909,7 +1032,9 @@ def test_generate_empty_ext_plain_path_uses_default_allowed_tools_receipt(monkey
     def fail_allowed_tools_receipt(request):  # pragma: no cover - should not be called
         nonlocal calls
         calls += 1
-        raise AssertionError("empty plain-text requests should use the default receipt fast path")
+        raise AssertionError(
+            "empty plain-text requests should use the default receipt fast path"
+        )
 
     monkeypatch.setattr(
         engine_core_module.EngineCore,
@@ -917,11 +1042,22 @@ def test_generate_empty_ext_plain_path_uses_default_allowed_tools_receipt(monkey
         staticmethod(fail_allowed_tools_receipt),
     )
 
-    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=False), context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(
+                inference_service,
+                generate_usage_request(model_handle, return_usage=False),
+            ),
+            context=None,
+        )
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert calls == 0
-    assert completed.parser_metrics["allowed_tools_receipt_json"] == engine_core_module._DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
+    assert (
+        completed.parser_metrics["allowed_tools_receipt_json"]
+        == engine_core_module._DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
+    )
 
 
 def test_allowed_tools_receipt_trims_source_ids_with_cached_ext_fields() -> None:
@@ -967,12 +1103,20 @@ def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> 
     request.execution.scope.revision = "revision-routing-custom"
     request.execution.ext["client-key"] = "client-value"
     request.execution.cache_hints.preferred_block_size = 16
-    request.execution.acceleration.mode = common_pb2.ACCELERATION_MODE_ACTIVE_KV_QUANTIZED
+    request.execution.acceleration.mode = (
+        common_pb2.ACCELERATION_MODE_ACTIVE_KV_QUANTIZED
+    )
     request.execution.acceleration.active_kv_quant_profile = "q4:g64"
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
-    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["counted"]
     assert dict(request.execution.ext) == {"client-key": "client-value"}
     assert runtime.execution_exts == [
         {
@@ -1004,9 +1148,15 @@ def test_generate_routing_ext_forwards_acceleration_knobs_but_not_melix_namespac
     request.execution.acceleration.ext["_melix.block_size"] = "512"
     request.execution.acceleration.ext["_melix.session_id"] = "spoofed-session"
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
-    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["counted"]
     assert runtime.execution_exts == [
         {
             "melix.prompt_lookup.enabled": "1",
@@ -1027,12 +1177,18 @@ def test_generate_routing_ext_prefers_request_ext_over_acceleration_ext() -> Non
     request.execution.ext["melix.prompt_lookup.max_draft_tokens"] = "4"
     request.execution.acceleration.ext["melix.prompt_lookup.max_draft_tokens"] = "16"
 
-    list(inference_service.Generate(request, context=None))
+    list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     assert runtime.execution_exts[0]["melix.prompt_lookup.max_draft_tokens"] == "4"
 
 
-def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match() -> None:
+def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match() -> (
+    None
+):
     sampling = common_pb2.SamplingConfig(max_output_tokens=4)
 
     resolved = EngineCore._sampling_with_resolved_stop(sampling, ())
@@ -1040,10 +1196,16 @@ def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match()
     assert resolved is sampling
 
 
-def test_sampling_with_resolved_stop_reuses_sampling_when_non_empty_stop_sequences_match() -> None:
-    sampling = common_pb2.SamplingConfig(max_output_tokens=4, stop=["</turn>", "</model>"])
+def test_sampling_with_resolved_stop_reuses_sampling_when_non_empty_stop_sequences_match() -> (
+    None
+):
+    sampling = common_pb2.SamplingConfig(
+        max_output_tokens=4, stop=["</turn>", "</model>"]
+    )
 
-    resolved = EngineCore._sampling_with_resolved_stop(sampling, ("</turn>", "</model>"))
+    resolved = EngineCore._sampling_with_resolved_stop(
+        sampling, ("</turn>", "</model>")
+    )
 
     assert resolved is sampling
     assert list(resolved.stop) == ["</turn>", "</model>"]
@@ -1059,11 +1221,21 @@ def test_sampling_with_resolved_stop_clones_when_stop_sequences_change() -> None
     assert list(sampling.stop) == ["old"]
 
 
-def test_generate_usage_reuses_runtime_event_prompt_tokens_without_fallback_count() -> None:
+def test_generate_usage_reuses_runtime_event_prompt_tokens_without_fallback_count() -> (
+    None
+):
     runtime = UsageCountingRuntime(prompt_tokens=7, recovered_prefix_tokens=64)
     inference_service, model_handle = build_usage_counting_services(runtime)
 
-    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(
+                inference_service,
+                generate_usage_request(model_handle, return_usage=True),
+            ),
+            context=None,
+        )
+    )
 
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     completed = next(event.completed for event in events if event.HasField("completed"))
@@ -1082,7 +1254,15 @@ def test_generate_usage_counts_prompt_tokens_only_for_missing_event_total() -> N
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
 
-    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(
+                inference_service,
+                generate_usage_request(model_handle, return_usage=True),
+            ),
+            context=None,
+        )
+    )
 
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     assert usage.prompt_tokens == 1024
@@ -1091,7 +1271,9 @@ def test_generate_usage_counts_prompt_tokens_only_for_missing_event_total() -> N
     assert runtime.prompt_token_count_calls == 1
 
 
-def test_whitespace_token_count_matches_split_semantics_and_reuses_shared_cache() -> None:
+def test_whitespace_token_count_matches_split_semantics_and_reuses_shared_cache() -> (
+    None
+):
     text = "  alpha\tbeta\n\u2003gamma\r\n\tdelta  "
     engine_core_module._whitespace_token_count.cache_clear()
 
@@ -1100,7 +1282,9 @@ def test_whitespace_token_count_matches_split_semantics_and_reuses_shared_cache(
     assert engine_core_module._whitespace_token_count.cache_info().hits == 1
 
 
-def test_generate_streams_token_and_terminal_completion_without_request_token_accumulation() -> None:
+def test_generate_streams_token_and_terminal_completion_without_request_token_accumulation() -> (
+    None
+):
     _, inference_service, model_handle = build_services()
     original_append_token = RequestState.append_token
 
@@ -1114,12 +1298,20 @@ def test_generate_streams_token_and_terminal_completion_without_request_token_ac
     RequestState.append_token = fail_append_token
     try:
         events = list(
-            inference_service.Generate(generate_usage_request(model_handle, return_usage=True), context=None)
+            inference_service.Generate(
+                bind_backend_identity(
+                    inference_service,
+                    generate_usage_request(model_handle, return_usage=True),
+                ),
+                context=None,
+            )
         )
     finally:
         RequestState.append_token = original_append_token
 
-    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    token_text = [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ]
     completed = next(event.completed for event in events if event.HasField("completed"))
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     assert token_text == ["Hello", " world"]
@@ -1127,7 +1319,9 @@ def test_generate_streams_token_and_terminal_completion_without_request_token_ac
     assert usage.completion_tokens == 2
 
 
-def test_generate_streams_token_and_terminal_completion_without_usage_preserves_finish_reason() -> None:
+def test_generate_streams_token_and_terminal_completion_without_usage_preserves_finish_reason() -> (
+    None
+):
     _, inference_service, model_handle = build_services()
 
     request = inference_pb2.GenerateRequest(
@@ -1146,9 +1340,17 @@ def test_generate_streams_token_and_terminal_completion_without_usage_preserves_
         return_usage=False,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
-    token_deltas = [event.token_delta for event in events if event.HasField("token_delta")]
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ]
+    token_deltas = [
+        event.token_delta for event in events if event.HasField("token_delta")
+    ]
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == ["Hello", " world"]
@@ -1178,8 +1380,14 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ]
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == ["Hello", " world"]
@@ -1208,37 +1416,45 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         context=None,
     )
     prefill = decode_inference_service.Prefill(
-        inference_pb2.PrefillRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id="req-vlm-usage"),
-                model_handle=decode_load_response.model_handle,
+        bind_backend_identity(
+            decode_inference_service,
+            inference_pb2.PrefillRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="req-vlm-usage"),
+                    model_handle=decode_load_response.model_handle,
+                ),
+                messages=[
+                    common_pb2.ChatMessage(
+                        role="user",
+                        parts=[common_pb2.MessagePart(text="Describe the image")],
+                    )
+                ],
+                return_decode_handle=True,
+                prefill_step_size=16,
             ),
-            messages=[
-                common_pb2.ChatMessage(
-                    role="user",
-                    parts=[common_pb2.MessagePart(text="Describe the image")],
-                )
-            ],
-            return_decode_handle=True,
-            prefill_step_size=16,
         ),
         context=None,
     )
     decode_events = list(
         decode_inference_service.Decode(
-            inference_pb2.DecodeRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="req-vlm-usage"),
-                    model_handle=decode_load_response.model_handle,
+            bind_backend_identity(
+                decode_inference_service,
+                inference_pb2.DecodeRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id="req-vlm-usage"),
+                        model_handle=decode_load_response.model_handle,
+                    ),
+                    decode_handle=prefill.decode_handle,
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+                    return_usage=True,
                 ),
-                decode_handle=prefill.decode_handle,
-                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
-                return_usage=True,
             ),
             context=None,
         )
     )
-    decode_usage = next(event.usage_delta for event in decode_events if event.HasField("usage_delta"))
+    decode_usage = next(
+        event.usage_delta for event in decode_events if event.HasField("usage_delta")
+    )
     assert decode_usage.prompt_tokens == 9
     assert decode_usage.completion_tokens == 1
     assert decode_usage.cached_prompt_tokens == 5
@@ -1249,7 +1465,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
 
     tool_schema_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-generate-tool-schema-receipt"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-generate-tool-schema-receipt"
+            ),
             model_handle=model_handle,
             ext={
                 "melix.tool_config.source": "openai_chat_tools",
@@ -1257,7 +1475,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
             },
             tool_config=common_pb2.ToolConfig(
                 tools=[
-                    common_pb2.ToolDefinition(name="   ", json_schema='{"type":"object"}'),
+                    common_pb2.ToolDefinition(
+                        name="   ", json_schema='{"type":"object"}'
+                    ),
                     common_pb2.ToolDefinition(name="empty", json_schema=""),
                     common_pb2.ToolDefinition(
                         name="search",
@@ -1266,14 +1486,16 @@ def test_generate_streams_token_and_terminal_completion() -> None:
                     common_pb2.ToolDefinition(
                         name="search",
                         json_schema=(
-                            '{\n'
+                            "{\n"
                             '  "properties": {"q": {"type": "string"}},\n'
                             '  "type": "object"\n'
                             "}"
                         ),
                     ),
                     common_pb2.ToolDefinition(name="bad", json_schema='{"type":'),
-                    common_pb2.ToolDefinition(name="bad", json_schema='{"type":"object"}'),
+                    common_pb2.ToolDefinition(
+                        name="bad", json_schema='{"type":"object"}'
+                    ),
                 ],
                 tool_choice="auto",
             ),
@@ -1287,7 +1509,11 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         sampling=common_pb2.SamplingConfig(max_output_tokens=16),
         stream=True,
     )
-    tool_schema_events = list(inference_service.Generate(tool_schema_request, context=None))
+    tool_schema_events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, tool_schema_request), context=None
+        )
+    )
     tool_schema_completed = next(
         event.completed for event in tool_schema_events if event.HasField("completed")
     )
@@ -1300,7 +1526,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
 
     explicit_empty_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-explicit-empty-tools-receipt"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-explicit-empty-tools-receipt"
+            ),
             model_handle=model_handle,
             ext={
                 "melix.tool_config.source": "openai_chat_tools",
@@ -1317,7 +1545,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
 
     suppressed_without_tools_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-suppressed-without-tools-receipt"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-suppressed-without-tools-receipt"
+            ),
             model_handle=model_handle,
             ext={"melix.tool_parser.suppressed_reason": "partial_json"},
         )
@@ -1328,7 +1558,10 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert suppressed_without_tools_receipt["tool_config_state"] == "omitted"
     assert suppressed_without_tools_receipt["suppressed_reason"] == "partial_json"
 
-    assert engine_core_module._parser_metric_text(0) is engine_core_module._METRIC_ZERO_TEXT
+    assert (
+        engine_core_module._parser_metric_text(0)
+        is engine_core_module._METRIC_ZERO_TEXT
+    )
     assert engine_core_module._parser_metric_text("plain") == "plain"
     assert engine_core_module._parser_metric_text(3) == "3"
 
@@ -1344,7 +1577,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     ).model_handle
     structured_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-generate-structured-receipts"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-generate-structured-receipts"
+            ),
             model_handle=structured_handle,
             ext={
                 "melix.compat.policy_receipt_json": (
@@ -1364,7 +1599,12 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         sampling=common_pb2.SamplingConfig(max_output_tokens=16),
         stream=True,
     )
-    structured_events = list(structured_inference_service.Generate(structured_request, context=None))
+    structured_events = list(
+        structured_inference_service.Generate(
+            bind_backend_identity(structured_inference_service, structured_request),
+            context=None,
+        )
+    )
     structured_completed = next(
         event.completed for event in structured_events if event.HasField("completed")
     )
@@ -1399,7 +1639,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
                 tool_name="lookup",
                 arguments_json_fragment='{"q":"native"}',
             )
-            yield RuntimeTokenEvent(text="done", prompt_tokens=4, completion_tokens=1, finish_reason="stop")
+            yield RuntimeTokenEvent(
+                text="done", prompt_tokens=4, completion_tokens=1, finish_reason="stop"
+            )
 
     native_tool_registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=RuntimeToolEventBackend()),
@@ -1426,10 +1668,15 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         stream=True,
     )
     native_tool_events = list(
-        native_tool_inference_service.Generate(native_tool_request, context=None)
+        native_tool_inference_service.Generate(
+            bind_backend_identity(native_tool_inference_service, native_tool_request),
+            context=None,
+        )
     )
     native_tool_call = next(
-        event.tool_call_delta for event in native_tool_events if event.HasField("tool_call_delta")
+        event.tool_call_delta
+        for event in native_tool_events
+        if event.HasField("tool_call_delta")
     )
     native_tool_completed = next(
         event.completed for event in native_tool_events if event.HasField("completed")
@@ -1437,7 +1684,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
 
     assert native_tool_call.tool_name == "lookup"
     assert native_tool_call.arguments_json_fragment == '{"q":"native"}'
-    assert native_tool_completed.parser_metrics["generated_tool_call_delta_count"] == "1"
+    assert (
+        native_tool_completed.parser_metrics["generated_tool_call_delta_count"] == "1"
+    )
     native_tool_receipt = json.loads(
         native_tool_completed.parser_metrics["token_route_receipt_json"]
     )
@@ -1459,7 +1708,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
             _ = prompt
             _ = sampling
             _ = cancel_event
-            yield RuntimeTokenEvent(text="Answer with citation.", prompt_tokens=4, completion_tokens=1)
+            yield RuntimeTokenEvent(
+                text="Answer with citation.", prompt_tokens=4, completion_tokens=1
+            )
             yield RuntimeAnnotationEvent(
                 annotation_id="cite-1",
                 kind="citation",
@@ -1472,7 +1723,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
                 status="ok",
                 result_json='{"temperature":72}',
             )
-            yield RuntimeTokenEvent(text="", prompt_tokens=4, completion_tokens=1, finish_reason="stop")
+            yield RuntimeTokenEvent(
+                text="", prompt_tokens=4, completion_tokens=1, finish_reason="stop"
+            )
 
     annotation_registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=RuntimeAnnotationToolResultBackend()),
@@ -1486,20 +1739,29 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     ).model_handle
     annotation_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-annotation-tool-result-event"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-annotation-tool-result-event"
+            ),
             model_handle=annotation_handle,
         ),
         messages=[
             common_pb2.ChatMessage(
                 role="user",
-                parts=[common_pb2.MessagePart(text="Answer with a citation and tool result.")],
+                parts=[
+                    common_pb2.MessagePart(
+                        text="Answer with a citation and tool result."
+                    )
+                ],
             )
         ],
         sampling=common_pb2.SamplingConfig(max_output_tokens=16),
         stream=True,
     )
     annotation_events = list(
-        annotation_inference_service.Generate(annotation_request, context=None)
+        annotation_inference_service.Generate(
+            bind_backend_identity(annotation_inference_service, annotation_request),
+            context=None,
+        )
     )
     annotation_delta = next(
         event.annotation_delta
@@ -1526,8 +1788,12 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert annotation_completed.assistant_text == "Answer with citation."
     assert "https://example.test/source" not in annotation_completed.assistant_text
     assert '{"temperature":72}' not in annotation_completed.assistant_text
-    assert annotation_completed.parser_metrics["annotation_payload_resolved_count"] == "1"
-    assert annotation_completed.parser_metrics["tool_result_payload_buffered_count"] == "1"
+    assert (
+        annotation_completed.parser_metrics["annotation_payload_resolved_count"] == "1"
+    )
+    assert (
+        annotation_completed.parser_metrics["tool_result_payload_buffered_count"] == "1"
+    )
 
     metadata_registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=MetadataStreamingBackend()),
@@ -1555,7 +1821,10 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         stream=True,
     )
     metadata_events = list(
-        metadata_inference_service.Generate(metadata_request, context=None)
+        metadata_inference_service.Generate(
+            bind_backend_identity(metadata_inference_service, metadata_request),
+            context=None,
+        )
     )
     metadata_completed = next(
         event.completed for event in metadata_events if event.HasField("completed")
@@ -1582,7 +1851,12 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         sampling=common_pb2.SamplingConfig(max_output_tokens=16),
         stream=True,
     )
-    inactive_events = list(inference_service.Generate(inactive_route_request, context=None))
+    inactive_events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, inactive_route_request),
+            context=None,
+        )
+    )
     inactive_completed = next(
         event.completed for event in inactive_events if event.HasField("completed")
     )
@@ -1593,9 +1867,12 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert inactive_receipt["reasoning_mode"] == "disabled"
     assert inactive_receipt["tool_choice_policy"] == "auto"
     assert EngineCore._token_route_receipt(inactive_route_request, {}) is None
-    assert json.loads(
-        EngineCore._inactive_token_route_receipt_json(inactive_route_request, {})
-    ) == inactive_receipt
+    assert (
+        json.loads(
+            EngineCore._inactive_token_route_receipt_json(inactive_route_request, {})
+        )
+        == inactive_receipt
+    )
     plain_compat_receipt = json.dumps(
         {
             "reasoning_mode": "disabled",
@@ -1605,7 +1882,9 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     )
     inactive_compat_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-inactive-compat-route-receipt"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-inactive-compat-route-receipt"
+            ),
             model_handle=model_handle,
             ext={
                 "melix.compat.policy_receipt_json": plain_compat_receipt,
@@ -1623,9 +1902,16 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         stream=True,
     )
     assert EngineCore._plain_text_fast_path(inactive_compat_request) is True
-    inactive_compat_events = list(inference_service.Generate(inactive_compat_request, context=None))
+    inactive_compat_events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, inactive_compat_request),
+            context=None,
+        )
+    )
     inactive_compat_completed = next(
-        event.completed for event in inactive_compat_events if event.HasField("completed")
+        event.completed
+        for event in inactive_compat_events
+        if event.HasField("completed")
     )
     inactive_compat_receipt = json.loads(
         inactive_compat_completed.parser_metrics["token_route_receipt_json"]
@@ -1633,22 +1919,40 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert inactive_compat_receipt["route_tracking_enabled"] is False
     assert inactive_compat_receipt["reasoning_mode"] == "disabled"
     assert inactive_compat_receipt["tool_choice_policy"] == "auto"
-    assert inactive_compat_completed.parser_metrics["compat_policy_receipt_json"] == plain_compat_receipt
-    assert inactive_compat_completed.parser_metrics["compat_effective_config_hash"] == "plain-compat-hash"
+    assert (
+        inactive_compat_completed.parser_metrics["compat_policy_receipt_json"]
+        == plain_compat_receipt
+    )
+    assert (
+        inactive_compat_completed.parser_metrics["compat_effective_config_hash"]
+        == "plain-compat-hash"
+    )
     assert inactive_compat_completed.parser_metrics["created"] == "1716500000"
-    assert EngineCore._ext_requires_token_route_tracking(
-        {"melix.structured_output.mode": "json_schema"}
-    ) is True
-    assert EngineCore._ext_requires_token_route_tracking(
-        {"melix.reasoning.mode": "adaptive"}
-    ) is True
-    assert EngineCore._ext_requires_token_route_tracking(
-        {"melix.compat.tool_choice_resolved": "required"}
-    ) is True
-    assert EngineCore._ext_requires_token_route_tracking(
-        {},
-        {"reasoning_mode": "enabled"},
-    ) is True
+    assert (
+        EngineCore._ext_requires_token_route_tracking(
+            {"melix.structured_output.mode": "json_schema"}
+        )
+        is True
+    )
+    assert (
+        EngineCore._ext_requires_token_route_tracking(
+            {"melix.reasoning.mode": "adaptive"}
+        )
+        is True
+    )
+    assert (
+        EngineCore._ext_requires_token_route_tracking(
+            {"melix.compat.tool_choice_resolved": "required"}
+        )
+        is True
+    )
+    assert (
+        EngineCore._ext_requires_token_route_tracking(
+            {},
+            {"reasoning_mode": "enabled"},
+        )
+        is True
+    )
     active_receipt = EngineCore._active_token_route_receipt(inactive_route_request)
     assert active_receipt.enabled is True
     assert json.loads(active_receipt.to_json())["route_tracking_enabled"] is True
@@ -1680,9 +1984,18 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         blocked_prefill_runtime.prefill,
     )
     assert EngineCore._compat_policy_receipt({}) == {}
-    assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": ""}) == {}
-    assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": "{"}) == {}
-    assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": "[]"}) == {}
+    assert (
+        EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": ""})
+        == {}
+    )
+    assert (
+        EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": "{"})
+        == {}
+    )
+    assert (
+        EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": "[]"})
+        == {}
+    )
 
     budget_runtime = AttentionBudgetFailingRuntime()
     budget_registry = WorkerRegistry(
@@ -1697,19 +2010,24 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     ).model_handle
     budget_events = list(
         budget_inference_service.Generate(
-            inference_pb2.GenerateRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="req-attention-budget-error"),
-                    model_handle=budget_handle,
+            bind_backend_identity(
+                budget_inference_service,
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(
+                            request_id="req-attention-budget-error"
+                        ),
+                        model_handle=budget_handle,
+                    ),
+                    messages=[
+                        common_pb2.ChatMessage(
+                            role="user",
+                            parts=[common_pb2.MessagePart(text="budget")],
+                        )
+                    ],
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=4),
+                    stream=True,
                 ),
-                messages=[
-                    common_pb2.ChatMessage(
-                        role="user",
-                        parts=[common_pb2.MessagePart(text="budget")],
-                    )
-                ],
-                sampling=common_pb2.SamplingConfig(max_output_tokens=4),
-                stream=True,
             ),
             context=None,
         )
@@ -1720,19 +2038,24 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert budget_error.details["selected_prefill_step_size"] == "0"
 
     budget_prefill = budget_inference_service.Prefill(
-        inference_pb2.PrefillRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id="req-attention-budget-prefill"),
-                model_handle=budget_handle,
+        bind_backend_identity(
+            budget_inference_service,
+            inference_pb2.PrefillRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(
+                        request_id="req-attention-budget-prefill"
+                    ),
+                    model_handle=budget_handle,
+                ),
+                messages=[
+                    common_pb2.ChatMessage(
+                        role="user",
+                        parts=[common_pb2.MessagePart(text="budget")],
+                    )
+                ],
+                return_decode_handle=True,
+                prefill_step_size=32,
             ),
-            messages=[
-                common_pb2.ChatMessage(
-                    role="user",
-                    parts=[common_pb2.MessagePart(text="budget")],
-                )
-            ],
-            return_decode_handle=True,
-            prefill_step_size=32,
         ),
         context=None,
     )
@@ -1750,25 +2073,33 @@ def test_generate_streams_token_and_terminal_completion() -> None:
 
     budget_runtime.prefill = failing_prefill  # type: ignore[method-assign]
     rejected_prefill = budget_inference_service.Prefill(
-        inference_pb2.PrefillRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id="req-attention-budget-prefill-reject"),
-                model_handle=budget_handle,
+        bind_backend_identity(
+            budget_inference_service,
+            inference_pb2.PrefillRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(
+                        request_id="req-attention-budget-prefill-reject"
+                    ),
+                    model_handle=budget_handle,
+                ),
+                messages=[
+                    common_pb2.ChatMessage(
+                        role="user",
+                        parts=[common_pb2.MessagePart(text="budget")],
+                    )
+                ],
+                return_decode_handle=True,
+                prefill_step_size=32,
             ),
-            messages=[
-                common_pb2.ChatMessage(
-                    role="user",
-                    parts=[common_pb2.MessagePart(text="budget")],
-                )
-            ],
-            return_decode_handle=True,
-            prefill_step_size=32,
         ),
         context=None,
     )
     assert rejected_prefill.ok is False
     assert rejected_prefill.admission_state == common_pb2.ADMISSION_REJECTED
-    assert rejected_prefill.error.details["auto_chunk_reason"] == "attention_budget_exceeded"
+    assert (
+        rejected_prefill.error.details["auto_chunk_reason"]
+        == "attention_budget_exceeded"
+    )
 
 
 def test_generate_streams_reasoning_tool_and_content_channels_from_raw_text() -> None:
@@ -1806,9 +2137,17 @@ def test_generate_streams_reasoning_tool_and_content_channels_from_raw_text() ->
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    reasoning = next(event.reasoning_delta for event in events if event.HasField("reasoning_delta"))
-    tool_call = next(event.tool_call_delta for event in events if event.HasField("tool_call_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    reasoning = next(
+        event.reasoning_delta for event in events if event.HasField("reasoning_delta")
+    )
+    tool_call = next(
+        event.tool_call_delta for event in events if event.HasField("tool_call_delta")
+    )
     token = next(event.token_delta for event in events if event.HasField("token_delta"))
     completed = next(event.completed for event in events if event.HasField("completed"))
 
@@ -1827,7 +2166,9 @@ def test_generate_streams_reasoning_tool_and_content_channels_from_raw_text() ->
     assert completed.parser_metrics["duplicate_tool_delta_count"] == "0"
 
 
-def test_generate_stream_preserves_explicit_tool_parser_with_structured_json_mode() -> None:
+def test_generate_stream_preserves_explicit_tool_parser_with_structured_json_mode() -> (
+    None
+):
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StructuredStreamingBackend()),
         model_catalog=WorkerModelCatalog(),
@@ -1863,8 +2204,14 @@ def test_generate_stream_preserves_explicit_tool_parser_with_structured_json_mod
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    tool_call = next(event.tool_call_delta for event in events if event.HasField("tool_call_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    tool_call = next(
+        event.tool_call_delta for event in events if event.HasField("tool_call_delta")
+    )
     token = next(event.token_delta for event in events if event.HasField("token_delta"))
     completed = next(event.completed for event in events if event.HasField("completed"))
 
@@ -1872,7 +2219,9 @@ def test_generate_stream_preserves_explicit_tool_parser_with_structured_json_mod
     assert tool_call.arguments_json_fragment == '{"q":"one"}'
     assert token.text == "visible"
     assert completed.assistant_text == "visible"
-    assert completed.parser_metrics["stream_parser_request_context_mode"] == "tool_parser"
+    assert (
+        completed.parser_metrics["stream_parser_request_context_mode"] == "tool_parser"
+    )
     assert completed.parser_metrics["tool_call_markup_leak_count"] == "0"
     assert completed.parser_metrics["reasoning_leak_count"] == "0"
 
@@ -1902,7 +2251,11 @@ def test_generate_rejects_unsupported_schema_backed_json_schema() -> None:
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     error = next(event.error.error for event in events if event.HasField("error"))
     assert error.code == "unsupported_structured_output"
@@ -1950,7 +2303,11 @@ def test_generate_allows_supported_schema_backed_json_schema_to_runtime() -> Non
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     completed = next(event.completed for event in events if event.HasField("completed"))
     assert completed.assistant_text == '{"answer":"ok"}'
@@ -1991,17 +2348,27 @@ def test_generate_prepares_required_tool_schema_before_sampler_preflight() -> No
                 ],
             ),
         ),
-        messages=[common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Search")])],
+        messages=[
+            common_pb2.ChatMessage(
+                role="user", parts=[common_pb2.MessagePart(text="Search")]
+            )
+        ],
         sampling=common_pb2.SamplingConfig(max_output_tokens=16),
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     assert not any(event.HasField("error") for event in events)
     assert runtime.seen_execution_ext is not None
     assert runtime.seen_execution_ext["melix.tool_config.tool_choice"] == "required"
-    assert '"name":"search"' in runtime.seen_execution_ext["melix.tool_config.tools_json"]
+    assert (
+        '"name":"search"' in runtime.seen_execution_ext["melix.tool_config.tools_json"]
+    )
 
 
 def test_generate_refuses_reasoning_required_tool_constraint_before_runtime() -> None:
@@ -2015,7 +2382,9 @@ def test_generate_refuses_reasoning_required_tool_constraint_before_runtime() ->
     ).model_handle
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-reasoning-required-tool-constraint"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-reasoning-required-tool-constraint"
+            ),
             model_handle=model_handle,
             ext={
                 "melix.compat.tool_choice_resolved": "required",
@@ -2034,7 +2403,11 @@ def test_generate_refuses_reasoning_required_tool_constraint_before_runtime() ->
         )
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
     error = next(event.error.error for event in events if event.HasField("error"))
 
     assert error.code == "tool_constraint_reasoning_unsupported"
@@ -2055,7 +2428,9 @@ def test_generate_reports_runtime_structured_output_constraint_error() -> None:
     )
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-runtime-structured-output-error"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-runtime-structured-output-error"
+            ),
             model_handle=load_response.model_handle,
             ext={"melix.structured_output.mode": "json_object"},
         ),
@@ -2069,11 +2444,18 @@ def test_generate_reports_runtime_structured_output_constraint_error() -> None:
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     error = next(event.error.error for event in events if event.HasField("error"))
     assert error.code == "unsupported_structured_output"
-    assert error.message == "json_object constraints require sampler logits processor support."
+    assert (
+        error.message
+        == "json_object constraints require sampler logits processor support."
+    )
     assert error.details["mode"] == "json_object"
     assert error.details["enforcement"] == "sampler"
     assert error.details["reason"] == "logits_processors_unsupported"
@@ -2117,8 +2499,14 @@ def test_generate_stream_normalizes_tool_calls_to_declared_openai_tool_names() -
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    tool_call = next(event.tool_call_delta for event in events if event.HasField("tool_call_delta"))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    tool_call = next(
+        event.tool_call_delta for event in events if event.HasField("tool_call_delta")
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert tool_call.tool_name == "terminal"
@@ -2155,8 +2543,14 @@ def test_generate_stream_suppresses_harmony_thought_channel_content() -> None:
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ]
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == ["\nRepository reviewed."]
@@ -2193,8 +2587,14 @@ def test_generate_stream_flushes_short_visible_prefix_before_marker_hold() -> No
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ]
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert token_text == ["OK"]
@@ -2235,7 +2635,11 @@ def test_generate_stream_forwards_token_metadata_and_effective_parser_receipt() 
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
     token = next(event.token_delta for event in events if event.HasField("token_delta"))
     completed = next(event.completed for event in events if event.HasField("completed"))
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
@@ -2246,7 +2650,10 @@ def test_generate_stream_forwards_token_metadata_and_effective_parser_receipt() 
     assert completed.parser_metrics["generated_token_count"] == "2"
     assert completed.parser_metrics["logprob_entry_count"] == "2"
     assert completed.parser_metrics["stream_interval_delta_flush_count"] == "1"
-    assert '"tool_parser_mode":"qwen"' in completed.parser_metrics["effective_parser_config_json"]
+    assert (
+        '"tool_parser_mode":"qwen"'
+        in completed.parser_metrics["effective_parser_config_json"]
+    )
     assert usage.completion_tokens == 2
 
 
@@ -2276,21 +2683,43 @@ def test_generate_stream_updates_loaded_model_status_throughput_fields() -> None
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    listed = runtime_service.ListLoadedModels(runtime_pb2.ListLoadedModelsRequest(), context=None)
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    listed = runtime_service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(), context=None
+    )
 
-    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["fast"]
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["fast"]
     assert listed.loaded_models[0].prompt_tps == 321.5
     assert listed.loaded_models[0].generation_tps == 42.25
 
 
-def test_generate_stream_keeps_loaded_model_status_defaults_without_throughput() -> None:
+def test_generate_stream_keeps_loaded_model_status_defaults_without_throughput() -> (
+    None
+):
     runtime_service, inference_service, model_handle = build_services()
 
-    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=False), context=None))
-    listed = runtime_service.ListLoadedModels(runtime_pb2.ListLoadedModelsRequest(), context=None)
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(
+                inference_service,
+                generate_usage_request(model_handle, return_usage=False),
+            ),
+            context=None,
+        )
+    )
+    listed = runtime_service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(), context=None
+    )
 
-    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["Hello", " world"]
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["Hello", " world"]
     assert listed.loaded_models[0].prompt_tps == 0.0
     assert listed.loaded_models[0].generation_tps == 0.0
 
@@ -2307,45 +2736,57 @@ def test_decode_updates_loaded_model_status_throughput_fields() -> None:
         context=None,
     )
     prefill = inference_service.Prefill(
-        inference_pb2.PrefillRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id="req-vlm-throughput"),
-                model_handle=load_response.model_handle,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.PrefillRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="req-vlm-throughput"),
+                    model_handle=load_response.model_handle,
+                ),
+                messages=[
+                    common_pb2.ChatMessage(
+                        role="user",
+                        parts=[common_pb2.MessagePart(text="Describe the image")],
+                    )
+                ],
+                return_decode_handle=True,
+                prefill_step_size=16,
             ),
-            messages=[
-                common_pb2.ChatMessage(
-                    role="user",
-                    parts=[common_pb2.MessagePart(text="Describe the image")],
-                )
-            ],
-            return_decode_handle=True,
-            prefill_step_size=16,
         ),
         context=None,
     )
 
     events = list(
         inference_service.Decode(
-            inference_pb2.DecodeRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id="req-vlm-throughput"),
-                    model_handle=load_response.model_handle,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.DecodeRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id="req-vlm-throughput"),
+                        model_handle=load_response.model_handle,
+                    ),
+                    decode_handle=prefill.decode_handle,
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=8),
                 ),
-                decode_handle=prefill.decode_handle,
-                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
             ),
             context=None,
         )
     )
-    listed = runtime_service.ListLoadedModels(runtime_pb2.ListLoadedModelsRequest(), context=None)
+    listed = runtime_service.ListLoadedModels(
+        runtime_pb2.ListLoadedModelsRequest(), context=None
+    )
 
     assert prefill.ok is True
-    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["vision"]
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["vision"]
     assert listed.loaded_models[0].prompt_tps == 88.5
     assert listed.loaded_models[0].generation_tps == 17.25
 
 
-def test_generate_stream_exports_stop_contract_metrics_and_stops_at_turn_boundary() -> None:
+def test_generate_stream_exports_stop_contract_metrics_and_stops_at_turn_boundary() -> (
+    None
+):
     backend = StopContractStreamingBackend()
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=backend),
@@ -2355,7 +2796,9 @@ def test_generate_stream_exports_stop_contract_metrics_and_stops_at_turn_boundar
     inference_service = WorkerInferenceService(registry)
     model = WorkerModelCatalog.dev_text_model()
     model.ext["melix.stop_sequences"] = "</model>"
-    load_response = runtime_service.LoadModel(runtime_pb2.LoadModelRequest(model=model), context=None)
+    load_response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=model), context=None
+    )
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id="req-stop-contract"),
@@ -2372,8 +2815,14 @@ def test_generate_stream_exports_stop_contract_metrics_and_stops_at_turn_boundar
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
-    token_text = [event.token_delta.text for event in events if event.HasField("token_delta")]
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
+    token_text = [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ]
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert backend.seen_stop_sequences == ["</turn>", "</model>", "</s>"]
@@ -2389,11 +2838,14 @@ def test_text_prefill_returns_structured_unimplemented_error() -> None:
     _, inference_service, model_handle = build_services()
 
     response = inference_service.Prefill(
-        inference_pb2.PrefillRequest(
-            execution=inference_pb2.ExecutionMetadata(
-                id=common_pb2.RequestIdentity(request_id="req-prefill-1"),
-                model_handle=model_handle,
-            )
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.PrefillRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="req-prefill-1"),
+                    model_handle=model_handle,
+                )
+            ),
         ),
         context=None,
     )
@@ -2420,7 +2872,7 @@ def test_generate_applies_chat_template_kwargs_from_execution_metadata() -> None
             id=common_pb2.RequestIdentity(request_id="req-template-kwargs"),
             model_handle=load_response.model_handle,
             ext={
-                "melix.chat_template_kwargs.effective_json": "{\"add_generation_prompt\":false,\"continue_final_message\":true}"
+                "melix.chat_template_kwargs.effective_json": '{"add_generation_prompt":false,"continue_final_message":true}'
             },
         ),
         messages=[
@@ -2434,9 +2886,15 @@ def test_generate_applies_chat_template_kwargs_from_execution_metadata() -> None
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
-    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["templated"]
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["templated"]
     assert backend.prompts == ["<templated-prompt>"]
     assert backend.tokenizer.calls == [
         (
@@ -2450,7 +2908,9 @@ def test_generate_applies_chat_template_kwargs_from_execution_metadata() -> None
     ]
 
 
-def test_generate_normalizes_non_leading_system_and_developer_messages_before_template_rendering() -> None:
+def test_generate_normalizes_non_leading_system_and_developer_messages_before_template_rendering() -> (
+    None
+):
     backend = TemplateAwareStreamingBackend()
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=backend),
@@ -2494,11 +2954,18 @@ def test_generate_normalizes_non_leading_system_and_developer_messages_before_te
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert backend.tokenizer.calls[0][0] == [
-        {"role": "system", "content": "Prefer native tool calls.\n\nKeep replies terse."},
+        {
+            "role": "system",
+            "content": "Prefer native tool calls.\n\nKeep replies terse.",
+        },
         {"role": "user", "content": "Previous question"},
         {"role": "assistant", "content": "Previous answer"},
         {"role": "user", "content": "Continue"},
@@ -2545,7 +3012,11 @@ def test_generate_injects_tool_config_as_native_template_tools_when_absent() -> 
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert backend.tokenizer.calls[0][1]["tools"] == [
@@ -2554,11 +3025,16 @@ def test_generate_injects_tool_config_as_native_template_tools_when_absent() -> 
             "function": {
                 "name": "search_docs",
                 "description": "Search local docs.",
-                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                },
             },
         }
     ]
-    assert request.execution.ext["melix.tool_config.native_template_tools"] == "injected"
+    assert (
+        request.execution.ext["melix.tool_config.native_template_tools"] == "injected"
+    )
     assert completed.parser_metrics["native_tool_exemplar_injected_count"] == "1"
 
 
@@ -2588,8 +3064,16 @@ def test_runtime_metadata_helper_defensive_branches_are_stable() -> None:
 
     assert mlx_text_runtime._native_template_tools(None) == []
     assert mlx_text_runtime._native_template_tools({}) == []
-    assert mlx_text_runtime._native_template_tools({"melix.tool_config.tools_json": "not-json"}) == []
-    assert mlx_text_runtime._native_template_tools({"melix.tool_config.tools_json": "{}"}) == []
+    assert (
+        mlx_text_runtime._native_template_tools(
+            {"melix.tool_config.tools_json": "not-json"}
+        )
+        == []
+    )
+    assert (
+        mlx_text_runtime._native_template_tools({"melix.tool_config.tools_json": "{}"})
+        == []
+    )
     assert mlx_text_runtime._native_template_tools(
         {"melix.tool_config.tools_json": '[{"type":"function"}, "ignored"]'}
     ) == [{"type": "function"}]
@@ -2642,7 +3126,9 @@ def test_auto_mlx_backend_extracts_stream_response_token_metadata() -> None:
     assert event.parser_observation == "token=42"
 
 
-def test_prepare_native_template_tools_preserves_existing_payload_and_skips_invalid_tools() -> None:
+def test_prepare_native_template_tools_preserves_existing_payload_and_skips_invalid_tools() -> (
+    None
+):
     existing = inference_pb2.ExecutionMetadata(
         ext={"melix.tool_config.tools_json": '[{"type":"function"}]'}
     )
@@ -2655,7 +3141,7 @@ def test_prepare_native_template_tools_preserves_existing_payload_and_skips_inva
             tools=[
                 common_pb2.ToolDefinition(name=" ", description="skip blank"),
                 common_pb2.ToolDefinition(name="bad_schema", json_schema="{not-json"),
-            ]
+            ],
         )
     )
     EngineCore._prepare_native_template_tools(invalid)
@@ -2664,7 +3150,9 @@ def test_prepare_native_template_tools_preserves_existing_payload_and_skips_inva
     assert '"parameters":{}' in invalid.ext["melix.tool_config.tools_json"]
 
 
-def test_prepare_native_template_tools_keeps_parameterless_constraints_enforceable() -> None:
+def test_prepare_native_template_tools_keeps_parameterless_constraints_enforceable() -> (
+    None
+):
     from worker.runtime.tool_wire_constraints import (
         tool_constraint_preflight_error,
         tool_wire_accepts_text,
@@ -2697,9 +3185,7 @@ def test_generate_rejects_non_object_chat_template_kwargs_payloads() -> None:
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id="req-template-invalid-root"),
             model_handle=model_handle,
-            ext={
-                "melix.chat_template_kwargs.effective_json": "[1,2,3]"
-            },
+            ext={"melix.chat_template_kwargs.effective_json": "[1,2,3]"},
         ),
         messages=[
             common_pb2.ChatMessage(
@@ -2711,7 +3197,11 @@ def test_generate_rejects_non_object_chat_template_kwargs_payloads() -> None:
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     error = next(event.error.error for event in events if event.HasField("error"))
     assert error.code == "runtime_error"
@@ -2752,9 +3242,15 @@ def test_generate_forwards_acceleration_policy_to_runtimes_that_accept_it() -> N
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
-    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["accelerated"]
+    assert [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ] == ["accelerated"]
     assert len(runtime.seen_acceleration_policies) == 1
     seen_policy = runtime.seen_acceleration_policies[0]
     assert seen_policy is not None
@@ -2800,7 +3296,9 @@ def test_generate_forwards_positive_block_size_to_runtime() -> None:
 
     def capturing(loaded_model, prompt, sampling, cancel_event, execution_ext=None):
         captured.update(dict(execution_ext or {}))
-        return original(loaded_model, prompt, sampling, cancel_event, execution_ext=execution_ext)
+        return original(
+            loaded_model, prompt, sampling, cancel_event, execution_ext=execution_ext
+        )
 
     runtime.generate_tokens = capturing  # type: ignore[method-assign]
     inference_service, model_handle = build_usage_counting_services(runtime)
@@ -2814,11 +3312,19 @@ def test_generate_forwards_positive_block_size_to_runtime() -> None:
                 cache_memory_budget_bytes=2048,
             ),
         ),
-        messages=[common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="hi")])],
+        messages=[
+            common_pb2.ChatMessage(
+                role="user", parts=[common_pb2.MessagePart(text="hi")]
+            )
+        ],
         sampling=common_pb2.SamplingConfig(max_output_tokens=2),
         stream=True,
     )
-    list(inference_service.Generate(request, context=None))
+    list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
     assert captured.get("_melix.block_size") == "32"
     assert captured.get("_melix.cache_memory_budget_bytes") == "2048"
 
@@ -2831,7 +3337,9 @@ def test_generate_omits_block_size_when_unset() -> None:
 
     def capturing(loaded_model, prompt, sampling, cancel_event, execution_ext=None):
         captured.update(dict(execution_ext or {}))
-        return original(loaded_model, prompt, sampling, cancel_event, execution_ext=execution_ext)
+        return original(
+            loaded_model, prompt, sampling, cancel_event, execution_ext=execution_ext
+        )
 
     runtime.generate_tokens = capturing  # type: ignore[method-assign]
     inference_service, model_handle = build_usage_counting_services(runtime)
@@ -2841,9 +3349,17 @@ def test_generate_omits_block_size_when_unset() -> None:
             id=common_pb2.RequestIdentity(request_id="req-noblocksize"),
             model_handle=model_handle,
         ),
-        messages=[common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="hi")])],
+        messages=[
+            common_pb2.ChatMessage(
+                role="user", parts=[common_pb2.MessagePart(text="hi")]
+            )
+        ],
         sampling=common_pb2.SamplingConfig(max_output_tokens=2),
         stream=True,
     )
-    list(inference_service.Generate(request, context=None))
+    list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
     assert "_melix.block_size" not in captured

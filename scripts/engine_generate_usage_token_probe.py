@@ -22,6 +22,15 @@ from worker.registry import WorkerRegistry
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 
 
+def _probe_backend_identity(worker_instance_id: str) -> common_pb2.BackendModelIdentity:
+    return common_pb2.BackendModelIdentity(
+        requested_model_id="melix-dev-text",
+        requested_adapter_id="text-family-llama",
+        route_generation=1,
+        worker_instance_id=worker_instance_id,
+    )
+
+
 class CountingRuntime:
     runtime_name = "probe-counting-runtime"
 
@@ -88,25 +97,38 @@ class FallbackRuntime:
         yield RuntimeTokenEvent(text="ok", prompt_tokens=0, completion_tokens=1, finish_reason="stop")
 
 
-def _load_services(runtime) -> tuple[WorkerInferenceService, str]:
+def _load_services(
+    runtime,
+) -> tuple[WorkerInferenceService, str, common_pb2.BackendModelIdentity]:
     registry = WorkerRegistry(
         runtime=runtime,  # type: ignore[arg-type]
         model_catalog=WorkerModelCatalog(environment={}),
     )
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
+    backend_identity = _probe_backend_identity(registry.worker_instance_id)
     load_response = runtime_service.LoadModel(
-        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        runtime_pb2.LoadModelRequest(
+            model=WorkerModelCatalog.dev_text_model(),
+            backend_identity=backend_identity,
+        ),
         context=None,
     )
-    return inference_service, load_response.model_handle
+    return inference_service, load_response.model_handle, backend_identity
 
 
-def _build_request(model_handle: str, *, request_index: int, return_usage: bool) -> inference_pb2.GenerateRequest:
+def _build_request(
+    model_handle: str,
+    backend_identity: common_pb2.BackendModelIdentity,
+    *,
+    request_index: int,
+    return_usage: bool,
+) -> inference_pb2.GenerateRequest:
     return inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id=f"probe-generate-{request_index}"),
             model_handle=model_handle,
+            backend_identity=backend_identity,
         ),
         messages=[
             common_pb2.ChatMessage(
@@ -122,7 +144,7 @@ def _build_request(model_handle: str, *, request_index: int, return_usage: bool)
 
 def _run_no_usage_sample(*, request_count: int, prompt_words: int, sample: int) -> tuple[float, int, int, int]:
     runtime = CountingRuntime(prompt_words=prompt_words)
-    inference_service, model_handle = _load_services(runtime)
+    inference_service, model_handle, backend_identity = _load_services(runtime)
     token_count = 0
     append_count = 0
     original_append_token = RequestState.append_token
@@ -138,6 +160,7 @@ def _run_no_usage_sample(*, request_count: int, prompt_words: int, sample: int) 
         for request_index in range(request_count):
             request = _build_request(
                 model_handle,
+                backend_identity,
                 request_index=sample * request_count + request_index,
                 return_usage=False,
             )
@@ -150,7 +173,7 @@ def _run_no_usage_sample(*, request_count: int, prompt_words: int, sample: int) 
 
 def _run_fallback_sample(*, request_count: int, prompt_words: int, sample: int) -> tuple[float, float, int, int]:
     runtime = FallbackRuntime(prompt_words=prompt_words)
-    inference_service, model_handle = _load_services(runtime)
+    inference_service, model_handle, backend_identity = _load_services(runtime)
     prompt_tokens = 0
     native_parser_calls = 0
     original_native_parser = engine_core_module._text_native_mtp_parser_metrics
@@ -167,11 +190,22 @@ def _run_fallback_sample(*, request_count: int, prompt_words: int, sample: int) 
         for request_index in range(request_count):
             request = _build_request(
                 model_handle,
+                backend_identity,
                 request_index=sample * request_count + request_index,
                 return_usage=True,
             )
             events = list(inference_service.Generate(request, context=None))
-            usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
+            usage = next(
+                (event.usage_delta for event in events if event.HasField("usage_delta")),
+                None,
+            )
+            if usage is None:
+                worker_errors = [
+                    event.error.error.code
+                    for event in events
+                    if event.HasField("error")
+                ]
+                raise RuntimeError(f"fallback probe emitted no usage event; worker_errors={worker_errors}")
             prompt_tokens = int(usage.prompt_tokens)
     finally:
         engine_core_module._text_native_mtp_parser_metrics = original_native_parser

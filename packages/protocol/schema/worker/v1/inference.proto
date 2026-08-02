@@ -30,6 +30,7 @@ message ExecutionMetadata {
   CacheHints cache_hints = 8;
   map<string, string> ext = 9;
   AccelerationPolicy acceleration = 10;
+  BackendModelIdentity backend_identity = 11;
 }
 
 message ExecutionMode {
@@ -255,6 +256,7 @@ message EmbedRequest {
   RequestIdentity id = 1;
   string model_handle = 2;
   repeated string inputs = 3;
+  BackendModelIdentity backend_identity = 4;
 }
 
 message Embedding {
@@ -272,6 +274,7 @@ message RerankRequest {
   string query = 3;
   repeated string documents = 4;
   uint32 top_k = 5;
+  BackendModelIdentity backend_identity = 6;
 }
 
 message RerankItem {
@@ -293,6 +296,7 @@ message TranscribeRequest {
   string audio_uri = 6;
   MediaMetadata audio = 7;
   string language = 8;
+  BackendModelIdentity backend_identity = 9;
 }
 
 message TranscribeResponse {
@@ -313,6 +317,7 @@ message SpeakRequest {
   map<string, string> ext = 8;
   bool streaming_enabled = 9;
   uint32 stream_interval_ms = 10;
+  BackendModelIdentity backend_identity = 11;
 }
 
 message SpeakResponse {
@@ -374,6 +379,7 @@ message ImageGenerateRequest {
   map<string, string> ext = 6;
   string response_format = 7;
   string artifact_namespace = 8;
+  BackendModelIdentity backend_identity = 9;
 }
 
 message ImageGenerateResponse {
@@ -398,6 +404,7 @@ message ImageEditRequest {
   string source_artifact_id = 13;
   string prompt_delta = 14;
   ImageEditMode edit_mode = 15;
+  BackendModelIdentity backend_identity = 16;
 }
 
 message ImageEditResponse {

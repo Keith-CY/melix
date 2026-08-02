@@ -178,56 +178,7 @@ class LiveMelixStack:
             ) * 1_000.0
 
         if self.should_start_python_worker:
-            python_started_at = time.perf_counter()
-            worker_env = os.environ.copy()
-            worker_env.update(self.environment_overrides)
-            pythonpath_segments: list[str] = []
-            pythonpath_prefix = worker_env.get("MELIX_PYTHONPATH_PREFIX", "").strip()
-            if pythonpath_prefix:
-                pythonpath_segments.append(pythonpath_prefix)
-            pythonpath_segments.extend(
-                [
-                    os.fspath(self.repo_root),
-                    os.fspath(self.repo_root / "services/mlx-worker-python"),
-                ]
-            )
-            worker_env["PYTHONPATH"] = os.pathsep.join(pythonpath_segments)
-            worker_env["MELIX_PYTHON_WORKER_METRICS_PATH"] = os.fspath(self.python_worker_metrics_path)
-            worker_env["MELIX_PYTHON_WORKER_STARTUP_T0_NS"] = str(time.perf_counter_ns())
-            self.python_worker_stdout = self.python_worker_stdout_path.open("w", encoding="utf-8")
-            self.python_worker_stderr = self.python_worker_stderr_path.open("w", encoding="utf-8")
-
-            self.python_worker = subprocess.Popen(
-                [
-                    "uv",
-                    "run",
-                    "--project",
-                    os.fspath(self.repo_root / "services/mlx-worker-python"),
-                    "python",
-                    "-m",
-                    "worker.bootstrap",
-                    "--socket-path",
-                    os.fspath(self.python_socket_path),
-                    "--backend-mode",
-                    self.python_backend_mode,
-                ],
-                cwd=self.repo_root,
-                stdout=self.python_worker_stdout,
-                stderr=self.python_worker_stderr,
-                text=True,
-                env=worker_env,
-                start_new_session=True,
-            )
-            wait_for_worker_handshake(
-                self.python_socket_path,
-                worker=self.python_worker,
-                stdout_path=self.python_worker_stdout_path,
-                stderr_path=self.python_worker_stderr_path,
-                timeout_seconds=60,
-            )
-            self.startup_timings["python_worker_ready_ms"] = (
-                time.perf_counter() - python_started_at
-            ) * 1_000.0
+            self.start_python_worker()
 
         control_plane_started_at = time.perf_counter()
         control_plane_binary = resolve_swift_product_binary(
@@ -307,6 +258,62 @@ class LiveMelixStack:
         self._close_logs("python_worker")
         self.python_socket_path.unlink(missing_ok=True)
         self.python_worker_metrics_path.unlink(missing_ok=True)
+
+    def start_python_worker(self) -> None:
+        if self.python_worker is not None and self.python_worker.poll() is None:
+            raise RuntimeError("python worker is already running")
+        python_started_at = time.perf_counter()
+        self.python_socket_path.unlink(missing_ok=True)
+        worker_env = os.environ.copy()
+        worker_env.update(self.environment_overrides)
+        pythonpath_segments: list[str] = []
+        pythonpath_prefix = worker_env.get("MELIX_PYTHONPATH_PREFIX", "").strip()
+        if pythonpath_prefix:
+            pythonpath_segments.append(pythonpath_prefix)
+        pythonpath_segments.extend(
+            [
+                os.fspath(self.repo_root),
+                os.fspath(self.repo_root / "services/mlx-worker-python"),
+            ]
+        )
+        worker_env["PYTHONPATH"] = os.pathsep.join(pythonpath_segments)
+        worker_env["MELIX_PYTHON_WORKER_METRICS_PATH"] = os.fspath(
+            self.python_worker_metrics_path
+        )
+        worker_env["MELIX_PYTHON_WORKER_STARTUP_T0_NS"] = str(time.perf_counter_ns())
+        self.python_worker_stdout = self.python_worker_stdout_path.open("w", encoding="utf-8")
+        self.python_worker_stderr = self.python_worker_stderr_path.open("w", encoding="utf-8")
+        self.python_worker = subprocess.Popen(
+            [
+                "uv",
+                "run",
+                "--project",
+                os.fspath(self.repo_root / "services/mlx-worker-python"),
+                "python",
+                "-m",
+                "worker.bootstrap",
+                "--socket-path",
+                os.fspath(self.python_socket_path),
+                "--backend-mode",
+                self.python_backend_mode,
+            ],
+            cwd=self.repo_root,
+            stdout=self.python_worker_stdout,
+            stderr=self.python_worker_stderr,
+            text=True,
+            env=worker_env,
+            start_new_session=True,
+        )
+        wait_for_worker_handshake(
+            self.python_socket_path,
+            worker=self.python_worker,
+            stdout_path=self.python_worker_stdout_path,
+            stderr_path=self.python_worker_stderr_path,
+            timeout_seconds=60,
+        )
+        self.startup_timings["python_worker_ready_ms"] = (
+            time.perf_counter() - python_started_at
+        ) * 1_000.0
 
     def stop_swift_text_worker(self) -> None:
         self._stop_process("swift text worker", self.swift_text_worker)

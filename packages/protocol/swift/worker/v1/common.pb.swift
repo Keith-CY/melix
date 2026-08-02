@@ -980,6 +980,69 @@ public nonisolated struct Melix_Worker_V1_ErrorStatus: Sendable {
 
   public var details: Dictionary<String,String> = [:]
 
+  public var backendIdentityMismatch: Melix_Worker_V1_BackendIdentityMismatchReceipt {
+    get {_backendIdentityMismatch ?? Melix_Worker_V1_BackendIdentityMismatchReceipt()}
+    set {_backendIdentityMismatch = newValue}
+  }
+  /// Returns true if `backendIdentityMismatch` has been explicitly set.
+  public var hasBackendIdentityMismatch: Bool {self._backendIdentityMismatch != nil}
+  /// Clears the value of `backendIdentityMismatch`. Subsequent reads from it will return its default value.
+  public mutating func clearBackendIdentityMismatch() {self._backendIdentityMismatch = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _backendIdentityMismatch: Melix_Worker_V1_BackendIdentityMismatchReceipt? = nil
+}
+
+/// BackendModelIdentity is the untranslated control-plane identity bound to a
+/// concrete backend residency. Workers compare this value before runtime work.
+public nonisolated struct Melix_Worker_V1_BackendModelIdentity: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var requestedModelID: String = String()
+
+  public var requestedAdapterID: String = String()
+
+  public var routeGeneration: UInt64 = 0
+
+  public var workerInstanceID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// BackendIdentityMismatchReceipt is safe for operator diagnostics: public
+/// catalog identifiers remain readable, while local paths are redacted.
+public nonisolated struct Melix_Worker_V1_BackendIdentityMismatchReceipt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var requestedModelID: String = String()
+
+  public var loadedModelID: String = String()
+
+  public var requestedAdapterID: String = String()
+
+  public var loadedAdapterID: String = String()
+
+  public var requestedRouteGeneration: UInt64 = 0
+
+  public var loadedRouteGeneration: UInt64 = 0
+
+  public var observedAtUnixMs: Int64 = 0
+
+  public var mismatchReason: String = String()
+
+  public var requestedWorkerInstanceID: String = String()
+
+  public var loadedWorkerInstanceID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2138,7 +2201,7 @@ nonisolated extension Melix_Worker_V1_AccelerationMode: SwiftProtobuf._ProtoName
 
 nonisolated extension Melix_Worker_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ErrorStatus"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}message\0\u{1}retriable\0\u{1}details\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}message\0\u{1}retriable\0\u{1}details\0\u{3}backend_identity_mismatch\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2150,12 +2213,17 @@ nonisolated extension Melix_Worker_V1_ErrorStatus: SwiftProtobuf.Message, SwiftP
       case 2: try { try decoder.decodeSingularStringField(value: &self.message) }()
       case 3: try { try decoder.decodeSingularBoolField(value: &self.retriable) }()
       case 4: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.details) }()
+      case 5: try { try decoder.decodeSingularMessageField(value: &self._backendIdentityMismatch) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.code.isEmpty {
       try visitor.visitSingularStringField(value: self.code, fieldNumber: 1)
     }
@@ -2168,6 +2236,9 @@ nonisolated extension Melix_Worker_V1_ErrorStatus: SwiftProtobuf.Message, SwiftP
     if !self.details.isEmpty {
       try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.details, fieldNumber: 4)
     }
+    try { if let v = self._backendIdentityMismatch {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2176,6 +2247,127 @@ nonisolated extension Melix_Worker_V1_ErrorStatus: SwiftProtobuf.Message, SwiftP
     if lhs.message != rhs.message {return false}
     if lhs.retriable != rhs.retriable {return false}
     if lhs.details != rhs.details {return false}
+    if lhs._backendIdentityMismatch != rhs._backendIdentityMismatch {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Worker_V1_BackendModelIdentity: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".BackendModelIdentity"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}requested_model_id\0\u{3}requested_adapter_id\0\u{3}route_generation\0\u{3}worker_instance_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.requestedModelID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.requestedAdapterID) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.routeGeneration) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.workerInstanceID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.requestedModelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestedModelID, fieldNumber: 1)
+    }
+    if !self.requestedAdapterID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestedAdapterID, fieldNumber: 2)
+    }
+    if self.routeGeneration != 0 {
+      try visitor.visitSingularUInt64Field(value: self.routeGeneration, fieldNumber: 3)
+    }
+    if !self.workerInstanceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.workerInstanceID, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_BackendModelIdentity, rhs: Melix_Worker_V1_BackendModelIdentity) -> Bool {
+    if lhs.requestedModelID != rhs.requestedModelID {return false}
+    if lhs.requestedAdapterID != rhs.requestedAdapterID {return false}
+    if lhs.routeGeneration != rhs.routeGeneration {return false}
+    if lhs.workerInstanceID != rhs.workerInstanceID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Worker_V1_BackendIdentityMismatchReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".BackendIdentityMismatchReceipt"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}requested_model_id\0\u{3}loaded_model_id\0\u{3}requested_adapter_id\0\u{3}loaded_adapter_id\0\u{3}requested_route_generation\0\u{3}loaded_route_generation\0\u{3}observed_at_unix_ms\0\u{3}mismatch_reason\0\u{3}requested_worker_instance_id\0\u{3}loaded_worker_instance_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.requestedModelID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.loadedModelID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.requestedAdapterID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.loadedAdapterID) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.requestedRouteGeneration) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.loadedRouteGeneration) }()
+      case 7: try { try decoder.decodeSingularInt64Field(value: &self.observedAtUnixMs) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.mismatchReason) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.requestedWorkerInstanceID) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.loadedWorkerInstanceID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.requestedModelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestedModelID, fieldNumber: 1)
+    }
+    if !self.loadedModelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.loadedModelID, fieldNumber: 2)
+    }
+    if !self.requestedAdapterID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestedAdapterID, fieldNumber: 3)
+    }
+    if !self.loadedAdapterID.isEmpty {
+      try visitor.visitSingularStringField(value: self.loadedAdapterID, fieldNumber: 4)
+    }
+    if self.requestedRouteGeneration != 0 {
+      try visitor.visitSingularUInt64Field(value: self.requestedRouteGeneration, fieldNumber: 5)
+    }
+    if self.loadedRouteGeneration != 0 {
+      try visitor.visitSingularUInt64Field(value: self.loadedRouteGeneration, fieldNumber: 6)
+    }
+    if self.observedAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.observedAtUnixMs, fieldNumber: 7)
+    }
+    if !self.mismatchReason.isEmpty {
+      try visitor.visitSingularStringField(value: self.mismatchReason, fieldNumber: 8)
+    }
+    if !self.requestedWorkerInstanceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestedWorkerInstanceID, fieldNumber: 9)
+    }
+    if !self.loadedWorkerInstanceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.loadedWorkerInstanceID, fieldNumber: 10)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_BackendIdentityMismatchReceipt, rhs: Melix_Worker_V1_BackendIdentityMismatchReceipt) -> Bool {
+    if lhs.requestedModelID != rhs.requestedModelID {return false}
+    if lhs.loadedModelID != rhs.loadedModelID {return false}
+    if lhs.requestedAdapterID != rhs.requestedAdapterID {return false}
+    if lhs.loadedAdapterID != rhs.loadedAdapterID {return false}
+    if lhs.requestedRouteGeneration != rhs.requestedRouteGeneration {return false}
+    if lhs.loadedRouteGeneration != rhs.loadedRouteGeneration {return false}
+    if lhs.observedAtUnixMs != rhs.observedAtUnixMs {return false}
+    if lhs.mismatchReason != rhs.mismatchReason {return false}
+    if lhs.requestedWorkerInstanceID != rhs.requestedWorkerInstanceID {return false}
+    if lhs.loadedWorkerInstanceID != rhs.loadedWorkerInstanceID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

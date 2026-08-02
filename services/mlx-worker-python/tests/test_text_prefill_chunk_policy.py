@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
@@ -88,7 +92,9 @@ def test_sequence_aligned_extra_inputs_force_single_forward_fallback() -> None:
     )
 
     assert decision.prefill_mode == TEXT_PREFILL_SINGLE_FORWARD
-    assert decision.fallback_reason == TEXT_PREFILL_FALLBACK_SEQUENCE_ALIGNED_EXTRA_INPUTS
+    assert (
+        decision.fallback_reason == TEXT_PREFILL_FALLBACK_SEQUENCE_ALIGNED_EXTRA_INPUTS
+    )
 
 
 def test_partial_attention_mask_forces_single_forward_fallback() -> None:
@@ -219,7 +225,9 @@ def test_configured_resolver_reads_top_level_and_nested_and_execution_ext() -> N
     assert overridden.effective_prefill_step_size == 4
 
 
-def test_configured_resolver_forwards_partial_mask_and_cache_and_extra_input_guards() -> None:
+def test_configured_resolver_forwards_partial_mask_and_cache_and_extra_input_guards() -> (
+    None
+):
     base_kwargs = dict(
         loaded_model={"melix.vlm.text_prefill_step_size": "4"},
         prepared_request=SimpleNamespace(images=(), videos=()),
@@ -248,7 +256,10 @@ def test_configured_resolver_forwards_partial_mask_and_cache_and_extra_input_gua
         **base_kwargs, has_sequence_aligned_extra_inputs=True
     )
     assert extra_inputs is not None
-    assert extra_inputs.fallback_reason == TEXT_PREFILL_FALLBACK_SEQUENCE_ALIGNED_EXTRA_INPUTS
+    assert (
+        extra_inputs.fallback_reason
+        == TEXT_PREFILL_FALLBACK_SEQUENCE_ALIGNED_EXTRA_INPUTS
+    )
 
 
 def test_configured_resolver_detects_media_on_prepared_request() -> None:
@@ -263,8 +274,12 @@ def test_configured_resolver_detects_media_on_prepared_request() -> None:
     assert decision.fallback_reason == TEXT_PREFILL_FALLBACK_MEDIA_PRESENT
 
 
-def _load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
-    response = runtime_service.LoadModel(runtime_pb2.LoadModelRequest(model=model), context=None)
+def _load_model(
+    runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec
+) -> str:
+    response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=model), context=None
+    )
     assert response.ok is True
     return response.model_handle
 
@@ -314,15 +329,18 @@ def _first_generate_receipt(
 
     first_event = next(
         inference_service.Generate(
-            inference_pb2.GenerateRequest(
-                execution=inference_pb2.ExecutionMetadata(
-                    id=common_pb2.RequestIdentity(request_id=request_id),
-                    model_handle=model_handle,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.GenerateRequest(
+                    execution=inference_pb2.ExecutionMetadata(
+                        id=common_pb2.RequestIdentity(request_id=request_id),
+                        model_handle=model_handle,
+                    ),
+                    messages=[message],
+                    sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+                    stream=True,
+                    return_usage=True,
                 ),
-                messages=[message],
-                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
-                stream=True,
-                return_usage=True,
             ),
             context=None,
         )

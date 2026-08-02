@@ -7,7 +7,11 @@ import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_embedding_runtime import (
@@ -99,7 +103,9 @@ def build_services(
     return registry, runtime_service, inference_service
 
 
-def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
+def load_model(
+    runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec
+) -> str:
     response = runtime_service.LoadModel(
         runtime_pb2.LoadModelRequest(model=model),
         context=None,
@@ -145,11 +151,26 @@ def test_project_digest_zero_dimensions_skips_digest_projection() -> None:
         digest_calls += 1
         return hashlib.sha256(payload)
 
-    assert backend._project_digest("bert::zero dimensions", 0, _sha256=counting_sha256) == []
-    assert backend._project_digest("bert::negative dimensions", -1, _sha256=counting_sha256) == []
+    assert (
+        backend._project_digest("bert::zero dimensions", 0, _sha256=counting_sha256)
+        == []
+    )
+    assert (
+        backend._project_digest(
+            "bert::negative dimensions", -1, _sha256=counting_sha256
+        )
+        == []
+    )
     assert digest_calls == 0
 
-    assert len(backend._project_digest("bert::positive dimensions", 1, _sha256=counting_sha256)) == 1
+    assert (
+        len(
+            backend._project_digest(
+                "bert::positive dimensions", 1, _sha256=counting_sha256
+            )
+        )
+        == 1
+    )
     assert digest_calls == 1
 
 
@@ -190,18 +211,24 @@ def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
 
     first = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-1"),
-            model_handle=model_handle,
-            inputs=["alpha", "beta"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-1"),
+                model_handle=model_handle,
+                inputs=["alpha", "beta"],
+            ),
         ),
         context=None,
     )
     second = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-2"),
-            model_handle=model_handle,
-            inputs=["alpha", "beta"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-2"),
+                model_handle=model_handle,
+                inputs=["alpha", "beta"],
+            ),
         ),
         context=None,
     )
@@ -217,14 +244,19 @@ def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
 
 def test_embed_passes_request_inputs_without_list_materialization() -> None:
     recording_runtime = RecordingEmbeddingRuntime()
-    _, runtime_service, inference_service = build_services(embedding_runtime=recording_runtime)
+    _, runtime_service, inference_service = build_services(
+        embedding_runtime=recording_runtime
+    )
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
 
     response = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-no-input-list-copy"),
-            model_handle=model_handle,
-            inputs=["alpha", "beta", "alpha"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-no-input-list-copy"),
+                model_handle=model_handle,
+                inputs=["alpha", "beta", "alpha"],
+            ),
         ),
         context=None,
     )
@@ -243,23 +275,30 @@ def test_embed_rejects_missing_and_wrong_model_kinds() -> None:
     text_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
 
     missing = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-missing"),
-            model_handle="missing-handle",
-            inputs=["alpha"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-missing"),
+                model_handle="missing-handle",
+                inputs=["alpha"],
+            ),
+            source_handle=text_handle,
         ),
         context=None,
     )
     wrong_kind = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-text"),
-            model_handle=text_handle,
-            inputs=["alpha"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-text"),
+                model_handle=text_handle,
+                inputs=["alpha"],
+            ),
         ),
         context=None,
     )
 
-    assert missing.error.code == "not_found"
+    assert missing.error.code == "model_identity_mismatch"
     assert wrong_kind.error.code == "invalid_argument"
 
 
@@ -270,10 +309,13 @@ def test_embed_returns_runtime_error_when_backend_raises() -> None:
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
 
     response = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-runtime-error"),
-            model_handle=model_handle,
-            inputs=["alpha"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-runtime-error"),
+                model_handle=model_handle,
+                inputs=["alpha"],
+            ),
         ),
         context=None,
     )
@@ -312,18 +354,24 @@ def test_embed_returns_distinct_vectors_for_xlmr_backend_selection() -> None:
     xlmr_handle = load_model(runtime_service, xlmr_model)
 
     bert = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-bert"),
-            model_handle=bert_handle,
-            inputs=["Straße"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-bert"),
+                model_handle=bert_handle,
+                inputs=["Straße"],
+            ),
         ),
         context=None,
     )
     xlmr = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-xlmr"),
-            model_handle=xlmr_handle,
-            inputs=["Straße"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-xlmr"),
+                model_handle=xlmr_handle,
+                inputs=["Straße"],
+            ),
         ),
         context=None,
     )
@@ -410,18 +458,24 @@ def test_embed_returns_family_specific_dimensions_for_mxbai() -> None:
     mxbai_handle = load_model(runtime_service, mxbai_model)
 
     bge = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-bge"),
-            model_handle=bge_handle,
-            inputs=["query text"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-bge"),
+                model_handle=bge_handle,
+                inputs=["query text"],
+            ),
         ),
         context=None,
     )
     mxbai = inference_service.Embed(
-        inference_pb2.EmbedRequest(
-            id=common_pb2.RequestIdentity(request_id="embed-mxbai"),
-            model_handle=mxbai_handle,
-            inputs=["query text"],
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-mxbai"),
+                model_handle=mxbai_handle,
+                inputs=["query text"],
+            ),
         ),
         context=None,
     )
@@ -551,7 +605,9 @@ def test_repeated_input_cycle_length_rejects_partial_single_input_cycles() -> No
     assert _repeated_input_cycle_length(inputs) == 0
 
 
-def test_repeated_input_cycle_length_validates_multi_input_cycles_without_slices() -> None:
+def test_repeated_input_cycle_length_validates_multi_input_cycles_without_slices() -> (
+    None
+):
     cycle = [f"document-{index}" for index in range(512)]
     inputs = SliceCountingInputs(cycle * 3)
 

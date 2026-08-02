@@ -452,6 +452,8 @@ public nonisolated struct Melix_Worker_V1_RestoreBoundarySnapshotRequest: Sendab
   /// Clears the value of `restoreBoundary`. Subsequent reads from it will return its default value.
   public mutating func clearRestoreBoundary() {self._restoreBoundary = nil}
 
+  public var requestID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1351,7 +1353,7 @@ nonisolated extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobu
 
 nonisolated extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RestoreBoundarySnapshotRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}snapshot_id\0\u{3}restore_boundary\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}snapshot_id\0\u{3}restore_boundary\0\u{3}request_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1361,6 +1363,7 @@ nonisolated extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProto
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.snapshotID) }()
       case 2: try { try decoder.decodeSingularMessageField(value: &self._restoreBoundary) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.requestID) }()
       default: break
       }
     }
@@ -1377,12 +1380,16 @@ nonisolated extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProto
     try { if let v = self._restoreBoundary {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
     } }()
+    if !self.requestID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestID, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Melix_Worker_V1_RestoreBoundarySnapshotRequest, rhs: Melix_Worker_V1_RestoreBoundarySnapshotRequest) -> Bool {
     if lhs.snapshotID != rhs.snapshotID {return false}
     if lhs._restoreBoundary != rhs._restoreBoundary {return false}
+    if lhs.requestID != rhs.requestID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

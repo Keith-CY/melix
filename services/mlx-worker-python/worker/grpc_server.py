@@ -48,7 +48,12 @@ from worker.productization.evaluation_final_result import (
     materialize_local_evaluation_dataset,
 )
 from worker.model_load_trust import ModelLoadTrustRejection
-from worker.registry import DiskStreamingUnsupported, MemoryBudgetExceeded, WorkerRegistry
+from worker.registry import (
+    DiskStreamingUnsupported,
+    MemoryBudgetExceeded,
+    WorkerInstanceMismatch,
+    WorkerRegistry,
+)
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError, AudioProcessorValidationError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
 from worker.runtime.deterministic_backend import DeterministicTextBackend
@@ -120,6 +125,8 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
             protocol_version=request.protocol_version,
             runtime_version=self._registry.runtime.runtime_name,
             capabilities=self._registry.capabilities(),
+            worker_family=common_pb2.WORKER_FAMILY_OMNI,
+            worker_instance_id=self._registry.worker_instance_id,
         )
 
     def LoadModel(self, request, context):
@@ -130,6 +137,18 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                 memory_budget_bytes=request.memory_budget_bytes,
                 disk_streaming_mode=request.disk_streaming_mode,
                 load_trust=request.load_trust if request.HasField("load_trust") else None,
+                backend_identity=(
+                    request.backend_identity if request.HasField("backend_identity") else None
+                ),
+            )
+        except WorkerInstanceMismatch as exc:
+            return runtime_pb2.LoadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="worker_instance_mismatch",
+                    message=str(exc),
+                    retriable=True,
+                ),
             )
         except ModelLoadTrustRejection as exc:
             response = runtime_pb2.LoadModelResponse(
@@ -216,6 +235,11 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
         receipt = self._registry.request_model_unload(
             request.model_handle,
             force=bool(request.force),
+            expected_backend_identity=(
+                request.expected_backend_identity
+                if request.HasField("expected_backend_identity")
+                else None
+            ),
         )
         if receipt.unloaded:
             return runtime_pb2.UnloadModelResponse(ok=True)
@@ -226,6 +250,16 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                     code="unload_pending",
                     message="Model unload is pending until active request leases are released.",
                     retriable=True,
+                    details=receipt.details,
+                ),
+            )
+        if receipt.identity_mismatch:
+            return runtime_pb2.UnloadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(
+                    code="model_identity_mismatch",
+                    message="The model residency no longer matches the unload request.",
+                    retriable=False,
                     details=receipt.details,
                 ),
             )
@@ -283,12 +317,30 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         self._image_edit = ImageEditCore(registry, images_root=Path(images_root or ".runtime/images"))
 
     def Generate(self, request, context):
+        if error := self._execution_identity_error(request.execution):
+            yield self._execute_error(request.execution.id.request_id, error)
+            return
         yield from self._engine.generate(request)
 
     def Prefill(self, request, context):
+        if error := self._execution_identity_error(request.execution):
+            return inference_pb2.PrefillResponse(ok=False, error=error)
         return self._engine.prefill(request)
 
     def Decode(self, request, context):
+        requested = (
+            request.execution.backend_identity
+            if request.execution.HasField("backend_identity")
+            else None
+        )
+        if error := self._registry.validate_decode_backend_identity(
+            request_id=request.execution.id.request_id,
+            decode_handle=request.decode_handle,
+            model_handle=request.execution.model_handle,
+            requested=requested,
+        ):
+            yield self._execute_error(request.execution.id.request_id, error)
+            return
         yield from self._engine.decode(request)
 
     def Abort(self, request, context):
@@ -296,25 +348,58 @@ class WorkerInferenceService(inference_pb2_grpc.InferenceServiceServicer):
         return inference_pb2.AbortResponse(ok=found, found=found)
 
     def Embed(self, request, context):
+        if error := self._request_identity_error(request):
+            return inference_pb2.EmbedResponse(error=error)
         return self._embedding.embed(request)
 
     def Rerank(self, request, context):
+        if error := self._request_identity_error(request):
+            return inference_pb2.RerankResponse(error=error)
         return self._rerank.rerank(request)
 
     def Transcribe(self, request, context):
+        if error := self._request_identity_error(request):
+            return inference_pb2.TranscribeResponse(error=error)
         return self._transcription.transcribe(request)
 
     def Speak(self, request, context):
+        if error := self._request_identity_error(request):
+            return inference_pb2.SpeakResponse(error=error)
         return self._speech.speak(request)
 
     def SpeakStream(self, request, context):
+        if error := self._request_identity_error(request):
+            yield inference_pb2.SpeakStreamEvent(
+                kind=inference_pb2.SPEAK_STREAM_EVENT_KIND_ERROR,
+                error=error,
+            )
+            return
         yield from self._speech.speak_stream(request)
 
     def ImageGenerate(self, request, context):
+        if error := self._request_identity_error(request):
+            return inference_pb2.ImageGenerateResponse(error=error)
         return self._image_generation.generate(request)
 
     def ImageEdit(self, request, context):
+        if error := self._request_identity_error(request):
+            return inference_pb2.ImageEditResponse(error=error)
         return self._image_edit.edit(request)
+
+    def _execution_identity_error(self, execution):
+        requested = execution.backend_identity if execution.HasField("backend_identity") else None
+        return self._registry.validate_backend_identity(execution.model_handle, requested)
+
+    def _request_identity_error(self, request):
+        requested = request.backend_identity if request.HasField("backend_identity") else None
+        return self._registry.validate_backend_identity(request.model_handle, requested)
+
+    @staticmethod
+    def _execute_error(request_id: str, error: common_pb2.ErrorStatus):
+        return inference_pb2.ExecuteEvent(
+            request_id=request_id,
+            error=inference_pb2.ErrorEvent(error=error),
+        )
 
 
 class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):

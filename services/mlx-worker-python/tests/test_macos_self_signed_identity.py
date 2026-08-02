@@ -167,6 +167,12 @@ def test_rfc2253_certificate_identity_requires_exact_common_name() -> None:
     )
 
     assert module.common_name_from_rfc2253(subject) == "Melix GitHub Release Signing"
+    assert (
+        module.parse_rfc2253_name(
+            "subject= CN=Melix GitHub Release Signing", prefix="subject"
+        )
+        == "CN=Melix GitHub Release Signing"
+    )
 
     with pytest.raises(ValueError, match="RFC2253"):
         module.parse_rfc2253_name("issuer=wrong", prefix="subject")

@@ -2,7 +2,11 @@ import threading
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
@@ -62,7 +66,9 @@ def test_abort_stops_active_generation_and_marks_completion_cancelled() -> None:
     events = []
 
     def consume() -> None:
-        for event in inference_service.Generate(request, context=None):
+        for event in inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        ):
             events.append(event)
 
     thread = threading.Thread(target=consume)

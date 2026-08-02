@@ -17,6 +17,8 @@ import sys
 import pytest
 import worker.productization.pr_scoped_performance as pr_scoped_performance_module
 
+from packages.protocol.python.worker.v1 import inference_pb2
+
 from worker.productization.pr_scoped_performance import (
     _build_large_benchmark_bundle,
     _build_large_scope_probe_changed_files,
@@ -154,7 +156,6 @@ def test_image_family_config_probe_script_emits_metrics(
     assert metrics["metadata_iteration_calls_mean"] == 0.0
     assert metrics["iteration_count"] == 128.0
     assert metrics["sample_count"] == 2.0
-
 
 def test_scope_report_selects_hub_catalog_probe() -> None:
     scope = build_scope_report(
@@ -710,13 +711,11 @@ def test_local_job_followup_scan_probe_script_emits_metrics(
     assert metrics["projection_receipt_count_mean"] == 6.0
     assert metrics["scalar_copy_baseline_elapsed_ms_mean"] >= 0.0
     assert metrics["scalar_copy_optimized_elapsed_ms_mean"] >= 0.0
-    assert abs(
-        metrics["scalar_copy_delta_ms"]
-        - (
-            metrics["scalar_copy_optimized_elapsed_ms_mean"]
-            - metrics["scalar_copy_baseline_elapsed_ms_mean"]
-        )
-    ) <= 1e-6
+    assert metrics["scalar_copy_delta_ms"] == pytest.approx(
+        metrics["scalar_copy_optimized_elapsed_ms_mean"]
+        - metrics["scalar_copy_baseline_elapsed_ms_mean"],
+        abs=2e-6,
+    )
     assert metrics["scalar_copy_speedup"] >= 0.0
     assert metrics["scalar_copy_iterations"] == 2.0
 
@@ -2257,8 +2256,168 @@ def test_scope_report_selects_worker_registry_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/registry.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "worker-registry-resident-bytes-accumulator"
+    assert scope["selected_count"] == 2
+    assert set(_selected_probe_ids(scope)) == {
+        "backend-model-identity-boundary",
+        "worker-registry-resident-bytes-accumulator",
+    }
+
+
+def test_backend_model_identity_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MELIX_BACKEND_IDENTITY_PROBE_ITERATIONS", "32")
+    monkeypatch.setenv("MELIX_BACKEND_IDENTITY_PROBE_SAMPLES", "2")
+
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/backend_model_identity_probe.py"))
+    probe_script["main"]()
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["matched_boundary_latency_ms_mean"] > 0.0
+    assert metrics["matched_boundary_latency_ms_p95"] > 0.0
+    assert metrics["mismatched_boundary_latency_ms_mean"] > 0.0
+    assert metrics["mismatched_boundary_latency_ms_p95"] > 0.0
+    assert metrics["mismatch_count"] == 64.0
+    assert metrics["output_before_mismatch_count"] == 0.0
+    assert metrics["handler_boundary_available"] == 1.0
+    assert metrics["control_plane_probe_available"] == 0.0
+    assert metrics["retry_allowed_count"] == 0.0
+    assert metrics["retry_suppressed_count"] == 0.0
+    assert metrics["retry_exhausted_count"] == 0.0
+    assert metrics["recovery_coalesced_caller_count"] == 0.0
+    assert metrics["fresh_binding_count"] == 0.0
+    assert metrics["duplicate_completed_tool_count"] == 0.0
+    assert metrics["iteration_count"] == 32.0
+    assert metrics["sample_count"] == 2.0
+
+    token = inference_pb2.ExecuteEvent()
+    token.token_delta.text = "must be counted"
+    mismatch = inference_pb2.ExecuteEvent()
+    mismatch.error.error.code = "model_identity_mismatch"
+    assert probe_script["_output_before_identity_mismatch"]([token, mismatch]) == 1
+    with pytest.raises(
+        AssertionError,
+        match="inference handler did not emit model_identity_mismatch",
+    ):
+        probe_script["_output_before_identity_mismatch"]([token])
+
+    probe_script["main"].__globals__["_output_before_identity_mismatch"] = (
+        lambda events: 1
+    )
+    with pytest.raises(AssertionError, match="identity mismatch emitted output"):
+        probe_script["main"]()
+
+    registry = load_probe_registry(REGISTRY_PATH)
+    probe = next(
+        item for item in registry
+        if item.probe_id == "backend-model-identity-boundary"
+    )
+    watched = set(probe.watch_globs)
+    assert {
+        "services/control-plane-swift/Sources/ModelCatalog/ModelCatalog.swift",
+        "services/control-plane-swift/Sources/Requests/RequestCoordinator.swift",
+        "services/control-plane-swift/Sources/HTTPGateway/OpenAI/OpenAIHandler.swift",
+        "services/control-plane-swift/Sources/WorkerClient/OnDemandModelLoader.swift",
+        "scripts/backend_model_identity_coverage.sh",
+    } <= watched
+    assert probe.coverage_command == "bash scripts/backend_model_identity_coverage.sh"
+    coverage_script = (REPO_ROOT / "scripts/backend_model_identity_coverage.sh").read_text()
+    assert 'MELIX_BACKEND_IDENTITY_COVERAGE_DIFF_FROM:-origin/main' in coverage_script
+    assert coverage_script.count("swift_changed_line_coverage.py") == 2
+    assert coverage_script.count("python_changed_line_coverage.py") == 1
+    assert '--diff-from "${diff_from}"' in coverage_script
+    assert "MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON" in coverage_script
+    assert "run_changed_line_coverage" in coverage_script
+    assert "$'TOTAL\\t100.00%\\t0/0'" in coverage_script
+    assert coverage_script.count("--no-parallel") == 2
+    assert "control_identity_test_filters" in coverage_script
+    assert "llvm-profdata merge" in coverage_script
+    assert "--enable-code-coverage" in coverage_script
+    assert "services/control-plane-swift" in coverage_script
+    assert "services/mlx-text-worker-swift" in coverage_script
+    definitions = {metric.key: metric for metric in probe.metrics}
+    assert definitions["matched_boundary_latency_ms_p95"].warn_pct == 0.0
+    assert definitions["matched_boundary_latency_ms_p95"].warn_abs == 0.05
+    assert definitions["mismatched_boundary_latency_ms_p95"].direction == "informational"
+    assert definitions["handler_boundary_available"].direction == "informational"
+
+    workflow = (REPO_ROOT / ".github/workflows/pr-scoped-performance.yml").read_text()
+    assert "MELIX_BACKEND_IDENTITY_COVERAGE_DIFF_FROM" in workflow
+    assert "github.event.pull_request.base.sha" in workflow
+
+    parsed = probe_script["_parse_control_plane_probe_output"](
+        "MELIX_BACKEND_IDENTITY_PROBE_JSON="
+        + json.dumps({
+            "control_plane_probe_available": 1,
+            "control_plane_boundary_latency_ms_mean": 0.004,
+            "control_plane_boundary_latency_ms_p95": 0.005,
+            "retry_allowed_count": 3,
+            "retry_suppressed_count": 2,
+            "retry_exhausted_count": 1,
+            "recovery_coalesced_caller_count": 1,
+            "fresh_binding_count": 2,
+            "duplicate_completed_tool_count": 0,
+        })
+    )
+    assert parsed["control_plane_probe_available"] == 1.0
+    assert parsed["retry_allowed_count"] == 3.0
+    assert parsed["retry_suppressed_count"] == 2.0
+    assert parsed["retry_exhausted_count"] == 1.0
+    assert parsed["recovery_coalesced_caller_count"] == 1.0
+    assert parsed["fresh_binding_count"] == 2.0
+
+    parse_control_metrics = probe_script["_parse_control_plane_probe_output"]
+    with pytest.raises(RuntimeError, match="without emitting"):
+        parse_control_metrics("no probe payload")
+    with pytest.raises(RuntimeError, match="invalid JSON"):
+        parse_control_metrics("MELIX_BACKEND_IDENTITY_PROBE_JSON={")
+    with pytest.raises(RuntimeError, match="omitted metrics"):
+        parse_control_metrics("MELIX_BACKEND_IDENTITY_PROBE_JSON={}")
+
+    control_test = (
+        tmp_path
+        / "services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift"
+    )
+    control_test.parent.mkdir(parents=True)
+    control_test.write_text("MELIX_BACKEND_IDENTITY_PROBE_JSON=", encoding="utf-8")
+    control_probe_globals = probe_script["_run_control_plane_probe"].__globals__
+    monkeypatch.setitem(control_probe_globals, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv("MELIX_BACKEND_IDENTITY_PROBE_RUN_CONTROL", "1")
+
+    class SuccessfulSwiftProbe:
+        returncode = 0
+        stdout = (
+            "MELIX_BACKEND_IDENTITY_PROBE_JSON="
+            + json.dumps({
+                "control_plane_probe_available": 1,
+                "control_plane_boundary_latency_ms_mean": 0.004,
+                "control_plane_boundary_latency_ms_p95": 0.005,
+                "retry_allowed_count": 3,
+                "retry_suppressed_count": 2,
+                "retry_exhausted_count": 1,
+                "recovery_coalesced_caller_count": 1,
+                "fresh_binding_count": 2,
+                "duplicate_completed_tool_count": 0,
+            })
+        )
+
+    class SuccessfulSubprocess:
+        PIPE = object()
+        STDOUT = object()
+        calls = 0
+
+        @classmethod
+        def run(cls, *_args, **kwargs):
+            cls.calls += 1
+            assert kwargs["cwd"] == tmp_path
+            return SuccessfulSwiftProbe()
+
+    monkeypatch.setitem(control_probe_globals, "subprocess", SuccessfulSubprocess)
+    control_metrics = probe_script["_run_control_plane_probe"]()
+    assert control_metrics["control_plane_probe_available"] == 1.0
+    assert SuccessfulSubprocess.calls == 1
 
 
 def test_scope_report_selects_lora_reward_summary_probe() -> None:
@@ -4936,6 +5095,7 @@ def test_text_family_config_probe_script_emits_metrics(
 
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
+        "backend-model-identity-boundary",
         "prefix-cold-index-scandir",
         "prefix-cache-snapshot-byte-streaming",
         "dataset-registry-limited-read-streaming",
@@ -5145,6 +5305,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         metric.key: metric for metric in worker_registry_probe.metrics
     }
     assert worker_registry_metrics["elapsed_ms_mean"].warn_abs == 0.001
+    assert worker_registry_metrics["loaded_model_listing_elapsed_ms_mean"].warn_abs == 0.005
     assert worker_registry_metrics["request_stats_elapsed_ms_mean"].warn_abs == 0.001
 
     assert structured_output_probe is not None

@@ -803,7 +803,26 @@ public actor RequestCoordinator {
         }
         let requestMetricStartedAt = requestStartedAt ?? now()
         let plan = try await resolvedSchedulingPlan(translatedRequest)
-        let request = plan.translatedRequest
+        var request = plan.translatedRequest
+        var backendBinding: ModelCatalog.BackendRouteBinding?
+        if let modelCatalog {
+            guard let binding = await modelCatalog.backendRouteBinding(
+                for: request.modelID,
+                routeKind: plan.routeKind
+            ) else {
+                throw RequestCoordinatorError.workerUnavailable
+            }
+            backendBinding = binding
+            var stampedWorkerRequest = request.workerRequest
+            BackendModelIdentityStamping.stamp(binding, on: &stampedWorkerRequest)
+            request = TranslatedChatRequest(
+                requestID: request.requestID,
+                modelID: request.modelID,
+                responseModelID: request.responseModelID,
+                workerRequest: stampedWorkerRequest,
+                stream: request.stream
+            )
+        }
         if let accelerationRefusal = plan.accelerationRefusal {
             await metricsStore.increment("control_plane.acceleration_refusal_count")
             _ = await schedulerReadModel.recordRejected(
@@ -937,7 +956,17 @@ public actor RequestCoordinator {
 
         do {
             let upstream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
-            if plan.cacheRouteEligible,
+            if let backendBinding,
+               let modelCatalog {
+                upstream = makeReplaySafeBackendUpstream(
+                    initialBinding: backendBinding,
+                    request: workerRequest,
+                    modelCatalog: modelCatalog,
+                    routeKind: plan.routeKind,
+                    cacheRouteEligible: plan.cacheRouteEligible,
+                    prefillLane: plan.prefillLane
+                )
+            } else if plan.cacheRouteEligible,
                let phaseAwareClient = workerClient as? any PhaseAwareWorkerClientProtocol,
                shouldUsePhaseAwareExecution(for: workerRequest) {
                 upstream = makePhaseAwareUpstream(
@@ -1206,6 +1235,50 @@ public actor RequestCoordinator {
             await finishRequestTracking(requestID: request.requestID, phase: .requestFailed)
             throw error
         }
+    }
+
+    private func makeReplaySafeBackendUpstream(
+        initialBinding: ModelCatalog.BackendRouteBinding,
+        request: Melix_Worker_V1_GenerateRequest,
+        modelCatalog: ModelCatalog,
+        routeKind: WorkerRouteKind,
+        cacheRouteEligible: Bool,
+        prefillLane: String
+    ) -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        BackendRouteRecovery.performReplaySafeStream(
+            binding: initialBinding,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            dispatch: { attemptBinding in
+                guard let client = await self.workerRegistry.client(for: routeKind) else {
+                    throw WorkerClientError.unavailable
+                }
+                var attempt = request
+                BackendModelIdentityStamping.stamp(attemptBinding, on: &attempt)
+                if cacheRouteEligible,
+                   let phaseAwareClient = client as? any PhaseAwareWorkerClientProtocol,
+                   await self.shouldUsePhaseAwareExecution(for: attempt) {
+                    return await self.makePhaseAwareUpstream(
+                        client: phaseAwareClient,
+                        request: attempt,
+                        modelID: attemptBinding.modelID,
+                        prefillLane: prefillLane
+                    )
+                }
+                return try await client.generate(request: attempt)
+            },
+            classify: { event in
+                switch event.payload {
+                case .error(let errorEvent):
+                    return .error(errorEvent.error)
+                case .completed:
+                    return .terminal
+                default:
+                    return .output
+                }
+            }
+        )
     }
 
     private func isSemanticStreamEvent(_ event: Melix_Worker_V1_ExecuteEvent) -> Bool {

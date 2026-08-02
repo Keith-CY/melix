@@ -74,7 +74,7 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
         response.protocolVersion = request.protocolVersion
         response.runtimeVersion = configuration.runtimeVersion
         response.workerFamily = configuration.workerFamily
-        response.workerInstanceID = configuration.workerID
+        response.workerInstanceID = configuration.workerInstanceID
         response.capabilities = await registry.capabilities()
         return response
     }
@@ -90,7 +90,8 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
                 request.model,
                 memoryBudgetBytes: request.memoryBudgetBytes,
                 pinOnLoad: request.pinOnLoad,
-                diskStreamingMode: request.diskStreamingMode
+                diskStreamingMode: request.diskStreamingMode,
+                backendIdentity: request.hasBackendIdentity ? request.backendIdentity : nil
             )
             metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
             metrics.set("swift_text.peak_resident_bytes", value: Int(clamping: loaded.estimatedResidentBytes))
@@ -167,6 +168,19 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
             )
             response.resolvedCapabilities = await registry.capabilities()
             return response
+        } catch WorkerRuntimeRegistryError.workerInstanceMismatch {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
+            metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
+
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.error = makeErrorStatus(
+                code: "worker_instance_mismatch",
+                message: "The load reservation belongs to a different worker process."
+            )
+            response.error.retriable = true
+            response.resolvedCapabilities = await registry.capabilities()
+            return response
         } catch {
             metrics.increment("swift_text.rpc_error_count")
             metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
@@ -185,7 +199,13 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_UnloadModelResponse {
         let startedAt = Date()
-        let result = await registry.unloadModel(request.modelHandle, force: request.force)
+        let result = await registry.unloadModel(
+            request.modelHandle,
+            force: request.force,
+            expectedBackendIdentity: request.hasExpectedBackendIdentity
+                ? request.expectedBackendIdentity
+                : nil
+        )
         metrics.recordMilliseconds("swift_text.unload_model_ms", value: elapsedMilliseconds(since: startedAt))
         metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
 
@@ -195,6 +215,11 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
             response.ok = true
         case .notFound:
             response.error = makeErrorStatus(code: "not_found", message: "Unknown model handle.")
+        case .identityMismatch:
+            response.error = makeErrorStatus(
+                code: "model_identity_mismatch",
+                message: "The model residency no longer matches the unload request."
+            )
         case .activeRequests:
             response.error = makeErrorStatus(
                 code: "model_in_use",
@@ -243,6 +268,7 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
     ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
         var response = Melix_Worker_V1_ListLoadedModelsResponse()
         response.modelHandles = await registry.listLoadedModels()
+        response.loadedModels = await registry.listLoadedModelSummaries()
         return response
     }
 
@@ -312,6 +338,19 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         response: GRPCCore.RPCWriter<Melix_Worker_V1_ExecuteEvent>,
         context: GRPCCore.ServerContext
     ) async throws {
+        if let error = await registry.validateBackendIdentity(
+            modelHandle: request.execution.modelHandle,
+            requested: request.execution.hasBackendIdentity ? request.execution.backendIdentity : nil
+        ) {
+            try await response.write(
+                makeBackendIdentityErrorExecuteEvent(
+                    requestID: request.execution.id.requestID,
+                    executionKind: "generate",
+                    error: error
+                )
+            )
+            return
+        }
         if configuration.workerFamily == .vision {
             enqueueVisionPayloadReceipt(for: request)
         }
@@ -322,7 +361,16 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         request: Melix_Worker_V1_PrefillRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Melix_Worker_V1_PrefillResponse {
-        await prefillEngine.runPrefill(request: request)
+        if let error = await registry.validateBackendIdentity(
+            modelHandle: request.execution.modelHandle,
+            requested: request.execution.hasBackendIdentity ? request.execution.backendIdentity : nil
+        ) {
+            var response = Melix_Worker_V1_PrefillResponse()
+            response.ok = false
+            response.error = error
+            return response
+        }
+        return await prefillEngine.runPrefill(request: request)
     }
 
     func decode(
@@ -598,7 +646,8 @@ final class CacheRPCService: Melix_Worker_V1_CacheService.SimpleServiceProtocol,
         let startedAt = Date()
         do {
             let response = try await registry.restoreBoundarySnapshot(
-                snapshotID: resolvedRestoreSnapshotID(from: request)
+                snapshotID: resolvedRestoreSnapshotID(from: request),
+                requestID: request.requestID
             )
             metrics.recordMilliseconds(
                 "swift_text.cache_snapshot_restore_ms",
@@ -852,7 +901,7 @@ private extension InferenceRPCService {
         let payload: [String: Any] = [
             "request_id": request.execution.id.requestID,
             "model_handle": request.execution.modelHandle,
-            "worker_instance_id": configuration.workerID,
+            "worker_instance_id": configuration.workerInstanceID,
             "worker_family": workerFamilyName(configuration.workerFamily),
             "media_parts": mediaParts,
         ]
@@ -909,6 +958,21 @@ private func makeErrorExecuteEvent(
 
     var errorEvent = Melix_Worker_V1_ErrorEvent()
     errorEvent.error = makeErrorStatus(code: code, message: message)
+    event.error = errorEvent
+    return event
+}
+
+private func makeBackendIdentityErrorExecuteEvent(
+    requestID: String,
+    executionKind: String,
+    error: Melix_Worker_V1_ErrorStatus
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.executionKind = executionKind
+    event.seq = 1
+    var errorEvent = Melix_Worker_V1_ErrorEvent()
+    errorEvent.error = error
     event.error = errorEvent
     return event
 }

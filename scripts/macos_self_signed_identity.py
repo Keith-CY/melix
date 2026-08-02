@@ -79,7 +79,7 @@ def parse_rfc2253_name(output: str, *, prefix: str) -> str:
     expected_prefix = f"{prefix}="
     if not stripped.lower().startswith(expected_prefix.lower()):
         raise ValueError(f"openssl did not return an RFC2253 {prefix}")
-    return stripped[len(expected_prefix) :]
+    return stripped[len(expected_prefix) :].lstrip()
 
 
 def common_name_from_rfc2253(name: str) -> str:

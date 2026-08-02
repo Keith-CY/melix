@@ -124,6 +124,10 @@ The interactive UI walkthrough is therefore not required for this slice.
 - Missing or mismatched key material, an unsigned feed, an invalid signature,
   a changed archive length, a downgrade, or an invalid bundle layout must fail
   closed.
+- Certificate subject and issuer parsing accepts the equivalent RFC2253 label
+  spacing emitted by both OpenSSL and macOS LibreSSL. This normalization does
+  not relax the exact self-signed subject, common-name, fingerprint, or
+  extended-key-usage checks.
 - The user must see and approve every install. Melix never executes an
   unverified archive and never silently replaces itself.
 - Sparkle's installer preserves the current App until the replacement is ready

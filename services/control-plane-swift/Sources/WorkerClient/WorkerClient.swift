@@ -116,6 +116,10 @@ public protocol LoadedModelsIntrospectingWorkerClientProtocol: WorkerClient {
     func listLoadedModels() async throws -> Melix_Worker_V1_ListLoadedModelsResponse
 }
 
+public protocol BackendHealthIdentifyingWorkerClientProtocol: WorkerClient {
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse
+}
+
 public protocol WorkerRoutingClient: WorkerClient {
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
