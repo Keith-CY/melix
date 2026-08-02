@@ -777,18 +777,45 @@ identical directory and memory invariants. Both alerts are non-reproducing
 measurement noise, not accepted regressions, and no performance-regression
 override is used.
 
+After synchronizing the bound-method kwarg-cache fast path from `origin/main`
+at `115e2c02`, the registered focused command passed `28` tests and measured
+`100%` changed-line coverage over zero task-owned lines. Its standalone probe
+measured `4.096 ms` across `40,000` calls per sample with one
+`inspect.signature` call. The exact staged-tree hook completed every functional
+gate: all Swift suites, `5,497` Python tests with `14` skips, and `132`
+integration tests with one skip. The report at
+`.runtime/pre-commit-performance/20260802-055011-8d17d99c/report` ran all `148`
+probes with `20` direct probes and `0` verification failures. The synchronized
+runtime-utils probe was `ok` and improved from `4.630 ms` to `3.838 ms`
+(`-17.12%`) while retaining one signature inspection.
+
+The backend identity probe remained `ok`: matched-worker p95 was `0.000492 ms`,
+control-plane stamping/recovery p95 was `0.001419 ms`, `140,000` mismatches
+produced zero output events, retry counts remained `3/2/1`, one recovery caller
+was coalesced into two fresh bindings, and duplicate completed-tool output
+remained zero. One unrelated deterministic image output-byte timing sample
+crossed its threshold even though the measured production runtime and probe
+script are byte-identical to `origin/main`. An expanded `100`-repetition,
+alternating Python 3.12.13 comparison disproved the alert: the head mean improved
+from `27.040 ms` to `25.615 ms`, the 10% trimmed means were `22.249 ms` and
+`22.344 ms` (`+0.43%`), the medians differed by about `2.2%`, and head p95
+improved. Output-byte scan calls, payload checksums, and generated/edit byte
+counts matched exactly. This is non-reproducing measurement noise, not an
+accepted regression, and no performance-regression override is used.
+
 ## Verification Results
 
 The latest post-merge repository gates completed successfully against
-`origin/main` at `d0c09938` on 2026-08-02:
+`origin/main` at `115e2c02` on 2026-08-02:
 
 - `make swift-test` (`301` text-worker and `882` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
-- `make py-test` (`5496` passed, `14` skipped)
+- `make py-test` (`5497` passed, `14` skipped)
 - `make integration-test` (`132` passed, `1` skipped)
 
-The registered maintenance probe command passed `23` tests and its changed-line
-coverage command reported `100%` over zero task-owned lines. The backend
+The registered runtime-utils probe command passed `28` tests and its changed-line
+coverage command reported `100%` over zero task-owned lines. The preceding
+maintenance probe command passed `23` tests with the same coverage result. The backend
 identity coverage command measured `96.98%` for Python, `96.19%` for the Swift
 control plane, and `99.16%` for the Swift text worker. The preceding
 compatibility merge also passed the shared protocol package build, focused
