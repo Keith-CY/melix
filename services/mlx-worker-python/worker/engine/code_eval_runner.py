@@ -115,7 +115,16 @@ def _code_block_content_start(text: str, start: int) -> int:
     text_length = len(text)
     if start < text_length and text[start] == "\n":
         start += 1
-    while start < text_length and text[start].isspace():
+    ascii_whitespace_flags = _ASCII_WHITESPACE_FLAGS
+    ord_ = ord
+    while start < text_length:
+        char = text[start]
+        char_ord = ord_(char)
+        if char_ord < 128:
+            if not ascii_whitespace_flags[char_ord]:
+                return start
+        elif not char.isspace():
+            return start
         start += 1
     return start
 
