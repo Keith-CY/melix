@@ -1102,6 +1102,42 @@ remains documented above; it is outside inference dispatch and is the only
 intentional performance tradeoff. Only these evidence paragraphs changed after
 the exact staged-tree report.
 
+After synchronizing the four-state prefix snapshot fast path from `origin/main`
+at `968c508a`, its registered slice passed `14` focused tests and `14` coverage
+tests at `100%` over zero task-owned lines. The standalone probe retained
+checksum `68071200`, `80` iterations, `4096` layers, and `685` peak bytes while
+measuring a `356.562 ms` mean and `361.334 ms` p95. In the final full report the
+same probe improved from `373.344 ms` to `359.971 ms`, with p95 improving from
+`380.700 ms` to `360.593 ms` and all structural counters unchanged.
+
+The exact staged-tree report at
+`.runtime/pre-commit-performance/20260802-160426-4299f27d/report` completed the
+full Swift gate including `907` menu-bar tests, `5653` Python tests with `14`
+skips, and `132` integration tests with one skip. All `148` performance probes
+ran, all `20` direct probes passed their targeted tests and coverage commands,
+and there were `0` verification failures. The backend identity probe remained
+`ok`: matched worker-boundary p95 was `0.000423 ms`, control-plane stamping and
+recovery p95 was `0.001458 ms`, all `140000` mismatches produced zero output,
+retry counts remained `3/2/1`, and coalesced/fresh/duplicate-tool counts remained
+`1/2/0`.
+
+Two direct timing samples crossed thresholds in the single report. Deterministic
+image output-byte accounting measured `21.067 ms` and `22.264 ms` (`+5.68%`),
+while the immediately preceding ten alternating equivalent-worktree repetitions
+measured a `-10.40%` minimum/maximum-trimmed change with identical output counts,
+byte totals, checksum, and zero byte-scan calls. Integration binary resolution
+improved from `14.623 ms` to `13.439 ms`; only its derived removal-savings metric
+varied by `8.561 ms` against a `5 ms` absolute threshold. Repeated measurements
+on this unchanged helper have independently returned that metric to a `0.76 ms`
+difference and to a `5.272 ms` improvement, always with `1200` directories and
+identical memory invariants. The only new mainline production change is the
+prefix snapshot fast path measured above, so neither alert has a causal path to
+that merge. They are sampled noise, not accepted regressions. The report's `31`
+context-only timing alerts had no verification failures. The approximately
+`0.0011 ms` identity-construction cost per model load remains the only accepted
+performance tradeoff and is outside inference dispatch. Only these evidence
+paragraphs changed after the exact staged-tree report.
+
 ## Known Boundaries
 
 - Process respawn is not implemented by current request-path production code.

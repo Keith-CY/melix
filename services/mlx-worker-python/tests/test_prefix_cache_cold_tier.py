@@ -120,13 +120,25 @@ def test_estimate_cache_snapshot_bytes_sums_non_pair_state_sequences() -> None:
         def __init__(self, nbytes: int) -> None:
             self.nbytes = nbytes
 
+    class TensorWithSize:
+        size = 3
+        itemsize = 5
+
     cache_snapshot = [
         SimpleNamespace(state=[]),
         SimpleNamespace(state=(TensorWithNbytes(4),)),
         SimpleNamespace(state=[TensorWithNbytes(8), TensorWithNbytes(16), TensorWithNbytes(32)]),
+        SimpleNamespace(
+            state=[
+                TensorWithNbytes(64),
+                TensorWithSize(),
+                TensorWithNbytes(128),
+                SimpleNamespace(),
+            ]
+        ),
     ]
 
-    assert estimate_cache_snapshot_bytes(cache_snapshot) == 60
+    assert estimate_cache_snapshot_bytes(cache_snapshot) == 267
 
 
 def test_estimate_cache_snapshot_bytes_sums_pair_tuple_state() -> None:
