@@ -47,3 +47,13 @@ git diff --check
 ## PR-scoped performance CI
 
 Existing registered probe: `dev-up-mlx-metal-dist-info-scandir`. The touched script and focused tests are already in its `watch_globs`, `test_command`, and `coverage_command`, so no new registry entry is needed for this narrow metadata-reader optimization.
+
+## 2026-08-02 prefix-slice follow-up
+
+This follow-up stays inside `_read_dist_info_metadata_version(...)` and the same
+registered `dev-up-mlx-metal-dist-info-scandir` probe. The metadata reader now
+binds the `Version:` prefix and slices after the known prefix length instead of
+calling `str.removeprefix(...)` after `startswith(...)` has already proven the
+line shape. Behavior remains unchanged for missing, empty, and whitespace-padded
+version headers; the slice only avoids one redundant prefix check per matching
+metadata line.

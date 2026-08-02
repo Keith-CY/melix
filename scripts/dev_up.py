@@ -479,10 +479,12 @@ def compatible_mlx_metal_versions_for_swift_mlx(repo_root: Path) -> tuple[str, .
 
 
 def _read_dist_info_metadata_version(metadata_path: Path) -> str | None:
+    version_prefix = "Version:"
+    version_prefix_length = len(version_prefix)
     with metadata_path.open("r", encoding="utf-8") as metadata_file:
         for line in metadata_file:
-            if line.startswith("Version:"):
-                version = line.removeprefix("Version:").strip()
+            if line.startswith(version_prefix):
+                version = line[version_prefix_length:].strip()
                 if version:
                     return version
     return None

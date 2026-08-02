@@ -1067,6 +1067,41 @@ override reason for this model-load-only cost. The report's `26` context-only
 timing alerts had no verification failures. Only these evidence paragraphs
 changed after the exact staged-tree report.
 
+After synchronizing the dev-up metadata-version prefix slice from
+`origin/main` at `21621613`, its registered slice passed `6` focused tests and
+`64` coverage tests. Changed-line coverage was `100%` over zero task-owned
+lines, and the standalone probe retained `2000` dist-info records with a
+`0.180548 ms` mean and `0.141375 ms` minimum.
+
+The exact staged-tree report at
+`.runtime/pre-commit-performance/20260802-144656-96fb94f2/report` completed the
+full Swift gate, `5653` Python tests with `14` skips, and `132` integration tests
+with one skip. All `148` performance probes ran, all `20` direct probes passed
+their targeted tests and coverage commands, and there were `0` verification
+failures. The backend identity probe remained `ok`: matched worker-boundary p95
+was `0.000512 ms`, control-plane stamping and recovery p95 was `0.001491 ms`, all
+`140000` mismatches produced zero output, retry counts remained `3/2/1`, and
+coalesced/fresh/duplicate-tool counts remained `1/2/0`.
+
+Five direct timing samples crossed their thresholds in the single report:
+deterministic image output-byte accounting (`+13.38%`), rerank request selection
+(`+5.16%`), performance-registry cold loading (`+8.94%`), vision-family config
+resolution (`+14.50%`), and integration binary resolution (`+7.87%`). Ten
+base/head-alternating repetitions in equivalent worktrees disproved every
+alert. Minimum/maximum-trimmed means changed by `-10.40%` for image output,
+`+1.39%` for rerank request selection, `+0.58%` for registry cold loading,
+`+4.65%` for vision-family config resolution, and `+0.90%` for integration
+binary resolution. Rerank total elapsed improved by `0.66%`. Every repetition
+retained the same output counts and byte totals, rerank document/result counts
+and checksum, vision token/split/metadata/footprint counters, and integration
+candidate, directory, and memory counters. These alerts are non-reproducing
+measurement noise, not accepted regressions. The report's `25` context-only
+timing alerts had no verification failures. The previously measured and
+accepted approximately `0.0011 ms` identity-construction cost per model load
+remains documented above; it is outside inference dispatch and is the only
+intentional performance tradeoff. Only these evidence paragraphs changed after
+the exact staged-tree report.
+
 ## Known Boundaries
 
 - Process respawn is not implemented by current request-path production code.
