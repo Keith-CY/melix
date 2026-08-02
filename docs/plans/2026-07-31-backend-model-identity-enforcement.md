@@ -894,7 +894,7 @@ orphans, zero path-glob calls, and one scandir call.
 ## Verification Results
 
 The latest post-merge repository gates completed successfully against
-`origin/main` at `0545580e` on 2026-08-02:
+`origin/main` at `6457b21b` on 2026-08-02:
 
 - `make swift-test` (`301` text-worker and `907` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
@@ -1030,6 +1030,43 @@ was `0.001642 ms`, all `140000` mismatches produced zero output, retry counts
 remained `3/2/1`, and coalesced/fresh/duplicate-tool counts remained `1/2/0`.
 Only these evidence paragraphs changed after the exact staged-tree report.
 
+After synchronizing the code-evaluation read-only flag binding from
+`origin/main` at `6457b21b`, the registered stdio slice passed `19` focused tests
+and `19` coverage tests. Its PR-scope allowlist reported `100%` over zero
+task-owned lines. The standalone probe retained one static sandbox-profile build,
+`6000` stdio stat calls, `5119` tail characters, and a `76.033 ms` stdio mean.
+
+The exact staged-tree report at
+`.runtime/pre-commit-performance/20260802-133627-bad9a417/report` completed the
+full Swift gate, `5653` Python tests with `14` skips, and `132` integration tests
+with one skip. All `148` performance probes ran, all `20` direct probes passed
+their targeted tests and coverage commands, and there were `0` verification
+failures. The backend identity probe remained `ok`: matched worker-boundary p95
+was `0.000517 ms`, control-plane stamping and recovery p95 was `0.001660 ms`, all
+`140000` mismatches produced zero output, retry counts remained `3/2/1`, and
+coalesced/fresh/duplicate-tool counts remained `1/2/0`.
+
+Two direct timing samples crossed their thresholds in the single report. Vision-
+family config resolution sampled `4.147 ms` and `4.795 ms` (`+15.64%`), but ten
+alternating equivalent-worktree repetitions measured `4.388 ms` and `4.190 ms`
+(`-4.51%`); minimum/maximum-trimmed means improved by `4.05%`. Every repetition
+retained `1309` tokens, zero prompt splits, zero metadata iterations, and a
+`312`-byte configuration footprint. This alert is non-reproducing measurement
+noise.
+
+Worker registry load/unload sampled `0.004516 ms` and `0.006002 ms` in the full
+report. Ten alternating repetitions measured `0.004499 ms` and `0.005589 ms`,
+with minimum/maximum-trimmed means of `0.004465 ms` and `0.005562 ms`. The
+approximately `0.0011 ms` cost per model load is the required construction and
+binding of one `BackendModelIdentity` value on each `LoadedModel`; it is outside
+the inference request path and is accepted as the explicit correctness tradeoff
+for stale-residency enforcement. All repetitions retained `8196096` resident
+bytes, one loaded-model listing sort, and the same `250/2000/3000` loop, preload,
+and request counts. The commit records the required performance-regression
+override reason for this model-load-only cost. The report's `26` context-only
+timing alerts had no verification failures. Only these evidence paragraphs
+changed after the exact staged-tree report.
+
 ## Known Boundaries
 
 - Process respawn is not implemented by current request-path production code.
@@ -1085,6 +1122,16 @@ pre-commit gate instead passes the temporary repository's synthetic `HEAD`,
 whose tree is the exact staged-comparison base, while the index snapshot remains
 in its worktree. Only an interactive direct script invocation uses `origin/main`
 as its default; a clean CI checkout never compares coverage to itself.
+
+The final Linux performance matrix exposed a test-isolation error in the probe
+contract test: it assigned the temporary repository root and fake subprocess to
+the dictionary returned by `runpy.run_path()`, while the loaded functions read
+their actual `__globals__` mapping. macOS masked the error by successfully
+running the real Swift probe; Linux correctly failed when the control-plane
+package imported `OSLog`. The test now injects both dependencies through the
+function globals and asserts that the fake subprocess runs exactly once from the
+temporary repository, so the contract test is platform-independent and cannot
+fall through to a real Swift build.
 
 A route-agnostic load completion cannot safely associate a changed handle with
 an unknown worker instance. If such a completion changes an existing handle, the

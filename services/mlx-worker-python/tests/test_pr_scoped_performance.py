@@ -2382,7 +2382,8 @@ def test_backend_model_identity_probe_script_emits_metrics(
     )
     control_test.parent.mkdir(parents=True)
     control_test.write_text("MELIX_BACKEND_IDENTITY_PROBE_JSON=", encoding="utf-8")
-    probe_script["REPO_ROOT"] = tmp_path
+    control_probe_globals = probe_script["_run_control_plane_probe"].__globals__
+    monkeypatch.setitem(control_probe_globals, "REPO_ROOT", tmp_path)
     monkeypatch.setenv("MELIX_BACKEND_IDENTITY_PROBE_RUN_CONTROL", "1")
 
     class SuccessfulSwiftProbe:
@@ -2405,14 +2406,18 @@ def test_backend_model_identity_probe_script_emits_metrics(
     class SuccessfulSubprocess:
         PIPE = object()
         STDOUT = object()
+        calls = 0
 
-        @staticmethod
-        def run(*_args, **_kwargs):
+        @classmethod
+        def run(cls, *_args, **kwargs):
+            cls.calls += 1
+            assert kwargs["cwd"] == tmp_path
             return SuccessfulSwiftProbe()
 
-    probe_script["subprocess"] = SuccessfulSubprocess
+    monkeypatch.setitem(control_probe_globals, "subprocess", SuccessfulSubprocess)
     control_metrics = probe_script["_run_control_plane_probe"]()
     assert control_metrics["control_plane_probe_available"] == 1.0
+    assert SuccessfulSubprocess.calls == 1
 
 
 def test_scope_report_selects_lora_reward_summary_probe() -> None:
