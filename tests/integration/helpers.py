@@ -560,6 +560,7 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
     os_stat = os.stat
     is_regular_file = stat.S_ISREG
     executable_mask = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    scoped_debug_product_suffix = os.sep + "debug" + os.sep + product_name
 
     def consider(candidate: str, *, depth: int) -> None:
         nonlocal newest_candidate, newest_key
@@ -583,7 +584,7 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
     with entries:
         for entry in entries:
             if entry.name != "debug" and entry.is_dir(follow_symlinks=False):
-                consider(join_path(entry.path, "debug", product_name), depth=scoped_depth)
+                consider(entry.path + scoped_debug_product_suffix, depth=scoped_depth)
     return Path(newest_candidate) if newest_candidate is not None else None
 
 
