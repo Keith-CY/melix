@@ -747,19 +747,53 @@ alerts also had no verification failures. The image alerts are non-reproducing
 measurement noise, not accepted regressions, and no performance-regression
 override is used.
 
+After synchronizing the single-token maintenance prompt-shape fast path from
+`origin/main` at `d0c09938`, its registered focused command passed `23` tests
+and measured `100%` changed-line coverage over zero task-owned lines. The
+standalone probe preserved three prompt contexts, `5,160,960` aggregate tokens,
+`16,384,000` plain tokens, and `2,000` single-context iterations. The exact
+staged-tree hook completed every functional gate: all Swift suites, `5,496`
+Python tests with `14` skips, and `132` integration tests with one skip. The
+report at
+`.runtime/pre-commit-performance/20260802-043705-2541f90d/report` ran all `148`
+probes with `20` direct probes and `0` verification failures. The synchronized
+maintenance probe was `ok`, with base/head means of `40.716 ms` and `40.965 ms`
+and unchanged token counts.
+
+The backend identity probe remained `ok`: matched-worker p95 was `0.000444 ms`,
+control-plane stamping/recovery p95 was `0.001387 ms`, `140,000` mismatches
+produced zero output events, retry counts remained `3/2/1`, one recovery caller
+was coalesced into two fresh bindings, and duplicate completed-tool output
+remained zero. Two unrelated direct timing samples crossed their thresholds.
+The deterministic embedding runtime and probe are byte-identical to
+`origin/main`; ten alternating Python 3.12.13 repetitions measured base/head
+means of `8.3958 ms` and `8.4161 ms` (`+0.24%`, threshold `5%`) with identical
+call counts and checksums. The integration probe scripts are also identical;
+the task's helper change only extracts Python worker restart control and does
+not change the measured tree-removal implementation. Ten alternating
+repetitions measured base/head removal savings of `-109.89 ms` and
+`-109.13 ms`, a `0.76 ms` difference against the `5 ms` threshold, with
+identical directory and memory invariants. Both alerts are non-reproducing
+measurement noise, not accepted regressions, and no performance-regression
+override is used.
+
 ## Verification Results
 
 The latest post-merge repository gates completed successfully against
-`origin/main` at `6a64e7f7` on 2026-08-02:
+`origin/main` at `d0c09938` on 2026-08-02:
 
 - `make swift-test` (`301` text-worker and `882` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
 - `make py-test` (`5496` passed, `14` skipped)
 - `make integration-test` (`132` passed, `1` skipped)
 
-The shared protocol package build, focused OpenAI idle-unload test, and focused
-Python long-enum structured-output test also passed after that merge. The
-immediately preceding `ebbf7f85` base passed `make bootstrap`, `make proto`, and
+The registered maintenance probe command passed `23` tests and its changed-line
+coverage command reported `100%` over zero task-owned lines. The backend
+identity coverage command measured `96.98%` for Python, `96.19%` for the Swift
+control plane, and `99.16%` for the Swift text worker. The preceding
+compatibility merge also passed the shared protocol package build, focused
+OpenAI idle-unload test, and focused Python long-enum structured-output test.
+The earlier `ebbf7f85` base passed `make bootstrap`, `make proto`, and
 `make proto-check`, proving the locked dependencies and generated protobuf
 artifacts were current and idempotent before the compatibility-only increment.
 
