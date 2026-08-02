@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from errno import EPERM
+from operator import itemgetter
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 from uuid import uuid4
@@ -418,7 +419,7 @@ class LocalJobContinuationStore:
                             else os.path.join(root_fspath, name),
                         )
                     )
-            scanned_records.sort(key=lambda record: record[0])
+            scanned_records.sort(key=itemgetter(0))
         except FileNotFoundError:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
         public_reconcile_record = self.reconcile_record
