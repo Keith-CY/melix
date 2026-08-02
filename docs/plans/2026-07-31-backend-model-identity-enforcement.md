@@ -1173,6 +1173,48 @@ context-only timing alerts had no verification failures. The approximately
 performance tradeoff and is outside inference dispatch. Only these evidence
 paragraphs changed after the exact staged-tree report.
 
+After synchronizing the package build-triple sort and changed-scope singleton
+ASCII-line fast paths from `origin/main` at `20f4dcd4`, the package slice passed
+`107` focused tests and `107` coverage tests at `100%` over zero task-owned
+lines. Its standalone probe retained `1500` build triples while measuring a
+`0.712806 ms` mean, `0.629792 ms` minimum, `0.682505 ms` CLI mean, and
+`7.451065 ms` tail-debug mean. The changed-scope slice passed `69` focused tests
+and `69` coverage tests at `100%` over zero task-owned lines; its standalone
+probe preserved zero source reads and measured the singleton workload at
+`28.614 ms`.
+
+The exact staged-tree report at
+`.runtime/pre-commit-performance/20260802-182231-0805e426/report` completed the
+full Swift gate including `907` menu-bar tests, `5653` Python tests with `14`
+skips, and `132` integration tests with one skip. All `148` probes ran, all `20`
+direct targeted test and coverage commands passed, and there were `0`
+verification failures. The synchronized changed-scope singleton probe was `ok`,
+improving from `23.100 ms` to `22.805 ms`; the package context probe's
+byte-identical base/head code produced one non-gating `+13.01%` mean sample.
+The backend identity probe remained `ok`: matched worker-boundary p95 was
+`0.000447 ms`, control-plane stamping and recovery p95 was `0.001399 ms`, all
+`140000` mismatches produced zero output, retry counts remained `3/2/1`, and
+coalesced/fresh/duplicate-tool counts remained `1/2/0`.
+
+Three direct timing samples crossed thresholds in that single report:
+deterministic image edit digest reuse (`+35.15%`), deterministic image output
+byte accounting (`+8.47%`), and integration cleanup removal savings (a
+`7.181 ms` difference against a `5 ms` absolute threshold). The image runtime
+and probes are unchanged; prior alternating evidence measured edit means at
+`11.316 ms` and `11.182 ms` (`-1.18%`) and output minimum/maximum-trimmed means
+at `-10.40%`, with identical digest calls, output counts, byte totals, checksum,
+and zero byte-scan calls. Five equal-length-worktree integration comparisons
+measured binary resolution improving from `14.231 ms` to `11.864 ms`
+(`-16.63%`) and removal savings improving by `3.534 ms`, with `1501` candidates,
+`1200` directories, and identical memory invariants. The only newly synchronized
+production changes are the package and changed-scope fast paths measured above,
+so none has a causal path to these direct samples. They are sampled noise, not
+accepted regressions. The report's `27` context-only timing alerts had no
+verification failures. The approximately `0.0011 ms` identity-construction cost
+per model load remains the only accepted performance tradeoff and is outside
+inference dispatch. Only these evidence paragraphs changed after the exact
+staged-tree report.
+
 ## Known Boundaries
 
 - Process respawn is not implemented by current request-path production code.

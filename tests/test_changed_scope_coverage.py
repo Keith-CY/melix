@@ -594,25 +594,35 @@ def test_measurable_non_comment_lines_preserves_dense_indented_comment_behavior(
     ) == [1, 3, 6, 7, 9]
 
 
-def test_measurable_non_comment_lines_singleton_avoids_remaining_set(
+def test_measurable_non_comment_lines_singleton_uses_ascii_bytes_fast_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     source_path = tmp_path / "singleton.py"
     source_path.write_text("# comment\n    value = 1\n", encoding="utf-8")
+    read_bytes_calls = 0
+    original_read_bytes = changed_scope_coverage.Path.read_bytes
 
     def fail_set(*args: object, **kwargs: object) -> object:  # pragma: no cover
         raise AssertionError("singleton sparse source scans should avoid building a set")
 
     def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
-        raise AssertionError("singleton sparse source scans should stream target lines")
+        raise AssertionError("ASCII singleton source scans should avoid Path.read_text")
+
+    def counted_read_bytes(self: Path, *args: object, **kwargs: object) -> bytes:
+        nonlocal read_bytes_calls
+        read_bytes_calls += 1
+        return original_read_bytes(self, *args, **kwargs)
 
     monkeypatch.setattr(changed_scope_coverage, "set", fail_set, raising=False)
     monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_bytes", counted_read_bytes)
 
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [0]) == []
+    assert read_bytes_calls == 0
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [2]) == [2]
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [3]) == []
+    assert read_bytes_calls == 2
 
 
 def test_measurable_non_comment_lines_two_line_sparse_avoids_remaining_set(
