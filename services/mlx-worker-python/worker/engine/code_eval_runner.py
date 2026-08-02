@@ -931,9 +931,10 @@ def _read_limited_stdio(
     _os_pread=_OS_PREAD,
     _os_read=_OS_READ,
     _os_close=_OS_CLOSE,
+    _os_rdonly=_OS_RDONLY,
 ) -> tuple[str, int]:
     try:
-        fd = _os_open(path, _OS_RDONLY)
+        fd = _os_open(path, _os_rdonly)
     except OSError:
         return "", 0
 
