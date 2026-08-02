@@ -632,21 +632,58 @@ test and coverage commands immediately passed on the staged tree (`61` tests,
 gate, reproduced cleanly, and did not affect any performance metric or scoped
 file, no performance-regression override is used.
 
+After synchronizing the startup-signal version-prefix and trajectory provenance
+copy fast paths from `origin/main` at `02214a49`, the exact staged-tree hook
+again completed every functional gate: all Swift suites, `5,496` Python tests
+with `14` skips, and `132` integration tests with one skip. The report at
+`.runtime/pre-commit-performance/20260801-234544-9b2d6a27/report` ran all `148`
+probes with `20` direct probes and `0` verification failures. The backend
+identity probe remained `ok`: it rejected `140,000` mismatches with `0` output
+events before mismatch, recorded retry counts `3/2/1`, coalesced one recovery
+caller into two fresh bindings, and measured matched-worker p95 at
+`0.000447 ms` and control-plane p95 at `0.001402 ms`.
+
+The synchronized startup-signals probes were both `ok`: the lazy-log control
+crash path improved from `7.976 ms` to `7.920 ms`, report serialization improved
+from `55.259 ms` to `54.282 ms`, the single-pass version comparison measured
+`6.571 ms`, and product-version parsing improved from `108.152 ms` to
+`105.885 ms`. The trajectory copy-elision probe passed `43` focused tests and
+changed-line coverage, retained `17,547` peak bytes, and measured a `7.58x`
+speedup. The changed-scope sparse and singleton probes remained `ok` at
+`7.422 ms` and `31.057 ms`, both with zero source reads. Rerank total elapsed
+improved from `1260.338 ms` to `1253.110 ms`; its request submetric changed by
+`+4.40%`, remaining below the `5%` threshold.
+
+One unrelated direct timing sample crossed its threshold: vision-family config
+resolution measured `4.274 ms` for the base and `4.501 ms` for the merged tree
+(`+5.31%` against a `5%` threshold). The probe was selected only because this
+task updates `test_vision_runtime.py` to send backend identity. The measured
+production modules and probe script are byte-identical to `origin/main`, with
+matching SHA-256 hashes. Seven alternating same-interpreter measurements did
+not reproduce the alert: aggregate means were `4.270 ms` and `4.309 ms`
+(`+0.93%`), medians were `4.268 ms` and `4.273 ms`, and the nominal head sample
+was faster in three of seven pairs. All structural metrics remained identical.
+The report's `16` context-only timing alerts had no verification failures. This
+direct alert is non-reproducing measurement noise, not an accepted regression,
+and no performance-regression override is used.
+
 ## Verification Results
 
 The final post-merge repository gates completed successfully against
-`origin/main` at `7ca8655a` on 2026-08-01:
+`origin/main` at `02214a49` on 2026-08-02:
 
 - `make bootstrap`
 - `make proto`
 - `make proto-check`
 - `make swift-test` (`301` text-worker and `882` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
-- `make py-test` (`5495` passed, `14` skipped)
+- `make py-test` (`5496` passed, `14` skipped)
 - `make integration-test` (`132` passed, `1` skipped)
 
-The final mainline merge also passed the changed-scope coverage and registered
-coverage/probe focused suites (`69` tests). The preceding merge passed the
+The final mainline merge also passed the combined startup-signals, trajectory,
+and relevant performance-registry focused suites (`144` tests), plus both new
+probe scripts. The preceding merge passed the changed-scope coverage and
+registered coverage/probe focused suites (`69` tests). The merge before that passed the
 changed-scope coverage, backend identity, and identity-probe focused suites
 (`73` tests). The merge before that
 passed the integration-helper, closure-audit, code-evaluation, backend-identity,

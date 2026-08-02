@@ -34,7 +34,10 @@ This follow-up slice keeps the same version semantics but tightens
 `compare_versions` boundary-whitespace detection: ASCII boundary characters now
 use a precomputed ordinal lookup before the existing strip fallback, while
 non-ASCII boundary characters still fall back to `str.isspace()` so Unicode
-whitespace keeps normalizing correctly. The focused probe measures the repeated
+whitespace keeps normalizing correctly. A later micro-slice hoists the leading
+`v` prefix-equivalence checks behind the same already-computed first-character
+ordinals, avoiding duplicate first-character indexing on the clean-prefix hot
+path before the existing strip fallback. The focused probe measures the repeated
 compare path with `elapsed_ms_mean` and guards unchanged behavior through
 `comparison_total`.
 
