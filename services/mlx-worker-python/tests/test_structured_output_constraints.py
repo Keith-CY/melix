@@ -1327,7 +1327,11 @@ def test_json_schema_compiler_deadline_is_checked_inside_one_schema(
     assert error.value.details["limit"] == "compile_deadline_ms"
 
 
-def test_json_schema_compiler_accepts_long_enum_below_text_limit_without_recursion() -> None:
+def test_json_schema_compiler_accepts_long_enum_below_text_limit_without_recursion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(constraints, "monotonic", lambda: 0.0)
+    constraints._compile_json_schema.cache_clear()
     value = "x" * 2_000
     schema = {
         "type": "object",

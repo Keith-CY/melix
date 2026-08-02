@@ -718,18 +718,50 @@ timing alerts had no verification failures. The rerank alert is non-reproducing
 measurement noise, not an accepted regression, and no performance-regression
 override is used.
 
+After synchronizing the Swift compatibility verification changes from
+`origin/main` at `6a64e7f7`, the shared protocol package built successfully with
+`swift-collections` resolved at `1.3.0`. The focused OpenAI idle-unload
+regression and the Python long-enum structured-output regression each passed.
+The exact staged-tree hook completed every functional gate: all Swift suites,
+`5,496` Python tests with `14` skips, and `132` integration tests with one skip.
+The report at
+`.runtime/pre-commit-performance/20260802-031951-872d4285/report` ran all `148`
+probes with `20` direct probes and `0` verification failures.
+
+The backend identity probe remained `ok`: matched-worker p95 was `0.000448 ms`,
+control-plane stamping/recovery p95 was `0.001464 ms`, `140,000` mismatches
+produced zero output events, retry counts remained `3/2/1`, one recovery caller
+was coalesced into two fresh bindings, and duplicate completed-tool output
+remained zero. Two unrelated deterministic-image direct samples crossed their
+timing thresholds even though the measured runtime and both probe scripts are
+byte-identical to `origin/main`; the probes were selected because the image
+handler tests now stamp backend identity. Equal-environment Python 3.12.13
+alternating measurements did not reproduce either alert. Ten edit repetitions
+measured `11.316 ms` for the base and `11.182 ms` for the merged tree
+(`-1.18%`). After an initial ten-repetition output sample remained noisy, an
+expanded thirty-repetition output run measured `21.436036 ms` for the base and
+`21.436463 ms` for the merged tree (`+0.002%`), with medians differing by only
+`0.83%`. Digest calls, output-byte scan calls, payload checksums, and generated
+and edited byte counts matched exactly. The report's `20` context-only timing
+alerts also had no verification failures. The image alerts are non-reproducing
+measurement noise, not accepted regressions, and no performance-regression
+override is used.
+
 ## Verification Results
 
-The final post-merge repository gates completed successfully against
-`origin/main` at `ebbf7f85` on 2026-08-02:
+The latest post-merge repository gates completed successfully against
+`origin/main` at `6a64e7f7` on 2026-08-02:
 
-- `make bootstrap`
-- `make proto`
-- `make proto-check`
 - `make swift-test` (`301` text-worker and `882` menu-bar tests passed,
   together with the control-plane and remaining Swift package suites)
 - `make py-test` (`5496` passed, `14` skipped)
 - `make integration-test` (`132` passed, `1` skipped)
+
+The shared protocol package build, focused OpenAI idle-unload test, and focused
+Python long-enum structured-output test also passed after that merge. The
+immediately preceding `ebbf7f85` base passed `make bootstrap`, `make proto`, and
+`make proto-check`, proving the locked dependencies and generated protobuf
+artifacts were current and idempotent before the compatibility-only increment.
 
 The final mainline merge also passed the code-evaluation and relevant
 performance-registry focused suites (`84` tests), the registered coverage

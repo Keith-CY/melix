@@ -3383,7 +3383,10 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
         #expect(elapsed < .seconds(2))
 
-        try await waitForOpenAIHandlerCondition("idle sweep starts after response") {
+        try await waitForOpenAIHandlerCondition(
+            "idle sweep starts after response",
+            timeout: .seconds(10)
+        ) {
             await workerClient.unloadRequestCount == 1
         }
         #expect(await workerClient.unloadCompletedCount == 0)
