@@ -304,3 +304,17 @@ local assignment per state-bearing layer.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Four-State Sequence Fast Path
+
+The 2026-08-02 follow-up keeps the same registered probe and narrows to exact
+four-item `.state` sequences in `estimate_cache_snapshot_bytes()`. The probe and
+representative prompt-cache snapshots include list-shaped state records with two
+primary tensors plus additional state tensors. This slice sums those four entries
+directly after the existing pair fast path, preserving the generic loop for
+empty, singleton, three-item, five-or-more-item, tuple, scalar `.state`, and
+`.keys` / `.values` cache shapes.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
