@@ -14,8 +14,9 @@ The affected path is covered by the registered PR-scoped probe `stream-assembler
 
 1. Keep the close-marker prefix matching semantics unchanged for built-in markers and unknown custom markers.
 2. Precompute built-in close-marker prefixes once on the class instead of slicing the same marker strings for every helper call.
-3. Add focused regression coverage proving built-in marker prefix results reuse the precomputed prefix strings while the fallback path still handles unknown markers.
-4. Run the focused tests, changed-scope coverage, and the registered structural-prefix probe locally on Linux before pushing. GitHub Actions PR-scoped performance remains the merge gate after PR creation.
+3. Use direct built-in marker branches in the hot helper so repeated close-marker checks reuse the named prefix tuples without a dictionary lookup; preserve the tuple-building fallback for unknown custom markers.
+4. Add focused regression coverage proving built-in marker prefix results reuse the precomputed prefix strings while the fallback path still handles unknown markers.
+5. Run the focused tests, changed-scope coverage, and the registered structural-prefix probe locally on Linux before pushing. GitHub Actions PR-scoped performance remains the merge gate after PR creation.
 
 ## Success criteria
 

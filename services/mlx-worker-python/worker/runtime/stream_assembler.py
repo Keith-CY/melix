@@ -320,11 +320,17 @@ class RequestStreamAssembler:
     _PIPE_TOOL_CLOSE = "<tool_call|>"
     _PIPE_CHANNEL_OPEN = "<|channel>"
     _PIPE_CHANNEL_HEADER_CLOSE = "<channel|>"
+    _THINK_CLOSE_PREFIX_SUFFIXES = _marker_prefix_suffixes(_THINK_CLOSE)
+    _TOOL_CLOSE_PREFIX_SUFFIXES = _marker_prefix_suffixes(_TOOL_CLOSE)
+    _PIPE_TOOL_CLOSE_PREFIX_SUFFIXES = _marker_prefix_suffixes(_PIPE_TOOL_CLOSE)
+    _PIPE_CHANNEL_HEADER_CLOSE_PREFIX_SUFFIXES = _marker_prefix_suffixes(
+        _PIPE_CHANNEL_HEADER_CLOSE,
+    )
     _MARKER_PREFIX_SUFFIXES = {
-        _THINK_CLOSE: _marker_prefix_suffixes(_THINK_CLOSE),
-        _TOOL_CLOSE: _marker_prefix_suffixes(_TOOL_CLOSE),
-        _PIPE_TOOL_CLOSE: _marker_prefix_suffixes(_PIPE_TOOL_CLOSE),
-        _PIPE_CHANNEL_HEADER_CLOSE: _marker_prefix_suffixes(_PIPE_CHANNEL_HEADER_CLOSE),
+        _THINK_CLOSE: _THINK_CLOSE_PREFIX_SUFFIXES,
+        _TOOL_CLOSE: _TOOL_CLOSE_PREFIX_SUFFIXES,
+        _PIPE_TOOL_CLOSE: _PIPE_TOOL_CLOSE_PREFIX_SUFFIXES,
+        _PIPE_CHANNEL_HEADER_CLOSE: _PIPE_CHANNEL_HEADER_CLOSE_PREFIX_SUFFIXES,
     }
     _REASONING_OPEN_TAGS = (_THINK_OPEN, _PIPE_CHANNEL_OPEN)
     _TOOL_OPEN_TAGS = (_TOOL_OPEN, _PIPE_TOOL_OPEN)
@@ -1245,8 +1251,15 @@ class RequestStreamAssembler:
 
     @staticmethod
     def _longest_marker_prefix_suffix(text: str, marker: str) -> str:
-        prefixes = RequestStreamAssembler._MARKER_PREFIX_SUFFIXES.get(marker)
-        if prefixes is None:
+        if marker == RequestStreamAssembler._THINK_CLOSE:
+            prefixes = RequestStreamAssembler._THINK_CLOSE_PREFIX_SUFFIXES
+        elif marker == RequestStreamAssembler._TOOL_CLOSE:
+            prefixes = RequestStreamAssembler._TOOL_CLOSE_PREFIX_SUFFIXES
+        elif marker == RequestStreamAssembler._PIPE_TOOL_CLOSE:
+            prefixes = RequestStreamAssembler._PIPE_TOOL_CLOSE_PREFIX_SUFFIXES
+        elif marker == RequestStreamAssembler._PIPE_CHANNEL_HEADER_CLOSE:
+            prefixes = RequestStreamAssembler._PIPE_CHANNEL_HEADER_CLOSE_PREFIX_SUFFIXES
+        else:
             maximum_length = min(len(text), len(marker) - 1)
             prefixes = tuple(marker[:length] for length in range(maximum_length, 0, -1))
         for prefix in prefixes:
