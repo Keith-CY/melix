@@ -291,3 +291,16 @@ snapshot byte-estimation loop.
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Inline State Type Check
+
+The 2026-08-02 follow-up keeps the same registered probe and narrows to the exact
+list/tuple `.state` type dispatch inside `estimate_cache_snapshot_bytes()`. The
+hot loop already binds `type` to `type_of`; this slice inlines the two exact-type
+checks instead of first storing a `state_type` local, preserving the same exact
+list/tuple, scalar `.state`, and `.keys` / `.values` behavior while trimming one
+local assignment per state-bearing layer.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
