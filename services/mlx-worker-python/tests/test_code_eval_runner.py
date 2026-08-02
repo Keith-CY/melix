@@ -52,6 +52,14 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
         "print('hi')",
         "parsed_code_block",
     )
+    assert code_eval_runner.extract_candidate_code("```python\nprint('unicode-space')\u2003\n```") == (
+        "print('unicode-space')",
+        "parsed_code_block",
+    )
+    assert code_eval_runner.extract_candidate_code("```python\nprint('unicode-char')é\n```") == (
+        "print('unicode-char')é",
+        "parsed_code_block",
+    )
     assert code_eval_runner.extract_candidate_code("\n  ```python\nprint('wrapped')\n```   \n\t") == (
         "print('wrapped')",
         "parsed_code_block",

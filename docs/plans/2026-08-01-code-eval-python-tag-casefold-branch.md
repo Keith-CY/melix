@@ -17,6 +17,8 @@ The affected path is covered by the registered PR-scoped performance probe `code
 
 The case-insensitive Python fence helper now checks each character with direct equality branches instead of one-character membership tests. Exact lowercase `python` fences still use the existing `str.startswith()` fast path; this slice targets mixed-case Python fences in repeated code-block extraction without changing handling for unknown language tags.
 
+This follow-up slice remains within the same registered code-block extraction probe and narrows the trailing-strip helper used after a fenced block is selected. ASCII tail whitespace now uses a precomputed ordinal lookup, while non-ASCII tail characters still fall back to `str.isspace()` so Unicode whitespace trimming semantics remain unchanged. The probe's main extraction workload exercises the common single trailing newline before the closing fence; behavior parity is guarded by the focused extraction test, including Unicode whitespace.
+
 ## Verification plan
 
 Run the focused registered test command, changed-scope coverage command, and registered probe locally on Linux before opening the PR. GitHub Actions PR-scoped performance remains the merge gate for the registered probe report.
