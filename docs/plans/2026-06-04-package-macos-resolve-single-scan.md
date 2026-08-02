@@ -28,3 +28,14 @@ fallbacks no longer rescan the build root.
 
 This is a Python packaging-path optimization and is locally verifiable on Linux.
 It does not change Swift runtime behavior or generated protocol artifacts.
+
+## 2026-08-02 in-place triple sort follow-up
+
+This follow-up stays inside `_resolve_built_product(...)` and the existing
+`package-macos-resolve-fallback-scandir` probe. The remaining target-triple
+fallback loop now sorts the collected triple-name list in place and skips the
+lexicographically first triple during iteration, avoiding an additional filtered
+list allocation after the direct and first-triple release/debug checks have
+already failed. Resolution precedence remains unchanged: direct release, first
+triple release, direct debug, first triple debug, remaining release candidates,
+then remaining debug candidates.
