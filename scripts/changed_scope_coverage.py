@@ -305,6 +305,9 @@ def _measurable_non_comment_lines(
         target_line = line_numbers[0]
         if target_line < 1:
             return measurable
+        ascii_measurable = _ascii_bytes_measurable_non_comment_lines(source_path, line_numbers)
+        if ascii_measurable is not None:
+            return ascii_measurable
         with source_path.open("r", encoding="utf-8") as source_file:
             for index, line in enumerate(source_file, 1):
                 if index != target_line:
