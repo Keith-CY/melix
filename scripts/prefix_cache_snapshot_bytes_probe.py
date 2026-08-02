@@ -33,20 +33,30 @@ class FakeFallbackTensor:
         self.itemsize = itemsize
 
 
+class FakeMissingTensor:
+    __slots__ = ()
+
+
 def _build_cache(layer_count: int) -> tuple[list[SimpleNamespace], int]:
     cache: list[SimpleNamespace] = []
     expected = 0
     for index in range(layer_count):
         first = FakeTensor(128 + (index % 17))
         second = FakeFallbackTensor(16 + (index % 11), 4)
-        if index % 3 == 0:
+        if index % 4 == 0:
             state = [first, second]
             cache.append(SimpleNamespace(state=state))
-        elif index % 3 == 1:
+            expected += first.nbytes + second.size * second.itemsize
+        elif index % 4 == 1:
             cache.append(SimpleNamespace(keys=first, values=second))
+            expected += first.nbytes + second.size * second.itemsize
+        elif index % 4 == 2:
+            third = FakeTensor(32 + (index % 7))
+            cache.append(SimpleNamespace(state=[first, second, third, FakeMissingTensor()]))
+            expected += first.nbytes + second.size * second.itemsize + third.nbytes
         else:
             cache.append(SimpleNamespace(state=first))
-        expected += first.nbytes + second.size * second.itemsize if index % 3 != 2 else first.nbytes
+            expected += first.nbytes
     return cache, expected
 
 
