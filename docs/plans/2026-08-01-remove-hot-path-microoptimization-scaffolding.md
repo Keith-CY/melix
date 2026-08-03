@@ -64,7 +64,15 @@ routed to a "not usable" branch now reaches a coercion that accepts it.
   separately, and only the stored one applied `or ""`. Since `Mapping.get(key, default)`
   returns the default only for an *absent* key, a manifest carrying an explicit
   `"trajectory_trace_digest": null` reached `str(None).strip()` and was stored as the
-  literal string `"None"`. Restored the `or ""`.
+  literal string `"None"`.
+
+  The first attempt at this fix added `or ""` to the single shared variable, which
+  moved the bug rather than removing it: the gate then read the normalized value,
+  saw `""`, and short-circuited to `{}` for any manifest with a non-matching `format`
+  and an explicit `null` digest — discarding the other identifying fields that
+  `main` returns. Both coercions are now derived from one raw
+  `trace_digest_value`, matching the split the old code had. The two uses look
+  redundant and are not.
 - `_probe_phase_duration_key` existed in the old file but was never called — the old
   `_slowest_probe_phases` inlined its own `type(x) is float/int/str` ladder. Routing the
   collapsed version through the helper made it live, and its `isinstance(duration,
@@ -145,6 +153,18 @@ the six drifts above came from a shared helper the removed code had bypassed —
 case a helper that had never been called at all, so nothing had ever exercised it. A
 collapse is not only a deletion; it promotes whatever the deleted branch stood in front
 of, and that code may be reachable for the first time.
+
+Where the old code derived two values from one input by different routes, assume the
+difference is load-bearing until proved otherwise. The trace-digest drift above was
+introduced by merging two coercions into one, and its first fix was introduced by
+merging them again in the other direction. Two `_manifest_text` calls on the same key
+read as duplication; they are the whole behavior.
+
+A regression test has to fail against the specific defect, not merely exercise the code
+near it. The first test written for that drift asserted only that the field was absent
+from the result — which is trivially true of the `{}` the broken gate returned, so it
+passed against the very bug the fix introduced. Asserting the whole returned dict
+catches both directions.
 
 Beyond that line, micro-optimize a pure-Python helper only when a profile of a real
 workload attributes measurable time to it. A registered probe that measures a synthetic

@@ -122,12 +122,21 @@ def _trajectory_provenance_from_snapshot_manifest(
     which may mutate it must run it through ``normalize_trajectory_provenance``.
     """
     manifest_get = manifest.get
-    # ``or ""`` matters: ``.get`` returns the default only for an absent key, so an
-    # explicit ``"trajectory_trace_digest": null`` would otherwise reach
-    # ``_manifest_text(None)`` and be stored as the literal string ``"None"``.
-    trace_digest = _manifest_text(manifest_get("trajectory_trace_digest") or "")
-    if _manifest_text(manifest_get("format", "")) != "agentic_tool_trace" and not trace_digest:
+    # The gate and the stored field coerce the digest differently, and have to keep
+    # doing so. ``.get`` returns its default only for an absent key, so an explicit
+    # ``"trajectory_trace_digest": null`` arrives here as ``None``. The gate sees
+    # ``_manifest_text(None)`` — the truthy string ``"None"`` — and stays open, while
+    # ``or ""`` normalizes the same value away before storage so it is not written out
+    # as ``"None"``. Deriving both from one ``or ""``-normalized value looks tidier and
+    # is wrong twice over: it either stores the bogus string or closes the gate on
+    # manifests that carry other identifying fields.
+    trace_digest_value = manifest_get("trajectory_trace_digest", "")
+    if (
+        _manifest_text(manifest_get("format", "")) != "agentic_tool_trace"
+        and not _manifest_text(trace_digest_value)
+    ):
         return {}
+    trace_digest = _manifest_text(trace_digest_value or "")
 
     provenance: dict[str, Any] = {}
     dataset_id = _manifest_text(

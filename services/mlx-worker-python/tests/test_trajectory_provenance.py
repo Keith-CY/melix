@@ -167,18 +167,40 @@ def _build_service(tmp_path: Path, runner: MLXLMRunner) -> WorkerMaintenanceServ
 
 
 def test_trajectory_provenance_ignores_explicit_null_trace_digest() -> None:
-    """An explicit ``null`` digest is absent, not the literal string ``"None"``.
+    """An explicit ``null`` digest is absent — it neither stores nor gates.
 
-    ``Mapping.get(key, default)`` returns the default only when the key is
-    missing, so a manifest carrying ``"trajectory_trace_digest": null`` reaches
-    the text coercion with ``None`` and would otherwise store ``"None"``.
+    ``Mapping.get(key, default)`` returns the default only when the key is missing, so
+    a manifest carrying ``"trajectory_trace_digest": null`` reaches the text coercion
+    with ``None``. Two things must hold at once, and normalizing the value once breaks
+    whichever one it is not written for: the field must not be stored as the literal
+    string ``"None"``, and the early-return gate must still let the manifest through so
+    its other identifying fields survive.
     """
     for manifest_format in ("agentic_tool_trace", "not_matching"):
         provenance = trajectory_provenance_module._trajectory_provenance_from_snapshot_manifest(
-            {"format": manifest_format, "trajectory_trace_digest": None}
+            {
+                "format": manifest_format,
+                "trajectory_trace_digest": None,
+                "source_dataset_id": "ds-123",
+            }
         )
 
-        assert "trajectory_trace_digest" not in provenance
+        assert provenance == {
+            "trajectory_dataset_id": "ds-123",
+            "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+            "trajectory_split": "train",
+        }
+
+    # The same manifest without other identifying fields still yields the defaults
+    # rather than short-circuiting to an empty dict.
+    bare = trajectory_provenance_module._trajectory_provenance_from_snapshot_manifest(
+        {"format": "not_matching", "trajectory_trace_digest": None}
+    )
+
+    assert bare == {
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_split": "train",
+    }
 
     kept = trajectory_provenance_module._trajectory_provenance_from_snapshot_manifest(
         {"format": "agentic_tool_trace", "trajectory_trace_digest": "  sha256:fixture  "}
