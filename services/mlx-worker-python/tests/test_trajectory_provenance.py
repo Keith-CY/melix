@@ -166,6 +166,27 @@ def _build_service(tmp_path: Path, runner: MLXLMRunner) -> WorkerMaintenanceServ
     return service
 
 
+def test_trajectory_provenance_ignores_explicit_null_trace_digest() -> None:
+    """An explicit ``null`` digest is absent, not the literal string ``"None"``.
+
+    ``Mapping.get(key, default)`` returns the default only when the key is
+    missing, so a manifest carrying ``"trajectory_trace_digest": null`` reaches
+    the text coercion with ``None`` and would otherwise store ``"None"``.
+    """
+    for manifest_format in ("agentic_tool_trace", "not_matching"):
+        provenance = trajectory_provenance_module._trajectory_provenance_from_snapshot_manifest(
+            {"format": manifest_format, "trajectory_trace_digest": None}
+        )
+
+        assert "trajectory_trace_digest" not in provenance
+
+    kept = trajectory_provenance_module._trajectory_provenance_from_snapshot_manifest(
+        {"format": "agentic_tool_trace", "trajectory_trace_digest": "  sha256:fixture  "}
+    )
+
+    assert kept["trajectory_trace_digest"] == "sha256:fixture"
+
+
 def test_load_trajectory_provenance_from_snapshot_manifest_uses_stable_field_names(
     tmp_path: Path,
 ) -> None:

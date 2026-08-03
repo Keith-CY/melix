@@ -221,6 +221,38 @@ def test_report_evidence_gate_slowest_probe_phases_accepts_typed_durations() -> 
     assert [row["phase"] for row in rows] == ["string", "int", "float", "empty", "missing"]
 
 
+def test_report_evidence_gate_slowest_probe_phases_rank_boolean_duration_last() -> None:
+    """A JSON ``true`` duration must not displace a real phase from the top five.
+
+    ``bool`` subclasses ``int``, so an unguarded numeric check scores ``True`` as
+    1.0 and drops the slowest genuine phase off the end of the list.
+    """
+    report: dict[str, object] = {
+        "probe_summary": {
+            "baseline": {
+                "slowest_phases": [
+                    {"phase": "bool_true", "duration_ms": True},
+                    {"phase": "nine", "duration_ms": 9.0},
+                    {"phase": "eight", "duration_ms": 8.0},
+                    {"phase": "seven", "duration_ms": 7.0},
+                    {"phase": "six", "duration_ms": 6.0},
+                    {"phase": "half", "duration_ms": 0.5},
+                ]
+            }
+        }
+    }
+
+    rows = report_evidence_gate_module._slowest_probe_phases(report)
+
+    assert [row["phase"] for row in rows] == ["nine", "eight", "seven", "six", "half"]
+    assert report_evidence_gate_module._probe_phase_duration_key(
+        {"duration_ms": True}
+    ) == 0.0
+    assert report_evidence_gate_module._probe_phase_duration_key(
+        {"duration_ms": False}
+    ) == 0.0
+
+
 def test_report_evidence_gate_run_kind_rules_accept_non_tuple_iterables() -> None:
     assert report_evidence_gate_module._rule_matches_report(
         rule={"run_kinds": {"evaluation", "serving_benchmark"}},

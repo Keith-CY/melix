@@ -420,10 +420,16 @@ def _telemetry_failures(report: dict[str, object]) -> list[str]:
 
 
 def _probe_phase_duration_key(row: dict[str, object]) -> float:
+    """Return the sort key for one probe phase, scoring unusable durations as 0.0.
+
+    ``bool`` is excluded deliberately: it is a subclass of ``int``, so a JSON
+    ``"duration_ms": true`` would otherwise score 1.0 and displace a real phase
+    from the top five rather than ranking last with the other unusable values.
+    """
     duration = row.get("duration_ms")
-    if isinstance(duration, (float, int, str)):
-        return float(duration or 0.0)
-    return 0.0
+    if isinstance(duration, bool) or not isinstance(duration, (float, int, str)):
+        return 0.0
+    return float(duration or 0.0)
 
 
 def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:

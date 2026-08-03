@@ -122,7 +122,10 @@ def _trajectory_provenance_from_snapshot_manifest(
     which may mutate it must run it through ``normalize_trajectory_provenance``.
     """
     manifest_get = manifest.get
-    trace_digest = _manifest_text(manifest_get("trajectory_trace_digest", ""))
+    # ``or ""`` matters: ``.get`` returns the default only for an absent key, so an
+    # explicit ``"trajectory_trace_digest": null`` would otherwise reach
+    # ``_manifest_text(None)`` and be stored as the literal string ``"None"``.
+    trace_digest = _manifest_text(manifest_get("trajectory_trace_digest") or "")
     if _manifest_text(manifest_get("format", "")) != "agentic_tool_trace" and not trace_digest:
         return {}
 

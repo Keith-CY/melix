@@ -15,7 +15,8 @@ that monkeypatch internals (`monkeypatch.setattr(module, "set", fail_set)`,
 a test failing. That inverts the usual relationship between tests and code: the tests
 asserted *how* the code ran rather than *what* it produced.
 
-Three of the fast paths had drifted from the semantics they claimed to preserve:
+Six of the fast paths had drifted from the semantics they claimed to preserve. Three
+were pre-existing:
 
 - `worker.runtime.token_counting.whitespace_token_count` documented its ASCII branch
   as "the exact ASCII whitespace set recognized by `str.split()`", but the set omitted
@@ -53,6 +54,30 @@ alone, while every strategy here — file iteration, `bytes.splitlines()`, and t
 `readlines()` this change settles on — also breaks on a bare `\r`. A source file
 containing a lone CR is still numbered inconsistently with the diff parser. This change
 does not fix that; it is recorded so the next person does not rediscover it as new.
+
+A fifth and sixth were introduced by this refactor and found in a later review pass, on
+the two largest collapsed files. Both are the same shape: a value that the old code
+routed to a "not usable" branch now reaches a coercion that accepts it.
+
+- `_trajectory_provenance_from_snapshot_manifest` derived the trace digest once and
+  used it for both the gate check and the stored field. The old code coerced the two
+  separately, and only the stored one applied `or ""`. Since `Mapping.get(key, default)`
+  returns the default only for an *absent* key, a manifest carrying an explicit
+  `"trajectory_trace_digest": null` reached `str(None).strip()` and was stored as the
+  literal string `"None"`. Restored the `or ""`.
+- `_probe_phase_duration_key` existed in the old file but was never called — the old
+  `_slowest_probe_phases` inlined its own `type(x) is float/int/str` ladder. Routing the
+  collapsed version through the helper made it live, and its `isinstance(duration,
+  (float, int, str))` accepts `bool`, which subclasses `int`. A JSON
+  `"duration_ms": true` scored 1.0 instead of 0.0, and because the result feeds
+  `heapq.nlargest(5, ...)` it displaced a genuine phase from the top five rather than
+  changing one reported number. `bool` is now excluded explicitly.
+
+The second is the more instructive one: the collapse did not change the helper, it
+changed *which* code was reachable. Deleting a duplicate implementation promotes
+whatever it was duplicating, and the survivor may never have been exercised. `type(x) is
+int` and `isinstance(x, int)` also differ for `int` subclasses; that difference is left
+alone here because `json.loads` cannot produce one.
 
 ## Scope
 
@@ -114,6 +139,12 @@ and the PR-scoped report caught it: deriving run-kind values per rule instead of
 per matrix turned matching from O(roles + rows) into O(roles x rows), and dropping the
 metric-prefix bucketing and the bounded top-k cost real time on real inputs. Those were
 restored. The rule-dict mutation was not.
+
+When collapsing duplicated implementations, check what the survivor actually is. Two of
+the six drifts above came from a shared helper the removed code had bypassed — in one
+case a helper that had never been called at all, so nothing had ever exercised it. A
+collapse is not only a deletion; it promotes whatever the deleted branch stood in front
+of, and that code may be reachable for the first time.
 
 Beyond that line, micro-optimize a pure-Python helper only when a profile of a real
 workload attributes measurable time to it. A registered probe that measures a synthetic
