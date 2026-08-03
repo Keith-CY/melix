@@ -3764,6 +3764,7 @@ struct RequestCoordinatorTests {
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "true"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "1"]) == 4)
+        #expect(ciScaledWaitDuration(milliseconds: 500, environment: ["CI": "true"]) == .seconds(2))
     }
 
     @Test("CI_WAIT_MULTIPLIER overrides the default when set within range")
@@ -8196,51 +8197,6 @@ private func makeCoordinatorTextModel(
     model.modelID = id
     model.state = state
     return model
-}
-
-/// Multiplier applied to polling-based wait helpers in this test file.
-///
-/// Local runs stay on the fast defaults; CI machines (GitHub-hosted macOS
-/// runners are slower and noisier than developer laptops) get a 4× budget so
-/// phase-transition polls can't race the scheduler under contention. The
-/// actual numerical default still passes locally in a few tens of ms — the
-/// multiplier only affects the *ceiling* before a timeout returns nil.
-///
-/// `CI_WAIT_MULTIPLIER` overrides the default when set to a positive integer
-/// within the accepted range, so future tuning doesn't require a code change.
-private let waitAttemptsMultiplier: Int = {
-    computedWaitAttemptsMultiplier(environment: ProcessInfo.processInfo.environment)
-}()
-
-private let defaultCIWaitMultiplier: Int = 4
-private let maximumCIWaitMultiplier: Int = 100
-
-private func computedWaitAttemptsMultiplier(environment: [String: String]) -> Int {
-    let ciActive = isTruthyEnvironmentFlag(environment["CI"])
-        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"])
-    guard ciActive else {
-        return 1
-    }
-    if let raw = environment["CI_WAIT_MULTIPLIER"]?
-        .trimmingCharacters(in: .whitespacesAndNewlines),
-       let parsed = Int(raw),
-       (1...maximumCIWaitMultiplier).contains(parsed) {
-        return parsed
-    }
-    return defaultCIWaitMultiplier
-}
-
-private func isTruthyEnvironmentFlag(_ value: String?) -> Bool {
-    guard let value else {
-        return false
-    }
-
-    switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-    case "1", "true", "yes", "on":
-        return true
-    default:
-        return false
-    }
 }
 
 private func waitForProgress(

@@ -1988,6 +1988,35 @@ def test_sparkle_code_signing_plan_is_official_inside_out_order(tmp_path: Path) 
     ]
 
 
+def test_code_signing_plan_limits_library_validation_exception_to_dynamic_code_hosts(
+    tmp_path: Path,
+) -> None:
+    app = tmp_path / "Melix.app"
+    resources = app / "Contents/Resources"
+    expected_hosts = {
+        resources / "melix-menubar",
+        resources / "melix-text-worker-swift",
+        resources / "python-runtime/bin/python3.12",
+    }
+    ordinary_targets = {
+        resources / "melix",
+        resources / "melix-control-plane",
+        resources / "python-site-packages/grpc/_cython/cygrpc.cpython-312-darwin.so",
+    }
+    for path in expected_hosts | ordinary_targets:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\xcf\xfa\xed\xfe" + b"mach-o")
+
+    plan = macos_code_signing_plan(app)
+
+    exception_paths = {
+        target.path
+        for target in plan
+        if target.disable_library_validation
+    }
+    assert exception_paths == {path.resolve() for path in expected_hosts}
+
+
 def test_sparkle_code_signing_plan_rejects_missing_required_helper(tmp_path: Path) -> None:
     app = tmp_path / "Melix.app"
     framework = app / "Contents/Frameworks/Sparkle.framework"
@@ -2205,6 +2234,15 @@ def test_sign_macos_app_bundle_uses_stable_identity_and_verifies_requirement(
         "_verify_codesign_identity_evidence",
         lambda codesign, target, **kwargs: verified_targets.append(target),
     )
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_canonical_codesign_entitlements",
+        lambda codesign, target: plistlib.dumps(
+            {"com.apple.security.cs.disable-library-validation": True},
+            fmt=plistlib.FMT_XML,
+            sort_keys=True,
+        ),
+    )
 
     def fake_run(command: list[str], check: bool, **kwargs: object) -> SimpleNamespace:
         calls.append(command)
@@ -2221,7 +2259,7 @@ def test_sign_macos_app_bundle_uses_stable_identity_and_verifies_requirement(
         expected_authority="Melix GitHub Release Signing",
     ) is True
     sign_calls = [command for command in calls if "--sign" in command]
-    assert sign_calls[0] == [
+    assert sign_calls[0][:-3] == [
         "/usr/bin/codesign",
         "--force",
         "--options",
@@ -2231,8 +2269,10 @@ def test_sign_macos_app_bundle_uses_stable_identity_and_verifies_requirement(
         "--timestamp=none",
         "--keychain",
         str(keychain_path.resolve()),
-        str(native_binary.resolve()),
     ]
+    assert sign_calls[0][-3] == "--entitlements"
+    assert Path(sign_calls[0][-2]).name == "disable-library-validation.plist"
+    assert sign_calls[0][-1] == str(native_binary.resolve())
     assert sign_calls[1] == [
         "/usr/bin/codesign",
         "--force",
@@ -2281,6 +2321,74 @@ def test_sign_macos_app_bundle_preserves_required_helper_entitlements(
     assert sign_macos_app_bundle(app_path, identity="-") is True
     sign_call = next(command for command in calls if "--sign" in command)
     assert "--preserve-metadata=entitlements" in sign_call
+
+
+def test_sign_macos_app_bundle_applies_and_verifies_library_validation_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_path = tmp_path / "Melix.app"
+    host = app_path / "Contents/Resources/melix-menubar"
+    host.parent.mkdir(parents=True)
+    host.write_bytes(b"\xcf\xfa\xed\xfe" + b"mach-o")
+    target = macos_app_bundle_module.MacOSCodeSigningTarget(
+        host.resolve(),
+        "nested_macho",
+        disable_library_validation=True,
+    )
+    signed_entitlements: list[dict[str, object]] = []
+    verified_entitlements: list[Path] = []
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/codesign")
+    monkeypatch.setattr(macos_app_bundle_module, "macos_code_signing_plan", lambda app: [target])
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_codesign_details",
+        lambda codesign, path: "flags=0x10000(runtime)",
+    )
+
+    def fake_entitlements(codesign: str, path: Path) -> bytes:
+        verified_entitlements.append(path)
+        return plistlib.dumps(
+            {"com.apple.security.cs.disable-library-validation": True},
+            fmt=plistlib.FMT_XML,
+            sort_keys=True,
+        )
+
+    def fake_run(command: list[str], check: bool, **kwargs: object) -> SimpleNamespace:
+        if "--sign" in command and "--entitlements" in command:
+            entitlements_path = Path(command[command.index("--entitlements") + 1])
+            signed_entitlements.append(plistlib.loads(entitlements_path.read_bytes()))
+        return SimpleNamespace(stdout="", stderr="")
+
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "_canonical_codesign_entitlements",
+        fake_entitlements,
+    )
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_run)
+
+    assert sign_macos_app_bundle(app_path, identity="-") is True
+    assert signed_entitlements == [
+        {"com.apple.security.cs.disable-library-validation": True}
+    ]
+    assert verified_entitlements == [host.resolve()]
+
+
+def test_sign_macos_app_bundle_rejects_conflicting_entitlement_policies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_path = tmp_path / "Melix.app"
+    target = macos_app_bundle_module.MacOSCodeSigningTarget(
+        app_path / "Contents/Resources/conflicting-host",
+        "nested_macho",
+        preserve_entitlements=True,
+        disable_library_validation=True,
+    )
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/codesign")
+    monkeypatch.setattr(macos_app_bundle_module, "macos_code_signing_plan", lambda app: [target])
+
+    assert sign_macos_app_bundle(app_path, identity="-") is False
 
 
 @pytest.mark.parametrize("failure", ["runtime", "entitlements"])
