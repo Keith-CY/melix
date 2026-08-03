@@ -6,15 +6,18 @@ struct LoadedTextModel: @unchecked Sendable {
     let storage: Any
     let residentBytesHint: UInt64
     let textFamilyID: String
+    let cacheEpochID: String
 
     init(
         storage: Any,
         residentBytesHint: UInt64 = 0,
-        textFamilyID: String = ""
+        textFamilyID: String = "",
+        cacheEpochID: String = UUID().uuidString.lowercased()
     ) {
         self.storage = storage
         self.residentBytesHint = residentBytesHint
         self.textFamilyID = textFamilyID
+        self.cacheEpochID = cacheEpochID
     }
 }
 
@@ -59,6 +62,27 @@ struct RuntimePrefillResult: Sendable {
     let appliedAcceleration: Melix_Worker_V1_AccelerationPolicy
     let acceleratedPrefillGainPct: Int
     let activeKVQuantizationRatio: Int
+    let pagedCacheEvidence: RuntimePagedCacheEvidence?
+
+    init(
+        context: TextPrefillContext,
+        promptTokens: Int,
+        requestedPrefillStepTokens: Int,
+        effectivePrefillWindowTokens: Int,
+        appliedAcceleration: Melix_Worker_V1_AccelerationPolicy,
+        acceleratedPrefillGainPct: Int,
+        activeKVQuantizationRatio: Int,
+        pagedCacheEvidence: RuntimePagedCacheEvidence? = nil
+    ) {
+        self.context = context
+        self.promptTokens = promptTokens
+        self.requestedPrefillStepTokens = requestedPrefillStepTokens
+        self.effectivePrefillWindowTokens = effectivePrefillWindowTokens
+        self.appliedAcceleration = appliedAcceleration
+        self.acceleratedPrefillGainPct = acceleratedPrefillGainPct
+        self.activeKVQuantizationRatio = activeKVQuantizationRatio
+        self.pagedCacheEvidence = pagedCacheEvidence
+    }
 }
 
 struct TextRuntimeCancellationError: LocalizedError, Equatable {
@@ -540,7 +564,9 @@ enum TextBatchGenerationEvent: Sendable {
 protocol TextRuntimeBackend: Sendable {
     var runtimeName: String { get }
     var supportsHomogeneousBatchDecode: Bool { get }
+    var supportsPagedKVCache: Bool { get }
     func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats?
+    func pagedKVPoolStats() async -> RuntimePagedKVPoolStats
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel
     func unloadModel(_ model: LoadedTextModel) async
     func prefill(
@@ -592,8 +618,14 @@ protocol TextRuntimeBackend: Sendable {
 extension TextRuntimeBackend {
     var supportsHomogeneousBatchDecode: Bool { false }
 
+    var supportsPagedKVCache: Bool { false }
+
     func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats? {
         nil
+    }
+
+    func pagedKVPoolStats() async -> RuntimePagedKVPoolStats {
+        .empty
     }
 
     func unloadModel(_ model: LoadedTextModel) async {}
@@ -703,8 +735,16 @@ struct TextRuntime: Sendable {
         backend.supportsHomogeneousBatchDecode
     }
 
+    var supportsPagedKVCache: Bool {
+        backend.supportsPagedKVCache
+    }
+
     func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats? {
         await backend.runtimeStatsOverlay()
+    }
+
+    func pagedKVPoolStats() async -> RuntimePagedKVPoolStats {
+        await backend.pagedKVPoolStats()
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> RuntimeLoadResult {
@@ -885,7 +925,7 @@ private func deterministicVisionDelayNanos(
     return 20_000_000
 }
 
-private func processResidentMemoryBytes() -> UInt64 {
+func processResidentMemoryBytes() -> UInt64 {
     var info = mach_task_basic_info()
     var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info_data_t>.size / MemoryLayout<natural_t>.size)
     let result: kern_return_t = withUnsafeMutablePointer(to: &info) { pointer in

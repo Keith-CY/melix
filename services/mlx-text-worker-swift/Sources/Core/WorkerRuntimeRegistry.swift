@@ -108,6 +108,20 @@ struct WorkerPrefillResult: Sendable {
     let hotPrefixCount: Int
     let restorePlan: Melix_Worker_V1_CacheRestorePlan?
     let cacheHitTaxonomy: HotCacheHitTaxonomy
+    let recoveredPrefixTokens: Int
+    let cacheHitMode: String
+    let cacheFallbackReason: String
+    let cacheLookupMicros: Int
+    let cacheRestoreMicros: Int
+    let cacheStreamOwnerMatch: Bool
+    let cacheCopyOnWriteBlockCount: Int
+    let cacheComputedPrefixTokens: Int
+    let cacheModelPrefillMicros: Int
+    let cacheModelPrefillChunkTokens: Int
+    let cacheModelPrefillCallCount: Int
+    let cacheModelPrefillMinCallTokens: Int
+    let cacheModelPrefillMaxCallTokens: Int
+    let cacheBlockTableBytes: UInt64
 }
 
 struct WorkerDecodeSession: @unchecked Sendable {
@@ -251,7 +265,7 @@ actor WorkerRuntimeRegistry {
 
         var cache = Melix_Worker_V1_CacheCapabilities()
         cache.supportsPrefixCache = true
-        cache.supportsPagedCache = false
+        cache.supportsPagedCache = runtime.supportsPagedKVCache
         cache.supportsDiskCache = false
         cache.kvQuantProfiles = ActiveKVQuantizationProfiles.supportedProfiles
         cache.supportsBoundarySnapshots = false
@@ -784,6 +798,23 @@ actor WorkerRuntimeRegistry {
            loaded.spec.settings.cacheBlockSizeTokens > 0 {
             effectiveExecution.cacheHints.preferredBlockSize = loaded.spec.settings.cacheBlockSizeTokens
         }
+        let requestedCacheBudget = effectiveExecution.cacheHints.cacheMemoryBudgetBytes > 0
+            ? effectiveExecution.cacheHints.cacheMemoryBudgetBytes
+            : loaded.spec.settings.cacheMemoryBudgetBytes
+        let modelResidentBytes = loadedModels.values.reduce(UInt64(0)) {
+            $0 + $1.estimatedResidentBytes
+        }
+        if configuration.memoryEnforcementEnabled,
+           configuration.processMemoryBudgetBytes > 0 {
+            let processCacheBudget = effectiveCacheBudgetBytes(modelResidentBytes: modelResidentBytes)
+            effectiveExecution.cacheHints.cacheMemoryBudgetBytes = requestedCacheBudget > 0
+                ? min(requestedCacheBudget, processCacheBudget)
+                : processCacheBudget
+        } else {
+            effectiveExecution.cacheHints.cacheMemoryBudgetBytes = requestedCacheBudget > 0
+                ? requestedCacheBudget
+                : PagedKVBlockPool.defaultBudgetBytes
+        }
         let cacheMode = CacheModePolicy.resolve(from: effectiveExecution.cacheHints)
         await cacheStore.setActiveMode(cacheMode)
 
@@ -837,11 +868,6 @@ actor WorkerRuntimeRegistry {
                 cacheMode: cacheMode
             )
             if let restorePlan = walkedBackPlan {
-                if restorePlan.partial {
-                    await cacheStore.recordPartialHit()
-                } else {
-                    await cacheStore.recordExactHit()
-                }
                 let restoreResumeHint = restoreResumeHint(
                     snapshotID: restored.snapshot.snapshotID,
                     restorePlan: restorePlan,
@@ -860,7 +886,25 @@ actor WorkerRuntimeRegistry {
 
                 let decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
                 nextDecodeHandle += 1
-                let restoredPrefix = await cacheStore.lookupPrefix(for: restorePlan.blockTable.cacheKey)
+                let registration = try await cacheStore.registerPrefill(
+                    execution: effectiveExecution,
+                    model: loaded.spec,
+                    messages: requestMessages,
+                    promptTokens: runtimePrefill.promptTokens,
+                    decodeHandle: decodeHandle,
+                    activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
+                    pagedCacheEvidence: runtimePrefill.pagedCacheEvidence,
+                    shouldAbort: shouldAbort
+                )
+                var executedRestorePlan = restorePlan
+                let recoveredPrefixTokens = runtimePrefill.pagedCacheEvidence?.recoveredPrefixTokens ?? 0
+                executedRestorePlan.blockTableID = registration.blockTableID
+                executedRestorePlan.blockTable = registration.blockTable
+                executedRestorePlan.pages = registration.blockTable.pages
+                executedRestorePlan.restoredTokenCount = UInt32(clamping: recoveredPrefixTokens)
+                executedRestorePlan.partial = recoveredPrefixTokens > 0
+                    && recoveredPrefixTokens < runtimePrefill.promptTokens
+                executedRestorePlan.tier = recoveredPrefixTokens > 0 ? "l1" : "metadata-only-l2"
                 try throwIfTextRuntimeCancellationRequested(shouldAbort)
                 prefillContexts[decodeHandle] = StoredPrefillContext(
                     decodeHandle: decodeHandle,
@@ -872,20 +916,23 @@ actor WorkerRuntimeRegistry {
                     resumeHint: restoreResumeHint,
                     acceleration: runtimePrefill.appliedAcceleration,
                     activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
-                    blockTableID: restorePlan.blockTableID,
-                    blockTable: restorePlan.blockTable,
+                    blockTableID: registration.blockTableID,
+                    blockTable: registration.blockTable,
                     restoredSnapshotID: restored.snapshot.snapshotID,
-                    prefix: restoredPrefix,
+                    prefix: registration.prefix,
                     context: runtimePrefill.context
                 )
 
                 let cacheSnapshot = await cacheStore.snapshot()
-                let cacheStats = cacheStatsWithRuntimeContext(cacheSnapshot.stats)
+                let cacheStats = cacheStatsWithRuntimeContext(
+                    cacheSnapshot.stats,
+                    pagedKVStats: await runtime.pagedKVPoolStats()
+                )
                 let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
                 return WorkerPrefillResult(
                     decodeHandle: decodeHandle,
-                    blockTableID: restorePlan.blockTableID,
-                    blockTable: restorePlan.blockTable,
+                    blockTableID: registration.blockTableID,
+                    blockTable: registration.blockTable,
                     promptTokens: runtimePrefill.promptTokens,
                     restoredSnapshotID: restored.snapshot.snapshotID,
                     appliedAcceleration: runtimePrefill.appliedAcceleration,
@@ -895,8 +942,23 @@ actor WorkerRuntimeRegistry {
                     activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
                     cacheStats: cacheStats,
                     hotPrefixCount: cacheSnapshot.hotPrefixes.count,
-                    restorePlan: restorePlan,
-                    cacheHitTaxonomy: cacheHitTaxonomy
+                    restorePlan: executedRestorePlan,
+                    cacheHitTaxonomy: cacheHitTaxonomy,
+                    recoveredPrefixTokens: recoveredPrefixTokens,
+                    cacheHitMode: runtimePrefill.pagedCacheEvidence?.cacheHitMode ?? "none",
+                    cacheFallbackReason: runtimePrefill.pagedCacheEvidence?.fallbackReason
+                        ?? "runtime_paged_cache_unavailable",
+                    cacheLookupMicros: runtimePrefill.pagedCacheEvidence?.lookupMicros ?? 0,
+                    cacheRestoreMicros: runtimePrefill.pagedCacheEvidence?.restoreMicros ?? 0,
+                    cacheStreamOwnerMatch: runtimePrefill.pagedCacheEvidence?.streamOwnerMatch ?? false,
+                    cacheCopyOnWriteBlockCount: runtimePrefill.pagedCacheEvidence?.copyOnWriteBlockCount ?? 0,
+                    cacheComputedPrefixTokens: runtimePrefill.pagedCacheEvidence?.computedPrefixTokens ?? 0,
+                    cacheModelPrefillMicros: runtimePrefill.pagedCacheEvidence?.modelPrefillMicros ?? 0,
+                    cacheModelPrefillChunkTokens: runtimePrefill.pagedCacheEvidence?.modelPrefillChunkTokens ?? 0,
+                    cacheModelPrefillCallCount: runtimePrefill.pagedCacheEvidence?.modelPrefillCallTokenCounts.count ?? 0,
+                    cacheModelPrefillMinCallTokens: runtimePrefill.pagedCacheEvidence?.modelPrefillCallTokenCounts.min() ?? 0,
+                    cacheModelPrefillMaxCallTokens: runtimePrefill.pagedCacheEvidence?.modelPrefillCallTokenCounts.max() ?? 0,
+                    cacheBlockTableBytes: runtimePrefill.pagedCacheEvidence?.blockTableBytes ?? 0
                 )
             }
             await cacheStore.recordReconstructionFailure()
@@ -926,6 +988,7 @@ actor WorkerRuntimeRegistry {
                 promptTokens: result.promptTokens,
                 decodeHandle: decodeHandle,
                 activeKVQuantizationRatio: result.activeKVQuantizationRatio,
+                pagedCacheEvidence: result.pagedCacheEvidence,
                 shouldAbort: shouldAbort
             )
             try throwIfTextRuntimeCancellationRequested(shouldAbort)
@@ -950,7 +1013,10 @@ actor WorkerRuntimeRegistry {
         }
 
         let cacheSnapshot = await cacheStore.snapshot()
-        let cacheStats = cacheStatsWithRuntimeContext(cacheSnapshot.stats)
+        let cacheStats = cacheStatsWithRuntimeContext(
+            cacheSnapshot.stats,
+            pagedKVStats: await runtime.pagedKVPoolStats()
+        )
         let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
 
         return WorkerPrefillResult(
@@ -967,7 +1033,22 @@ actor WorkerRuntimeRegistry {
             cacheStats: cacheStats,
             hotPrefixCount: cacheSnapshot.hotPrefixes.count,
             restorePlan: nil,
-            cacheHitTaxonomy: cacheHitTaxonomy
+            cacheHitTaxonomy: cacheHitTaxonomy,
+            recoveredPrefixTokens: result.pagedCacheEvidence?.recoveredPrefixTokens ?? 0,
+            cacheHitMode: result.pagedCacheEvidence?.cacheHitMode ?? "none",
+            cacheFallbackReason: result.pagedCacheEvidence?.fallbackReason
+                ?? "runtime_paged_cache_unavailable",
+            cacheLookupMicros: result.pagedCacheEvidence?.lookupMicros ?? 0,
+            cacheRestoreMicros: result.pagedCacheEvidence?.restoreMicros ?? 0,
+            cacheStreamOwnerMatch: result.pagedCacheEvidence?.streamOwnerMatch ?? false,
+            cacheCopyOnWriteBlockCount: result.pagedCacheEvidence?.copyOnWriteBlockCount ?? 0,
+            cacheComputedPrefixTokens: result.pagedCacheEvidence?.computedPrefixTokens ?? 0,
+            cacheModelPrefillMicros: result.pagedCacheEvidence?.modelPrefillMicros ?? 0,
+            cacheModelPrefillChunkTokens: result.pagedCacheEvidence?.modelPrefillChunkTokens ?? 0,
+            cacheModelPrefillCallCount: result.pagedCacheEvidence?.modelPrefillCallTokenCounts.count ?? 0,
+            cacheModelPrefillMinCallTokens: result.pagedCacheEvidence?.modelPrefillCallTokenCounts.min() ?? 0,
+            cacheModelPrefillMaxCallTokens: result.pagedCacheEvidence?.modelPrefillCallTokenCounts.max() ?? 0,
+            cacheBlockTableBytes: result.pagedCacheEvidence?.blockTableBytes ?? 0
         )
     }
 
@@ -1204,12 +1285,14 @@ actor WorkerRuntimeRegistry {
 
     func runtimeStats() async -> Melix_Worker_V1_RuntimeStats {
         let modelResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
+        let pagedKVStats = await runtime.pagedKVPoolStats()
         let cacheStats = cacheStatsWithRuntimeContext(
             await cacheStore.stats(),
-            modelResidentBytes: modelResidentBytes
+            modelResidentBytes: modelResidentBytes,
+            pagedKVStats: pagedKVStats
         )
         let cacheResidentBytes = cacheStats.l1Bytes
-        let kvCacheBytes: UInt64 = 0
+        let kvCacheBytes = pagedKVStats.residentBytes
         var stats = Melix_Worker_V1_RuntimeStats()
         if draining {
             stats.workerState = "draining"
@@ -1223,7 +1306,7 @@ actor WorkerRuntimeRegistry {
         stats.kvCacheBytes = kvCacheBytes
         stats.peakAllocationBytes = 0
         stats.memoryHeadroomBytes = configuration.memoryEnforcementEnabled ? configuration.modelLoadHeadroomBytes : 0
-        stats.residentBytes = modelResidentBytes &+ cacheResidentBytes &+ kvCacheBytes
+        stats.residentBytes = modelResidentBytes &+ cacheResidentBytes
         stats.activeRequests = activeRequests
         stats.activePrefills = activePrefills
         stats.activeDecodes = activeDecodes
@@ -1246,7 +1329,10 @@ actor WorkerRuntimeRegistry {
     func cacheStatsResponse() async -> Melix_Worker_V1_GetCacheStatsResponse {
         var response = Melix_Worker_V1_GetCacheStatsResponse()
         var snapshot = await cacheStore.snapshot()
-        let stats = cacheStatsWithRuntimeContext(snapshot.stats)
+        let stats = cacheStatsWithRuntimeContext(
+            snapshot.stats,
+            pagedKVStats: await runtime.pagedKVPoolStats()
+        )
         snapshot.stats = stats
         response.stats = stats
         response.snapshot = snapshot
@@ -1487,9 +1573,21 @@ actor WorkerRuntimeRegistry {
 
     private func cacheStatsWithRuntimeContext(
         _ cacheStats: Melix_Worker_V1_CacheStats,
-        modelResidentBytes: UInt64? = nil
+        modelResidentBytes: UInt64? = nil,
+        pagedKVStats: RuntimePagedKVPoolStats = .empty
     ) -> Melix_Worker_V1_CacheStats {
         var stats = cacheStats
+        stats.supportsPagedCache = runtime.supportsPagedKVCache
+        if runtime.supportsPagedKVCache {
+            stats.l1Bytes = pagedKVStats.residentBytes
+            stats.blockCount = UInt64(pagedKVStats.blockCount)
+            stats.l1HitRate = pagedKVStats.lookupCount > 0
+                ? Double(pagedKVStats.hitCount) / Double(pagedKVStats.lookupCount)
+                : 0
+            stats.dedupRatio = pagedKVStats.residentBytes > 0
+                ? Double(pagedKVStats.logicalBytes) / Double(pagedKVStats.residentBytes)
+                : 0
+        }
         let resolvedModelResidentBytes = modelResidentBytes
             ?? loadedModels.values.reduce(UInt64(0)) { $0 + $1.estimatedResidentBytes }
         let activeMemoryBytes = resolvedModelResidentBytes &+ stats.l1Bytes

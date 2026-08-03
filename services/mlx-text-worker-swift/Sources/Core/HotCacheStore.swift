@@ -118,6 +118,7 @@ actor HotCacheStore {
         promptTokens: Int,
         decodeHandle: String,
         activeKVQuantizationRatio: Int,
+        pagedCacheEvidence: RuntimePagedCacheEvidence? = nil,
         shouldAbort: @escaping @Sendable () -> Bool = { false }
     ) async throws -> HotCacheRegistration {
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
@@ -131,12 +132,17 @@ actor HotCacheStore {
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
         let keyID = cacheKeyIdentifier(resolvedKey)
         totalLookups += 1
+        let runtimeBlocks = pagedCacheEvidence?.admitted == true
+            ? pagedCacheEvidence?.blocks ?? []
+            : []
 
-        if let existingID = prefixIDByKey[keyID], var existing = prefixesByID[existingID] {
+        if let existingID = prefixIDByKey[keyID],
+           var existing = prefixesByID[existingID],
+           pagedCacheEvidence?.admitted == true,
+           pagedCacheEvidence?.cacheHitMode == "exact",
+           existing.blockIDs == runtimeBlocks.map(\.blockID) {
             try throwIfTextRuntimeCancellationRequested(shouldAbort)
-            totalHits += 1
-            totalExactHits += 1
-            totalReusedBlocks += UInt64(existing.blockIDs.count)
+            recordRuntimeCacheEvidence(pagedCacheEvidence)
             existing.accessCount += 1
             if shouldPinPrefix(existing.prefix.prefixID, hints: execution.cacheHints) {
                 existing.prefix.pinned = true
@@ -150,44 +156,30 @@ actor HotCacheStore {
             )
         }
 
-        if execution.cacheHints.allowL2 || execution.cacheHints.persistL2,
-           let restored = await diskStore.restorePrefix(cacheKey: resolvedKey) {
-            try throwIfTextRuntimeCancellationRequested(shouldAbort)
-            var restoredPrefix = restored.prefix
-            restoredPrefix.tier = "l1"
-            if shouldPinPrefix(restoredPrefix.prefixID, hints: execution.cacheHints) {
-                restoredPrefix.pinned = true
-            }
-
-            let stored = StoredHotPrefix(
-                prefix: restoredPrefix,
-                blockTableID: restored.blockTableID,
-                blockTable: restored.blockTable,
-                pageIDs: restored.blockTable.pages.map(\.pageID),
-                blockIDs: restored.blockTable.blocks.map(\.blockID),
-                quantizedBytes: restored.quantizedBytes,
-                accessCount: 1
-            )
-
-            prefixesByID[restoredPrefix.prefixID] = stored
-            prefixIDByKey[keyID] = restoredPrefix.prefixID
-            registerOwnership(for: stored)
-            // Phase 1 #40: L2 restore counts as an exact hit, but we deliberately do
-            // NOT bump `totalHits` / `totalReusedBlocks` here. Those two are consumed
-            // by `CacheStats.l1HitRate` / `dedupRatio` and have a legacy semantics of
-            // "L1 cache reuse only"; changing that breaks existing release-gate and
-            // menubar consumers. Keep the legacy counters pinned to L1; expose the
-            // restore-inclusive hit count exclusively via `hitTaxonomy()`.
-            totalExactHits += 1
+        if let existingID = prefixIDByKey[keyID],
+           let existing = prefixesByID[existingID],
+           pagedCacheEvidence?.admitted != true {
+            recordRuntimeCacheEvidence(pagedCacheEvidence)
+            let metadataTable = normalizedBlockTable(makeBlockTable(
+                cacheKey: resolvedKey,
+                scopeID: resolvedScope.scopeID,
+                decodeHandle: decodeHandle,
+                promptTokens: promptTokens,
+                preferredBlockSize: execution.cacheHints.preferredBlockSize,
+                initialCacheBlocks: initialCacheBlocks,
+                runtimeBlocks: []
+            ))
             return HotCacheRegistration(
-                prefix: restoredPrefix,
-                blockTableID: restored.blockTableID,
-                blockTable: restored.blockTable,
-                cacheHit: true
+                prefix: existing.prefix,
+                blockTableID: "bt-\(decodeHandle)",
+                blockTable: metadataTable,
+                cacheHit: false
             )
         }
 
-        let prefixID = makePrefixID(for: resolvedKey)
+        recordRuntimeCacheEvidence(pagedCacheEvidence)
+        let existing = prefixIDByKey[keyID].flatMap { prefixesByID[$0] }
+        let prefixID = existing?.prefix.prefixID ?? makePrefixID(for: resolvedKey)
         let blockTableID = "bt-\(decodeHandle)"
         let blockTable = normalizedBlockTable(makeBlockTable(
             cacheKey: resolvedKey,
@@ -195,7 +187,8 @@ actor HotCacheStore {
             decodeHandle: decodeHandle,
             promptTokens: promptTokens,
             preferredBlockSize: execution.cacheHints.preferredBlockSize,
-            initialCacheBlocks: initialCacheBlocks
+            initialCacheBlocks: initialCacheBlocks,
+            runtimeBlocks: runtimeBlocks
         ))
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
@@ -204,8 +197,9 @@ actor HotCacheStore {
         prefix.cacheKey = resolvedKey
         prefix.scope = resolvedScope
         prefix.tokenLength = UInt32(max(0, promptTokens))
-        prefix.pinned = shouldPinPrefix(prefixID, hints: execution.cacheHints)
-        prefix.tier = "l1"
+        prefix.pinned = existing?.prefix.pinned == true
+            || shouldPinPrefix(prefixID, hints: execution.cacheHints)
+        prefix.tier = runtimeBlocks.isEmpty ? "metadata-only" : "l1"
 
         let stored = StoredHotPrefix(
             prefix: prefix,
@@ -217,13 +211,15 @@ actor HotCacheStore {
                 for: blockTable,
                 activeKVQuantizationRatio: activeKVQuantizationRatio
             ),
-            accessCount: 1
+            accessCount: (existing?.accessCount ?? 0) + 1
         )
 
+        if let existing {
+            _ = unregisterOwnership(for: existing)
+        }
         prefixesByID[prefixID] = stored
         prefixIDByKey[keyID] = prefixID
         registerOwnership(for: stored)
-        totalFallbacks += 1
         if execution.cacheHints.allowL2 || execution.cacheHints.persistL2 {
             let l2QuantizedBytes = storageBoundaryQuantizedBytes(
                 for: blockTable,
@@ -242,8 +238,29 @@ actor HotCacheStore {
             prefix: prefix,
             blockTableID: blockTableID,
             blockTable: blockTable,
-            cacheHit: false
+            cacheHit: (pagedCacheEvidence?.recoveredPrefixTokens ?? 0) > 0
         )
+    }
+
+    private func recordRuntimeCacheEvidence(_ evidence: RuntimePagedCacheEvidence?) {
+        guard let evidence else {
+            totalFallbacks += 1
+            return
+        }
+        guard evidence.admitted else {
+            totalFallbacks += 1
+            return
+        }
+        guard evidence.recoveredPrefixTokens > 0 else { return }
+        totalHits += 1
+        totalReusedBlocks += UInt64(
+            evidence.blocks.lazy.filter { $0.tokenEnd <= evidence.recoveredPrefixTokens }.count
+        )
+        if evidence.cacheHitMode == "exact" {
+            totalExactHits += 1
+        } else {
+            totalPartialHits += 1
+        }
     }
 
     func recordExactHit() {
@@ -488,7 +505,10 @@ actor HotCacheStore {
         stats.snapshotCount = diskSummary.snapshotCount
         stats.l1HitRate = totalLookups > 0 ? Double(totalHits) / Double(totalLookups) : 0
         stats.l2HitRate = diskSummary.l2HitRate
-        stats.dedupRatio = entries.isEmpty ? 0 : Double(totalLookups) / Double(entries.count)
+        let logicalL1Bytes = entries.reduce(UInt64(0)) { total, entry in
+            total + entry.blockTable.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
+        }
+        stats.dedupRatio = l1Bytes > 0 ? Double(logicalL1Bytes) / Double(l1Bytes) : 0
         stats.quantizedBytes = quantizedBytes
         stats.compressionRatio = quantizedBytes > 0 ? Double(totalUnquantizedBytes) / Double(quantizedBytes) : 0
         stats.l2RestoreHitRate = diskSummary.l2RestoreHitRate
@@ -793,9 +813,28 @@ private func makeBlockTable(
     decodeHandle: String,
     promptTokens: Int,
     preferredBlockSize: UInt32,
-    initialCacheBlocks: UInt32
+    initialCacheBlocks: UInt32,
+    runtimeBlocks: [RuntimeKVBlockDescriptor] = []
 ) -> Melix_Worker_V1_BlockTable {
     let tokenCount = max(promptTokens, 1)
+    if !runtimeBlocks.isEmpty {
+        let blocks = runtimeBlocks.map { descriptor in
+            var block = Melix_Worker_V1_BlockRef()
+            block.blockID = descriptor.blockID
+            block.tokenStart = Int32(clamping: descriptor.tokenStart)
+            block.tokenEnd = Int32(clamping: descriptor.tokenEnd)
+            block.bytes = descriptor.bytes
+            return block
+        }
+        var table = Melix_Worker_V1_BlockTable()
+        table.blocks = blocks
+        table.cacheKey = cacheKey
+        table.scopeID = scopeID
+        table.pages = makePageRefs(from: blocks)
+        table.totalTokenCount = UInt32(clamping: runtimeBlocks.map(\.tokenEnd).max() ?? 0)
+        return table
+    }
+
     let blockSize: Int
     if preferredBlockSize > 0 {
         blockSize = max(Int(preferredBlockSize), 16)
@@ -819,7 +858,7 @@ private func makeBlockTable(
         block.blockID = "\(decodeHandle)::blk::\(index)"
         block.tokenStart = Int32(start)
         block.tokenEnd = Int32(end)
-        block.bytes = UInt64(end - start) * 1024
+        block.bytes = 0
         blocks.append(block)
         start = end
         index += 1

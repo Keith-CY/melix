@@ -134,7 +134,7 @@ def test_boundary_snapshots_restore_after_swift_worker_restart_with_persisted_ca
             second_stack.stop()
 
 
-def test_restart_prefill_promotes_cold_tier_prefixes_and_publishes_tier_metrics() -> None:
+def test_restart_prefill_keeps_metadata_only_cold_tier_out_of_hit_metrics() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     with tempfile.TemporaryDirectory(prefix="melix-cold-tier-cache-") as cache_root_str:
         cache_root = Path(cache_root_str)
@@ -177,15 +177,17 @@ def test_restart_prefill_promotes_cold_tier_prefixes_and_publishes_tier_metrics(
             cache_response = get_cache_stats(second_stack.swift_socket_path)
             metrics = read_metrics_export(second_stack.swift_text_worker_metrics_path)
 
-            assert cache_response.stats.l2_hit_rate >= 1.0
-            assert metrics["values"]["swift_text.cache_l2_hit_rate"] >= 100
+            assert cache_response.stats.l2_hit_rate == 0
+            assert cache_response.stats.supports_disk_cache is False
+            assert cache_response.stats.supports_boundary_snapshots is False
+            assert metrics["values"]["swift_text.cache_l2_hit_rate"] == 0
             assert metrics["values"]["swift_text.cache_l2_writeback_queue_depth"] == 0
             assert metrics["values"]["swift_text.cache_l2_restore_queue_depth"] == 0
         finally:
             second_stack.stop()
 
 
-def test_partial_prefix_followup_walks_back_to_safe_boundary_and_reports_metrics() -> None:
+def test_metadata_only_partial_prefix_followup_reports_no_executed_restore() -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     stack.start()
 
@@ -219,23 +221,15 @@ def test_partial_prefix_followup_walks_back_to_safe_boundary_and_reports_metrics
         assert follow_up["status"] == 200
         assert follow_up["request_id"]
 
-        control_values = wait_for_metric(
-            stack.control_plane_metrics_path,
-            "scheduler.partial_restore_walk_back_count",
-            minimum=1,
-        )
-        swift_values = wait_for_metric(
-            stack.swift_text_worker_metrics_path,
-            "swift_text.partial_restore_walk_back_count",
-            minimum=1,
-        )
+        control_values = read_metrics_export(stack.control_plane_metrics_path)["values"]
+        swift_values = read_metrics_export(stack.swift_text_worker_metrics_path)["values"]
 
-        assert control_values["scheduler.partial_restore_walk_back_count"] >= 1
-        assert control_values["scheduler.restore_plan_restored_tokens"] >= 16
-        assert control_values["scheduler.restore_plan_total_tokens"] >= 22
-        assert swift_values["swift_text.partial_restore_walk_back_count"] >= 1
-        assert swift_values["swift_text.partial_restore_restored_tokens"] >= 16
+        assert control_values.get("scheduler.partial_restore_walk_back_count", 0) == 0
+        assert control_values.get("scheduler.restore_plan_restored_tokens", 0) == 0
+        assert swift_values.get("swift_text.partial_restore_walk_back_count", 0) == 0
+        assert swift_values.get("swift_text.partial_restore_restored_tokens", 0) == 0
         assert swift_values["swift_text.partial_restore_total_tokens"] >= 22
+        assert swift_values["swift_text.paged_cache_recovered_prefix_tokens"] == 0
     finally:
         stack.stop()
 

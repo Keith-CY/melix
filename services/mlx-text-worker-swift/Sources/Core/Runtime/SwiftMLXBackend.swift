@@ -32,6 +32,7 @@ struct PreparedPrefillContext: @unchecked Sendable {
     let promptTokens: Int
     let effectivePrefillWindowTokens: Int
     let activeKVQuantizationRatio: Int
+    let pagedCacheEvidence: RuntimePagedCacheEvidence?
 }
 
 #if canImport(MLXLMCommon)
@@ -184,7 +185,8 @@ private func mergingTokenizerConfigEndOfTurnToken(
     let identifiedModel = LoadedTextModel(
         storage: loadedModel.storage,
         residentBytesHint: loadedModel.residentBytesHint,
-        textFamilyID: textFamilyID
+        textFamilyID: textFamilyID,
+        cacheEpochID: loadedModel.cacheEpochID
     )
     #if canImport(MLXLMCommon)
     guard let container = identifiedModel.storage as? ModelContainer else {
@@ -339,8 +341,17 @@ private func swiftMLXPromptTemplateSendableJSONValue(
 struct AutoSwiftMLXBackend: TextRuntimeBackend {
     let runtimeName: String
     let turboQuantCandidateProbeEnabled: Bool
+    let pagedKVPool: PagedKVBlockPool
 
     var supportsHomogeneousBatchDecode: Bool {
+        #if canImport(MLXLMCommon)
+        true
+        #else
+        false
+        #endif
+    }
+
+    var supportsPagedKVCache: Bool {
         #if canImport(MLXLMCommon)
         true
         #else
@@ -364,6 +375,7 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         loader: (@Sendable (String) async throws -> Any)? = nil,
         directoryLoader: (@Sendable (URL) async throws -> LoadedTextModel)? = nil,
         identifierLoader: (@Sendable (String, String) async throws -> LoadedTextModel)? = nil,
+        pagedKVPool: PagedKVBlockPool? = nil,
         preparedGenerationFactory: (@Sendable (
             LoadedTextModel,
             [Melix_Worker_V1_ChatMessage],
@@ -427,6 +439,7 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
             )
         }
         self.turboQuantCandidateProbeEnabled = turboQuantCandidateProbeEnabled
+        self.pagedKVPool = pagedKVPool ?? PagedKVBlockPool()
 
         if let runtimeName {
             self.runtimeName = runtimeName
@@ -437,6 +450,14 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
             self.runtimeName = "swift-mlx-unavailable"
             #endif
         }
+    }
+
+    func pagedKVPoolStats() async -> RuntimePagedKVPoolStats {
+        pagedKVPool.stats()
+    }
+
+    func unloadModel(_ model: LoadedTextModel) async {
+        pagedKVPool.removeAll(compatibilitySignaturePrefix: "\(model.cacheEpochID)::")
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
@@ -534,10 +555,12 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         let baseWindowSize = Int(clamping: max(prefillStepSize, 1))
         let prepared = try await makePreparedPromptContext(
             model: model,
+            execution: execution,
             messages: messages,
             additionalContext: try makeSwiftMLXPromptTemplateAdditionalContext(from: execution),
             prefillStepSize: prefillStepSize,
             acceleration: appliedAcceleration,
+            pagedKVPool: pagedKVPool,
             shouldAbort: shouldAbort
         )
         return RuntimePrefillResult(
@@ -553,7 +576,8 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                 baselineWindowSize: baseWindowSize,
                 effectiveWindowSize: prepared.effectivePrefillWindowTokens
             ),
-            activeKVQuantizationRatio: prepared.activeKVQuantizationRatio
+            activeKVQuantizationRatio: prepared.activeKVQuantizationRatio,
+            pagedCacheEvidence: prepared.pagedCacheEvidence
         )
     }
 
@@ -869,10 +893,12 @@ private func makePreparedTextGeneration(
 
 private func makePreparedPromptContext(
     model: LoadedTextModel,
+    execution: Melix_Worker_V1_ExecutionMetadata,
     messages: [Melix_Worker_V1_ChatMessage],
     additionalContext: [String: any Sendable]?,
     prefillStepSize: UInt32,
     acceleration: Melix_Worker_V1_AccelerationPolicy,
+    pagedKVPool: PagedKVBlockPool,
     shouldAbort: @escaping @Sendable () -> Bool
 ) async throws -> PreparedPrefillContext {
     #if canImport(MLXLMCommon)
@@ -890,7 +916,7 @@ private func makePreparedPromptContext(
         policy: acceleration,
         messages: messages
     )
-    let preparedState = try await container.perform { context in
+    let preparedExecution = try await container.perform { context in
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
         let preparedInput = try await context.processor.prepare(input: userInput)
         let input = normalizingGemma4ChatTemplateWhitespace(
@@ -899,40 +925,25 @@ private func makePreparedPromptContext(
             modelFamilyID: model.textFamilyID
         )
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
-        var cache = context.model.newCache(parameters: nil)
-        let startedAt = Date.timeIntervalSinceReferenceDate
-        let prepared = try context.model.prepare(
-            input,
-            cache: cache,
-            windowSize: effectiveWindowSize
-        )
-        try throwIfTextRuntimeCancellationRequested(shouldAbort)
-        let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
-        applyActiveKVQuantizationIfNeeded(
-            cache: &cache,
-            acceleration: acceleration
-        )
-        try throwIfTextRuntimeCancellationRequested(shouldAbort)
-        let prefillQuantizeMicros = elapsedMicros(since: quantizeStartedAt)
-        let promptPrefillTime = Date.timeIntervalSinceReferenceDate - startedAt
-        return PreparedDecodeState(
+        return try makePagedOrContiguousPrefillState(
             input: input,
-            prepared: prepared,
-            cache: cache,
-            promptPrefillTime: promptPrefillTime,
-            prefillQuantizeMicros: prefillQuantizeMicros,
-            activeKVQuantizationRatio: activeKVRuntimeQuantizationRatioPercent(
-                for: acceleration,
-                cache: cache
-            )
+            context: context,
+            model: model,
+            execution: execution,
+            acceleration: acceleration,
+            effectiveWindowSize: effectiveWindowSize,
+            pagedKVPool: pagedKVPool,
+            shouldAbort: shouldAbort
         )
     }
     try throwIfTextRuntimeCancellationRequested(shouldAbort)
+    let preparedState = preparedExecution.state
     return PreparedPrefillContext(
         preparedInput: preparedState,
         promptTokens: preparedState.input.text.tokens.size,
         effectivePrefillWindowTokens: effectiveWindowSize,
-        activeKVQuantizationRatio: preparedState.activeKVQuantizationRatio
+        activeKVQuantizationRatio: preparedState.activeKVQuantizationRatio,
+        pagedCacheEvidence: preparedExecution.evidence
     )
     #else
     throw RuntimeUnavailableError(
@@ -940,6 +951,323 @@ private func makePreparedPromptContext(
     )
     #endif
 }
+
+#if canImport(MLXLMCommon)
+private struct PreparedPrefillExecutionState: @unchecked Sendable {
+    let state: PreparedDecodeState
+    let evidence: RuntimePagedCacheEvidence
+}
+
+private func makePagedOrContiguousPrefillState(
+    input: LMInput,
+    context: ModelContext,
+    model: LoadedTextModel,
+    execution: Melix_Worker_V1_ExecutionMetadata,
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    effectiveWindowSize: Int,
+    pagedKVPool: PagedKVBlockPool,
+    shouldAbort: @escaping @Sendable () -> Bool
+) throws -> PreparedPrefillExecutionState {
+    let cacheMode = CacheModePolicy.resolve(from: execution.cacheHints)
+    guard cacheMode == .tiered else {
+        return try makeContiguousPrefillState(
+            input: input,
+            context: context,
+            acceleration: acceleration,
+            effectiveWindowSize: effectiveWindowSize,
+            fallbackReason: "cache_mode_unsupported",
+            shouldAbort: shouldAbort
+        )
+    }
+    guard normalizedAccelerationPolicy(acceleration).mode != .activeKvQuantized else {
+        return try makeContiguousPrefillState(
+            input: input,
+            context: context,
+            acceleration: acceleration,
+            effectiveWindowSize: effectiveWindowSize,
+            fallbackReason: "active_kv_layout_unsupported",
+            shouldAbort: shouldAbort
+        )
+    }
+    guard pagedKVPrefillShapeIsSupported(input) else {
+        return try makeContiguousPrefillState(
+            input: input,
+            context: context,
+            acceleration: acceleration,
+            effectiveWindowSize: effectiveWindowSize,
+            fallbackReason: "prefill_shape_unsupported",
+            shouldAbort: shouldAbort
+        )
+    }
+
+    let modelCaches = context.model.newCache(parameters: nil)
+    guard pagedKVCacheLayoutIsSupported(modelCaches) else {
+        return try makeContiguousPrefillState(
+            input: input,
+            context: context,
+            acceleration: acceleration,
+            effectiveWindowSize: effectiveWindowSize,
+            fallbackReason: "cache_layout_unsupported",
+            shouldAbort: shouldAbort
+        )
+    }
+
+    let blockSize = max(Int(execution.cacheHints.preferredBlockSize), 16)
+    let modelPrefillChunkTokens = pagedKVPrefillForwardChunkTokens(
+        effectiveWindowSize: effectiveWindowSize,
+        blockSize: blockSize
+    )
+    let promptTokenCount = input.text.tokens.size
+    let storedTokenBoundary = max(0, ((promptTokenCount - 1) / blockSize) * blockSize)
+    guard storedTokenBoundary > 0 else {
+        return try makeContiguousPrefillState(
+            input: input,
+            context: context,
+            acceleration: acceleration,
+            effectiveWindowSize: effectiveWindowSize,
+            fallbackReason: "prompt_below_block_boundary",
+            shouldAbort: shouldAbort
+        )
+    }
+
+    let tokenIDs = input.text.tokens.asArray(Int.self)
+    let compatibilitySignature = pagedKVCompatibilitySignature(
+        model: model,
+        execution: execution,
+        acceleration: acceleration,
+        blockSize: blockSize,
+        prefillShapeSignature: pagedKVPrefillShapeSignature(
+            input,
+            blockSize: blockSize,
+            forwardChunkTokens: modelPrefillChunkTokens
+        )
+    ) + "::layout::" + modelCaches.map { String(reflecting: type(of: $0)) }.joined(separator: ",")
+    let lookup = pagedKVPool.lookup(
+        compatibilitySignature: compatibilitySignature,
+        tokenIDs: tokenIDs,
+        storedTokenBoundary: storedTokenBoundary,
+        blockSize: blockSize
+    )
+    let restoreStartedAt = Date.timeIntervalSinceReferenceDate
+    var cache: [KVCache]
+    var processedTokens: Int
+    let reusedSnapshot: PagedKVPrefixSnapshot?
+    if let snapshot = lookup.snapshot,
+       snapshot.layerCount == modelCaches.count,
+       let restoredCaches = lookup.makeCaches() {
+        cache = restoredCaches
+        processedTokens = snapshot.tokenCount
+        reusedSnapshot = snapshot
+    } else {
+        cache = (0 ..< modelCaches.count).map { PagedKVCache(blockSize: blockSize, layerIndex: $0) }
+        processedTokens = 0
+        reusedSnapshot = nil
+    }
+    let restoreMicros = reusedSnapshot == nil ? 0 : elapsedMicros(since: restoreStartedAt)
+    let prefillStartedAt = Date.timeIntervalSinceReferenceDate
+    var modelPrefillCallTokenCounts: [Int] = []
+
+    while processedTokens < storedTokenBoundary {
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
+        let end = min(storedTokenBoundary, processedTokens + modelPrefillChunkTokens)
+        let chunk = input.text[text: processedTokens ..< end][.newAxis]
+        let output = context.model(chunk, cache: cache, state: nil)
+        if output.state != nil {
+            return try makeContiguousPrefillState(
+                input: input,
+                context: context,
+                acceleration: acceleration,
+                effectiveWindowSize: effectiveWindowSize,
+                fallbackReason: "composite_runtime_state_unsupported",
+                shouldAbort: shouldAbort
+            )
+        }
+        eval(cache)
+        modelPrefillCallTokenCounts.append(end - processedTokens)
+        processedTokens = end
+    }
+
+    let stored = pagedKVPool.store(
+        compatibilitySignature: compatibilitySignature,
+        tokenIDs: tokenIDs,
+        storedTokenBoundary: storedTokenBoundary,
+        blockSize: blockSize,
+        caches: cache,
+        reusedLookup: reusedSnapshot == nil ? nil : lookup,
+        budgetBytes: execution.cacheHints.cacheMemoryBudgetBytes
+    )
+    let recoveredTokens = reusedSnapshot?.tokenCount ?? 0
+    let hitMode = recoveredTokens == 0
+        ? "none"
+        : (recoveredTokens == storedTokenBoundary ? "exact" : "partial")
+    guard let snapshot = stored.snapshot,
+          let storedCaches = stored.makeCaches() else {
+        let fallbackReason = stored.fallbackReason.isEmpty
+            ? "cache_store_result_unavailable"
+            : stored.fallbackReason
+        let state = PreparedDecodeState(
+            input: input,
+            prepared: .tokens(input.text[text: storedTokenBoundary...]),
+            cache: cache,
+            promptPrefillTime: Date.timeIntervalSinceReferenceDate - prefillStartedAt,
+            prefillQuantizeMicros: 0,
+            activeKVQuantizationRatio: 0
+        )
+        return PreparedPrefillExecutionState(
+            state: state,
+            evidence: RuntimePagedCacheEvidence(
+                admitted: false,
+                cacheHitMode: hitMode,
+                fallbackReason: fallbackReason,
+                recoveredPrefixTokens: recoveredTokens,
+                blocks: reusedSnapshot?.descriptors ?? [],
+                lookupMicros: lookup.lookupMicros,
+                restoreMicros: restoreMicros,
+                streamOwnerMatch: true,
+                copyOnWriteBlockCount: 0,
+                computedPrefixTokens: storedTokenBoundary - recoveredTokens,
+                modelPrefillMicros: elapsedMicros(since: prefillStartedAt),
+                modelPrefillChunkTokens: modelPrefillChunkTokens,
+                modelPrefillCallTokenCounts: modelPrefillCallTokenCounts,
+                blockTableBytes: reusedSnapshot?.blocks.reduce(UInt64(0)) { $0 + $1.bytes } ?? 0
+            )
+        )
+    }
+
+    cache = storedCaches
+    let remaining = input.text[text: storedTokenBoundary...]
+    let state = PreparedDecodeState(
+        input: input,
+        prepared: .tokens(remaining),
+        cache: cache,
+        promptPrefillTime: Date.timeIntervalSinceReferenceDate - prefillStartedAt,
+        prefillQuantizeMicros: 0,
+        activeKVQuantizationRatio: 0
+    )
+    return PreparedPrefillExecutionState(
+        state: state,
+        evidence: RuntimePagedCacheEvidence(
+            admitted: true,
+            cacheHitMode: hitMode,
+            fallbackReason: "",
+            recoveredPrefixTokens: recoveredTokens,
+            blocks: snapshot.descriptors,
+            lookupMicros: lookup.lookupMicros,
+            restoreMicros: restoreMicros,
+            streamOwnerMatch: true,
+            copyOnWriteBlockCount: stored.copyOnWriteBlockCount,
+            computedPrefixTokens: storedTokenBoundary - recoveredTokens,
+            modelPrefillMicros: elapsedMicros(since: prefillStartedAt),
+            modelPrefillChunkTokens: modelPrefillChunkTokens,
+            modelPrefillCallTokenCounts: modelPrefillCallTokenCounts,
+            blockTableBytes: snapshot.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
+        )
+    )
+}
+
+private func makeContiguousPrefillState(
+    input: LMInput,
+    context: ModelContext,
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    effectiveWindowSize: Int,
+    fallbackReason: String,
+    shouldAbort: @escaping @Sendable () -> Bool
+) throws -> PreparedPrefillExecutionState {
+    var cache = context.model.newCache(parameters: nil)
+    let startedAt = Date.timeIntervalSinceReferenceDate
+    let prepared = try context.model.prepare(input, cache: cache, windowSize: effectiveWindowSize)
+    try throwIfTextRuntimeCancellationRequested(shouldAbort)
+    let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
+    applyActiveKVQuantizationIfNeeded(cache: &cache, acceleration: acceleration)
+    try throwIfTextRuntimeCancellationRequested(shouldAbort)
+    let state = PreparedDecodeState(
+        input: input,
+        prepared: prepared,
+        cache: cache,
+        promptPrefillTime: Date.timeIntervalSinceReferenceDate - startedAt,
+        prefillQuantizeMicros: elapsedMicros(since: quantizeStartedAt),
+        activeKVQuantizationRatio: activeKVRuntimeQuantizationRatioPercent(
+            for: acceleration,
+            cache: cache
+        )
+    )
+    return PreparedPrefillExecutionState(
+        state: state,
+        evidence: .fallback(
+            fallbackReason,
+            computedPrefixTokens: input.text.tokens.size,
+            modelPrefillMicros: elapsedMicros(since: startedAt)
+        )
+    )
+}
+
+private func pagedKVCompatibilitySignature(
+    model: LoadedTextModel,
+    execution: Melix_Worker_V1_ExecutionMetadata,
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    blockSize: Int,
+    prefillShapeSignature: String
+) -> String {
+    let scope = execution.scope
+    return [
+        model.cacheEpochID,
+        String(reflecting: ObjectIdentifier(StreamOrDevice.default.stream)),
+        model.textFamilyID,
+        scope.modelID,
+        scope.revision,
+        scope.tokenizerHash,
+        scope.quantProfileID,
+        scope.promptTemplateHash,
+        scope.parserMode,
+        scope.reasoningMode,
+        scope.reasoningEffort,
+        scope.toolParserMode,
+        scope.structuredOutputMode,
+        scope.chatTemplateKwargsHash,
+        scope.multimodalAdapterHash,
+        String(scope.reasoningContinuityPresent),
+        accelerationModeName(acceleration.mode),
+        acceleration.profileID,
+        prefillShapeSignature,
+        String(blockSize),
+    ].joined(separator: "::")
+}
+
+func pagedKVPrefillForwardChunkTokens(effectiveWindowSize: Int, blockSize: Int) -> Int {
+    let normalizedBlockSize = max(1, blockSize)
+    let window = max(normalizedBlockSize, effectiveWindowSize)
+    return max(normalizedBlockSize, (window / normalizedBlockSize) * normalizedBlockSize)
+}
+
+func pagedKVPrefillShapeSignature(
+    _ input: LMInput,
+    blockSize: Int,
+    forwardChunkTokens: Int? = nil
+) -> String {
+    let tokens = input.text.tokens
+    let modelCallTokens = max(1, forwardChunkTokens ?? blockSize)
+    let tokenPrefixShape = tokens.shape.dropLast().map { String($0) }.joined(separator: "x")
+    let maskShape = input.text.mask.map {
+        "\($0.dtype):\($0.shape.map { String($0) }.joined(separator: "x"))"
+    } ?? "none"
+    return [
+        "text-dtype=\(tokens.dtype)",
+        "text-rank=\(tokens.ndim)",
+        "text-prefix-shape=\(tokenPrefixShape.isEmpty ? "scalar-batch" : tokenPrefixShape)",
+        "model-call-max-shape=1x\(modelCallTokens)",
+        "mask=\(maskShape)",
+        "image=\(input.image == nil ? "none" : "present")",
+        "video=\(input.video == nil ? "none" : "present")",
+    ].joined(separator: ";")
+}
+
+func pagedKVPrefillShapeIsSupported(_ input: LMInput) -> Bool {
+    input.text.tokens.ndim == 1
+        && input.text.mask == nil
+        && input.image == nil
+        && input.video == nil
+}
+#endif
 
 private func resolveSwiftPrefillAcceleration(
     _ acceleration: Melix_Worker_V1_AccelerationPolicy,
@@ -1694,6 +2022,10 @@ private func isTextOnlyBatchDecodeState(_ state: PreparedDecodeState) -> Bool {
 private func cacheBatchSignature(_ cache: [KVCache]) -> [String]? {
     var signature: [String] = []
     for layer in cache {
+        if let paged = layer as? PagedKVCache {
+            signature.append(paged.decodeBatchSignature)
+            continue
+        }
         guard layer is KVCacheSimple || layer is RotatingKVCache else {
             return nil
         }
@@ -2488,6 +2820,93 @@ private final class BatchPositionedKVCacheAdapter: KVCache, BatchPositionedKVCac
     }
 }
 
+private final class BatchedPagedKVCache: KVCache, BatchPositionedKVCache {
+    private let rowCaches: [PagedKVCache]
+
+    init?(rowCaches: [PagedKVCache]) {
+        guard let first = rowCaches.first,
+              rowCaches.allSatisfy({ $0.decodeBatchSignature == first.decodeBatchSignature })
+        else {
+            return nil
+        }
+        self.rowCaches = rowCaches
+    }
+
+    var offset: Int { rowCaches[0].offset }
+    var batchOffset: MLXArray { MLXArray(rowCaches.map { Int32($0.offset) }) }
+    var maxSize: Int? { nil }
+    var isTrimmable: Bool { true }
+
+    var state: [MLXArray] {
+        get {
+            let rowStates = rowCaches.map(\.state)
+            guard let first = rowStates.first, !first.isEmpty else { return [] }
+            return first.indices.map { stateIndex in
+                concatenated(rowStates.map { $0[stateIndex] }, axis: 0)
+            }
+        }
+        set {
+            precondition(newValue.count == 2, "Batched paged KV state requires keys and values.")
+            precondition(
+                newValue.allSatisfy { $0.dim(0) == rowCaches.count },
+                "Batched paged KV state must contain one row per source cache."
+            )
+            for rowIndex in rowCaches.indices {
+                rowCaches[rowIndex].state = newValue.map { array in
+                    array[rowIndex ..< (rowIndex + 1), 0..., 0..., 0...]
+                }
+            }
+        }
+    }
+
+    var metaState: [String] {
+        get { rowCaches[0].metaState }
+        set {
+            for cache in rowCaches {
+                cache.metaState = newValue
+            }
+        }
+    }
+
+    func innerState() -> [MLXArray] {
+        state
+    }
+
+    func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
+        precondition(keys.dim(0) == rowCaches.count, "Paged KV batch size must match row cache count.")
+        precondition(values.dim(0) == rowCaches.count, "Paged KV batch size must match row cache count.")
+        let updated = rowCaches.indices.map { rowIndex in
+            rowCaches[rowIndex].update(
+                keys: keys[rowIndex ..< (rowIndex + 1), 0..., 0..., 0...],
+                values: values[rowIndex ..< (rowIndex + 1), 0..., 0..., 0...]
+            )
+        }
+        return (
+            concatenated(updated.map(\.0), axis: 0),
+            concatenated(updated.map(\.1), axis: 0)
+        )
+    }
+
+    @discardableResult
+    func trim(_ n: Int) -> Int {
+        let trimmed = rowCaches.map { $0.trim(n) }
+        precondition(Set(trimmed).count == 1, "Paged KV batch rows must trim equally.")
+        return trimmed[0]
+    }
+
+    func makeMask(
+        n: Int,
+        windowSize: Int?,
+        returnArray: Bool
+    ) -> MLXFast.ScaledDotProductAttentionMaskMode {
+        rowCaches[0].makeMask(n: n, windowSize: windowSize, returnArray: returnArray)
+    }
+
+    fileprivate func rowCache(at index: Int) -> PagedKVCache {
+        rowCaches[index]
+    }
+}
+
 private func makeBatchDecodeCache(from caches: [[KVCache]]) -> [KVCache]? {
     guard let first = caches.first,
           !first.isEmpty
@@ -2511,6 +2930,11 @@ private func makeBatchDecodeCacheLayer(from layers: [KVCache]) -> KVCache? {
           layers.allSatisfy({ type(of: $0) == type(of: first) && $0.offset == first.offset && $0.metaState == first.metaState })
     else {
         return nil
+    }
+
+    let pagedRows = layers.compactMap { $0 as? PagedKVCache }
+    if pagedRows.count == layers.count {
+        return BatchedPagedKVCache(rowCaches: pagedRows)
     }
 
     let stateCount = first.state.count
@@ -2574,6 +2998,9 @@ private func splitBatchDecodeCache(_ cache: [KVCache], batchSize: Int) -> [[KVCa
 }
 
 private func splitBatchDecodeCacheLayer(_ layer: KVCache, batchIndex: Int) -> KVCache {
+    if let paged = layer as? BatchedPagedKVCache {
+        return paged.rowCache(at: batchIndex)
+    }
     let adapter = layer as? BatchPositionedKVCacheAdapter
     let underlyingLayer = adapter?.underlyingLayer ?? layer
     let state = layer.state
