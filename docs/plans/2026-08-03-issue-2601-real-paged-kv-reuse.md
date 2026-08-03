@@ -1,0 +1,266 @@
+# Issue 2601 Real Paged KV Reuse Completion Plan
+
+## Goal
+
+Replace the Swift text worker's metadata-only paged-cache bookkeeping with a
+real, block-owned L1 KV execution path for compatible append-only text caches.
+Capability flags, block bytes, reuse receipts, runtime memory statistics, and
+warm-prefill claims must all derive from the same executed tensor state.
+
+## Governing Contracts
+
+- GitHub issue `#2601`, including all comments through 2026-07-31
+- `docs/architecture-spec.md`, especially the L1 shared paged-cache contract
+- `docs/decisions/2026-03-27-swift-text-runtime.md`
+- `docs/decisions/2026-03-28-product-scope-and-runtime-priorities.md`
+- `docs/adr/0001-homogeneous-batch-decode-cache-compatibility.md`
+- `docs/plans/2026-03-30-m2-2-text-worker-paged-cache-ownership.md`
+- `docs/plans/2026-07-09-issue-2601-paged-cache-truthful-capabilities.md`
+
+PR `#2691` correctly disabled the capability while the tables were metadata
+only. It did not complete the parent issue.
+
+## Supported End State
+
+The first executed paged-cache contract is deliberately narrow and complete:
+
+- Swift MLX text models whose every cache layer is an append-only
+  `KVCacheSimple`-compatible layer are admitted.
+- Prompt state is materialized in fixed token blocks. Each logical block owns
+  the real per-layer key and value arrays, and reports the sum of their actual
+  allocated tensor bytes.
+- Prefix snapshots share immutable block objects across sessions. A divergent
+  suffix appends private blocks; trimming or mutation never modifies a shared
+  block in place.
+- Attention consumes a `KVCache` implementation backed by the block table. It
+  gathers the shared blocks and the request-private tail for the model call,
+  rather than rebuilding the prefix with a full prefill.
+- Paged prefill advances by a block-aligned multi-block chunk derived from the
+  effective prefill window. The configured chunk and actual model-call count
+  are part of compatibility and execution evidence, so a larger prefill window
+  cannot be reported while the runtime still forwards one block at a time.
+- Homogeneous decode cohorts retain each row's original paged cache and lease.
+  A batch cache adapter splits incoming K/V by row, updates those row caches,
+  concatenates the resulting attention state for the batch model call, and
+  returns the same row caches when the cohort is materialized or shrinks.
+- Reuse is block-aligned and keyed by the exact production-rendered token
+  blocks plus model residency epoch, cache scope, layout, acceleration mode,
+  backend-derived prefill shape, and block size. Request metadata cannot supply
+  or override the prefill-shape identity.
+- Reuse extension stores accept only the still-current atomic lookup-and-pin
+  result and validate its signature, block size, layer count, digest boundary,
+  generation, lease, and pool membership while holding the pool lock.
+- A lookup result transfers its lease into one cache set exactly once. Repeated
+  materialization returns no caches, so divergent cache aliases cannot share one
+  private-allocation owner and under-report live tensor bytes.
+- Successful stores pin the committed generation under the same lock and use a
+  one-shot lease transfer to construct decode caches; snapshots alone cannot
+  bypass pool membership or budget accounting.
+- The L1 pool is bounded by the effective request/model cache byte budget.
+  Admission that cannot remain within the bound fails closed to ordinary
+  contiguous prefill.
+
+## Fail-Closed Boundaries
+
+The worker must not claim executed paged reuse for:
+
+- rotating or moving-window caches;
+- recurrent, hybrid, composite, or otherwise non-`KVCacheSimple` state;
+- active-KV-quantized cache state until its packed layout has a block-native
+  attention implementation;
+- a different loaded model/container epoch, cache compatibility signature,
+  prefill boundary, block size, or engine owner;
+- metadata-only disk records or boundary snapshots.
+
+Those paths keep their existing correct execution behavior and return a typed
+fallback reason. `supportsDiskCache` and `supportsBoundarySnapshots` remain
+false. No L2 metadata restore may be credited as saved prefill work.
+
+## Work Plan
+
+1. Add a worker-owned paged KV module with immutable logical block payloads,
+   append-only layer cache views, exact byte accounting, block-aligned lookup,
+   atomic lookup-and-pin semantics, copy-on-write divergence, bounded eviction,
+   and an inspectable snapshot.
+2. Integrate the module into Swift MLX prefill. Prepare input through the
+   production renderer, restore the longest compatible block prefix, execute
+   only the uncached suffix up to the stored boundary, and return a decode
+   context whose cache still references the shared blocks.
+3. Carry executed paged evidence through `RuntimePrefillResult` and
+   `WorkerPrefillResult`. Build protocol block tables from the real block IDs,
+   token spans, and bytes. Populate `recovered_prefix_tokens`,
+   `cache_hit_mode`, and typed fallback evidence on the Prefill RPC.
+4. Make handshake, cache statistics, runtime KV bytes, hit rate, and dedup ratio
+   use the executed pool/real block tables. Remove the fixed 1024-byte-per-token
+   estimate from the executed path and keep metadata-only fallback tables
+   visibly non-executed.
+5. Update the architecture and cache runbook to document supported families,
+   byte-budget behavior, persistence boundaries, and refusal reasons.
+6. Add focused correctness, compatibility, lifetime, byte-accounting, and
+   performance tests. Run the complete repository gate and record the final
+   metrics before handoff.
+7. Preserve the homogeneous decode contract for paged sessions with a
+   lease-preserving batch adapter and prove actual model-eval batch size and
+   per-batch throughput for concurrent shared-prefix sessions.
+8. Run a same-load paired contiguous-versus-paged probe with the same loaded
+   model, prompt, four sessions, and output-token count. Poll both MLX allocator
+   memory and process RSS concurrently across the complete prefill and batched
+   decode interval, then archive peak and steady deltas for both modes.
+9. Track each active request-private tail as one pool-owned allocation owner.
+   Publish exact per-layer tensor bytes after append, trim, copy-on-write, and
+   release; include those bytes in physical resident, logical ownership, peak,
+   and store-admission budget calculations without double-counting a successful
+   private-to-shared ownership transfer.
+10. When atomic store validation or budget admission fails after model prefill,
+    materialize the already-computed paged state once into ordinary
+    `KVCacheSimple` caches, evaluate that state, and release all paged leases and
+    private allocation owners. This fallback must not invoke model prefill a
+    second time and must preserve decode parity.
+11. Register a dedicated PR-scoped Paged KV probe whose watch set includes the
+    pool, Swift backend, runtime registry/cache projection, focused tests, probe
+    implementation, and this plan. The probe must emit numeric ownership,
+    fallback, correctness, batching, and paired-memory acceptance metrics.
+12. Make lookup cache materialization a one-shot lease transfer. Keep only a
+    weak post-transfer reference for atomic store validation, and prove a second
+    `makeCaches()` call returns no caches and creates no additional private owner.
+
+## Performance Probes
+
+### Measurement points
+
+- pool lookup-and-pin latency;
+- cache restore/view construction latency;
+- cold prefill model-call token count versus warm suffix model-call token count;
+- configured prefill forward chunk, actual call count, and min/max call shape;
+- physical resident block bytes versus logical per-request KV bytes;
+- paired MLX active/peak allocator bytes and sampled process RSS while the same
+  `N` concurrent sessions remain live through a real batched decode update;
+- shared block count, restored block count, and copy-on-write block count;
+- attention gather latency for one decode update;
+- paged-session decode model-eval batch size and per-batch tokens per second;
+- fallback count and reason by cache layout/compatibility class.
+
+### Success metrics
+
+- Two sessions with a shared block-aligned prompt reference the same block IDs.
+- `physical_kv_bytes < logical_kv_bytes` for the shared-prefix fixture, with the
+  saved byte count exactly equal to the shared real tensor payload.
+- Warm prefill executes zero model work for restored full blocks and processes
+  only the uncached suffix boundary.
+- With an effective prefill window larger than one block, cold prefill uses the
+  block-aligned window chunk and performs `ceil(boundary / chunk)` model calls,
+  not one call per block; the signature and execution evidence agree.
+- Compatible paged sessions execute one homogeneous model batch, keep their
+  original row cache/lease identities after split, and report model-eval batch
+  size greater than one with non-zero batch throughput.
+- Paged and contiguous cache fixtures produce byte-identical gathered K/V
+  arrays and identical next-token logits for the deterministic model fixture.
+- Model epoch, scope, layout, stream owner, block-size, and prefill-shape
+  mismatches produce zero restored tokens.
+- Identical token IDs with different production input shapes cannot cross-hit,
+  and stale or structurally mismatched lookup handles cannot extend an entry.
+- Rotating, hybrid/recurrent, active-KV-quantized, and metadata-only L2 paths
+  never set an executed paged-cache hit.
+- The synthetic lookup-and-restore probe has zero leaked references, zero
+  negative reference counts, p95 warm lookup plus view construction below
+  1 ms, and p95 single-layer attention gather for one decode update below 1 ms
+  on the local Apple Silicon host.
+- The paired probe starts contiguous and paged measurement from MLX active
+  baselines within 64 KiB, reports more than one concurrent sample for each
+  mode, and covers at least four live sessions through prefill and batched
+  decode.
+- Under the same model, prompt, session count, and output-token count, paged MLX
+  active peak delta and allocator-reported peak delta are both strictly lower
+  than the contiguous deltas. Process RSS peak and steady deltas are recorded
+  as corroborating host-level evidence, not substituted for allocator truth.
+- Changed-scope automated coverage is at least 95 percent and the PR-scoped
+  performance report has zero unexplained regression or verification failure.
+- A block-aligned prefill plus a non-empty prompt tail and multi-token decode
+  reports every live private K/V tensor byte, then returns private resident
+  bytes and owner count to zero after context release.
+- A lookup lease can materialize only one cache set; repeated materialization
+  returns no caches, and a live private tail is attributed to exactly one owner.
+- Budget rejection and stale-snapshot races use ordinary `KVCacheSimple`
+  decode state after exactly one model-prefill pass, preserve contiguous output
+  parity, and leave no paged block lease or private allocation owner alive.
+- Changes to any Paged KV execution or projection file select the dedicated
+  Paged KV PR-scoped probe, whose final report has zero regression and zero
+  verification failure.
+
+## Paired memory result
+
+The 2026-08-03 local Apple Silicon probe used the same loaded deterministic
+model, 33-token prompt, four sessions, and two output tokens per session. Both
+modes started from `600336` MLX active bytes. Contiguous execution reached a
+`2233084`-byte MLX active peak delta and a `2981888`-byte RSS peak delta. Paged
+execution reached a `173116`-byte MLX active peak delta and a `294912`-byte RSS
+peak delta. The paged reductions were therefore `2059968` MLX active bytes and
+`2686976` RSS bytes. The allocator-reported peak reduction was `2218056` bytes.
+Pool accounting reported `40960` real resident bytes, including active private
+tails, versus `172032` logical session bytes.
+
+The tiny-fixture batched decode throughput was `1439.88` tokens/second for
+contiguous execution and `1046.57` tokens/second for paged execution. This probe
+is a memory acceptance gate, not a representative serving-throughput benchmark;
+the throughput values are retained so the gather cost remains visible. The
+versioned raw artifact is
+`docs/metrics/issue-2601-paired-contiguous-paged-memory.json`.
+
+The complete changed-line coverage run for the six changed production files
+reported `97.73%` (`1337/1368`). The complete `WorkerScaffoldTests` suite passed
+all `330` tests with coverage enabled.
+
+## Verification
+
+Focused checks:
+
+```bash
+xcrun swift test --package-path services/mlx-text-worker-swift \
+  --filter WorkerScaffoldTests/testPagedKV
+xcrun swift test --package-path services/mlx-text-worker-swift \
+  --filter WorkerScaffoldTests/testAutoSwiftMLXBackendUsesEffectiveWindowForBlockAlignedPagedPrefillCalls
+MELIX_PAGED_KV_PAIRED_MEMORY_PROBE_OUTPUT=.runtime/metrics/issue-2601-paired-memory.json \
+  xcrun swift test --package-path services/mlx-text-worker-swift \
+  --filter WorkerScaffoldTests/testAutoSwiftMLXBackendPairedContiguousAndPagedMemoryWatermarks
+xcrun swift test --package-path services/mlx-text-worker-swift \
+  --enable-code-coverage --filter WorkerScaffoldTests/testPagedKV
+UV_PYTHON=3.12 uv run --python 3.12 python3 scripts/swift_changed_line_coverage.py \
+  --binary services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests \
+  --profdata services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata \
+  services/mlx-text-worker-swift/Sources/Core/Runtime/PagedKVCache.swift \
+  services/mlx-text-worker-swift/Sources/Core/Runtime/SwiftMLXBackend.swift \
+  services/mlx-text-worker-swift/Sources/Core/Runtime/TextRuntime.swift \
+  services/mlx-text-worker-swift/Sources/Core/HotCacheStore.swift \
+  services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift \
+  services/mlx-text-worker-swift/Sources/Core/Inference/TextPrefillEngine.swift
+```
+
+Repository gate:
+
+```bash
+make bootstrap
+make proto
+make swift-test
+make py-test
+make integration-test
+.githooks/pre-commit
+```
+
+## Acceptance Criteria
+
+- `supportsPagedCache` is true only in a worker build/runtime that executes the
+  block-backed Swift MLX path.
+- Every admitted block has real tensor payload and measured bytes.
+- Cross-session prefix reuse reduces retained physical KV bytes and prefill
+  model work, with observable hit/restore evidence.
+- Divergence is copy-on-write and decode correctness matches contiguous cache.
+- Unsupported compatibility classes fail closed without saved-work credit.
+- L2 remains explicitly metadata-only until real payload persistence lands.
+- Documentation, coverage, metrics, and full verification evidence are current.
+
+## Rollback or Safe Exit
+
+The paged module remains behind strict runtime admission. Removing the runtime
+admission call and restoring `supportsPagedCache=false` returns all requests to
+the existing contiguous prefill/decode path without changing protocol data or
+persisted metadata formats.

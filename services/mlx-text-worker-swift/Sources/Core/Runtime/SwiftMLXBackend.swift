@@ -1059,7 +1059,7 @@ private func makePagedOrContiguousPrefillState(
         processedTokens = snapshot.tokenCount
         reusedSnapshot = snapshot
     } else {
-        cache = (0 ..< modelCaches.count).map { PagedKVCache(blockSize: blockSize, layerIndex: $0) }
+        cache = pagedKVPool.makeCaches(blockSize: blockSize, layerCount: modelCaches.count)
         processedTokens = 0
         reusedSnapshot = nil
     }
@@ -1105,6 +1105,7 @@ private func makePagedOrContiguousPrefillState(
         let fallbackReason = stored.fallbackReason.isEmpty
             ? "cache_store_result_unavailable"
             : stored.fallbackReason
+        cache = materializeContiguousCaches(from: cache)
         let state = PreparedDecodeState(
             input: input,
             prepared: .tokens(input.text[text: storedTokenBoundary...]),
@@ -1163,6 +1164,21 @@ private func makePagedOrContiguousPrefillState(
             blockTableBytes: snapshot.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
         )
     )
+}
+
+private func materializeContiguousCaches(from caches: [KVCache]) -> [KVCache] {
+    let pagedCaches = caches.compactMap { $0 as? PagedKVCache }
+    precondition(
+        pagedCaches.count == caches.count && !pagedCaches.isEmpty,
+        "Post-prefill Paged KV fallback requires a complete paged cache layout."
+    )
+    let contiguousCaches: [KVCache] = pagedCaches.map { pagedCache in
+        let contiguousCache = KVCacheSimple()
+        contiguousCache.state = pagedCache.state
+        return contiguousCache
+    }
+    eval(contiguousCaches)
+    return contiguousCaches
 }
 
 private func makeContiguousPrefillState(
