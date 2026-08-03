@@ -5095,6 +5095,7 @@ def test_text_family_config_probe_script_emits_metrics(
 
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
+        "agentic-tool-guardrail-loop",
         "backend-model-identity-boundary",
         "prefix-cold-index-scandir",
         "prefix-cache-snapshot-byte-streaming",
@@ -8639,3 +8640,61 @@ def test_model_load_config_json_bytes_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["executable_elapsed_ms_mean"] > 0
     assert metrics["executable_peak_bytes_mean"] > 0
+
+
+def test_scope_report_selects_agentic_tool_guardrail_loop_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/runtime/agentic_tool_guardrail_loop.py"
+        ],
+    )
+
+    assert _selected_probe_ids(scope) == ["agentic-tool-guardrail-loop"]
+
+    parking_scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/runtime/agentic_tool_parking_budget.py"
+        ],
+    )
+    assert _selected_probe_ids(parking_scope) == ["agentic-tool-guardrail-loop"]
+
+
+def test_agentic_tool_guardrail_loop_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_AGENTIC_GUARDRAIL_PROBE_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_AGENTIC_GUARDRAIL_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_AGENTIC_GUARDRAIL_PROMPT_TURNS", "8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/agentic_tool_guardrail_loop_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["guardrail_decision_latency_ms_mean"] > 0
+    assert metrics["guardrail_decision_latency_ms_p95"] > 0
+    assert metrics["tool_execution_count"] == 1.0
+    assert metrics["duplicate_execution_count"] == 0.0
+    assert metrics["terminal_failure_count"] == 1.0
+    assert metrics["diagnostic_sensitive_value_leak_count"] == 0.0
+    assert metrics["guardrail_probe_contract_version"] == 1.0
+    assert metrics["approval_wait_count_v1"] == 100.0
+    assert metrics["approval_resume_lease_count_v1"] == 2.0
+    assert metrics["concurrent_wait_ledger_bytes_per_request_v1"] > 0.0
+    assert metrics["executor_capacity_available_min_v1"] >= 2.0
+    assert metrics["executor_lease_leak_count_v1"] == 0.0
+    assert metrics["parking_permit_leak_count_v1"] == 0.0
+    assert metrics["parking_transition_latency_ms_mean_v1"] > 0.0
+    assert metrics["parking_transition_latency_ms_p95_v1"] > 0.0
+    assert metrics["prompt_current_window_growth_ratio_v1"] <= 1.05
+    assert metrics["prompt_current_observation_count_max_v1"] == 1.0
+    assert metrics["prompt_current_payload_bytes_max_v1"] > 0.0
+    assert metrics["ledger_state_bytes_per_call_v1"] > 0.0
+    assert metrics["ledger_decision_latency_ms_mean_v1"] > 0.0
+    assert metrics["ledger_entry_count_v1"] == 8.0

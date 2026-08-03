@@ -26,11 +26,12 @@ malformed/tool-failure budgets, premature-terminal handling, exactly-once call
 admission, and a single diagnostic summary.
 
 The repository does not expose a model-reachable command-based tool-server
-registration API, scheduled agent execution API, or approval-wait executor
-pool. Command-registration rollback and approval parking therefore remain
-outside the executable surface of this issue. The completion must still fail
-closed at the selected registry, preserve owner-scoped observation checks, and
-leave typed extension points for later execution-policy and capacity work.
+registration API, scheduled agent execution API, approval UI, or approval-wait
+executor pool. Command-registration rollback and concrete approval-flow wiring
+therefore remain outside the executable surface of this issue. Capacity safety
+does not depend on those product surfaces: this completion includes a reusable
+process-wide approval parking budget, a request lifecycle ledger, and a real
+threaded capacity proof that later scheduling work must reuse.
 
 ## Architecture
 
@@ -57,6 +58,20 @@ The Swift control plane owns Codable request, state, event, and diagnostics
 contracts for the same schema versions. Request shaping writes canonical JSON
 into worker execution metadata without moving execution truth into Swift.
 
+The Python worker also owns a process-wide `AgenticToolApprovalParkingBudget`.
+An executing request holds one executor lease. An approval wait atomically
+acquires one bounded parking permit and returns its executor lease. Resume first
+reacquires a lease without consuming the configured two-worker reserve, then
+returns the parking permit. Completion, cancellation, timeout, and runtime
+reload transition the lifecycle ledger to `released` exactly once; duplicate
+release is recorded but cannot decrement either resource again. Counts are
+derived from lifecycle state rather than maintained as an independent mutable
+resource total. A process-wide reentrant lock makes capacity checks, state
+transitions, event sequencing, snapshots, and diagnostics atomic. Released
+request IDs remain as duplicate-release tombstones in a configurable bounded
+window (1,000 by default); cumulative lifecycle counters survive tombstone
+eviction, while globally unique request IDs remain the caller contract.
+
 ## Acceptance Mapping
 
 | Issue requirement | Completion evidence |
@@ -71,6 +86,10 @@ into worker execution metadata without moving execution truth into Swift.
 | Swift contract | Swift Codable types validate and shape the same config/state/event/diagnostic schemas. |
 | Operator evidence | A CLI fixture writes JSON diagnostics with counts, last nudge kind, final outcome, failure reason, and no raw prompt or arguments. |
 | Exactly-once side effects | The execution ledger suppresses identical replay and rejects a reused call ID with changed arguments. |
+| Bounded approval parking | A process-wide v1 helper and 100-thread barrier fixture permit 100 simultaneous approval waits while retaining at least two executor slots. |
+| Resume and cleanup | Concurrent resume preserves the executor reserve; concurrent cancel, timeout, duplicate release, and runtime reload release each held resource exactly once and finish with zero leaks. |
+| Open turns | A request that never waits for approval uses the normal executor path and never consumes parking capacity. |
+| Prompt growth | A 64-turn fixture writes only the current nudge and observation to the next model directive; persistent ledger growth is measured separately. |
 
 ## Performance Probes And Success Metrics
 
@@ -85,6 +104,21 @@ decisions with a deterministic fixture runtime.
 - `duplicate_execution_count`: must remain zero.
 - `terminal_failure_count`: must match the configured fixture outcome.
 - `diagnostic_sensitive_value_leak_count`: must remain zero.
+- `guardrail_probe_contract_version`: identifies the numeric metric contract as
+  v1.
+- `executor_capacity_available_min_v1`: must remain at least `2` across 100
+  concurrent approval waits and bounded resume attempts.
+- `executor_lease_leak_count_v1` and `parking_permit_leak_count_v1`: must remain
+  zero after cancel, timeout, and restored runtime-reload cleanup.
+- `prompt_current_window_growth_ratio_v1`: must remain at most `1.05` between
+  the first and second halves of a 64-turn current-observation fixture.
+- `prompt_current_observation_count_max_v1`: must remain exactly `1`.
+- `ledger_state_bytes_per_call_v1` and
+  `concurrent_wait_ledger_bytes_per_request_v1`: record versioned execution and
+  lifecycle ledger overhead.
+- `ledger_decision_latency_ms_mean_v1` and
+  `parking_transition_latency_ms_mean_v1`: record request-ledger and capacity
+  transition cost separately.
 
 Measurement points are the start and end of each public live-loop response
 transition and the final diagnostic serialization. The probe uses no model
@@ -104,6 +138,9 @@ weights, network access, or external processes.
 
 - Add the request-scoped loop, serializable state, event, turn-result, and
   diagnostics contracts.
+- Add the process-wide bounded approval parking helper, serializable lifecycle
+  state, atomic exactly-once release transitions, bounded released tombstones,
+  and real `ThreadPoolExecutor` barrier tests.
 - Reuse existing healing, admission, registry, observation, and execution
   primitives rather than duplicating parser or adapter behavior.
 - Add streaming-delta conversion and a mocked-responder runner.
@@ -132,9 +169,14 @@ weights, network access, or external processes.
   correctness require them. It is protected local control state and is never
   copied into receipts or diagnostic summaries.
 - Network-capable tools remain governed by the existing request-local policy.
-- Later process-based tool registration or approval-wait scheduling must reuse
-  the event and state contract, but cannot be verified before those product
-  surfaces exist.
+- Later process-based tool registration, approval UI, or concrete executor
+  scheduling must reuse the parking event and state contract. This change
+  verifies capacity safety and lifecycle cleanup, not an end-user approval
+  flow.
+- Released request tombstones are intentionally bounded for process-lifetime
+  memory safety. Callers must continue to provide globally unique request IDs;
+  duplicate releases outside the retained window are still suppressed as
+  unknown requests.
 
 ## Plan-Only Commit Evidence
 
