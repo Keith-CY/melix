@@ -4,6 +4,49 @@ import Testing
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
+/// Polling waits stay short locally but receive a bounded multiplier on slower CI hosts.
+let waitAttemptsMultiplier: Int = {
+    computedWaitAttemptsMultiplier(environment: ProcessInfo.processInfo.environment)
+}()
+
+private let defaultCIWaitMultiplier: Int = 4
+private let maximumCIWaitMultiplier: Int = 100
+
+func computedWaitAttemptsMultiplier(environment: [String: String]) -> Int {
+    let ciActive = isTruthyEnvironmentFlag(environment["CI"])
+        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"])
+    guard ciActive else {
+        return 1
+    }
+    if let raw = environment["CI_WAIT_MULTIPLIER"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+       let parsed = Int(raw),
+       (1...maximumCIWaitMultiplier).contains(parsed) {
+        return parsed
+    }
+    return defaultCIWaitMultiplier
+}
+
+func ciScaledWaitDuration(
+    milliseconds: Int,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) -> Duration {
+    .milliseconds(milliseconds * computedWaitAttemptsMultiplier(environment: environment))
+}
+
+private func isTruthyEnvironmentFlag(_ value: String?) -> Bool {
+    guard let value else {
+        return false
+    }
+
+    switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "1", "true", "yes", "on":
+        return true
+    default:
+        return false
+    }
+}
+
 func collectChunks(
     _ stream: AsyncThrowingStream<Data, Error>
 ) async throws -> String {

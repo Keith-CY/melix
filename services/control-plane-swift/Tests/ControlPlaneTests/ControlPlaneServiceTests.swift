@@ -9447,10 +9447,9 @@ struct ControlPlaneServiceTests {
             )
         )
         let loadRequest = try #require(await textClient.lastLoadModelRequest)
+        _ = try await Array(execution.stream)
         let generated = try #require(await textClient.lastGenerateRequest)
         let model = await modelCatalog.model(id: "melix-dev-text")
-
-        _ = try await Array(execution.stream)
 
         #expect(loadRequest.model.modelID == "melix-dev-text")
         #expect(loadRequest.pinOnLoad == false)
