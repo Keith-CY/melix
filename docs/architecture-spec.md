@@ -413,7 +413,9 @@ private paged tail is live.
 
 Compatibility includes the loaded model residency epoch, MLX stream owner,
 full cache scope, acceleration profile, prefill-shape signature, block size,
-and every layer cache type. The backend derives the prefill-shape signature
+and every layer cache type. Every variable compatibility component is encoded
+as a UTF-8 byte-length-prefixed value, so delimiter characters inside scope or
+model fields cannot create a cross-scope signature collision. The backend derives the prefill-shape signature
 from the prepared `LMInput` tensor rank, dtype, non-token dimensions, mask and
 multimodal presence, plus the block-aligned maximum model-call shape derived
 from the effective prefill window. The same configured chunk and the actual
@@ -427,9 +429,10 @@ subsequent materialization attempts return no caches, and the lookup retains
 only a weak lease reference for the later atomic store validation. Successful
 stores also pin the new generation under that lock and transfer the committed
 lease exactly once into the decode caches. The submitting private owner is
-removed from private accounting only while the same tensors are transferred
-into committed shared blocks; a failed store restores that owner before
-returning. Arbitrary snapshots cannot construct an unaccounted decode view.
+removed from private accounting only inside the same owner-to-pool transaction
+that transfers those tensors into committed shared blocks; a failed store
+leaves the owner accounting unchanged. Arbitrary snapshots cannot construct an
+unaccounted decode view.
 Rotating or moving-window caches, recurrent or composite state, mixed layouts,
 unsupported input shapes, stale lookup handles, and active-KV-quantized state
 are not admitted. Those requests use ordinary contiguous prefill and return a
@@ -443,9 +446,18 @@ decode on the contiguous caches with `admitted=false` and the typed failure
 reason. Any reused-prefix evidence remains audit evidence for work already
 executed; it is not an active paged-cache admission claim.
 
+Paged cache views retain the exact MLX stream that created their tensor state.
+Decode on a different current stream materializes the already-computed state
+once into `KVCacheSimple` caches and records `paged_stream_owner_mismatch` in
+the decode fallback summary. Homogeneous batch admission rejects such paged
+rows before model evaluation so each request takes the same per-request
+materialization path.
+
 The pool enforces the effective request/model/process cache budget against real
 resident tensor bytes, including other active private owners. The submitting
 owner is not double-counted when its tensors become the proposed shared blocks.
+The prefill response reports this same tightest effective budget; global cache
+statistics without a request context continue to report process headroom.
 The pool evicts least-recently-used unleased entries only; active decode leases
 and private owners remain resident, and an admission that cannot fit without
 reclaiming them is rejected without mutating the prior pool state.

@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_WORKER_ROOT = REPO_ROOT / "services/mlx-worker-python"
@@ -29,6 +31,17 @@ def paired_payload() -> dict[str, object]:
     return {
         "status": "passed",
         "session_count": 4,
+        "acceptance": {
+            "owner_leak_count": 0,
+            "cache_correctness_mismatch_count": 0,
+            "fallback_second_prefill_count": 0,
+            "batch_row_cache_identity_mismatch_count": 0,
+            "scope_cross_hit_count": 0,
+            "stream_owner_fallback_count": 1,
+            "leased_entry_eviction_count": 0,
+            "trimmed_shared_block_resident_bytes": 0,
+            "tightest_budget_violation_count": 0,
+        },
         "contiguous": {
             "sample_count": 4,
             "output_token_count": 8,
@@ -70,7 +83,70 @@ def test_probe_emits_numeric_passing_metrics() -> None:
     assert metrics["failure_count"] == 0.0
     assert metrics["sample_count_min"] == 3.0
     assert metrics["mlx_active_peak_delta_reduction_bytes"] == 500.0
+    assert metrics["stream_owner_fallback_count"] == 1.0
+    assert metrics["owner_leak_count"] == 0.0
     assert all(isinstance(value, float) for value in metrics.values())
+
+
+def test_probe_fails_closed_when_behavioral_acceptance_regresses() -> None:
+    payload = paired_payload()
+    acceptance = payload["acceptance"]
+    assert isinstance(acceptance, dict)
+    acceptance["scope_cross_hit_count"] = 1
+
+    metrics = probe.analyze_artifact(payload)
+
+    assert metrics["status_passed"] == 0.0
+    assert metrics["status_failed"] == 1.0
+    assert metrics["failure_count"] == 1.0
+
+
+def _write_swift_test_log(
+    path: Path,
+    test_names: list[str],
+    *,
+    failing: str | None = None,
+) -> None:
+    lines = [
+        (
+            "Test Case '-[MelixTextWorkerCoreTests.WorkerScaffoldTests "
+            f"{test_name}]' {'failed' if test_name == failing else 'passed'} (0.001 seconds)."
+        )
+        for test_name in test_names
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_focused_gate_log_generates_reproducible_acceptance(tmp_path: Path) -> None:
+    payload = paired_payload()
+    payload.pop("acceptance")
+    required = sorted(
+        {test_name for tests in probe.ACCEPTANCE_TESTS.values() for test_name in tests}
+    )
+    log_path = tmp_path / "swift.log"
+    _write_swift_test_log(log_path, required)
+
+    probe.add_focused_gate_acceptance(payload, [log_path])
+
+    acceptance = payload["acceptance"]
+    assert isinstance(acceptance, dict)
+    assert acceptance["owner_leak_count"] == 0
+    assert acceptance["stream_owner_fallback_count"] == 3
+    source = payload["acceptance_source"]
+    assert isinstance(source, dict)
+    assert source["kind"] == "swift-test-log-focused-gate-v1"
+    assert source["passing_tests"] == required
+
+
+def test_focused_gate_log_rejects_failed_or_missing_evidence(tmp_path: Path) -> None:
+    required = sorted(
+        {test_name for tests in probe.ACCEPTANCE_TESTS.values() for test_name in tests}
+    )
+    log_path = tmp_path / "swift.log"
+    _write_swift_test_log(log_path, required, failing=required[0])
+
+    with pytest.raises(ValueError, match="focused gate is missing passing tests"):
+        probe.add_focused_gate_acceptance(paired_payload(), [log_path])
 
 
 def test_registry_probe_command_has_explicit_base_fallback(tmp_path: Path) -> None:
@@ -93,17 +169,34 @@ def test_registry_probe_command_has_explicit_base_fallback(tmp_path: Path) -> No
     metrics = json.loads(completed.stdout)
     assert metrics == {
         "failure_count": 0.0,
+        "batch_row_cache_identity_mismatch_count": 0.0,
+        "cache_correctness_mismatch_count": 0.0,
+        "fallback_second_prefill_count": 0.0,
+        "leased_entry_eviction_count": 0.0,
         "logical_session_bytes": 0.0,
         "mlx_active_peak_delta_reduction_bytes": 0.0,
         "mlx_reported_peak_delta_reduction_bytes": 0.0,
         "model_eval_batch_size": 0.0,
+        "owner_leak_count": 0.0,
         "paged_mlx_active_peak_delta_bytes": 0.0,
         "paged_tokens_per_second": 0.0,
         "process_resident_peak_delta_reduction_bytes": 0.0,
         "resident_block_bytes": 0.0,
         "sample_count_min": 0.0,
+        "scope_cross_hit_count": 0.0,
         "session_count": 0.0,
         "status_failed": 0.0,
         "status_passed": 0.0,
         "status_warning": 1.0,
+        "stream_owner_fallback_count": 0.0,
+        "tightest_budget_violation_count": 0.0,
+        "trimmed_shared_block_resident_bytes": 0.0,
     }
+
+
+def test_coverage_gate_requires_ninety_five_percent() -> None:
+    coverage_script = (REPO_ROOT / "scripts/paged_kv_cache_coverage.sh").read_text()
+
+    assert "minimum_coverage_pct=95" in coverage_script
+    assert 'MELIX_PAGED_KV_COVERAGE_DIFF_FROM:-origin/main' in coverage_script
+    assert 'Paged KV changed-line coverage %.2f%% is below %.2f%%.' in coverage_script

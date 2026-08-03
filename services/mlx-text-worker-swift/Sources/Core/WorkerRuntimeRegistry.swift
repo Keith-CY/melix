@@ -798,9 +798,11 @@ actor WorkerRuntimeRegistry {
            loaded.spec.settings.cacheBlockSizeTokens > 0 {
             effectiveExecution.cacheHints.preferredBlockSize = loaded.spec.settings.cacheBlockSizeTokens
         }
-        let requestedCacheBudget = effectiveExecution.cacheHints.cacheMemoryBudgetBytes > 0
-            ? effectiveExecution.cacheHints.cacheMemoryBudgetBytes
-            : loaded.spec.settings.cacheMemoryBudgetBytes
+        let configuredCacheBudgets: [UInt64] = [
+            effectiveExecution.cacheHints.cacheMemoryBudgetBytes,
+            loaded.spec.settings.cacheMemoryBudgetBytes,
+        ]
+        let requestedCacheBudget: UInt64 = configuredCacheBudgets.filter { $0 > 0 }.min() ?? 0
         let modelResidentBytes = loadedModels.values.reduce(UInt64(0)) {
             $0 + $1.estimatedResidentBytes
         }
@@ -926,7 +928,8 @@ actor WorkerRuntimeRegistry {
                 let cacheSnapshot = await cacheStore.snapshot()
                 let cacheStats = cacheStatsWithRuntimeContext(
                     cacheSnapshot.stats,
-                    pagedKVStats: await runtime.pagedKVPoolStats()
+                    pagedKVStats: await runtime.pagedKVPoolStats(),
+                    effectiveCacheBudgetOverride: effectiveExecution.cacheHints.cacheMemoryBudgetBytes
                 )
                 let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
                 return WorkerPrefillResult(
@@ -1015,7 +1018,8 @@ actor WorkerRuntimeRegistry {
         let cacheSnapshot = await cacheStore.snapshot()
         let cacheStats = cacheStatsWithRuntimeContext(
             cacheSnapshot.stats,
-            pagedKVStats: await runtime.pagedKVPoolStats()
+            pagedKVStats: await runtime.pagedKVPoolStats(),
+            effectiveCacheBudgetOverride: effectiveExecution.cacheHints.cacheMemoryBudgetBytes
         )
         let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
 
@@ -1574,7 +1578,8 @@ actor WorkerRuntimeRegistry {
     private func cacheStatsWithRuntimeContext(
         _ cacheStats: Melix_Worker_V1_CacheStats,
         modelResidentBytes: UInt64? = nil,
-        pagedKVStats: RuntimePagedKVPoolStats = .empty
+        pagedKVStats: RuntimePagedKVPoolStats = .empty,
+        effectiveCacheBudgetOverride: UInt64? = nil
     ) -> Melix_Worker_V1_CacheStats {
         var stats = cacheStats
         stats.supportsPagedCache = runtime.supportsPagedKVCache
@@ -1594,9 +1599,8 @@ actor WorkerRuntimeRegistry {
         stats.runtimeCacheFingerprint = configuration.runtimeCacheFingerprint
         stats.activeMemoryBytes = activeMemoryBytes
         stats.maxWorkingSetBytes = configuration.processMemoryBudgetBytes
-        stats.effectiveCacheBudgetBytes = effectiveCacheBudgetBytes(
-            modelResidentBytes: resolvedModelResidentBytes
-        )
+        stats.effectiveCacheBudgetBytes = effectiveCacheBudgetOverride
+            ?? effectiveCacheBudgetBytes(modelResidentBytes: resolvedModelResidentBytes)
         return stats
     }
 

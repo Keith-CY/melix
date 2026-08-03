@@ -6896,9 +6896,9 @@
       "docs/runbooks/text-prefix-cache-tiering.md",
       "docs/architecture-spec.md"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --frozen --project services/mlx-worker-python pytest -q tests/test_paged_kv_cache_probe.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && HOME=\"$PWD/.swift-home/paged-kv-cache-focused\" CLANG_MODULE_CACHE_PATH=\"$PWD/.build/ModuleCache.noindex/paged-kv-cache-focused\" xcrun swift test --package-path services/mlx-text-worker-swift --filter 'WorkerScaffoldTests/testPagedKV(BlockPoolAccountsPrefillTailAndMultiTokenDecodeUntilRelease|BlockPoolBudgetIncludesOtherActivePrivateOwners|LookupMaterializesCachesOnlyOnceWithoutDuplicatingPrivateOwner)' && HOME=\"$PWD/.swift-home/paged-kv-cache-focused\" CLANG_MODULE_CACHE_PATH=\"$PWD/.build/ModuleCache.noindex/paged-kv-cache-focused\" xcrun swift test --package-path services/mlx-text-worker-swift --filter 'WorkerScaffoldTests/testAutoSwiftMLXBackend(AccountsPromptTailAndMultiTokenDecodeUntilContextRelease|BudgetRejectionFallsBackToContiguousWithoutSecondPrefill|SnapshotRaceFallsBackToContiguousWithoutSecondPrefillOrLeaseLeak)'",
+    "test_command": "set -o pipefail && mkdir -p .runtime/metrics/paged-kv-focused && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --frozen --project services/mlx-worker-python pytest -q tests/test_paged_kv_cache_probe.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && HOME=\"$PWD/.swift-home/paged-kv-cache-focused\" CLANG_MODULE_CACHE_PATH=\"$PWD/.build/ModuleCache.noindex/paged-kv-cache-focused\" xcrun swift test --package-path services/mlx-text-worker-swift --filter 'WorkerScaffoldTests/testPagedKV' 2>&1 | tee .runtime/metrics/paged-kv-focused/paged.log && HOME=\"$PWD/.swift-home/paged-kv-cache-focused\" CLANG_MODULE_CACHE_PATH=\"$PWD/.build/ModuleCache.noindex/paged-kv-cache-focused\" xcrun swift test --package-path services/mlx-text-worker-swift --filter 'WorkerScaffoldTests/testAutoSwiftMLXBackend(BatchDecodeRetainsPagedRowCachesAndLeases|BatchedPagedCacheImplementsKVCacheProtocolState|BatchRejectsPagedCachesFromAnotherStreamOwner|ReusesChangedTailPrefixWithTruthfulEvidenceAndDecodeParity|BudgetRejectionFallsBackToContiguousWithoutSecondPrefill|AccountsPromptTailAndMultiTokenDecodeUntilContextRelease|SnapshotRaceFallsBackToContiguousWithoutSecondPrefillOrLeaseLeak|ReusesBlockGranularPromptKVWithTruthfulEvidence|KeepsPagedPrefixesIsolatedByScopeID|MaterializesPagedCacheAcrossStreamOwners)' 2>&1 | tee .runtime/metrics/paged-kv-focused/backend.log && HOME=\"$PWD/.swift-home/paged-kv-cache-focused\" CLANG_MODULE_CACHE_PATH=\"$PWD/.build/ModuleCache.noindex/paged-kv-cache-focused\" xcrun swift test --package-path services/mlx-text-worker-swift --filter 'WorkerScaffoldTests/testRuntimeRegistryClampsPagedCacheBudgetToProcessHeadroom' 2>&1 | tee .runtime/metrics/paged-kv-focused/budget.log && MELIX_PAGED_KV_PAIRED_MEMORY_PROBE_OUTPUT=\"$PWD/.runtime/metrics/paged-kv-focused/paired-raw.json\" HOME=\"$PWD/.swift-home/paged-kv-cache-focused\" CLANG_MODULE_CACHE_PATH=\"$PWD/.build/ModuleCache.noindex/paged-kv-cache-focused\" xcrun swift test --package-path services/mlx-text-worker-swift --filter 'WorkerScaffoldTests/testAutoSwiftMLXBackendPairedContiguousAndPagedMemoryWatermarks' 2>&1 | tee .runtime/metrics/paged-kv-focused/paired.log && python3 scripts/paged_kv_cache_probe.py --artifact .runtime/metrics/paged-kv-focused/paired-raw.json --test-log .runtime/metrics/paged-kv-focused/paged.log --test-log .runtime/metrics/paged-kv-focused/backend.log --test-log .runtime/metrics/paged-kv-focused/budget.log --test-log .runtime/metrics/paged-kv-focused/paired.log --output .runtime/metrics/paged-kv-cache-ownership-memory.json",
     "coverage_command": "bash scripts/paged_kv_cache_coverage.sh",
-    "probe_command": "if [ -f scripts/paged_kv_cache_probe.py ]; then python3 scripts/paged_kv_cache_probe.py --repo-root \"$PWD\"; else python3 -c 'import json; print(json.dumps({\"failure_count\": 0.0, \"logical_session_bytes\": 0.0, \"mlx_active_peak_delta_reduction_bytes\": 0.0, \"mlx_reported_peak_delta_reduction_bytes\": 0.0, \"model_eval_batch_size\": 0.0, \"paged_mlx_active_peak_delta_bytes\": 0.0, \"paged_tokens_per_second\": 0.0, \"process_resident_peak_delta_reduction_bytes\": 0.0, \"resident_block_bytes\": 0.0, \"sample_count_min\": 0.0, \"session_count\": 0.0, \"status_failed\": 0.0, \"status_passed\": 0.0, \"status_warning\": 1.0}, sort_keys=True))'; fi",
+    "probe_command": "if [ -f .runtime/metrics/paged-kv-cache-ownership-memory.json ]; then python3 scripts/paged_kv_cache_probe.py --artifact .runtime/metrics/paged-kv-cache-ownership-memory.json; elif [ -f scripts/paged_kv_cache_probe.py ]; then python3 scripts/paged_kv_cache_probe.py --repo-root \"$PWD\"; else python3 -c 'import json; print(json.dumps({\"batch_row_cache_identity_mismatch_count\": 0.0, \"cache_correctness_mismatch_count\": 0.0, \"failure_count\": 0.0, \"fallback_second_prefill_count\": 0.0, \"leased_entry_eviction_count\": 0.0, \"logical_session_bytes\": 0.0, \"mlx_active_peak_delta_reduction_bytes\": 0.0, \"mlx_reported_peak_delta_reduction_bytes\": 0.0, \"model_eval_batch_size\": 0.0, \"owner_leak_count\": 0.0, \"paged_mlx_active_peak_delta_bytes\": 0.0, \"paged_tokens_per_second\": 0.0, \"process_resident_peak_delta_reduction_bytes\": 0.0, \"resident_block_bytes\": 0.0, \"sample_count_min\": 0.0, \"scope_cross_hit_count\": 0.0, \"session_count\": 0.0, \"status_failed\": 0.0, \"status_passed\": 0.0, \"status_warning\": 1.0, \"stream_owner_fallback_count\": 0.0, \"tightest_budget_violation_count\": 0.0, \"trimmed_shared_block_resident_bytes\": 0.0}, sort_keys=True))'; fi",
     "probe_impl": "command_json",
     "coverage_replays_tests": false,
     "metrics": [
@@ -6921,6 +6921,60 @@
       },
       {
         "key": "failure_count",
+        "unit": "count",
+        "direction": "lower_is_better",
+        "warn_abs": 1.0
+      },
+      {
+        "key": "owner_leak_count",
+        "unit": "count",
+        "direction": "lower_is_better",
+        "warn_abs": 1.0
+      },
+      {
+        "key": "cache_correctness_mismatch_count",
+        "unit": "count",
+        "direction": "lower_is_better",
+        "warn_abs": 1.0
+      },
+      {
+        "key": "fallback_second_prefill_count",
+        "unit": "count",
+        "direction": "lower_is_better",
+        "warn_abs": 1.0
+      },
+      {
+        "key": "batch_row_cache_identity_mismatch_count",
+        "unit": "count",
+        "direction": "lower_is_better",
+        "warn_abs": 1.0
+      },
+      {
+        "key": "scope_cross_hit_count",
+        "unit": "count",
+        "direction": "lower_is_better",
+        "warn_abs": 1.0
+      },
+      {
+        "key": "stream_owner_fallback_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_abs": 1.0
+      },
+      {
+        "key": "leased_entry_eviction_count",
+        "unit": "count",
+        "direction": "lower_is_better",
+        "warn_abs": 1.0
+      },
+      {
+        "key": "trimmed_shared_block_resident_bytes",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_abs": 1.0
+      },
+      {
+        "key": "tightest_budget_violation_count",
         "unit": "count",
         "direction": "lower_is_better",
         "warn_abs": 1.0

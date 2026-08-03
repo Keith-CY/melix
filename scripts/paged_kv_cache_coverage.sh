@@ -7,6 +7,7 @@ cd "${repo_root}"
 
 coverage_root="${repo_root}/.runtime/paged-kv-cache-coverage"
 diff_from="${MELIX_PAGED_KV_COVERAGE_DIFF_FROM:-origin/main}"
+minimum_coverage_pct=95
 mkdir -p "${coverage_root}" "${repo_root}/.uv-cache"
 
 PYTHONPATH="${repo_root}:${repo_root}/services/mlx-worker-python" \
@@ -24,14 +25,41 @@ xcrun swift test \
   --filter WorkerScaffoldTests
 
 bin_dir="$(xcrun swift build --package-path services/mlx-text-worker-swift --show-bin-path)"
-UV_CACHE_DIR="${repo_root}/.uv-cache" \
-uv run --python 3.12 python3 scripts/swift_changed_line_coverage.py \
-  --binary "${bin_dir}/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests" \
-  --profdata "${bin_dir}/codecov/default.profdata" \
-  --diff-from "${diff_from}" \
-  services/mlx-text-worker-swift/Sources/Core/Runtime/PagedKVCache.swift \
-  services/mlx-text-worker-swift/Sources/Core/Runtime/SwiftMLXBackend.swift \
-  services/mlx-text-worker-swift/Sources/Core/Runtime/TextRuntime.swift \
-  services/mlx-text-worker-swift/Sources/Core/HotCacheStore.swift \
-  services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift \
-  services/mlx-text-worker-swift/Sources/Core/Inference/TextPrefillEngine.swift
+if coverage_output="$({
+  UV_CACHE_DIR="${repo_root}/.uv-cache" \
+  uv run --python 3.12 python3 scripts/swift_changed_line_coverage.py \
+    --binary "${bin_dir}/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests" \
+    --profdata "${bin_dir}/codecov/default.profdata" \
+    --diff-from "${diff_from}" \
+    services/mlx-text-worker-swift/Sources/Core/Runtime/PagedKVCache.swift \
+    services/mlx-text-worker-swift/Sources/Core/Runtime/SwiftMLXBackend.swift \
+    services/mlx-text-worker-swift/Sources/Core/Runtime/TextRuntime.swift \
+    services/mlx-text-worker-swift/Sources/Core/HotCacheStore.swift \
+    services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift \
+    services/mlx-text-worker-swift/Sources/Core/Inference/TextPrefillEngine.swift
+} 2>&1)"; then
+  coverage_status=0
+else
+  coverage_status=$?
+fi
+printf '%s\n' "${coverage_output}"
+if (( coverage_status != 0 )); then
+  exit "${coverage_status}"
+fi
+
+awk -F '\t' -v minimum="${minimum_coverage_pct}" '
+  $1 == "TOTAL" {
+    gsub(/%/, "", $2)
+    found = 1
+    if (($2 + 0) < minimum) {
+      printf "Paged KV changed-line coverage %.2f%% is below %.2f%%.\n", $2, minimum > "/dev/stderr"
+      exit 1
+    }
+  }
+  END {
+    if (!found) {
+      print "Paged KV changed-line coverage output is missing TOTAL." > "/dev/stderr"
+      exit 1
+    }
+  }
+' <<< "${coverage_output}"

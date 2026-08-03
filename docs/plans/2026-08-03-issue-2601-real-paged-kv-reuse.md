@@ -59,6 +59,19 @@ The first executed paged-cache contract is deliberately narrow and complete:
 - The L1 pool is bounded by the effective request/model cache byte budget.
   Admission that cannot remain within the bound fails closed to ordinary
   contiguous prefill.
+- Cache identity includes the full scope identifier and the exact creating MLX
+  stream. A decode that resumes under another stream materializes the computed
+  state once into contiguous caches and records the typed fallback; batch
+  admission rejects the cross-stream paged row before model evaluation.
+- Variable identity fields use UTF-8 byte-length-prefixed encoding, so embedded
+  delimiters cannot make two distinct full cache scopes share a signature.
+- Prefill cache statistics report the same tightest request/model/process byte
+  budget used for admission, rather than a process-headroom approximation.
+- Private-owner publication and private-to-shared transfer use one owner-to-pool
+  lock order, so no live tensor bytes can appear between accounting removal and
+  committed shared ownership. LRU eviction never selects an entry whose blocks
+  still have an active decode lease, and a shared block is released after every
+  layer view has trimmed or replaced it.
 
 ## Fail-Closed Boundaries
 
@@ -123,6 +136,15 @@ false. No L2 metadata restore may be credited as saved prefill work.
 12. Make lookup cache materialization a one-shot lease transfer. Keep only a
     weak post-transfer reference for atomic store validation, and prove a second
     `makeCaches()` call returns no caches and creates no additional private owner.
+13. Close independent-review findings by applying the minimum non-zero
+    request/model budget, including `scope_id` in compatibility, carrying and
+    validating stream ownership through decode, making owner accounting a
+    single lock-ordered transaction, protecting leased LRU entries, and
+    releasing shared blocks at per-layer trim boundaries.
+14. Make compatibility components collision-free with length-prefixed encoding,
+    project the exact admission budget into each prefill response, and derive
+    behavioral acceptance metrics from passing Swift test logs plus the real
+    paired-memory artifact.
 
 ## Performance Probes
 
@@ -186,53 +208,54 @@ false. No L2 metadata restore may be credited as saved prefill work.
 - Changes to any Paged KV execution or projection file select the dedicated
   Paged KV PR-scoped probe, whose final report has zero regression and zero
   verification failure.
+- The probe emits numeric zero-count acceptance for owner leaks, correctness
+  mismatches, second-prefill fallbacks, row-cache identity mismatches, scope
+  cross-hits, leased-entry eviction, retained bytes after full-layer trim, and
+  tightest-budget violations. It also requires at least one proven cross-stream
+  contiguous fallback.
 
 ## Paired memory result
 
 The 2026-08-03 local Apple Silicon probe used the same loaded deterministic
 model, 33-token prompt, four sessions, and two output tokens per session. Both
 modes started from `600336` MLX active bytes. Contiguous execution reached a
-`2233084`-byte MLX active peak delta and a `2981888`-byte RSS peak delta. Paged
-execution reached a `173116`-byte MLX active peak delta and a `294912`-byte RSS
-peak delta. The paged reductions were therefore `2059968` MLX active bytes and
-`2686976` RSS bytes. The allocator-reported peak reduction was `2218056` bytes.
+`2246920`-byte MLX active peak delta and a `2686976`-byte RSS peak delta. Paged
+execution reached a `165436`-byte MLX active peak delta and a `229376`-byte RSS
+peak delta. The paged reductions were therefore `2081484` MLX active bytes and
+`2457600` RSS bytes. The allocator-reported peak reduction was `2217044` bytes.
 Pool accounting reported `40960` real resident bytes, including active private
 tails, versus `172032` logical session bytes.
 
-The tiny-fixture batched decode throughput was `1439.88` tokens/second for
-contiguous execution and `1046.57` tokens/second for paged execution. This probe
+The registered focused gate captures passing XCTest cases in four Swift test
+logs and merges them with the raw paired-memory output. The generated artifact
+records the focused behavioral acceptance results:
+zero owner leaks, cache mismatches, second-prefill fallbacks, batch row-cache
+identity mismatches, scope cross-hits, leased-entry evictions, retained bytes
+after all layer views trim a block, and tightest-budget violations. Three
+cross-stream decode fallbacks, one direct and two from rejected batch rows, are
+retained as positive evidence that both stream-owner guards executed.
+
+The tiny-fixture batched decode throughput was `1385.52` tokens/second for
+contiguous execution and `919.86` tokens/second for paged execution. This probe
 is a memory acceptance gate, not a representative serving-throughput benchmark;
 the throughput values are retained so the gather cost remains visible. The
 versioned raw artifact is
 `docs/metrics/issue-2601-paired-contiguous-paged-memory.json`.
 
 The complete changed-line coverage run for the six changed production files
-reported `97.73%` (`1337/1368`). The complete `WorkerScaffoldTests` suite passed
-all `330` tests with coverage enabled.
+reported `96.77%` (`1470/1519`). The complete `WorkerScaffoldTests` suite passed
+all `336` tests with coverage enabled.
 
 ## Verification
 
 Focused checks:
 
 ```bash
-xcrun swift test --package-path services/mlx-text-worker-swift \
-  --filter WorkerScaffoldTests/testPagedKV
-xcrun swift test --package-path services/mlx-text-worker-swift \
-  --filter WorkerScaffoldTests/testAutoSwiftMLXBackendUsesEffectiveWindowForBlockAlignedPagedPrefillCalls
-MELIX_PAGED_KV_PAIRED_MEMORY_PROBE_OUTPUT=.runtime/metrics/issue-2601-paired-memory.json \
-  xcrun swift test --package-path services/mlx-text-worker-swift \
-  --filter WorkerScaffoldTests/testAutoSwiftMLXBackendPairedContiguousAndPagedMemoryWatermarks
-xcrun swift test --package-path services/mlx-text-worker-swift \
-  --enable-code-coverage --filter WorkerScaffoldTests/testPagedKV
-UV_PYTHON=3.12 uv run --python 3.12 python3 scripts/swift_changed_line_coverage.py \
-  --binary services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests \
-  --profdata services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata \
-  services/mlx-text-worker-swift/Sources/Core/Runtime/PagedKVCache.swift \
-  services/mlx-text-worker-swift/Sources/Core/Runtime/SwiftMLXBackend.swift \
-  services/mlx-text-worker-swift/Sources/Core/Runtime/TextRuntime.swift \
-  services/mlx-text-worker-swift/Sources/Core/HotCacheStore.swift \
-  services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift \
-  services/mlx-text-worker-swift/Sources/Core/Inference/TextPrefillEngine.swift
+jq -r '.[] | select(.id == "paged-kv-cache-ownership-memory") | .test_command' \
+  infra/perf/pr_scoped_probes.json | bash
+python3 scripts/paged_kv_cache_probe.py \
+  --artifact .runtime/metrics/paged-kv-cache-ownership-memory.json
+bash scripts/paged_kv_cache_coverage.sh
 ```
 
 Repository gate:

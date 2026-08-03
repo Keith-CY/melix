@@ -5343,7 +5343,7 @@ final class WorkerScaffoldTests: XCTestCase {
         requestBudgetExecution.id.requestID = "req-cache-budget-clamp"
         requestBudgetExecution.modelHandle = loaded.handle
         requestBudgetExecution.cacheHints.cacheMemoryBudgetBytes = 900_000
-        _ = try await registry.prefill(
+        let requestBudgetResult = try await registry.prefill(
             execution: requestBudgetExecution,
             messages: [makeUserMessage("budget")],
             prefillStepSize: 8,
@@ -5356,7 +5356,7 @@ final class WorkerScaffoldTests: XCTestCase {
         var modelBudgetExecution = Melix_Worker_V1_ExecutionMetadata()
         modelBudgetExecution.id.requestID = "model-cache-budget"
         modelBudgetExecution.modelHandle = loaded.handle
-        _ = try await registry.prefill(
+        let modelBudgetResult = try await registry.prefill(
             execution: modelBudgetExecution,
             messages: [makeUserMessage("budget")],
             prefillStepSize: 8,
@@ -5368,8 +5368,11 @@ final class WorkerScaffoldTests: XCTestCase {
 
         let executions = await backend.prefillExecutions().compactMap { $0 }
         XCTAssertEqual(executions.count, 2)
-        XCTAssertEqual(executions[0].cacheHints.cacheMemoryBudgetBytes, processCacheBudget)
+        XCTAssertEqual(executions[0].cacheHints.cacheMemoryBudgetBytes, 600_000)
+        XCTAssertLessThan(executions[0].cacheHints.cacheMemoryBudgetBytes, processCacheBudget)
         XCTAssertEqual(executions[1].cacheHints.cacheMemoryBudgetBytes, 600_000)
+        XCTAssertEqual(requestBudgetResult.cacheStats.effectiveCacheBudgetBytes, 600_000)
+        XCTAssertEqual(modelBudgetResult.cacheStats.effectiveCacheBudgetBytes, 600_000)
     }
 
     func testRuntimeRegistryUsesConfiguredInitialCacheBlockTarget() async throws {
@@ -12745,7 +12748,7 @@ final class WorkerScaffoldTests: XCTestCase {
                         values: MLXArray((0 ..< 8).map { Float($0) - offset }, [1, 1, 4, 2])
                     )
                 }
-                do {
+                let extendedSnapshot: PagedKVPrefixSnapshot = try {
                     let extendedStore = pool.store(
                         compatibilitySignature: "model-epoch::dense-f32",
                         tokenIDs: firstTokens + Array(4 ..< 8),
@@ -12759,7 +12762,8 @@ final class WorkerScaffoldTests: XCTestCase {
                     XCTAssertTrue(extendedSnapshot.blocks[0] === firstSnapshot.blocks[0])
                     XCTAssertFalse(extendedSnapshot.blocks[1] === firstSnapshot.blocks[0])
                     XCTAssertEqual(extendedStore.copyOnWriteBlockCount, 0)
-                }
+                    return extendedSnapshot
+                }()
 
                 let trimmingLookup = pool.lookup(
                     compatibilitySignature: "model-epoch::dense-f32",
@@ -12779,7 +12783,13 @@ final class WorkerScaffoldTests: XCTestCase {
                 XCTAssertEqual(stats.privateResidentBytes, 48)
                 XCTAssertEqual(stats.activePrivateOwnerCount, 1)
                 XCTAssertEqual(stats.residentBytes, 304)
-                XCTAssertEqual(stats.logicalBytes, 688)
+                let storedLogicalBytes = (firstSnapshot.blocks + extendedSnapshot.blocks)
+                    .reduce(UInt64(0)) { $0 + $1.bytes }
+                let activeSharedLeaseBytes = firstSnapshot.blocks[0].bytes
+                XCTAssertEqual(
+                    stats.logicalBytes,
+                    storedLogicalBytes + activeSharedLeaseBytes + stats.privateResidentBytes
+                )
                 XCTAssertEqual(stats.peakResidentBytes, 304)
                 XCTAssertEqual(stats.blockCount, 2)
                 XCTAssertEqual(stats.sharedBlockCount, 1)
@@ -13036,6 +13046,115 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testPagedKVBlockPoolEvictsUnleasedEntryBeforeOlderLeasedEntry() async throws {
+        try await withTemporaryDefaultMetallib {
+            try Device.withDefaultDevice(.cpu) {
+                func makeCache(value: Float) -> PagedKVCache {
+                    let cache = PagedKVCache(blockSize: 4, layerIndex: 0)
+                    _ = cache.update(
+                        keys: MLXArray(Array(repeating: value, count: 8), [1, 1, 4, 2]),
+                        values: MLXArray(Array(repeating: -value, count: 8), [1, 1, 4, 2])
+                    )
+                    return cache
+                }
+
+                let pool = PagedKVBlockPool()
+                for (signature, tokenStart, value) in [
+                    ("leased-oldest", 0, Float(1)),
+                    ("unleased-newer", 4, Float(2)),
+                ] {
+                    XCTAssertNotNil(pool.store(
+                        compatibilitySignature: signature,
+                        tokenIDs: Array(tokenStart ..< tokenStart + 4),
+                        storedTokenBoundary: 4,
+                        blockSize: 4,
+                        caches: [makeCache(value: value)],
+                        reusedLookup: nil,
+                        budgetBytes: 128
+                    ).snapshot)
+                }
+                let leasedLookup = pool.lookup(
+                    compatibilitySignature: "leased-oldest",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4
+                )
+                let leasedCaches = try XCTUnwrap(leasedLookup.makeCaches())
+
+                XCTAssertNotNil(pool.store(
+                    compatibilitySignature: "candidate",
+                    tokenIDs: Array(8 ..< 12),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: [makeCache(value: 3)],
+                    reusedLookup: nil,
+                    budgetBytes: 128
+                ).snapshot)
+
+                XCTAssertEqual(leasedCaches.first?.offset, 4)
+                XCTAssertNotNil(pool.lookup(
+                    compatibilitySignature: "leased-oldest",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4
+                ).snapshot)
+                XCTAssertNil(pool.lookup(
+                    compatibilitySignature: "unleased-newer",
+                    tokenIDs: Array(4 ..< 8),
+                    storedTokenBoundary: 4,
+                    blockSize: 4
+                ).snapshot)
+                XCTAssertNotNil(pool.lookup(
+                    compatibilitySignature: "candidate",
+                    tokenIDs: Array(8 ..< 12),
+                    storedTokenBoundary: 4,
+                    blockSize: 4
+                ).snapshot)
+                XCTAssertEqual(pool.stats().entryCount, 2)
+            }
+        }
+    }
+
+    func testPagedKVCacheReleasesSharedBlockAfterEveryLayerTrimsIt() async throws {
+        try await withTemporaryDefaultMetallib {
+            try Device.withDefaultDevice(.cpu) {
+                let pool = PagedKVBlockPool()
+                let seedCaches: [KVCache] = (0 ..< 2).map { layerIndex in
+                    let cache = PagedKVCache(blockSize: 4, layerIndex: layerIndex)
+                    _ = cache.update(
+                        keys: MLXArray(Array(repeating: Float(layerIndex + 1), count: 8), [1, 1, 4, 2]),
+                        values: MLXArray(Array(repeating: -Float(layerIndex + 1), count: 8), [1, 1, 4, 2])
+                    )
+                    return cache
+                }
+                XCTAssertNotNil(pool.store(
+                    compatibilitySignature: "trimmed-shared-block",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: seedCaches,
+                    reusedLookup: nil,
+                    budgetBytes: 1_024
+                ).snapshot)
+                let lookup = pool.lookup(
+                    compatibilitySignature: "trimmed-shared-block",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4
+                )
+                let restoredCaches = try XCTUnwrap(lookup.makeCaches())
+                pool.removeAll()
+
+                XCTAssertEqual(pool.stats().residentBytes, 128)
+                XCTAssertEqual(restoredCaches[0].trim(4), 4)
+                XCTAssertEqual(pool.stats().residentBytes, 128)
+                XCTAssertEqual(restoredCaches[1].trim(4), 4)
+                XCTAssertEqual(pool.stats().residentBytes, 0)
+                XCTAssertEqual(pool.stats().blockCount, 0)
+            }
+        }
+    }
+
     func testPagedKVStorePinsCommittedGenerationAndTransfersLeaseOnce() async throws {
         try await withTemporaryDefaultMetallib {
             Device.withDefaultDevice(.cpu) {
@@ -13074,6 +13193,66 @@ final class WorkerScaffoldTests: XCTestCase {
                 XCTAssertNil(competing.snapshot)
                 XCTAssertEqual(competing.fallbackReason, "cache_memory_budget_exceeded")
                 XCTAssertEqual(decodeCaches?.first?.offset, 4)
+            }
+        }
+    }
+
+    func testPagedKVConcurrentStoresTransferPrivateOwnersWithoutAccountingGaps() async throws {
+        try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                try await MLX.Stream.withNewDefaultStream(device: .cpu) {
+                    let pool = PagedKVBlockPool()
+                    func makePrivateCache(value: Float) throws -> PagedKVCache {
+                        let cache = try XCTUnwrap(
+                            pool.makeCaches(blockSize: 4, layerCount: 1).first as? PagedKVCache
+                        )
+                        _ = cache.update(
+                            keys: MLXArray(Array(repeating: value, count: 8), [1, 1, 4, 2]),
+                            values: MLXArray(Array(repeating: -value, count: 8), [1, 1, 4, 2])
+                        )
+                        return cache
+                    }
+
+                    let firstCache = try makePrivateCache(value: 1)
+                    let secondCache = try makePrivateCache(value: 2)
+                    XCTAssertEqual(pool.stats().privateResidentBytes, 128)
+                    XCTAssertEqual(pool.stats().activePrivateOwnerCount, 2)
+                    let boundaryStats = PagedKVPoolStatsRecorder()
+                    pool.setStoreCommitBoundaryHookForTesting {
+                        boundaryStats.append(pool.stats())
+                    }
+                    defer { pool.setStoreCommitBoundaryHookForTesting(nil) }
+
+                    let startGate = PagedKVConcurrentStartGate(participantCount: 2)
+                    func store(index: Int, cache: PagedKVCache) async -> PagedKVStoreResult {
+                        await startGate.wait()
+                        return pool.store(
+                            compatibilitySignature: "concurrent-owner-\(index)",
+                            tokenIDs: Array((index * 4) ..< (index * 4) + 4),
+                            storedTokenBoundary: 4,
+                            blockSize: 4,
+                            caches: [cache],
+                            reusedLookup: nil,
+                            budgetBytes: 128
+                        )
+                    }
+                    async let firstStore = store(index: 0, cache: firstCache)
+                    async let secondStore = store(index: 1, cache: secondCache)
+
+                    let stored = await [firstStore, secondStore]
+                    XCTAssertEqual(stored.count, 2)
+                    XCTAssertTrue(stored.allSatisfy { $0.snapshot != nil })
+                    XCTAssertTrue(stored.allSatisfy { $0.fallbackReason.isEmpty })
+                    XCTAssertEqual(boundaryStats.values.count, 2)
+                    XCTAssertTrue(boundaryStats.values.allSatisfy { $0.residentBytes == 128 })
+                    XCTAssertTrue(boundaryStats.values.allSatisfy {
+                        $0.privateResidentBytes > 0 && $0.activePrivateOwnerCount > 0
+                    })
+                    XCTAssertEqual(pool.stats().privateResidentBytes, 0)
+                    XCTAssertEqual(pool.stats().activePrivateOwnerCount, 0)
+                    XCTAssertEqual(pool.stats().residentBytes, 128)
+                    XCTAssertEqual(pool.stats().entryCount, 2)
+                }
             }
         }
     }
@@ -13784,6 +13963,199 @@ final class WorkerScaffoldTests: XCTestCase {
         }
 
         await backend.unloadModel(results.4)
+        XCTAssertEqual(pool.stats().entryCount, 0)
+    }
+
+    func testAutoSwiftMLXBackendKeepsPagedPrefixesIsolatedByScopeID() async throws {
+        let promptTokens = (0 ..< 33).map { $0 % 31 }
+        let pool = PagedKVBlockPool()
+        let backend = AutoSwiftMLXBackend(pagedKVPool: pool)
+        var executionA = Melix_Worker_V1_ExecutionMetadata()
+        executionA.scope.scopeID = "tenant-a::model-b"
+        executionA.scope.modelID = "m"
+        executionA.cacheHints.cacheMode = .tiered
+        executionA.cacheHints.preferredBlockSize = 16
+        executionA.cacheHints.cacheMemoryBudgetBytes = 16 * 1_024 * 1_024
+        var executionB = executionA
+        executionB.scope.scopeID = "tenant-a"
+        executionB.scope.modelID = "model-b::m"
+
+        let results = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let firstA = try await backend.prefill(
+                    model: model,
+                    execution: executionA,
+                    messages: [makeUserMessage("scope-a-cold")],
+                    prefillStepSize: 16,
+                    resumeHint: "scope-a-cold",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let firstB = try await backend.prefill(
+                    model: model,
+                    execution: executionB,
+                    messages: [makeUserMessage("scope-b-cold")],
+                    prefillStepSize: 16,
+                    resumeHint: "scope-b-cold",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let secondA = try await backend.prefill(
+                    model: model,
+                    execution: executionA,
+                    messages: [makeUserMessage("scope-a-warm")],
+                    prefillStepSize: 16,
+                    resumeHint: "scope-a-warm",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                return (firstA, firstB, secondA, model)
+            }
+        }
+
+        let firstAEvidence = try XCTUnwrap(results.0.pagedCacheEvidence)
+        let firstBEvidence = try XCTUnwrap(results.1.pagedCacheEvidence)
+        let secondAEvidence = try XCTUnwrap(results.2.pagedCacheEvidence)
+        XCTAssertEqual(firstAEvidence.cacheHitMode, "none")
+        XCTAssertEqual(firstBEvidence.cacheHitMode, "none")
+        XCTAssertEqual(secondAEvidence.cacheHitMode, "exact")
+        XCTAssertNotEqual(firstAEvidence.blocks.map(\.blockID), firstBEvidence.blocks.map(\.blockID))
+        XCTAssertEqual(firstAEvidence.blocks.map(\.blockID), secondAEvidence.blocks.map(\.blockID))
+        XCTAssertEqual(pool.stats().entryCount, 2)
+
+        await backend.unloadModel(results.3)
+        XCTAssertEqual(pool.stats().entryCount, 0)
+    }
+
+    func testAutoSwiftMLXBackendMaterializesPagedCacheAcrossStreamOwners() async throws {
+        let promptTokens = (0 ..< 33).map { $0 % 31 }
+        let pool = PagedKVBlockPool()
+        let backend = AutoSwiftMLXBackend(pagedKVPool: pool)
+        var execution = Melix_Worker_V1_ExecutionMetadata()
+        execution.scope.scopeID = "paged-stream-owner"
+        execution.cacheHints.cacheMode = .tiered
+        execution.cacheHints.preferredBlockSize = 16
+        execution.cacheHints.cacheMemoryBudgetBytes = 16 * 1_024 * 1_024
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 1
+
+        let result = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await MLX.Stream.withNewDefaultStream(device: .cpu) {
+                    try await backend.prefill(
+                        model: model,
+                        execution: execution,
+                        messages: [makeUserMessage("stream-owned-paged-prefix")],
+                        prefillStepSize: 16,
+                        resumeHint: "stream-owned-paged-prefix",
+                        acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                        shouldAbort: { false }
+                    )
+                }
+                XCTAssertTrue(try XCTUnwrap(prefill.pagedCacheEvidence).admitted)
+
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 1,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let events = try await collectTextGenerationEvents(from: stream)
+                return (events, model)
+            }
+        }
+
+        XCTAssertFalse(renderedTokenChunks(from: result.0).joined().isEmpty)
+        XCTAssertEqual(
+            renderedSummary(from: result.0)?.decodeBatchFallbackReason,
+            "paged_stream_owner_mismatch"
+        )
+        XCTAssertEqual(pool.stats().privateResidentBytes, 0)
+
+        await backend.unloadModel(result.1)
+        XCTAssertEqual(pool.stats().entryCount, 0)
+    }
+
+    func testAutoSwiftMLXBackendBatchRejectsPagedCachesFromAnotherStreamOwner() async throws {
+        let promptTokens = (0 ..< 33).map { $0 % 31 }
+        let pool = PagedKVBlockPool()
+        let backend = AutoSwiftMLXBackend(pagedKVPool: pool)
+        var execution = Melix_Worker_V1_ExecutionMetadata()
+        execution.scope.scopeID = "paged-batch-stream-owner"
+        execution.cacheHints.cacheMode = .tiered
+        execution.cacheHints.preferredBlockSize = 16
+        execution.cacheHints.cacheMemoryBudgetBytes = 16 * 1_024 * 1_024
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 1
+
+        let result = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefills = try await MLX.Stream.withNewDefaultStream(device: .cpu) {
+                    var prefills: [RuntimePrefillResult] = []
+                    for index in 0 ..< 2 {
+                        prefills.append(try await backend.prefill(
+                            model: model,
+                            execution: execution,
+                            messages: [makeUserMessage("batch-stream-owner-\(index)")],
+                            prefillStepSize: 16,
+                            resumeHint: "batch-stream-owner-\(index)",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ))
+                    }
+                    return prefills
+                }
+                XCTAssertTrue(prefills.allSatisfy { $0.pagedCacheEvidence?.admitted == true })
+
+                let requests = prefills.map { prefill in
+                    TextRuntimeDecodeRequest(
+                        model: model,
+                        draftModel: nil,
+                        context: prefill.context,
+                        sampling: sampling,
+                        maxOutputTokens: 1,
+                        decodeStepSize: 1,
+                        prefillToken: "",
+                        acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                        shouldAbort: { false }
+                    )
+                }
+                let stream = try await backend.decodeBatchEvents(requests: requests)
+                let events = try await collectTextBatchGenerationEvents(from: stream)
+                return (events, model)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: result.0)
+        XCTAssertEqual(summaries.count, 2)
+        XCTAssertTrue(summaries.values.allSatisfy {
+            $0.decodeBatchFallbackReason == "not_batchable:paged_stream_owner_mismatch"
+        })
+        let tokenRequestIndices = Set(result.0.compactMap { event -> Int? in
+            guard case let .token(requestIndex, text) = event, !text.isEmpty else { return nil }
+            return requestIndex
+        })
+        XCTAssertEqual(tokenRequestIndices, Set([0, 1]))
+        XCTAssertEqual(pool.stats().privateResidentBytes, 0)
+
+        await backend.unloadModel(result.1)
         XCTAssertEqual(pool.stats().entryCount, 0)
     }
 
@@ -17709,6 +18081,22 @@ private final class BatchCacheIdentityRecorder: @unchecked Sendable {
 }
 
 @available(macOS 15.0, *)
+private final class PagedKVPoolStatsRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedValues: [RuntimePagedKVPoolStats] = []
+
+    var values: [RuntimePagedKVPoolStats] {
+        lock.withLock { recordedValues }
+    }
+
+    func append(_ value: RuntimePagedKVPoolStats) {
+        lock.withLock {
+            recordedValues.append(value)
+        }
+    }
+}
+
+@available(macOS 15.0, *)
 private enum TestBatchCacheKind {
     case simple
     case rotating(maxSize: Int)
@@ -18390,6 +18778,27 @@ private struct DeterministicTokenizer: Tokenizer {
         additionalContext: [String: any Sendable]?
     ) throws -> [Int] {
         try applyChatTemplate(messages: messages)
+    }
+}
+
+private actor PagedKVConcurrentStartGate {
+    private let participantCount: Int
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    init(participantCount: Int) {
+        self.participantCount = participantCount
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+            guard continuations.count == participantCount else { return }
+            let ready = continuations
+            continuations.removeAll()
+            for continuation in ready {
+                continuation.resume()
+            }
+        }
     }
 }
 

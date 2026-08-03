@@ -85,7 +85,9 @@ for the normal generation iterator.
 The backend derives compatibility from the prepared production input, including
 tensor rank, dtype, non-token dimensions, mask and multimodal presence, and the
 block-aligned maximum forward chunk derived from the effective prefill window.
-A request extension cannot provide that identity. Reuse writes validate the
+A UTF-8 byte-length prefix encodes every variable component, including the full
+cache scope, so embedded delimiters cannot collide across scope fields. A
+request extension cannot provide that identity. Reuse writes validate the
 current generation, pool membership, digest boundary, layout, and pinned lease
 together under the pool lock. Cold prefill advances by that multi-block chunk,
 not one model call per block. A lookup result materializes its pinned lease into
@@ -102,6 +104,8 @@ bytes are included in physical resident, logical ownership, L1, runtime
 The byte budget is the minimum applicable request/model/process budget. Store
 admission includes other active private owners and excludes double-counting the
 submitting owner only while those same tensors transfer into shared blocks.
+The prefill response reports that exact effective budget; process-wide cache
+statistics report process headroom when no request-specific budget exists.
 LRU eviction skips active decode leases; if the candidate still cannot fit,
 the prior pool contents remain unchanged.
 
@@ -110,6 +114,13 @@ the worker evaluates the already-computed paged state once into ordinary
 `KVCacheSimple` caches. It does not invoke model prefill again. The old paged
 owner and block lease are released before the returned decode context can run,
 and the response carries `admitted=false` plus the typed fallback reason.
+
+Each paged cache also retains its creating MLX stream. If decode resumes under
+a different current stream, the worker materializes the computed state once
+into `KVCacheSimple`, reports `paged_stream_owner_mismatch` in the decode
+summary, and continues without another prefill. Batch admission refuses a
+cross-stream paged row before model evaluation so the same per-request fallback
+is used.
 
 Swift prefill responses expose `cache_hit_mode`, `recovered_prefix_tokens`, and
 `fallback_reason`. Runtime metrics additionally expose lookup and restore
@@ -137,6 +148,8 @@ Common Swift fallback reasons include:
 - `cache_block_shape_mismatch`
 - `cache_snapshot_validation_failed`
 - `cache_memory_budget_exceeded`
+- `cache_stream_owner_mismatch`
+- `paged_stream_owner_mismatch`
 
 The Swift `DiskCacheStore` persists identity and block-table metadata only. It
 does not serialize KV payloads, so an L2 metadata match is reported as

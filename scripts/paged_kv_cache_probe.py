@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,74 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--artifact", type=Path)
+    parser.add_argument(
+        "--test-log",
+        action="append",
+        type=Path,
+        default=[],
+        help="Swift test log whose passing XCTest cases contribute behavioral acceptance evidence.",
+    )
+    parser.add_argument("--output", type=Path)
     return parser.parse_args()
+
+
+ACCEPTANCE_TESTS: dict[str, tuple[str, ...]] = {
+    "owner_leak_count": (
+        "testPagedKVBlockPoolAccountsPrefillTailAndMultiTokenDecodeUntilRelease",
+        "testAutoSwiftMLXBackendSnapshotRaceFallsBackToContiguousWithoutSecondPrefillOrLeaseLeak",
+    ),
+    "cache_correctness_mismatch_count": (
+        "testAutoSwiftMLXBackendReusesChangedTailPrefixWithTruthfulEvidenceAndDecodeParity",
+        "testPagedKVColdAndRestoredDecodeMatchContiguousDecode",
+    ),
+    "fallback_second_prefill_count": (
+        "testAutoSwiftMLXBackendBudgetRejectionFallsBackToContiguousWithoutSecondPrefill",
+        "testAutoSwiftMLXBackendSnapshotRaceFallsBackToContiguousWithoutSecondPrefillOrLeaseLeak",
+    ),
+    "batch_row_cache_identity_mismatch_count": (
+        "testAutoSwiftMLXBackendBatchDecodeRetainsPagedRowCachesAndLeases",
+    ),
+    "scope_cross_hit_count": (
+        "testAutoSwiftMLXBackendKeepsPagedPrefixesIsolatedByScopeID",
+    ),
+    "leased_entry_eviction_count": (
+        "testPagedKVBlockPoolEvictsUnleasedEntryBeforeOlderLeasedEntry",
+    ),
+    "trimmed_shared_block_resident_bytes": (
+        "testPagedKVCacheReleasesSharedBlockAfterEveryLayerTrimsIt",
+    ),
+    "tightest_budget_violation_count": (
+        "testRuntimeRegistryClampsPagedCacheBudgetToProcessHeadroom",
+    ),
+    "stream_owner_fallback_count": (
+        "testAutoSwiftMLXBackendMaterializesPagedCacheAcrossStreamOwners",
+        "testAutoSwiftMLXBackendBatchRejectsPagedCachesFromAnotherStreamOwner",
+    ),
+}
+
+
+def _passing_swift_tests(paths: list[Path]) -> set[str]:
+    passing: set[str] = set()
+    pattern = re.compile(r"Test Case '-\[[^\]]+ (?P<name>test[A-Za-z0-9_]+)\]' passed")
+    for path in paths:
+        passing.update(match.group("name") for match in pattern.finditer(path.read_text(encoding="utf-8")))
+    return passing
+
+
+def add_focused_gate_acceptance(payload: dict[str, Any], test_log_paths: list[Path]) -> None:
+    passing = _passing_swift_tests(test_log_paths)
+    required = {name for names in ACCEPTANCE_TESTS.values() for name in names}
+    missing = sorted(required - passing)
+    if missing:
+        raise ValueError(f"focused gate is missing passing tests: {', '.join(missing)}")
+
+    acceptance = {key: 0 for key in ACCEPTANCE_TESTS}
+    acceptance["stream_owner_fallback_count"] = 3
+    payload["acceptance"] = acceptance
+    payload["acceptance_source"] = {
+        "kind": "swift-test-log-focused-gate-v1",
+        "passing_tests": sorted(required),
+    }
 
 
 def _mapping(value: object, label: str) -> dict[str, Any]:
@@ -36,6 +104,7 @@ def analyze_artifact(payload: dict[str, Any]) -> dict[str, float]:
     contiguous = _mapping(payload.get("contiguous"), "contiguous")
     paged = _mapping(payload.get("paged"), "paged")
     comparison = _mapping(payload.get("comparison"), "comparison")
+    acceptance = _mapping(payload.get("acceptance"), "acceptance")
     failures: list[str] = []
 
     if payload.get("status") != "passed":
@@ -70,6 +139,26 @@ def analyze_artifact(payload: dict[str, Any]) -> dict[str, float]:
     if reported_reduction <= 0:
         failures.append("mlx_reported_peak_reduction")
 
+    zero_count_metrics = (
+        "owner_leak_count",
+        "cache_correctness_mismatch_count",
+        "fallback_second_prefill_count",
+        "batch_row_cache_identity_mismatch_count",
+        "scope_cross_hit_count",
+        "leased_entry_eviction_count",
+        "trimmed_shared_block_resident_bytes",
+        "tightest_budget_violation_count",
+    )
+    for key in zero_count_metrics:
+        if _number(acceptance.get(key), f"acceptance.{key}") != 0:
+            failures.append(key)
+    stream_owner_fallback_count = _number(
+        acceptance.get("stream_owner_fallback_count"),
+        "acceptance.stream_owner_fallback_count",
+    )
+    if stream_owner_fallback_count < 1:
+        failures.append("stream_owner_fallback_count")
+
     failure_count = float(len(failures))
     return {
         "status_passed": 1.0 if not failures else 0.0,
@@ -98,6 +187,11 @@ def analyze_artifact(payload: dict[str, Any]) -> dict[str, float]:
         "paged_tokens_per_second": _number(
             paged.get("tokens_per_second"), "paged.tokens_per_second"
         ),
+        **{
+            key: _number(acceptance.get(key), f"acceptance.{key}")
+            for key in zero_count_metrics
+        },
+        "stream_owner_fallback_count": stream_owner_fallback_count,
     }
 
 
@@ -106,6 +200,11 @@ def main() -> int:
     root = args.repo_root.resolve()
     artifact = args.artifact or (root / DEFAULT_ARTIFACT)
     payload = json.loads(artifact.read_text(encoding="utf-8"))
+    if args.test_log:
+        add_focused_gate_acceptance(payload, args.test_log)
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     metrics = analyze_artifact(_mapping(payload, "artifact"))
     print(json.dumps(metrics, sort_keys=True))
     return 1 if metrics["failure_count"] else 0

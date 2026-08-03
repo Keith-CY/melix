@@ -457,7 +457,9 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
     }
 
     func unloadModel(_ model: LoadedTextModel) async {
-        pagedKVPool.removeAll(compatibilitySignaturePrefix: "\(model.cacheEpochID)::")
+        pagedKVPool.removeAll(
+            compatibilitySignaturePrefix: pagedKVCompatibilityComponent(model.cacheEpochID)
+        )
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
@@ -1031,11 +1033,13 @@ private func makePagedOrContiguousPrefillState(
     }
 
     let tokenIDs = input.text.tokens.asArray(Int.self)
+    let streamOwner = StreamOrDevice.default.stream
     let compatibilitySignature = pagedKVCompatibilitySignature(
         model: model,
         execution: execution,
         acceleration: acceleration,
         blockSize: blockSize,
+        streamOwner: streamOwner,
         prefillShapeSignature: pagedKVPrefillShapeSignature(
             input,
             blockSize: blockSize,
@@ -1046,7 +1050,8 @@ private func makePagedOrContiguousPrefillState(
         compatibilitySignature: compatibilitySignature,
         tokenIDs: tokenIDs,
         storedTokenBoundary: storedTokenBoundary,
-        blockSize: blockSize
+        blockSize: blockSize,
+        streamOwner: streamOwner
     )
     let restoreStartedAt = Date.timeIntervalSinceReferenceDate
     var cache: [KVCache]
@@ -1059,7 +1064,11 @@ private func makePagedOrContiguousPrefillState(
         processedTokens = snapshot.tokenCount
         reusedSnapshot = snapshot
     } else {
-        cache = pagedKVPool.makeCaches(blockSize: blockSize, layerCount: modelCaches.count)
+        cache = pagedKVPool.makeCaches(
+            blockSize: blockSize,
+            layerCount: modelCaches.count,
+            streamOwner: streamOwner
+        )
         processedTokens = 0
         reusedSnapshot = nil
     }
@@ -1222,13 +1231,15 @@ private func pagedKVCompatibilitySignature(
     execution: Melix_Worker_V1_ExecutionMetadata,
     acceleration: Melix_Worker_V1_AccelerationPolicy,
     blockSize: Int,
+    streamOwner: MLX.Stream,
     prefillShapeSignature: String
 ) -> String {
     let scope = execution.scope
     return [
         model.cacheEpochID,
-        String(reflecting: ObjectIdentifier(StreamOrDevice.default.stream)),
+        String(reflecting: ObjectIdentifier(streamOwner)),
         model.textFamilyID,
+        scope.scopeID,
         scope.modelID,
         scope.revision,
         scope.tokenizerHash,
@@ -1246,7 +1257,11 @@ private func pagedKVCompatibilitySignature(
         acceleration.profileID,
         prefillShapeSignature,
         String(blockSize),
-    ].joined(separator: "::")
+    ].map(pagedKVCompatibilityComponent).joined()
+}
+
+private func pagedKVCompatibilityComponent(_ value: String) -> String {
+    "\(value.utf8.count):\(value)"
 }
 
 func pagedKVPrefillForwardChunkTokens(effectiveWindowSize: Int, blockSize: Int) -> Int {
@@ -1999,6 +2014,11 @@ private func batchDecodeCacheCompatibilityFailure(_ states: [PreparedDecodeState
           let first = states.first
     else {
         return "not_batchable:single_request"
+    }
+
+    let pagedCaches = states.flatMap(\.cache).compactMap { $0 as? PagedKVCache }
+    if pagedCaches.contains(where: { !$0.streamOwnerMatchesCurrent }) {
+        return "not_batchable:paged_stream_owner_mismatch"
     }
 
     guard let firstCacheSignature = cacheBatchSignature(first.cache),
@@ -3754,11 +3774,14 @@ private func makePreparedDecodeGeneration(
             message: "Loaded model is not a Swift MLX model container."
         )
     }
-    guard let decodeState = context.storage as? PreparedDecodeState else {
+    guard let storedDecodeState = context.storage as? PreparedDecodeState else {
         throw RuntimeUnavailableError(
             message: "Decode context is not a prepared Swift MLX prefill state."
         )
     }
+    let streamSafeState = try decodeStateForCurrentStream(storedDecodeState)
+    let decodeState = streamSafeState.state
+    let streamFallbackReason = streamSafeState.fallbackReason
 
     let parameters = makeDecodeParameters(
         from: sampling,
@@ -3787,7 +3810,10 @@ private func makePreparedDecodeGeneration(
             }
             return PreparedTextGeneration(
                 promptTokens: decodeState.input.text.tokens.size,
-                runtimeEvents: runtimeEvents
+                runtimeEvents: annotatingDecodeFallbackReason(
+                    streamFallbackReason,
+                    in: runtimeEvents
+                )
             )
         }
         #endif
@@ -3809,7 +3835,10 @@ private func makePreparedDecodeGeneration(
         }
         return PreparedTextGeneration(
             promptTokens: decodeState.input.text.tokens.size,
-            runtimeEvents: runtimeEvents
+            runtimeEvents: annotatingDecodeFallbackReason(
+                streamFallbackReason,
+                in: runtimeEvents
+            )
         )
     }
 
@@ -3825,13 +3854,74 @@ private func makePreparedDecodeGeneration(
 
     return PreparedTextGeneration(
         promptTokens: decodeState.input.text.tokens.size,
-        runtimeEvents: runtimeEvents
+        runtimeEvents: annotatingDecodeFallbackReason(
+            streamFallbackReason,
+            in: runtimeEvents
+        )
     )
     #else
     throw RuntimeUnavailableError(
         message: "MLXLMCommon is not available in this build. Install the Swift MLX runtime dependencies before decoding."
     )
     #endif
+}
+
+#if canImport(MLXLMCommon)
+private func decodeStateForCurrentStream(
+    _ state: PreparedDecodeState
+) throws -> (state: PreparedDecodeState, fallbackReason: String?) {
+    let pagedCaches = state.cache.compactMap { $0 as? PagedKVCache }
+    guard !pagedCaches.isEmpty else {
+        return (state, nil)
+    }
+    guard pagedCaches.count == state.cache.count else {
+        throw RuntimeUnavailableError(
+            message: "Prepared decode state contains a mixed Paged KV cache layout."
+        )
+    }
+    guard pagedCaches.contains(where: { !$0.streamOwnerMatchesCurrent }) else {
+        return (state, nil)
+    }
+
+    return (
+        PreparedDecodeState(
+            input: state.input,
+            prepared: state.prepared,
+            cache: materializeContiguousCaches(from: state.cache),
+            promptPrefillTime: state.promptPrefillTime,
+            prefillQuantizeMicros: state.prefillQuantizeMicros,
+            activeKVQuantizationRatio: state.activeKVQuantizationRatio
+        ),
+        "paged_stream_owner_mismatch"
+    )
+}
+#endif
+
+private func annotatingDecodeFallbackReason(
+    _ reason: String?,
+    in source: AsyncThrowingStream<RawTextGenerationEvent, Error>
+) -> AsyncThrowingStream<RawTextGenerationEvent, Error> {
+    guard let reason else { return source }
+    let (stream, continuation) = AsyncThrowingStream<RawTextGenerationEvent, Error>.makeStream()
+    let task = Task {
+        do {
+            for try await event in source {
+                switch event {
+                case .chunk:
+                    continuation.yield(event)
+                case let .summary(summary):
+                    continuation.yield(.summary(summary.withDecodeBatchFallbackReason(reason)))
+                }
+            }
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
+        }
+    }
+    continuation.onTermination = { _ in
+        task.cancel()
+    }
+    return stream
 }
 
 #if canImport(MLXLMCommon)

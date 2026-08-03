@@ -81,7 +81,7 @@ struct RuntimePagedKVPoolStats: Sendable, Equatable {
     )
 }
 
-fileprivate final class PagedKVPrivateAllocationOwner: @unchecked Sendable {
+private final class PagedKVPrivateAllocationOwner: @unchecked Sendable {
     let ownerID = UUID().uuidString.lowercased()
 
     private enum State: Equatable {
@@ -100,47 +100,31 @@ fileprivate final class PagedKVPrivateAllocationOwner: @unchecked Sendable {
     }
 
     func setBytes(_ bytes: UInt64, forLayer layerIndex: Int) {
-        let total = lock.withLock { () -> UInt64? in
-            guard state == .active else { return nil }
+        lock.withLock {
+            guard state == .active else { return }
             if bytes == 0 {
                 bytesByLayer.removeValue(forKey: layerIndex)
             } else {
                 bytesByLayer[layerIndex] = bytes
             }
-            return bytesByLayer.values.reduce(UInt64(0), +)
-        }
-        if let total {
-            onBytesChanged(ownerID, total)
+            onBytesChanged(ownerID, bytesByLayer.values.reduce(UInt64(0), +))
         }
     }
 
-    func beginTransfer() {
-        let shouldRemove = lock.withLock { () -> Bool in
-            guard state == .active else { return false }
-            state = .transferring
-            return true
-        }
-        if shouldRemove {
-            onBytesChanged(ownerID, 0)
-        }
-    }
-
-    func completeTransfer() {
+    func withPoolTransfer<Result>(
+        _ body: (String, UInt64) -> (result: Result, committed: Bool)
+    ) -> Result? {
         lock.withLock {
-            guard state == .transferring else { return }
-            bytesByLayer.removeAll()
-            state = .transferred
-        }
-    }
-
-    func cancelTransfer() {
-        let total = lock.withLock { () -> UInt64? in
-            guard state == .transferring else { return nil }
-            state = .active
-            return bytesByLayer.values.reduce(UInt64(0), +)
-        }
-        if let total {
-            onBytesChanged(ownerID, total)
+            guard state == .active else { return nil }
+            state = .transferring
+            let outcome = body(ownerID, bytesByLayer.values.reduce(UInt64(0), +))
+            if outcome.committed {
+                bytesByLayer.removeAll()
+                state = .transferred
+            } else {
+                state = .active
+            }
+            return outcome.result
         }
     }
 
@@ -210,27 +194,39 @@ final class PagedKVBlock: @unchecked Sendable {
     }
 }
 
-fileprivate final class PagedKVCacheLease: @unchecked Sendable {
-    let blocks: [PagedKVBlock]
+private final class PagedKVCacheLease: @unchecked Sendable {
+    let streamOwner: MLX.Stream
     let privateAllocationOwner: PagedKVPrivateAllocationOwner?
     private let lock = NSLock()
+    private var activeBlocks: [PagedKVBlock]
+    private var layerReferencesByBlock: [ObjectIdentifier: Int]
     private var copiedBlockIdentities: Set<ObjectIdentifier> = []
     private let onCopyOnWrite: @Sendable () -> Void
     private let onRelease: @Sendable () -> Void
 
     init(
         blocks: [PagedKVBlock],
+        layerCount: Int,
+        streamOwner: MLX.Stream,
         privateAllocationOwner: PagedKVPrivateAllocationOwner? = nil,
         onCopyOnWrite: @escaping @Sendable () -> Void = {},
         onRelease: @escaping @Sendable () -> Void = {}
     ) {
-        self.blocks = blocks
+        self.activeBlocks = blocks
+        self.streamOwner = streamOwner
+        self.layerReferencesByBlock = Dictionary(
+            uniqueKeysWithValues: blocks.map { (ObjectIdentifier($0), max(1, layerCount)) }
+        )
         self.privateAllocationOwner = privateAllocationOwner
         self.onCopyOnWrite = onCopyOnWrite
         self.onRelease = onRelease
         for block in blocks {
             block.retainLease()
         }
+    }
+
+    var blocks: [PagedKVBlock] {
+        lock.withLock { activeBlocks }
     }
 
     func recordCopyOnWrite(of block: PagedKVBlock) {
@@ -242,7 +238,31 @@ fileprivate final class PagedKVCacheLease: @unchecked Sendable {
         }
     }
 
+    func releaseLayerReference(to block: PagedKVBlock) {
+        let released = lock.withLock { () -> PagedKVBlock? in
+            let identity = ObjectIdentifier(block)
+            guard let count = layerReferencesByBlock[identity], count > 0 else { return nil }
+            if count > 1 {
+                layerReferencesByBlock[identity] = count - 1
+                return nil
+            }
+            layerReferencesByBlock.removeValue(forKey: identity)
+            guard let index = activeBlocks.firstIndex(where: { $0 === block }) else { return nil }
+            return activeBlocks.remove(at: index)
+        }
+        if let released {
+            released.releaseLease()
+            onRelease()
+        }
+    }
+
     deinit {
+        let blocks = lock.withLock {
+            let blocks = activeBlocks
+            activeBlocks.removeAll()
+            layerReferencesByBlock.removeAll()
+            return blocks
+        }
         for block in blocks {
             block.releaseLease()
         }
@@ -257,6 +277,7 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
     private var privatePayloads: [PagedKVLayerPayload]
     private let layerIndex: Int
     private let blockSize: Int
+    private let streamOwner: MLX.Stream
 
     private(set) var offset: Int
     var maxSize: Int? { nil }
@@ -269,6 +290,7 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
         self.sharedBlocks = []
         self.privatePayloads = []
         self.offset = 0
+        self.streamOwner = StreamOrDevice.default.stream
     }
 
     private init(
@@ -283,16 +305,17 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
         self.sharedBlocks = lease.blocks
         self.privatePayloads = []
         self.offset = lease.blocks.reduce(0) { $0 + ($1.tokenEnd - $1.tokenStart) }
+        self.streamOwner = lease.streamOwner
     }
 
     fileprivate static func makeCaches(
         blocks: [PagedKVBlock],
         blockSize: Int,
         layerCount: Int,
-        lease suppliedLease: PagedKVCacheLease? = nil
+        streamOwner: MLX.Stream = StreamOrDevice.default.stream,
+        lease: PagedKVCacheLease
     ) -> [KVCache] {
-        let lease = suppliedLease ?? PagedKVCacheLease(blocks: blocks)
-        return (0 ..< layerCount).map { layerIndex in
+        return (0..<layerCount).map { layerIndex in
             PagedKVCache(blockSize: blockSize, layerIndex: layerIndex, lease: lease)
         }
     }
@@ -302,7 +325,8 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
     }
 
     func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
-        precondition(keys.dim(2) == values.dim(2), "Paged KV keys and values must have equal token counts.")
+        precondition(
+            keys.dim(2) == values.dim(2), "Paged KV keys and values must have equal token counts.")
         var cursor = 0
         let incomingCount = keys.dim(2)
 
@@ -310,11 +334,11 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
             let accepted = min(blockSize - last.tokenCount, incomingCount)
             let appended = PagedKVLayerPayload(
                 keys: concatenated(
-                    [last.keys, keys[.ellipsis, cursor ..< cursor + accepted, 0...]],
+                    [last.keys, keys[.ellipsis, cursor..<cursor + accepted, 0...]],
                     axis: 2
                 ).contiguous(),
                 values: concatenated(
-                    [last.values, values[.ellipsis, cursor ..< cursor + accepted, 0...]],
+                    [last.values, values[.ellipsis, cursor..<cursor + accepted, 0...]],
                     axis: 2
                 ).contiguous()
             )
@@ -326,8 +350,8 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
         while cursor < incomingCount {
             let end = min(incomingCount, cursor + blockSize)
             let payload = PagedKVLayerPayload(
-                keys: keys[.ellipsis, cursor ..< end, 0...].contiguous(),
-                values: values[.ellipsis, cursor ..< end, 0...].contiguous()
+                keys: keys[.ellipsis, cursor..<end, 0...].contiguous(),
+                values: values[.ellipsis, cursor..<end, 0...].contiguous()
             )
             eval(payload.keys, payload.values)
             privatePayloads.append(payload)
@@ -347,6 +371,9 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
         }
         set {
             precondition(newValue.count == 2, "PagedKVCache state requires keys and values.")
+            for block in sharedBlocks {
+                lease?.releaseLayerReference(to: block)
+            }
             lease = nil
             sharedBlocks = []
             privatePayloads = []
@@ -391,6 +418,7 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
             let tokenCount = last.tokenEnd - last.tokenStart
             if remaining >= tokenCount {
                 remaining -= tokenCount
+                lease?.releaseLayerReference(to: last)
                 sharedBlocks.removeLast()
             } else {
                 let kept = tokenCount - remaining
@@ -401,6 +429,7 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
                 )
                 eval(replacement.keys, replacement.values)
                 lease?.recordCopyOnWrite(of: last)
+                lease?.releaseLayerReference(to: last)
                 sharedBlocks.removeLast()
                 privatePayloads.insert(replacement, at: 0)
                 remaining = 0
@@ -435,6 +464,14 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
 
     fileprivate var allocationOwner: PagedKVPrivateAllocationOwner? {
         privateAllocationOwner
+    }
+
+    fileprivate var ownerStream: MLX.Stream {
+        streamOwner
+    }
+
+    var streamOwnerMatchesCurrent: Bool {
+        streamOwner === StreamOrDevice.default.stream
     }
 
     var decodeBatchSignature: String {
@@ -477,6 +514,9 @@ final class PagedKVCache: KVCache, @unchecked Sendable {
     }
 
     deinit {
+        for block in sharedBlocks {
+            lease?.releaseLayerReference(to: block)
+        }
         privateAllocationOwner?.setBytes(0, forLayer: layerIndex)
     }
 }
@@ -488,6 +528,7 @@ final class PagedKVPrefixSnapshot: @unchecked Sendable {
     let tokenBlockDigests: [String]
     let blocks: [PagedKVBlock]
     let layerCount: Int
+    let streamOwner: MLX.Stream
     let generation: UInt64
     var lastAccessOrdinal: UInt64
 
@@ -502,6 +543,7 @@ final class PagedKVPrefixSnapshot: @unchecked Sendable {
         tokenBlockDigests: [String],
         blocks: [PagedKVBlock],
         layerCount: Int,
+        streamOwner: MLX.Stream,
         generation: UInt64,
         lastAccessOrdinal: UInt64
     ) {
@@ -511,6 +553,7 @@ final class PagedKVPrefixSnapshot: @unchecked Sendable {
         self.tokenBlockDigests = tokenBlockDigests
         self.blocks = blocks
         self.layerCount = layerCount
+        self.streamOwner = streamOwner
         self.generation = generation
         self.lastAccessOrdinal = lastAccessOrdinal
     }
@@ -555,6 +598,7 @@ struct PagedKVLookupResult: @unchecked Sendable {
             blocks: snapshot.blocks,
             blockSize: snapshot.blockSize,
             layerCount: snapshot.layerCount,
+            streamOwner: snapshot.streamOwner,
             lease: lease
         )
     }
@@ -585,12 +629,13 @@ struct PagedKVStoreResult: @unchecked Sendable {
             blocks: snapshot.blocks,
             blockSize: snapshot.blockSize,
             layerCount: snapshot.layerCount,
+            streamOwner: snapshot.streamOwner,
             lease: lease
         )
     }
 }
 
-fileprivate final class PagedKVCacheLeaseTransfer: @unchecked Sendable {
+private final class PagedKVCacheLeaseTransfer: @unchecked Sendable {
     private let lock = NSLock()
     private var lease: PagedKVCacheLease?
     private weak var transferredLease: PagedKVCacheLease?
@@ -617,6 +662,7 @@ final class PagedKVBlockPool: @unchecked Sendable {
     static let defaultBudgetBytes: UInt64 = 4 * 1_024 * 1_024 * 1_024
 
     private let lock = NSLock()
+    private let testHookLock = NSLock()
     private var entriesByID: [String: PagedKVPrefixSnapshot] = [:]
     private var blocksByIdentity: [ObjectIdentifier: PagedKVBlock] = [:]
     private var privateBytesByOwnerID: [String: UInt64] = [:]
@@ -627,17 +673,31 @@ final class PagedKVBlockPool: @unchecked Sendable {
     private var restoredTokenCount: UInt64 = 0
     private var copyOnWriteBlockCount: UInt64 = 0
     private var peakResidentBytes: UInt64 = 0
+    private var storeCommitBoundaryHookForTesting: (@Sendable () -> Void)?
 
-    func makeCaches(blockSize: Int, layerCount: Int) -> [KVCache] {
+    func setStoreCommitBoundaryHookForTesting(_ hook: (@Sendable () -> Void)?) {
+        testHookLock.withLock {
+            storeCommitBoundaryHookForTesting = hook
+        }
+    }
+
+    func makeCaches(
+        blockSize: Int,
+        layerCount: Int,
+        streamOwner: MLX.Stream = StreamOrDevice.default.stream
+    ) -> [KVCache] {
         guard layerCount > 0 else { return [] }
         let lease = PagedKVCacheLease(
             blocks: [],
+            layerCount: layerCount,
+            streamOwner: streamOwner,
             privateAllocationOwner: makePrivateAllocationOwner()
         )
         return PagedKVCache.makeCaches(
             blocks: [],
             blockSize: blockSize,
             layerCount: layerCount,
+            streamOwner: streamOwner,
             lease: lease
         )
     }
@@ -646,7 +706,8 @@ final class PagedKVBlockPool: @unchecked Sendable {
         compatibilitySignature: String,
         tokenIDs: [Int],
         storedTokenBoundary: Int,
-        blockSize: Int
+        blockSize: Int,
+        streamOwner: MLX.Stream = StreamOrDevice.default.stream
     ) -> PagedKVLookupResult {
         let startedAt = Date.timeIntervalSinceReferenceDate
         let digests = pagedKVTokenBlockDigests(
@@ -659,9 +720,11 @@ final class PagedKVBlockPool: @unchecked Sendable {
             lookupCount += 1
             var sourceSnapshot: PagedKVPrefixSnapshot?
             var matchedBlockCount = 0
-            for candidate in entriesByID.values where
+            for candidate in entriesByID.values
+            where
                 candidate.compatibilitySignature == compatibilitySignature
-                    && candidate.blockSize == blockSize
+                && candidate.blockSize == blockSize
+                && candidate.streamOwner === streamOwner
             {
                 let commonBlockCount = zip(candidate.tokenBlockDigests, digests)
                     .prefix(while: { $0.0 == $0.1 })
@@ -689,11 +752,14 @@ final class PagedKVBlockPool: @unchecked Sendable {
                 tokenBlockDigests: matchedDigests,
                 blocks: matchedBlocks,
                 layerCount: sourceSnapshot.layerCount,
+                streamOwner: sourceSnapshot.streamOwner,
                 generation: sourceSnapshot.generation,
                 lastAccessOrdinal: sourceSnapshot.lastAccessOrdinal
             )
             let lease = PagedKVCacheLease(
                 blocks: matchedBlocks,
+                layerCount: sourceSnapshot.layerCount,
+                streamOwner: sourceSnapshot.streamOwner,
                 privateAllocationOwner: makePrivateAllocationOwner(),
                 onCopyOnWrite: { [weak self] in
                     self?.recordCopyOnWrite()
@@ -729,6 +795,16 @@ final class PagedKVBlockPool: @unchecked Sendable {
                 copyOnWriteBlockCount: 0
             )
         }
+        guard let streamOwner = pagedCaches.first?.ownerStream,
+            streamOwner === StreamOrDevice.default.stream,
+            pagedCaches.allSatisfy({ $0.ownerStream === streamOwner })
+        else {
+            return PagedKVStoreResult(
+                snapshot: nil,
+                fallbackReason: "cache_stream_owner_mismatch",
+                copyOnWriteBlockCount: 0
+            )
+        }
         let digests = pagedKVTokenBlockDigests(
             tokenIDs: tokenIDs,
             storedTokenBoundary: storedTokenBoundary,
@@ -738,151 +814,184 @@ final class PagedKVBlockPool: @unchecked Sendable {
         let expectedBlockCount = storedTokenBoundary / blockSize
         let payloadsByLayer = pagedCaches.map { $0.payloadsForSnapshot() }
         let privateAllocationOwner = pagedCaches.first?.allocationOwner
-        let transfersOnePrivateOwner = privateAllocationOwner != nil
+        let transfersOnePrivateOwner =
+            privateAllocationOwner != nil
             && pagedCaches.allSatisfy { $0.allocationOwner === privateAllocationOwner }
         let transferringOwner = transfersOnePrivateOwner ? privateAllocationOwner : nil
-        transferringOwner?.beginTransfer()
+        let performStore: (String?, UInt64) -> PagedKVStoreResult = {
+            [self] submittingOwnerID, submittingOwnerBytes in
+            let commitBoundaryHook = self.testHookLock.withLock {
+                self.storeCommitBoundaryHookForTesting
+            }
+            commitBoundaryHook?()
+            return self.lock.withLock {
+                let reusedSnapshot: PagedKVPrefixSnapshot?
+                if let reusedLookup {
+                    guard let matched = reusedLookup.snapshot,
+                        let source = reusedLookup.sourceSnapshot,
+                        let lease = reusedLookup.lease,
+                        source.compatibilitySignature == compatibilitySignature,
+                        source.blockSize == blockSize,
+                        source.layerCount == caches.count,
+                        source.streamOwner === streamOwner,
+                        matched.entryID == source.entryID,
+                        matched.compatibilitySignature == source.compatibilitySignature,
+                        matched.blockSize == source.blockSize,
+                        matched.layerCount == source.layerCount,
+                        matched.generation == source.generation,
+                        !matched.blocks.isEmpty,
+                        matched.blocks.count == matched.tokenBlockDigests.count,
+                        matched.blocks.count <= source.blocks.count,
+                        matched.tokenBlockDigests
+                            == Array(source.tokenBlockDigests.prefix(matched.blocks.count)),
+                        matched.tokenBlockDigests
+                            == Array(digests.prefix(matched.blocks.count)),
+                        let current = entriesByID[source.entryID],
+                        current === source,
+                        current.generation == source.generation,
+                        lease.blocks.count == matched.blocks.count,
+                        lease.streamOwner === streamOwner,
+                        zip(lease.blocks, source.blocks.prefix(matched.blocks.count))
+                            .allSatisfy({ $0.0 === $0.1 }),
+                        zip(matched.blocks, source.blocks.prefix(matched.blocks.count))
+                            .allSatisfy({ $0.0 === $0.1 }),
+                        matched.blocks.allSatisfy({
+                            blocksByIdentity[ObjectIdentifier($0)] === $0
+                        })
+                    else {
+                        return PagedKVStoreResult(
+                            snapshot: nil,
+                            fallbackReason: "cache_snapshot_validation_failed",
+                            copyOnWriteBlockCount: 0
+                        )
+                    }
+                    reusedSnapshot = matched
+                } else {
+                    reusedSnapshot = nil
+                }
 
-        let result = lock.withLock {
-            let reusedSnapshot: PagedKVPrefixSnapshot?
-            if let reusedLookup {
-                guard let matched = reusedLookup.snapshot,
-                      let source = reusedLookup.sourceSnapshot,
-                      let lease = reusedLookup.lease,
-                      source.compatibilitySignature == compatibilitySignature,
-                      source.blockSize == blockSize,
-                      source.layerCount == caches.count,
-                      matched.entryID == source.entryID,
-                      matched.compatibilitySignature == source.compatibilitySignature,
-                      matched.blockSize == source.blockSize,
-                      matched.layerCount == source.layerCount,
-                      matched.generation == source.generation,
-                      !matched.blocks.isEmpty,
-                      matched.blocks.count == matched.tokenBlockDigests.count,
-                      matched.blocks.count <= source.blocks.count,
-                      matched.tokenBlockDigests
-                        == Array(source.tokenBlockDigests.prefix(matched.blocks.count)),
-                      matched.tokenBlockDigests
-                        == Array(digests.prefix(matched.blocks.count)),
-                      let current = entriesByID[source.entryID],
-                      current === source,
-                      current.generation == source.generation,
-                      lease.blocks.count == matched.blocks.count,
-                      zip(lease.blocks, source.blocks.prefix(matched.blocks.count))
-                        .allSatisfy({ $0.0 === $0.1 }),
-                      zip(matched.blocks, source.blocks.prefix(matched.blocks.count))
-                        .allSatisfy({ $0.0 === $0.1 }),
-                      matched.blocks.allSatisfy({
-                          blocksByIdentity[ObjectIdentifier($0)] === $0
-                      }) else {
+                guard expectedBlockCount > 0,
+                    payloadsByLayer.allSatisfy({ $0.count == expectedBlockCount }),
+                    payloadsByLayer.allSatisfy({ $0.allSatisfy { $0.tokenCount == blockSize } })
+                else {
                     return PagedKVStoreResult(
                         snapshot: nil,
-                        fallbackReason: "cache_snapshot_validation_failed",
+                        fallbackReason: "cache_block_shape_mismatch",
                         copyOnWriteBlockCount: 0
                     )
                 }
-                reusedSnapshot = matched
-            } else {
-                reusedSnapshot = nil
-            }
 
-            guard expectedBlockCount > 0,
-                  payloadsByLayer.allSatisfy({ $0.count == expectedBlockCount }),
-                  payloadsByLayer.allSatisfy({ $0.allSatisfy { $0.tokenCount == blockSize } }) else {
-                return PagedKVStoreResult(
-                    snapshot: nil,
-                    fallbackReason: "cache_block_shape_mismatch",
-                    copyOnWriteBlockCount: 0
+                var blocks: [PagedKVBlock] = []
+                blocks.reserveCapacity(expectedBlockCount)
+                for blockIndex in 0..<expectedBlockCount {
+                    if let reusedSnapshot,
+                        reusedSnapshot.blocks.indices.contains(blockIndex),
+                        reusedSnapshot.tokenBlockDigests[blockIndex] == digests[blockIndex]
+                    {
+                        blocks.append(reusedSnapshot.blocks[blockIndex])
+                        continue
+                    }
+
+                    let start = blockIndex * blockSize
+                    blocks.append(
+                        PagedKVBlock(
+                            blockID: "pkvb-\(UUID().uuidString.lowercased())",
+                            tokenStart: start,
+                            tokenEnd: start + blockSize,
+                            layers: payloadsByLayer.map { $0[blockIndex] }
+                        ))
+                }
+
+                let snapshot = PagedKVPrefixSnapshot(
+                    entryID: entryID,
+                    compatibilitySignature: compatibilitySignature,
+                    blockSize: blockSize,
+                    tokenBlockDigests: digests,
+                    blocks: blocks,
+                    layerCount: caches.count,
+                    streamOwner: streamOwner,
+                    generation: nextGeneration,
+                    lastAccessOrdinal: nextAccessOrdinal
                 )
-            }
-
-            var blocks: [PagedKVBlock] = []
-            blocks.reserveCapacity(expectedBlockCount)
-            for blockIndex in 0 ..< expectedBlockCount {
-                if let reusedSnapshot,
-                   reusedSnapshot.blocks.indices.contains(blockIndex),
-                   reusedSnapshot.tokenBlockDigests[blockIndex] == digests[blockIndex] {
-                    blocks.append(reusedSnapshot.blocks[blockIndex])
-                    continue
-                }
-
-                let start = blockIndex * blockSize
-                blocks.append(PagedKVBlock(
-                    blockID: "pkvb-\(UUID().uuidString.lowercased())",
-                    tokenStart: start,
-                    tokenEnd: start + blockSize,
-                    layers: payloadsByLayer.map { $0[blockIndex] }
-                ))
-            }
-
-            let snapshot = PagedKVPrefixSnapshot(
-                entryID: entryID,
-                compatibilitySignature: compatibilitySignature,
-                blockSize: blockSize,
-                tokenBlockDigests: digests,
-                blocks: blocks,
-                layerCount: caches.count,
-                generation: nextGeneration,
-                lastAccessOrdinal: nextAccessOrdinal
-            )
-            let limit = budgetBytes
-            let activePrivateBytes = privateBytesByOwnerID.values.reduce(UInt64(0), +)
-            var proposedEntries = entriesByID
-            proposedEntries[entryID] = snapshot
-            var residentBlocks = retainedBlocks(for: proposedEntries)
-            var residentBytes = residentBlocks.values.reduce(UInt64(0)) { $0 + $1.bytes }
-                + activePrivateBytes
-            while residentBytes > limit {
-                guard let victim = proposedEntries.values
-                    .filter({ $0.entryID != entryID })
-                    .min(by: { $0.lastAccessOrdinal < $1.lastAccessOrdinal }) else {
-                    break
-                }
-                proposedEntries.removeValue(forKey: victim.entryID)
-                residentBlocks = retainedBlocks(for: proposedEntries)
-                residentBytes = residentBlocks.values.reduce(UInt64(0)) { $0 + $1.bytes }
+                let limit = budgetBytes
+                let activePrivateBytes =
+                    privateBytesByOwnerID.values.reduce(UInt64(0), +)
+                    - submittingOwnerBytes
+                var proposedEntries = entriesByID
+                proposedEntries[entryID] = snapshot
+                var residentBlocks = retainedBlocks(for: proposedEntries)
+                var residentBytes =
+                    residentBlocks.values.reduce(UInt64(0)) { $0 + $1.bytes }
                     + activePrivateBytes
-            }
-            guard residentBytes <= limit else {
+                while residentBytes > limit {
+                    guard
+                        let victim = proposedEntries.values
+                            .filter({ candidate in
+                                candidate.entryID != entryID
+                                    && candidate.blocks.allSatisfy { $0.leaseCount() == 0 }
+                            })
+                            .min(by: { $0.lastAccessOrdinal < $1.lastAccessOrdinal })
+                    else {
+                        break
+                    }
+                    proposedEntries.removeValue(forKey: victim.entryID)
+                    residentBlocks = retainedBlocks(for: proposedEntries)
+                    residentBytes =
+                        residentBlocks.values.reduce(UInt64(0)) { $0 + $1.bytes }
+                        + activePrivateBytes
+                }
+                guard residentBytes <= limit else {
+                    return PagedKVStoreResult(
+                        snapshot: nil,
+                        fallbackReason: "cache_memory_budget_exceeded",
+                        copyOnWriteBlockCount: 0
+                    )
+                }
+
+                entriesByID = proposedEntries
+                blocksByIdentity = residentBlocks
+                if let submittingOwnerID {
+                    privateBytesByOwnerID.removeValue(forKey: submittingOwnerID)
+                }
+                nextGeneration += 1
+                nextAccessOrdinal += 1
+                if let reusedSnapshot {
+                    hitCount += 1
+                    restoredTokenCount += UInt64(reusedSnapshot.tokenCount)
+                }
+                peakResidentBytes = max(peakResidentBytes, residentBytes)
+                let lease = PagedKVCacheLease(
+                    blocks: snapshot.blocks,
+                    layerCount: caches.count,
+                    streamOwner: snapshot.streamOwner,
+                    privateAllocationOwner: makePrivateAllocationOwner(),
+                    onCopyOnWrite: { [weak self] in
+                        self?.recordCopyOnWrite()
+                    },
+                    onRelease: { [weak self] in
+                        self?.releaseUnreferencedBlocks()
+                    }
+                )
                 return PagedKVStoreResult(
-                    snapshot: nil,
-                    fallbackReason: "cache_memory_budget_exceeded",
-                    copyOnWriteBlockCount: 0
+                    snapshot: snapshot,
+                    fallbackReason: "",
+                    copyOnWriteBlockCount: 0,
+                    lease: lease
                 )
             }
-
-            entriesByID = proposedEntries
-            blocksByIdentity = residentBlocks
-            nextGeneration += 1
-            nextAccessOrdinal += 1
-            if let reusedSnapshot {
-                hitCount += 1
-                restoredTokenCount += UInt64(reusedSnapshot.tokenCount)
-            }
-            peakResidentBytes = max(peakResidentBytes, residentBytes)
-            let lease = PagedKVCacheLease(
-                blocks: snapshot.blocks,
-                privateAllocationOwner: makePrivateAllocationOwner(),
-                onCopyOnWrite: { [weak self] in
-                    self?.recordCopyOnWrite()
-                },
-                onRelease: { [weak self] in
-                    self?.releaseUnreferencedBlocks()
-                }
-            )
-            return PagedKVStoreResult(
-                snapshot: snapshot,
-                fallbackReason: "",
-                copyOnWriteBlockCount: 0,
-                lease: lease
-            )
         }
-        if result.snapshot == nil {
-            transferringOwner?.cancelTransfer()
-        } else {
-            transferringOwner?.completeTransfer()
+        guard let transferringOwner else {
+            return performStore(nil, 0)
         }
-        return result
+        return transferringOwner.withPoolTransfer { ownerID, ownerBytes in
+            let result = performStore(ownerID, ownerBytes)
+            return (result, result.snapshot != nil)
+        }
+            ?? PagedKVStoreResult(
+                snapshot: nil,
+                fallbackReason: "cache_private_owner_transfer_unavailable",
+                copyOnWriteBlockCount: 0
+            )
     }
 
     func stats() -> RuntimePagedKVPoolStats {
@@ -993,9 +1102,10 @@ final class PagedKVBlockPool: @unchecked Sendable {
 }
 
 func pagedKVCacheLayoutIsSupported(_ caches: [KVCache]) -> Bool {
-    !caches.isEmpty && caches.allSatisfy { cache in
-        type(of: cache) == KVCacheSimple.self
-    }
+    !caches.isEmpty
+        && caches.allSatisfy { cache in
+            type(of: cache) == KVCacheSimple.self
+        }
 }
 
 func pagedKVArrayBytes(_ array: MLXArray) -> UInt64 {
@@ -1011,7 +1121,7 @@ private func pagedKVTokenBlockDigests(
     return stride(from: 0, to: storedTokenBoundary, by: blockSize).map { start in
         let end = min(storedTokenBoundary, start + blockSize)
         var data = Data(capacity: (end - start) * MemoryLayout<Int64>.size)
-        for tokenID in tokenIDs[start ..< end] {
+        for tokenID in tokenIDs[start..<end] {
             var value = Int64(tokenID).littleEndian
             withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
         }
