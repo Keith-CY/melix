@@ -17,7 +17,7 @@ let package = Package(
         // with Xcode 26.6 / Swift 6.3.3. This shared package participates in all
         // five committed SwiftPM graphs, so one exact constraint keeps every
         // workspace on the compatible release.
-        .package(url: "https://github.com/apple/swift-collections.git", exact: "1.3.0"),
+        .package(url: "https://github.com/apple/swift-collections.git", exact: "1.6.0"),
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.37.0"),
         .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.4.1"),
         .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.3.0"),
