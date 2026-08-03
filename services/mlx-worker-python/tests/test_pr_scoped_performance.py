@@ -8697,4 +8697,5 @@ def test_agentic_tool_guardrail_loop_probe_script_emits_metrics(
     assert metrics["prompt_current_payload_bytes_max_v1"] > 0.0
     assert metrics["ledger_state_bytes_per_call_v1"] > 0.0
     assert metrics["ledger_decision_latency_ms_mean_v1"] > 0.0
+    assert metrics["ledger_checkpoint_serialization_latency_ms_mean_v1"] > 0.0
     assert metrics["ledger_entry_count_v1"] == 8.0

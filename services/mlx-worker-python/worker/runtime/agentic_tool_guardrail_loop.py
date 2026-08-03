@@ -17,6 +17,7 @@ from worker.runtime.agentic_tools import (
     heal_agentic_tool_calls,
 )
 from worker.runtime.stream_assembler import AssemblyDelta
+from worker.runtime.tool_observation import DEFAULT_TOOL_OBSERVATION_TEXT_BYTE_LIMIT
 from worker.runtime.tool_registry import ToolRegistry, agentic_tool_catalog_registry
 
 AGENTIC_TOOL_GUARDRAIL_STATE_SCHEMA_VERSION = "melix.agentic_tool_guardrail_state.v1"
@@ -25,6 +26,8 @@ AGENTIC_TOOL_GUARDRAIL_EVENT_SCHEMA_VERSION = "melix.agentic_tool_guardrail_even
 AGENTIC_TOOL_GUARDRAIL_DIAGNOSTIC_SCHEMA_VERSION = (
     "melix.agentic_tool_guardrail_diagnostic.v1"
 )
+AGENTIC_TOOL_RESULT_EXPORT_SCHEMA_VERSION = "melix.agentic_tool_result_export.v1"
+AGENTIC_TOOL_RESULT_EXPORT_POLICY = "model_text_summary_ui_full"
 
 _STATE_COUNTER_FIELDS = (
     "responses_seen",
@@ -47,6 +50,44 @@ _REQUIRED_TOOL_LIFECYCLE_STATES = frozenset(
 _EXECUTION_LEDGER_LIFECYCLE_STATES = frozenset(
     {"authorized", "executing", "completed", "retired"}
 )
+_FRONTEND_ONLY_PAYLOAD_KEYS = frozenset(
+    {
+        "audio",
+        "audio_base64",
+        "audio_bytes",
+        "audio_data",
+        "binary",
+        "binary_data",
+        "blob",
+        "data_uri",
+        "frontend_payload",
+        "image",
+        "image_base64",
+        "image_bytes",
+        "image_data",
+        "images",
+        "media",
+        "media_base64",
+        "media_bytes",
+        "media_data",
+        "thumbnail",
+        "thumbnail_data",
+        "video",
+        "video_base64",
+        "video_bytes",
+        "video_data",
+    }
+)
+_MODEL_EXPORT_KEY_PRIORITY = {
+    "error": 0,
+    "result": 1,
+    "results": 2,
+    "elements": 3,
+    "summary": 4,
+    "text": 5,
+    "message": 6,
+}
+_OMITTED_MODEL_EXPORT_VALUE = object()
 
 
 class AgenticToolGuardrailLoopError(ValueError):
@@ -60,9 +101,16 @@ class AgenticToolGuardrailLoopError(ValueError):
         self.event = event
 
 
+class AgenticToolGuardrailStatePersistenceError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class AgenticToolGuardrailConfig:
     request_id: str
+    thread_scope_id: str = ""
+    current_turn_tool_start: int = 0
+    tool_result_export_policy: str = AGENTIC_TOOL_RESULT_EXPORT_POLICY
     required_tools: tuple[str, ...] = ()
     prerequisites: tuple[AgenticToolPrerequisite, ...] = ()
     max_consecutive_malformed_responses: int = 2
@@ -71,11 +119,29 @@ class AgenticToolGuardrailConfig:
 
     def __post_init__(self) -> None:
         request_id = self.request_id.strip()
+        thread_scope_id = (
+            request_id if self.thread_scope_id == "" else self.thread_scope_id.strip()
+        )
+        tool_result_export_policy = self.tool_result_export_policy.strip()
         required_tools = tuple(
             dict.fromkeys(name.strip() for name in self.required_tools if name.strip())
         )
         if not request_id:
             raise AgenticToolGuardrailLoopError("A guardrail loop request id is required.")
+        if not thread_scope_id:
+            raise AgenticToolGuardrailLoopError("A guardrail loop thread scope id is required.")
+        if (
+            isinstance(self.current_turn_tool_start, bool)
+            or not isinstance(self.current_turn_tool_start, int)
+            or self.current_turn_tool_start < 0
+        ):
+            raise AgenticToolGuardrailLoopError(
+                "Guardrail current-turn tool start must be a nonnegative integer."
+            )
+        if tool_result_export_policy != AGENTIC_TOOL_RESULT_EXPORT_POLICY:
+            raise AgenticToolGuardrailLoopError(
+                "Guardrail tool-result export policy is unsupported."
+            )
         if self.max_consecutive_malformed_responses < 0:
             raise AgenticToolGuardrailLoopError("Malformed-response budget cannot be negative.")
         if self.max_consecutive_tool_failures < 0:
@@ -83,6 +149,8 @@ class AgenticToolGuardrailConfig:
         if self.max_turns < 1:
             raise AgenticToolGuardrailLoopError("Guardrail loop max turns must be positive.")
         object.__setattr__(self, "request_id", request_id)
+        object.__setattr__(self, "thread_scope_id", thread_scope_id)
+        object.__setattr__(self, "tool_result_export_policy", tool_result_export_policy)
         object.__setattr__(self, "required_tools", required_tools)
         object.__setattr__(self, "prerequisites", tuple(self.prerequisites))
 
@@ -90,6 +158,9 @@ class AgenticToolGuardrailConfig:
         return {
             "schema_version": AGENTIC_TOOL_GUARDRAIL_CONFIG_SCHEMA_VERSION,
             "request_id": self.request_id,
+            "thread_scope_id": self.thread_scope_id,
+            "current_turn_tool_start": self.current_turn_tool_start,
+            "tool_result_export_policy": self.tool_result_export_policy,
             "required_tools": list(self.required_tools),
             "prerequisites": [
                 {
@@ -140,6 +211,16 @@ class AgenticToolGuardrailConfig:
                 raise AgenticToolGuardrailLoopError(str(exc)) from exc
         return cls(
             request_id=_required_string(payload.get("request_id"), "request_id"),
+            thread_scope_id=_required_string(
+                payload.get("thread_scope_id"), "thread_scope_id"
+            ),
+            current_turn_tool_start=_required_int(
+                payload.get("current_turn_tool_start"), "current_turn_tool_start"
+            ),
+            tool_result_export_policy=_required_string(
+                payload.get("tool_result_export_policy"),
+                "tool_result_export_policy",
+            ),
             required_tools=required_tools,
             prerequisites=tuple(prerequisites),
             max_consecutive_malformed_responses=_required_int(
@@ -174,6 +255,9 @@ class AgenticToolGuardrailEvent:
     tool_name: str = ""
     consecutive_malformed_responses: int = 0
     consecutive_tool_failures: int = 0
+    thread_scope_id: str = ""
+    current_turn_tool_start: int = 0
+    tool_result_export_policy: str = AGENTIC_TOOL_RESULT_EXPORT_POLICY
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -187,6 +271,9 @@ class AgenticToolGuardrailEvent:
             "tool_name": self.tool_name,
             "consecutive_malformed_responses": self.consecutive_malformed_responses,
             "consecutive_tool_failures": self.consecutive_tool_failures,
+            "thread_scope_id": self.thread_scope_id,
+            "current_turn_tool_start": self.current_turn_tool_start,
+            "tool_result_export_policy": self.tool_result_export_policy,
         }
 
 
@@ -213,7 +300,7 @@ class AgenticToolGuardrailRun:
 class AgenticToolGuardrailModelDirective:
     tool_choice: str
     context_messages: tuple[dict[str, str], ...] = ()
-    tool_observations: tuple[AgenticToolExecutionResult, ...] = ()
+    tool_observations: tuple[dict[str, object], ...] = ()
     nudge: AgenticToolGuardrailNudge | None = None
 
 
@@ -225,10 +312,12 @@ class AgenticToolGuardrailLoop:
         registry: ToolRegistry | None = None,
         runtime: DeterministicAgenticToolRuntime | None = None,
         state: dict[str, object] | None = None,
+        persist_executing_state: Callable[[dict[str, object]], None] | None = None,
     ) -> None:
         self.config = config
         self._registry = registry or agentic_tool_catalog_registry()
         self._runtime = runtime or DeterministicAgenticToolRuntime(registry=self._registry)
+        self._persist_executing_state = persist_executing_state
         self._state = self._restore_state(state)
         configured_tools = set(config.required_tools)
         for prerequisite in config.prerequisites:
@@ -247,6 +336,9 @@ class AgenticToolGuardrailLoop:
                     outcome="rejected",
                     failure_reason="configured_tool_unavailable",
                     tool_name=unknown_tool,
+                    thread_scope_id=config.thread_scope_id,
+                    current_turn_tool_start=config.current_turn_tool_start,
+                    tool_result_export_policy=config.tool_result_export_policy,
                 ),
             )
 
@@ -339,6 +431,12 @@ class AgenticToolGuardrailLoop:
             call_id = str(normalized_call["id"])
             tool_name = str(normalized_call["name"])
             arguments = dict(normalized_call["arguments"])
+            if not _is_json_value(arguments):
+                return self._malformed_turn(
+                    "invalid_arguments",
+                    events=events,
+                    results=results,
+                )
             try:
                 fingerprint = _tool_call_fingerprint(tool_name=tool_name, arguments=arguments)
             except (TypeError, ValueError):
@@ -357,14 +455,54 @@ class AgenticToolGuardrailLoop:
                         tool_call_id=call_id,
                         tool_name=tool_name,
                     )
+                if previous_entry["lifecycle_state"] == "executing":
+                    self._state["replay_suppression_count"] = (
+                        int(self._state["replay_suppression_count"]) + 1
+                    )
+                    events.append(
+                        self._event(
+                            "replay_suppressed",
+                            "execution_outcome_uncertain",
+                            failure_reason="tool_execution_outcome_uncertain",
+                            tool_call_id=call_id,
+                            tool_name=tool_name,
+                        )
+                    )
+                    return self._terminal_turn(
+                        "tool_execution_outcome_uncertain",
+                        events=events,
+                        results=results,
+                        tool_call_id=call_id,
+                        tool_name=tool_name,
+                    )
                 self._state["replay_suppression_count"] = (
                     int(self._state["replay_suppression_count"]) + 1
                 )
-                self._state["consecutive_malformed_responses"] = 0
                 events.append(
                     self._event(
                         "replay_suppressed",
                         "suppressed",
+                        tool_call_id=call_id,
+                        tool_name=tool_name,
+                    )
+                )
+                continue
+
+            required_lifecycle = self._required_tool_lifecycle().get(tool_name)
+            if required_lifecycle == "executing":
+                return self._terminal_turn(
+                    "required_tool_execution_outcome_uncertain",
+                    events=events,
+                    results=results,
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                )
+            if required_lifecycle in {"completed", "retired"}:
+                events.append(
+                    self._event(
+                        "tool_call_retired",
+                        "retired",
+                        failure_reason="required_step_already_completed",
                         tool_call_id=call_id,
                         tool_name=tool_name,
                     )
@@ -401,10 +539,31 @@ class AgenticToolGuardrailLoop:
             self._state["consecutive_malformed_responses"] = 0
             self._state["tool_execution_count"] = int(self._state["tool_execution_count"]) + 1
             try:
+                self._persist_before_dispatch()
+            except AgenticToolGuardrailStatePersistenceError:
+                events.append(
+                    self._event(
+                        "state_checkpoint",
+                        "failed",
+                        failure_reason="tool_state_checkpoint_failed",
+                        tool_call_id=call_id,
+                        tool_name=tool_name,
+                    )
+                )
+                return self._terminal_turn(
+                    "tool_state_checkpoint_failed",
+                    events=events,
+                    results=results,
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                )
+            try:
                 result = self._runtime.execute(
                     tool_name=tool_name,
                     arguments=arguments,
                     tool_call_id=call_id,
+                    thread_scope_id=self.config.thread_scope_id,
+                    current_turn_tool_start=self.config.current_turn_tool_start,
                 )
             except Exception:
                 events.append(
@@ -418,6 +577,28 @@ class AgenticToolGuardrailLoop:
                 )
                 return self._tool_failure_turn(
                     "tool_adapter_error",
+                    events=events,
+                    results=results,
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                )
+            if (
+                result.tool_call_id != call_id
+                or result.tool_name != tool_name
+                or result.thread_scope_id != self.config.thread_scope_id
+                or result.current_turn_tool_start != self.config.current_turn_tool_start
+            ):
+                events.append(
+                    self._event(
+                        "tool_result_binding",
+                        "rejected",
+                        failure_reason="tool_result_scope_mismatch",
+                        tool_call_id=call_id,
+                        tool_name=tool_name,
+                    )
+                )
+                return self._terminal_turn(
+                    "tool_result_scope_mismatch",
                     events=events,
                     results=results,
                     tool_call_id=call_id,
@@ -499,7 +680,21 @@ class AgenticToolGuardrailLoop:
         )
 
     def state_snapshot(self) -> dict[str, object]:
-        return copy.deepcopy(self._state)
+        snapshot = self._state.copy()
+        snapshot["completed_tool_calls"] = [
+            {
+                "id": call["id"],
+                "name": call["name"],
+                "arguments": _copy_json_value(call["arguments"]),
+            }
+            for call in self._completed_calls()
+        ]
+        snapshot["execution_ledger"] = {
+            call_id: entry.copy()
+            for call_id, entry in self._execution_ledger().items()
+        }
+        snapshot["required_tool_lifecycle"] = self._required_tool_lifecycle().copy()
+        return snapshot
 
     def diagnostics(self) -> dict[str, object]:
         completed_names = {str(call.get("name", "")) for call in self._completed_calls()}
@@ -526,6 +721,9 @@ class AgenticToolGuardrailLoop:
             "completed_required_tools": [
                 name for name in self.config.required_tools if name in completed_names
             ],
+            "thread_scope_id": self.config.thread_scope_id,
+            "current_turn_tool_start": self.config.current_turn_tool_start,
+            "tool_result_export_policy": self.config.tool_result_export_policy,
         }
 
     def next_model_directive(
@@ -534,6 +732,21 @@ class AgenticToolGuardrailLoop:
         *,
         tool_observations: tuple[AgenticToolExecutionResult, ...] = (),
     ) -> AgenticToolGuardrailModelDirective:
+        for result in tool_observations:
+            if (
+                result.thread_scope_id != self.config.thread_scope_id
+                or result.current_turn_tool_start != self.config.current_turn_tool_start
+            ):
+                raise AgenticToolGuardrailLoopError(
+                    "Tool result thread or turn boundary does not match the active loop.",
+                    event=self._event(
+                        "tool_result_export",
+                        "rejected",
+                        failure_reason="tool_result_scope_mismatch",
+                        tool_call_id=result.tool_call_id,
+                        tool_name=result.tool_name,
+                    ),
+                )
         if bool(self._state["terminal"]) or bool(self._state["awaiting_final_answer"]):
             tool_choice = "none"
         elif self._missing_required_tools():
@@ -548,7 +761,10 @@ class AgenticToolGuardrailLoop:
         return AgenticToolGuardrailModelDirective(
             tool_choice=tool_choice,
             context_messages=messages,
-            tool_observations=tool_observations,
+            tool_observations=tuple(
+                _model_tool_observation_export(result, config=self.config)
+                for result in tool_observations
+            ),
             nudge=nudge,
         )
 
@@ -557,6 +773,15 @@ class AgenticToolGuardrailLoop:
         *,
         events: list[AgenticToolGuardrailEvent] | None = None,
     ) -> AgenticToolGuardrailTurn:
+        if bool(self._state["terminal"]):
+            outcome = str(self._state["final_outcome"])
+            return AgenticToolGuardrailTurn(
+                action="complete" if outcome == "completed" else "failed",
+                nudge=None,
+                tool_results=(),
+                events=(),
+                failure_reason=str(self._state["final_failure_reason"]),
+            )
         budget_events = list(events) if events is not None else self._preflight_events()
         budget_events.append(self._event("turn_budget", "exhausted"))
         return self._terminal_turn(
@@ -676,6 +901,14 @@ class AgenticToolGuardrailLoop:
         self._state["consecutive_tool_failures"] = (
             int(self._state["consecutive_tool_failures"]) + 1
         )
+        if tool_name in self.config.required_tools:
+            return self._terminal_turn(
+                "required_tool_execution_outcome_uncertain",
+                events=events,
+                results=results,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+            )
         if (
             int(self._state["consecutive_tool_failures"])
             > self.config.max_consecutive_tool_failures
@@ -776,6 +1009,9 @@ class AgenticToolGuardrailLoop:
                 self._state["consecutive_malformed_responses"]
             ),
             consecutive_tool_failures=int(self._state["consecutive_tool_failures"]),
+            thread_scope_id=self.config.thread_scope_id,
+            current_turn_tool_start=self.config.current_turn_tool_start,
+            tool_result_export_policy=self.config.tool_result_export_policy,
         )
 
     def _preflight_events(self) -> list[AgenticToolGuardrailEvent]:
@@ -873,9 +1109,7 @@ class AgenticToolGuardrailLoop:
 
     def _restore_state(self, state: dict[str, object] | None) -> dict[str, object]:
         if state is None:
-            return _new_guardrail_state(
-                self.config.request_id, self.config.required_tools
-            )
+            return _new_guardrail_state(self.config)
         if not isinstance(state, dict):
             raise AgenticToolGuardrailLoopError("Guardrail state must be an object.")
         restored = copy.deepcopy(state)
@@ -884,7 +1118,7 @@ class AgenticToolGuardrailLoop:
         if restored.get("request_id") != self.config.request_id:
             raise AgenticToolGuardrailLoopError("Guardrail state request id does not match config.")
         expected_keys = set(
-            _new_guardrail_state(self.config.request_id, self.config.required_tools)
+            _new_guardrail_state(self.config)
         )
         if set(restored) != expected_keys:
             raise AgenticToolGuardrailLoopError(
@@ -906,6 +1140,34 @@ class AgenticToolGuardrailLoop:
                 raise AgenticToolGuardrailLoopError(
                     f"Guardrail state {field} must be a string."
                 )
+        if not isinstance(restored["thread_scope_id"], str) or not restored[
+            "thread_scope_id"
+        ]:
+            raise AgenticToolGuardrailLoopError(
+                "Guardrail state thread scope id must be a nonempty string."
+            )
+        if (
+            isinstance(restored["current_turn_tool_start"], bool)
+            or not isinstance(restored["current_turn_tool_start"], int)
+            or restored["current_turn_tool_start"] < 0
+        ):
+            raise AgenticToolGuardrailLoopError(
+                "Guardrail state current-turn tool start must be a nonnegative integer."
+            )
+        if not isinstance(restored["tool_result_export_policy"], str):
+            raise AgenticToolGuardrailLoopError(
+                "Guardrail state tool-result export policy must be a string."
+            )
+        if (
+            restored["thread_scope_id"] != self.config.thread_scope_id
+            or restored["current_turn_tool_start"]
+            != self.config.current_turn_tool_start
+            or restored["tool_result_export_policy"]
+            != self.config.tool_result_export_policy
+        ):
+            raise AgenticToolGuardrailLoopError(
+                "Guardrail state thread, turn, or export-policy boundary does not match config."
+            )
 
         completed_calls = restored["completed_tool_calls"]
         if not isinstance(completed_calls, list):
@@ -1040,9 +1302,9 @@ class AgenticToolGuardrailLoop:
             raise AgenticToolGuardrailLoopError(
                 "Guardrail state tool execution count must match the execution ledger."
             )
-        if tool_failure_count != executing_entries:
+        if tool_failure_count > executing_entries:
             raise AgenticToolGuardrailLoopError(
-                "Guardrail state tool failures must match uncertain executions."
+                "Guardrail state tool failures cannot exceed uncertain executions."
             )
         if restored["duplicate_execution_count"] != 0:
             raise AgenticToolGuardrailLoopError(
@@ -1070,20 +1332,23 @@ class AgenticToolGuardrailLoop:
             )
 
         for tool_name, lifecycle_state in required_tool_lifecycle.items():
-            matching_ledger_states = {
-                entry["lifecycle_state"]
+            matching_ledger_entries = [
+                entry
                 for entry in execution_ledger.values()
                 if entry["tool_name"] == tool_name
-            }
-            if lifecycle_state == "required" and tool_name in completed_names:
-                raise AgenticToolGuardrailLoopError(
-                    "Required lifecycle cannot contain completed evidence."
-                )
-            if lifecycle_state in {"authorized", "executing", "completed", "retired"}:
-                if lifecycle_state not in matching_ledger_states:
+            ]
+            if lifecycle_state == "required":
+                if matching_ledger_entries or tool_name in completed_names:
                     raise AgenticToolGuardrailLoopError(
-                        "Required lifecycle must match execution-ledger evidence."
+                        "Required lifecycle cannot contain execution evidence."
                     )
+            elif (
+                len(matching_ledger_entries) != 1
+                or matching_ledger_entries[0]["lifecycle_state"] != lifecycle_state
+            ):
+                raise AgenticToolGuardrailLoopError(
+                    "Required lifecycle must uniquely match execution-ledger evidence."
+                )
             if lifecycle_state in {"completed", "retired"} and tool_name not in completed_names:
                 raise AgenticToolGuardrailLoopError(
                     "Completed required lifecycle needs a completed call."
@@ -1197,6 +1462,18 @@ class AgenticToolGuardrailLoop:
             )
         return restored
 
+    def _persist_before_dispatch(self) -> None:
+        if self._persist_executing_state is None:
+            raise AgenticToolGuardrailStatePersistenceError(
+                "A durable executing-state checkpoint is required before tool dispatch."
+            )
+        try:
+            self._persist_executing_state(self.state_snapshot())
+        except Exception as exc:
+            raise AgenticToolGuardrailStatePersistenceError(
+                "The durable executing-state checkpoint failed before tool dispatch."
+            ) from exc
+
 
 def agentic_tool_calls_from_stream_deltas(
     deltas: Iterable[AssemblyDelta],
@@ -1273,12 +1550,14 @@ def run_guarded_agentic_tool_loop(
     registry: ToolRegistry | None = None,
     runtime: DeterministicAgenticToolRuntime | None = None,
     state: dict[str, object] | None = None,
+    persist_executing_state: Callable[[dict[str, object]], None],
 ) -> AgenticToolGuardrailRun:
     loop = AgenticToolGuardrailLoop(
         config=config,
         registry=registry,
         runtime=runtime,
         state=state,
+        persist_executing_state=persist_executing_state,
     )
     turns: list[AgenticToolGuardrailTurn] = []
     nudge: AgenticToolGuardrailNudge | None = None
@@ -1322,16 +1601,17 @@ def run_guarded_agentic_tool_loop(
     )
 
 
-def _new_guardrail_state(
-    request_id: str, required_tools: Iterable[str]
-) -> dict[str, object]:
+def _new_guardrail_state(config: AgenticToolGuardrailConfig) -> dict[str, object]:
     return {
         "schema_version": AGENTIC_TOOL_GUARDRAIL_STATE_SCHEMA_VERSION,
-        "request_id": request_id,
+        "request_id": config.request_id,
+        "thread_scope_id": config.thread_scope_id,
+        "current_turn_tool_start": config.current_turn_tool_start,
+        "tool_result_export_policy": config.tool_result_export_policy,
         "completed_tool_calls": [],
         "execution_ledger": {},
         "required_tool_lifecycle": {
-            tool_name: "required" for tool_name in required_tools
+            tool_name: "required" for tool_name in config.required_tools
         },
         "responses_seen": 0,
         "healed_response_count": 0,
@@ -1353,6 +1633,147 @@ def _new_guardrail_state(
         "event_sequence": 0,
         "preflight_event_emitted": False,
     }
+
+
+def _model_tool_observation_export(
+    result: AgenticToolExecutionResult,
+    *,
+    config: AgenticToolGuardrailConfig,
+) -> dict[str, object]:
+    projected_payload = _model_safe_payload(result.observation.payload)
+    summary = _model_safe_payload_text(projected_payload)
+    if not summary:
+        summary = (
+            f"{result.tool_name} returned "
+            f"{result.observation.observation_kind} ({result.status})."
+        )
+    return {
+        "schema_version": AGENTIC_TOOL_RESULT_EXPORT_SCHEMA_VERSION,
+        "thread_scope_id": config.thread_scope_id,
+        "current_turn_tool_start": config.current_turn_tool_start,
+        "tool_result_export_policy": config.tool_result_export_policy,
+        "tool_call_id": result.tool_call_id,
+        "tool_name": result.tool_name,
+        "status": result.status,
+        "observation_kind": result.observation.observation_kind,
+        "text_summary": summary,
+        "frontend_payload_included": False,
+    }
+
+
+def _model_safe_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        projected: dict[str, Any] = {}
+        ordered_items = sorted(
+            value.items(),
+            key=lambda item: (
+                _MODEL_EXPORT_KEY_PRIORITY.get(str(item[0]), 100),
+                str(item[0]),
+            ),
+        )
+        for raw_key, raw_value in ordered_items:
+            key = str(raw_key)
+            if _is_frontend_only_payload_key(key):
+                continue
+            projected_value = _model_safe_payload(raw_value)
+            if projected_value is _OMITTED_MODEL_EXPORT_VALUE:
+                continue
+            projected_key = _strip_tool_wire_sentinels(key).strip()
+            if not projected_key or projected_key in projected:
+                continue
+            projected[projected_key] = projected_value
+        return projected if projected else _OMITTED_MODEL_EXPORT_VALUE
+    if isinstance(value, (list, tuple)):
+        projected_items = [
+            projected
+            for item in value
+            if (projected := _model_safe_payload(item))
+            is not _OMITTED_MODEL_EXPORT_VALUE
+        ]
+        return projected_items
+    if isinstance(value, str):
+        if _is_frontend_only_text(value):
+            return _OMITTED_MODEL_EXPORT_VALUE
+        return _strip_tool_wire_sentinels(value)
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else str(value)
+    return _strip_tool_wire_sentinels(str(value))
+
+
+def _model_safe_payload_text(value: Any) -> str:
+    if value is _OMITTED_MODEL_EXPORT_VALUE:
+        return ""
+    if isinstance(value, dict) and len(value) == 1:
+        key, candidate = next(iter(value.items()))
+        if key in {"summary", "text", "message", "error"} and isinstance(candidate, str):
+            return _bounded_model_export_text(candidate.strip())
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return _bounded_model_export_json_text(serialized)
+
+
+def _bounded_model_export_text(value: str) -> str:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= DEFAULT_TOOL_OBSERVATION_TEXT_BYTE_LIMIT:
+        return value
+    return encoded[:DEFAULT_TOOL_OBSERVATION_TEXT_BYTE_LIMIT].decode(
+        "utf-8", errors="ignore"
+    )
+
+
+def _bounded_model_export_json_text(serialized: str) -> str:
+    encoded = serialized.encode("utf-8")
+    if len(encoded) <= DEFAULT_TOOL_OBSERVATION_TEXT_BYTE_LIMIT:
+        return serialized
+
+    lower = 0
+    upper = len(encoded)
+    best = ""
+    while lower <= upper:
+        midpoint = (lower + upper) // 2
+        preview = encoded[:midpoint].decode("utf-8", errors="ignore")
+        candidate = json.dumps(
+            {"json_preview": preview, "truncated": True},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(candidate.encode("utf-8")) <= DEFAULT_TOOL_OBSERVATION_TEXT_BYTE_LIMIT:
+            best = candidate
+            lower = midpoint + 1
+        else:
+            upper = midpoint - 1
+    return best
+
+
+def _is_frontend_only_payload_key(value: str) -> bool:
+    normalized = value.strip().lower().replace("-", "_")
+    return normalized in _FRONTEND_ONLY_PAYLOAD_KEYS or normalized.endswith(
+        ("_base64", "_bytes", "_data_uri")
+    )
+
+
+def _is_frontend_only_text(value: str) -> bool:
+    normalized = value.lstrip().lower()
+    return normalized.startswith("data:")
+
+
+def _strip_tool_wire_sentinels(value: str) -> str:
+    cleaned = value
+    for sentinel in (
+        "<tool_call>",
+        "</tool_call>",
+        "<tool_result>",
+        "</tool_result>",
+        "<|tool_call|>",
+        "<|tool_result|>",
+    ):
+        cleaned = cleaned.replace(sentinel, "")
+    return cleaned
 
 
 def _tool_call_fingerprint(*, tool_name: str, arguments: dict[str, Any]) -> str:
@@ -1378,6 +1799,14 @@ def _is_json_value(value: object) -> bool:
             for key, item in value.items()
         )
     return False
+
+
+def _copy_json_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_copy_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _copy_json_value(item) for key, item in value.items()}
+    return value
 
 
 def _required_string(value: object, field: str) -> str:
@@ -1448,6 +1877,8 @@ __all__ = [
     "AGENTIC_TOOL_GUARDRAIL_DIAGNOSTIC_SCHEMA_VERSION",
     "AGENTIC_TOOL_GUARDRAIL_EVENT_SCHEMA_VERSION",
     "AGENTIC_TOOL_GUARDRAIL_STATE_SCHEMA_VERSION",
+    "AGENTIC_TOOL_RESULT_EXPORT_POLICY",
+    "AGENTIC_TOOL_RESULT_EXPORT_SCHEMA_VERSION",
     "AgenticToolGuardrailConfig",
     "AgenticToolGuardrailEvent",
     "AgenticToolGuardrailLoop",

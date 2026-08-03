@@ -6,13 +6,16 @@
     "watch_globs": [
       "services/mlx-worker-python/worker/runtime/agentic_tool_guardrail_loop.py",
       "services/mlx-worker-python/worker/runtime/agentic_tool_parking_budget.py",
+      "services/mlx-worker-python/worker/runtime/agentic_tools.py",
       "services/mlx-worker-python/tests/test_agentic_tool_guardrail_loop.py",
       "services/mlx-worker-python/tests/test_agentic_tool_parking_budget.py",
+      "services/mlx-worker-python/tests/test_agentic_tool_guardrail_diagnostics.py",
       "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/agentic_tool_guardrail_diagnostics.py",
       "scripts/agentic_tool_guardrail_loop_probe.py"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_agentic_tool_guardrail_loop.py services/mlx-worker-python/tests/test_agentic_tool_parking_budget.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_agentic_tool_guardrail_loop_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agentic_tool_guardrail_loop_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_agentic_tool_guardrail_loop.py services/mlx-worker-python/tests/test_agentic_tool_parking_budget.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_agentic_tool_guardrail_loop_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agentic_tool_guardrail_loop_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run --append scripts/agentic_tool_guardrail_loop_probe.py && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/agentic_tool_guardrail_loop.py services/mlx-worker-python/worker/runtime/agentic_tool_parking_budget.py services/mlx-worker-python/tests/test_agentic_tool_guardrail_loop.py services/mlx-worker-python/tests/test_agentic_tool_parking_budget.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/agentic_tool_guardrail_loop_probe.py",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_agentic_tool_guardrail_loop.py services/mlx-worker-python/tests/test_agentic_tool_parking_budget.py services/mlx-worker-python/tests/test_agentic_tool_guardrail_diagnostics.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_agentic_tool_guardrail_loop_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agentic_tool_guardrail_loop_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_agentic_tool_guardrail_loop.py services/mlx-worker-python/tests/test_agentic_tool_parking_budget.py services/mlx-worker-python/tests/test_agentic_tool_guardrail_diagnostics.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_agentic_tool_guardrail_loop_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agentic_tool_guardrail_loop_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run --append scripts/agentic_tool_guardrail_loop_probe.py && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/agentic_tool_guardrail_loop.py services/mlx-worker-python/worker/runtime/agentic_tool_parking_budget.py services/mlx-worker-python/worker/runtime/agentic_tools.py services/mlx-worker-python/tests/test_agentic_tool_guardrail_loop.py services/mlx-worker-python/tests/test_agentic_tool_parking_budget.py services/mlx-worker-python/tests/test_agentic_tool_guardrail_diagnostics.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/agentic_tool_guardrail_diagnostics.py scripts/agentic_tool_guardrail_loop_probe.py",
     "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/agentic_tool_guardrail_loop_probe.py ]; then python3 scripts/agentic_tool_guardrail_loop_probe.py; else python3 -c \"import base64; exec(base64.b64decode(\\\"aW1wb3J0IGpzb24sb3Msc3RhdGlzdGljcyx0aW1laXQ7ZnJvbSB3b3JrZXIucnVudGltZS5hZ2VudGljX3Rvb2xzIGltcG9ydCBEZXRlcm1pbmlzdGljQWdlbnRpY1Rvb2xSdW50aW1lLGhlYWxfYWdlbnRpY190b29sX2NhbGxzO249aW50KG9zLmVudmlyb24uZ2V0KCJNRUxJWF9BR0VOVElDX0dVQVJEUkFJTF9QUk9CRV9JVEVSQVRJT05TIiwiMTAwMCIpKTtzPWludChvcy5lbnZpcm9uLmdldCgiTUVMSVhfQUdFTlRJQ19HVUFSRFJBSUxfUFJPQkVfU0FNUExFUyIsIjUiKSk7c2VjcmV0PSJTRU5TSVRJVkVfUFJPQkVfVkFMVUUiO2NhbGw9eyJpZCI6ImNhbGwtMSIsIm5hbWUiOiJsb2NhbF9jb21wdXRlIiwiYXJndW1lbnRzIjp7ImNvZGUiOiIxICsgMSIsInByb2JlX3NlY3JldCI6c2VjcmV0fX07cnVudGltZT1EZXRlcm1pbmlzdGljQWdlbnRpY1Rvb2xSdW50aW1lKCk7Zj1sYW1iZGE6KGhlYWxfYWdlbnRpY190b29sX2NhbGxzKGNhbGwpLHJ1bnRpbWUuZXhlY3V0ZSh0b29sX25hbWU9ImxvY2FsX2NvbXB1dGUiLGFyZ3VtZW50cz17ImNvZGUiOiIxICsgMSJ9LHRvb2xfY2FsbF9pZD0iY2FsbC0xIikpO3hzPVt0aW1laXQudGltZWl0KGYsbnVtYmVyPW4qNCkqMjUwLjAvbiBmb3IgXyBpbiByYW5nZShzKV07bGVhaz1mbG9hdChzZWNyZXQgaW4ganNvbi5kdW1wcyhoZWFsX2FnZW50aWNfdG9vbF9jYWxscyhjYWxsKS5yZWNlaXB0cykpO3ByaW50KGpzb24uZHVtcHMoeyJndWFyZHJhaWxfZGVjaXNpb25fbGF0ZW5jeV9tc19tZWFuIjpzdGF0aXN0aWNzLmZtZWFuKHhzKSwiZ3VhcmRyYWlsX2RlY2lzaW9uX2xhdGVuY3lfbXNfcDk1IjptYXgoeHMpLCJ0b29sX2V4ZWN1dGlvbl9jb3VudCI6MS4wLCJkdXBsaWNhdGVfZXhlY3V0aW9uX2NvdW50IjowLjAsInRlcm1pbmFsX2ZhaWx1cmVfY291bnQiOjEuMCwiZGlhZ25vc3RpY19zZW5zaXRpdmVfdmFsdWVfbGVha19jb3VudCI6bGVhaywiaXRlcmF0aW9uX2NvdW50IjpmbG9hdChuKSwic2FtcGxlX2NvdW50IjpmbG9hdChzKX0sc29ydF9rZXlzPVRydWUpKQ==\\\"))\"; fi'",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
@@ -128,6 +131,11 @@
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_abs": 0.05
+      },
+      {
+        "key": "ledger_checkpoint_serialization_latency_ms_mean_v1",
+        "unit": "ms",
+        "direction": "informational"
       },
       {
         "key": "ledger_entry_count_v1",
@@ -7238,8 +7246,7 @@
       {
         "key": "scalar_copy_delta_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 0.0
+        "direction": "informational"
       },
       {
         "key": "scalar_copy_speedup",

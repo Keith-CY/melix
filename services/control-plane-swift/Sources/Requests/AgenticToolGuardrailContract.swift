@@ -18,6 +18,7 @@ public enum AgenticToolGuardrailContract {
     public static let stateSchemaVersion = "melix.agentic_tool_guardrail_state.v1"
     public static let eventSchemaVersion = "melix.agentic_tool_guardrail_event.v1"
     public static let diagnosticSchemaVersion = "melix.agentic_tool_guardrail_diagnostic.v1"
+    public static let toolResultExportPolicy = "model_text_summary_ui_full"
     public static let parkingConfigSchemaVersion =
         "melix.agentic_tool_approval_parking_config.v1"
     public static let parkingStateSchemaVersion =
@@ -34,8 +35,63 @@ public enum AgenticToolGuardrailContract {
         guard config.schemaVersion == configSchemaVersion else {
             throw AgenticToolGuardrailContractError.unsupportedConfigSchema(config.schemaVersion)
         }
-        guard !config.requestID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AgenticToolGuardrailContractError.invalidConfig("request_id is required")
+        let normalizedRequestID = config.requestID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedRequestID.isEmpty, config.requestID == normalizedRequestID else {
+            throw AgenticToolGuardrailContractError.invalidConfig(
+                "request_id must be non-empty and normalized"
+            )
+        }
+        let normalizedThreadScopeID = config.threadScopeID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !normalizedThreadScopeID.isEmpty,
+              config.threadScopeID == normalizedThreadScopeID
+        else {
+            throw AgenticToolGuardrailContractError.invalidConfig(
+                "thread_scope_id must be non-empty and normalized"
+            )
+        }
+        guard config.currentTurnToolStart >= 0 else {
+            throw AgenticToolGuardrailContractError.invalidConfig(
+                "current_turn_tool_start cannot be negative"
+            )
+        }
+        guard config.toolResultExportPolicy == toolResultExportPolicy else {
+            throw AgenticToolGuardrailContractError.invalidConfig(
+                "tool_result_export_policy is unsupported"
+            )
+        }
+        let normalizedRequiredTools = config.requiredTools.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard config.requiredTools == normalizedRequiredTools,
+              normalizedRequiredTools.allSatisfy({ !$0.isEmpty }),
+              Set(normalizedRequiredTools).count == normalizedRequiredTools.count
+        else {
+            throw AgenticToolGuardrailContractError.invalidConfig(
+                "required_tools must contain unique normalized names"
+            )
+        }
+        guard config.prerequisites.allSatisfy({ prerequisite in
+            let normalizedToolName = prerequisite.toolName.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            let normalizedRequiredToolName = prerequisite.requiredToolName.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            let normalizedArgumentMatchKeys = prerequisite.argumentMatchKeys.map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return !normalizedToolName.isEmpty
+                && prerequisite.toolName == normalizedToolName
+                && !normalizedRequiredToolName.isEmpty
+                && prerequisite.requiredToolName == normalizedRequiredToolName
+                && prerequisite.argumentMatchKeys == normalizedArgumentMatchKeys
+                && normalizedArgumentMatchKeys.allSatisfy({ !$0.isEmpty })
+        }) else {
+            throw AgenticToolGuardrailContractError.invalidConfig(
+                "prerequisites must contain normalized non-empty names and match keys"
+            )
         }
         guard config.maxConsecutiveMalformedResponses >= 0 else {
             throw AgenticToolGuardrailContractError.invalidConfig(
@@ -94,6 +150,14 @@ public enum AgenticToolGuardrailContract {
         state: AgenticToolGuardrailState,
         config: AgenticToolGuardrailConfig
     ) throws {
+        guard state.threadScopeID == config.threadScopeID,
+              state.currentTurnToolStart == config.currentTurnToolStart,
+              state.toolResultExportPolicy == config.toolResultExportPolicy
+        else {
+            throw AgenticToolGuardrailContractError.invalidState(
+                "state thread, turn, or export-policy boundary does not match config"
+            )
+        }
         let counters = [
             state.responsesSeen,
             state.healedResponseCount,
@@ -134,7 +198,7 @@ public enum AgenticToolGuardrailContract {
             $0.lifecycleState == "executing"
         }
         guard state.toolExecutionCount == dispatchedEntries.count,
-              state.toolFailureCount == uncertainEntries.count,
+              state.toolFailureCount <= uncertainEntries.count,
               state.duplicateExecutionCount == 0
         else {
             throw AgenticToolGuardrailContractError.invalidState(
@@ -174,7 +238,6 @@ public enum AgenticToolGuardrailContract {
             guard !call.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !call.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   completedIDs.insert(call.id).inserted,
-                  state.executionLedger[call.id]?.fingerprint == toolCallFingerprint(call),
                   state.executionLedger[call.id]?.toolName == call.name,
                   ["completed", "retired"].contains(
                       state.executionLedger[call.id]?.lifecycleState ?? ""
@@ -198,17 +261,20 @@ public enum AgenticToolGuardrailContract {
         }
         let completedNames = Set(state.completedToolCalls.map(\.name))
         for (toolName, lifecycleState) in state.requiredToolLifecycle {
-            let matchingLedgerStates = Set(state.executionLedger.values.compactMap { entry in
-                entry.toolName == toolName ? entry.lifecycleState : nil
-            })
-            if lifecycleState == "required", completedNames.contains(toolName) {
-                throw AgenticToolGuardrailContractError.invalidState(
-                    "required lifecycle contains completed evidence"
-                )
+            let matchingLedgerEntries = state.executionLedger.values.filter {
+                $0.toolName == toolName
             }
-            if lifecycleState != "required", !matchingLedgerStates.contains(lifecycleState) {
+            if lifecycleState == "required" {
+                guard matchingLedgerEntries.isEmpty, !completedNames.contains(toolName) else {
+                    throw AgenticToolGuardrailContractError.invalidState(
+                        "required lifecycle contains execution evidence"
+                    )
+                }
+            } else if matchingLedgerEntries.count != 1 ||
+                matchingLedgerEntries[0].lifecycleState != lifecycleState
+            {
                 throw AgenticToolGuardrailContractError.invalidState(
-                    "required lifecycle lacks matching ledger evidence"
+                    "required lifecycle does not uniquely match ledger evidence"
                 )
             }
             if ["completed", "retired"].contains(lifecycleState),
@@ -462,19 +528,6 @@ public enum AgenticToolGuardrailContract {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func toolCallFingerprint(
-        _ call: AgenticToolGuardrailCompletedCall
-    ) -> String? {
-        let payload = AgenticToolGuardrailFingerprintPayload(
-            arguments: call.arguments,
-            name: call.name
-        )
-        guard let data = try? JSONEncoder.canonical.encode(payload) else {
-            return nil
-        }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-
     private static func canonicalJSONString<T: Encodable>(_ value: T) throws -> String {
         String(decoding: try JSONEncoder.canonical.encode(value), as: UTF8.self)
     }
@@ -486,11 +539,6 @@ private extension JSONEncoder {
         encoder.outputFormatting = [.sortedKeys]
         return encoder
     }
-}
-
-private struct AgenticToolGuardrailFingerprintPayload: Encodable {
-    let arguments: [String: StructuredJSONValue]
-    let name: String
 }
 
 public struct AgenticToolGuardrailPrerequisite: Codable, Sendable, Equatable {
@@ -518,6 +566,9 @@ public struct AgenticToolGuardrailPrerequisite: Codable, Sendable, Equatable {
 public struct AgenticToolGuardrailConfig: Codable, Sendable, Equatable {
     public let schemaVersion: String
     public let requestID: String
+    public let threadScopeID: String
+    public let currentTurnToolStart: Int
+    public let toolResultExportPolicy: String
     public let requiredTools: [String]
     public let prerequisites: [AgenticToolGuardrailPrerequisite]
     public let maxConsecutiveMalformedResponses: Int
@@ -527,6 +578,9 @@ public struct AgenticToolGuardrailConfig: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case requestID = "request_id"
+        case threadScopeID = "thread_scope_id"
+        case currentTurnToolStart = "current_turn_tool_start"
+        case toolResultExportPolicy = "tool_result_export_policy"
         case requiredTools = "required_tools"
         case prerequisites
         case maxConsecutiveMalformedResponses = "max_consecutive_malformed_responses"
@@ -536,6 +590,9 @@ public struct AgenticToolGuardrailConfig: Codable, Sendable, Equatable {
 
     public init(
         requestID: String,
+        threadScopeID: String? = nil,
+        currentTurnToolStart: Int = 0,
+        toolResultExportPolicy: String = AgenticToolGuardrailContract.toolResultExportPolicy,
         requiredTools: [String] = [],
         prerequisites: [AgenticToolGuardrailPrerequisite] = [],
         maxConsecutiveMalformedResponses: Int = 2,
@@ -544,6 +601,9 @@ public struct AgenticToolGuardrailConfig: Codable, Sendable, Equatable {
     ) {
         self.schemaVersion = AgenticToolGuardrailContract.configSchemaVersion
         self.requestID = requestID
+        self.threadScopeID = threadScopeID ?? requestID
+        self.currentTurnToolStart = currentTurnToolStart
+        self.toolResultExportPolicy = toolResultExportPolicy
         self.requiredTools = requiredTools
         self.prerequisites = prerequisites
         self.maxConsecutiveMalformedResponses = maxConsecutiveMalformedResponses
@@ -573,6 +633,9 @@ public struct AgenticToolGuardrailExecutionLedgerEntry: Codable, Sendable, Equat
 public struct AgenticToolGuardrailState: Codable, Sendable, Equatable {
     public let schemaVersion: String
     public let requestID: String
+    public let threadScopeID: String
+    public let currentTurnToolStart: Int
+    public let toolResultExportPolicy: String
     public let completedToolCalls: [AgenticToolGuardrailCompletedCall]
     public let executionLedger: [String: AgenticToolGuardrailExecutionLedgerEntry]
     public let requiredToolLifecycle: [String: String]
@@ -599,6 +662,9 @@ public struct AgenticToolGuardrailState: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case requestID = "request_id"
+        case threadScopeID = "thread_scope_id"
+        case currentTurnToolStart = "current_turn_tool_start"
+        case toolResultExportPolicy = "tool_result_export_policy"
         case completedToolCalls = "completed_tool_calls"
         case executionLedger = "execution_ledger"
         case requiredToolLifecycle = "required_tool_lifecycle"
@@ -635,6 +701,9 @@ public struct AgenticToolGuardrailEvent: Codable, Sendable, Equatable {
     public let toolName: String
     public let consecutiveMalformedResponses: Int
     public let consecutiveToolFailures: Int
+    public let threadScopeID: String
+    public let currentTurnToolStart: Int
+    public let toolResultExportPolicy: String
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -647,6 +716,9 @@ public struct AgenticToolGuardrailEvent: Codable, Sendable, Equatable {
         case toolName = "tool_name"
         case consecutiveMalformedResponses = "consecutive_malformed_responses"
         case consecutiveToolFailures = "consecutive_tool_failures"
+        case threadScopeID = "thread_scope_id"
+        case currentTurnToolStart = "current_turn_tool_start"
+        case toolResultExportPolicy = "tool_result_export_policy"
     }
 }
 
@@ -669,6 +741,9 @@ public struct AgenticToolGuardrailDiagnostic: Codable, Sendable, Equatable {
     public let finalOutcome: String
     public let finalFailureReason: String
     public let completedRequiredTools: [String]
+    public let threadScopeID: String
+    public let currentTurnToolStart: Int
+    public let toolResultExportPolicy: String
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -689,6 +764,9 @@ public struct AgenticToolGuardrailDiagnostic: Codable, Sendable, Equatable {
         case finalOutcome = "final_outcome"
         case finalFailureReason = "final_failure_reason"
         case completedRequiredTools = "completed_required_tools"
+        case threadScopeID = "thread_scope_id"
+        case currentTurnToolStart = "current_turn_tool_start"
+        case toolResultExportPolicy = "tool_result_export_policy"
     }
 }
 

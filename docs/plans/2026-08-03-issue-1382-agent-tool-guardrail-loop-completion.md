@@ -50,11 +50,21 @@ Each model response follows one path:
    different arguments;
 4. move required tools and admitted call identities through explicit
    `required`, `authorized`, `executing`, `completed`, and `retired` states,
-   updating completed-step evidence only after a completed observation;
+   requiring a caller-owned durable `executing` checkpoint acknowledgement
+   before adapter dispatch and updating completed-step evidence only after a
+   completed observation;
 5. apply independent consecutive malformed-response and tool-failure budgets;
 6. retire tool execution after all required steps complete and request one
    final answer without tools;
 7. emit sanitized decision events and a deterministic diagnostic summary.
+
+Every config/state/event/diagnostic receipt also binds `thread_scope_id`,
+`current_turn_tool_start`, and `tool_result_export_policy`. Restore rejects a
+different thread or turn boundary. Runtime dispatch and execution results carry
+the thread and turn binding, and the loop validates it both after execution and
+before model export. Model directives receive only matching, bounded
+text-summary projections. Full sanitized media/operator payloads remain on the
+turn result and are not copied back into model context.
 
 The Swift control plane owns Codable request, state, event, and diagnostics
 contracts for the same schema versions. Request shaping writes canonical JSON
@@ -87,7 +97,11 @@ eviction, while globally unique request IDs remain the caller contract.
 | Structured events | Every preflight, response, admission, replay, execution, retry, completion, and terminal decision emits a v1 event. |
 | Swift contract | Swift Codable types validate and shape the same config/state/event/diagnostic schemas. |
 | Operator evidence | A CLI fixture writes JSON diagnostics with counts, last nudge kind, final outcome, failure reason, and no raw prompt or arguments. |
-| Exactly-once side effects | Required tools and call IDs expose explicit lifecycle state; the execution ledger suppresses identical replay in every state and rejects a reused call ID with changed arguments. |
+| Exactly-once side effects | Required tools and call IDs expose explicit lifecycle state; dispatch requires a durable `executing` checkpoint acknowledgement, restored uncertain executions terminate automatic replay, and the ledger rejects a reused call ID with changed arguments. |
+| Restorable argument state | Dispatch rejects tuples, non-finite floats, and other non-v1 JSON values before checkpointing or adapter entry, so every accepted protected-state snapshot can be restored. |
+| Checkpoint and execution uncertainty | Failed checkpoint acknowledgement emits a typed terminal turn without dispatch; required-tool adapter failure terminates for reconciliation instead of issuing an unusable retry. |
+| Thread and turn isolation | Config/state restore and runtime results bind thread scope and current-turn start; cross-thread/cross-turn restore and result-export fixtures fail closed before model projection. |
+| Tool result export | Model directives receive only `melix.agentic_tool_result_export.v1` text summaries, while operator turn results retain the full sanitized payload; real compute/search/layout fixtures prove scalar and structured result usability, and recursive media-envelope and sentinel fixtures prove separation. |
 | Bounded approval parking | A process-wide v1 helper and 100-thread barrier fixture permit 100 simultaneous approval waits while retaining at least two executor slots. |
 | Resume and cleanup | Concurrent resume preserves the executor reserve; concurrent cancel, timeout, duplicate release, and runtime reload release each held resource exactly once and finish with zero leaks. |
 | Open turns | A request that never waits for approval uses the normal executor path and never consumes parking capacity. |
@@ -118,9 +132,13 @@ decisions with a deterministic fixture runtime.
 - `ledger_state_bytes_per_call_v1` and
   `concurrent_wait_ledger_bytes_per_request_v1`: record versioned execution and
   lifecycle ledger overhead.
-- `ledger_decision_latency_ms_mean_v1` and
-  `parking_transition_latency_ms_mean_v1`: record request-ledger and capacity
-  transition cost separately.
+- `ledger_decision_latency_ms_mean_v1`,
+  `ledger_checkpoint_serialization_latency_ms_mean_v1`, and
+  `parking_transition_latency_ms_mean_v1`: record request-ledger transition,
+  caller-owned checkpoint serialization, and capacity transition cost
+  separately. The ledger decision metric retains the `0.05 ms` regression
+  threshold; checkpoint serialization remains informational because durable
+  storage latency is caller-owned.
 
 Measurement points are the start and end of each public live-loop response
 transition and the final diagnostic serialization. The probe uses no model
@@ -133,7 +151,8 @@ weights, network access, or external processes.
 - Add this plan.
 - Add focused Python tests for malformed recovery, unknown-tool correction,
   premature terminal response, matching prerequisites, separate exhaustion,
-  compaction restore, exactly-once replay, and diagnostics redaction.
+  compaction restore, exactly-once replay, thread/turn isolation, model/UI
+  observation export, checkpoint failure, and diagnostics redaction.
 - Add focused Swift tests for request shaping and receipt decoding.
 
 ### Slice 2: Worker Live-Loop State Machine
@@ -186,3 +205,47 @@ weights, network access, or external processes.
   executable source lines.`
 - Metrics: `N/A: this commit defines the future probe contract but changes no
   runtime path.`
+
+## Completion Verification
+
+Focused verification completed before the final staged pre-commit gate:
+
+- Python guardrail, parking, diagnostics, and performance-registry tests:
+  `159 passed`.
+- Swift guardrail contract tests: `14 passed`.
+- Python branch changed-line coverage: `2,219 / 2,280 = 97.32%`.
+- Swift changed-line coverage: `1,124 / 1,142 = 98.42%`.
+- `git diff --check`: passed.
+
+The registered deterministic probe produced:
+
+- `approval_wait_count_v1 = 100`.
+- `executor_capacity_available_min_v1 = 2`.
+- `executor_lease_leak_count_v1 = 0`.
+- `parking_permit_leak_count_v1 = 0`.
+- `guardrail_decision_latency_ms_mean = 0.027906`.
+- `guardrail_decision_latency_ms_p95 = 0.072166`.
+- `tool_execution_count = 1`.
+- `duplicate_execution_count = 0`.
+- `terminal_failure_count = 1`.
+- `diagnostic_sensitive_value_leak_count = 0`.
+- `ledger_state_bytes_per_call_v1 = 242.375`.
+- `ledger_decision_latency_ms_mean_v1 = 0.072471` against base `0.056927`;
+  the `0.015544 ms` increase is below the `0.05 ms` gate.
+- `ledger_checkpoint_serialization_latency_ms_mean_v1 = 0.027097`.
+- `prompt_current_window_growth_ratio_v1 = 1.0`.
+- `prompt_current_observation_count_max_v1 = 1`.
+- `prompt_current_payload_bytes_max_v1 = 563`.
+
+The operator diagnostic fixture completed success, exhaustion, and 100-waiter
+parking scenarios. The persisted artifact contained no raw prompt, arguments,
+observations, or seeded sensitive values. An initial full pre-commit run passed
+Swift, Python, integration, and all probe verification commands, then correctly
+blocked the commit on two performance comparisons. The in-scope ledger path was
+optimized from `0.204076 ms` to `0.072471 ms` by replacing generic whole-state
+deep copies with isolated JSON-state copies and separating caller-owned
+checkpoint serialization from loop decision latency. The unrelated local-job
+probe retained its `1.935x` scalar-copy speedup; its derived delta is now
+informational while the speedup remains gated. Exact base/head reruns for both
+direct probes passed. The final staged commit remains subject to a clean rerun
+of the versioned pre-commit hook on this host.

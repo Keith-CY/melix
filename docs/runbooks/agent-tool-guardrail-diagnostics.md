@@ -11,10 +11,17 @@ tool guardrail loop. The fixture exercises:
 - 100 bounded approval waits with two executor slots retained;
 - cancel, timeout, resume, and runtime-reload lifecycle release;
 - sanitized event and final diagnostic serialization.
+- thread scope, current-turn boundary, and result-export policy receipts on
+  every guardrail event and diagnostic;
+- fail-closed runtime-result and model-export binding checks that prevent a
+  prior thread or turn result from entering the active model directive.
 
 The command does not start a model, network service, command tool server,
 approval UI, or production executor. It exercises the shipped selected-registry
-and deterministic runtime boundaries with an in-process fixture executor.
+and deterministic runtime boundaries with an in-process fixture executor. Its
+checkpoint callback serializes state only to acknowledge ordering inside the
+fixture; production callers must persist the protected snapshot atomically and
+durably before returning from `persist_executing_state`.
 
 ## Generate The Bundle
 
@@ -54,6 +61,9 @@ The successful fixture should report:
 - `completed_required_tools = ["text_search", "image_search"]`
 - `last_nudge_type = required_steps_completed`
 - `terminal_failure_count = 0`
+- `thread_scope_id = diagnostic-success`
+- `current_turn_tool_start = 0`
+- `tool_result_export_policy = model_text_summary_ui_full`
 
 The exhaustion fixture should report:
 
@@ -109,6 +119,17 @@ fi
 Do not add state snapshots to this bundle. Completed-call arguments are required
 inside protected state for prerequisite matching and replay identity, but they
 are not operator diagnostics.
+
+The Python focused suite also verifies the model/UI split directly: a synthetic
+image envelope remains visible in `AgenticToolGuardrailTurn.tool_results`, while
+the next model directive contains only a bounded, sentinel-free text summary.
+Real `local_compute`, `text_search`, and `layout_parse` fixtures prove that
+numeric and structured results survive as recursively sanitized JSON text while
+frontend media fields and data URIs do not. It also uses one shared fixture
+runtime for two thread scopes and proves each scope receives an independent
+session key. Cross-thread and later-turn result fixtures must fail with a
+`tool_result_export` event whose reason is `tool_result_scope_mismatch`, before
+any observation content reaches the model directive.
 
 ## Verification
 

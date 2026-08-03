@@ -18,6 +18,15 @@ def test_bundle_records_success_and_terminal_failure_without_sensitive_values() 
     assert [run["outcome"] for run in runs] == ["completed", "failed"]
     assert runs[0]["diagnostics"]["tool_execution_count"] == 2
     assert runs[0]["diagnostics"]["last_nudge_type"] == "required_steps_completed"
+    assert runs[0]["diagnostics"]["thread_scope_id"] == "diagnostic-success"
+    assert runs[0]["diagnostics"]["current_turn_tool_start"] == 0
+    assert runs[0]["diagnostics"]["tool_result_export_policy"] == (
+        "model_text_summary_ui_full"
+    )
+    assert all(
+        event["thread_scope_id"] == "diagnostic-success"
+        for event in runs[0]["events"]
+    )
     assert runs[1]["diagnostics"]["final_failure_reason"] == (
         "malformed_response_budget_exhausted"
     )

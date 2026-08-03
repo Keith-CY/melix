@@ -23,6 +23,10 @@ _APPROVAL_WAIT_COUNT = 100
 _Result = TypeVar("_Result")
 
 
+def _acknowledge_probe_checkpoint(state: dict[str, object]) -> None:
+    json.dumps(state, separators=(",", ":"))
+
+
 def _percentile(values: list[float], percentile: float) -> float:
     ordered = sorted(values)
     position = (len(ordered) - 1) * percentile
@@ -61,10 +65,7 @@ def _current_prompt_payload_metrics(
     payload = {
         "tool_choice": directive.tool_choice,
         "context_messages": list(directive.context_messages),
-        "tool_observations": [
-            result.observation.as_agentic_trace_observation()
-            for result in directive.tool_observations
-        ],
+        "tool_observations": list(directive.tool_observations),
     }
     return (
         len(json.dumps(payload, sort_keys=True, separators=(",", ":"))),
@@ -73,11 +74,19 @@ def _current_prompt_payload_metrics(
 
 
 def _prompt_and_ledger_metrics(*, prompt_turns: int) -> dict[str, float]:
+    checkpoint_latencies: list[float] = []
+
+    def acknowledge_checkpoint(state: dict[str, object]) -> None:
+        started = time.perf_counter()
+        json.dumps(state, separators=(",", ":"))
+        checkpoint_latencies.append((time.perf_counter() - started) * 1_000.0)
+
     loop = AgenticToolGuardrailLoop(
         config=AgenticToolGuardrailConfig(
             request_id="probe-prompt-ledger",
             max_turns=prompt_turns + 1,
-        )
+        ),
+        persist_executing_state=acknowledge_checkpoint,
     )
     initial_state_bytes = len(
         json.dumps(loop.state_snapshot(), sort_keys=True, separators=(",", ":"))
@@ -93,7 +102,8 @@ def _prompt_and_ledger_metrics(*, prompt_turns: int) -> dict[str, float]:
         }
         started = time.perf_counter()
         turn = loop.handle_response(call)
-        ledger_latencies.append((time.perf_counter() - started) * 1_000.0)
+        transition_latency = (time.perf_counter() - started) * 1_000.0
+        ledger_latencies.append(transition_latency - checkpoint_latencies[-1])
         payload_bytes, observation_count = _current_prompt_payload_metrics(loop, turn)
         prompt_payload_bytes.append(payload_bytes)
         prompt_observation_counts.append(observation_count)
@@ -120,6 +130,9 @@ def _prompt_and_ledger_metrics(*, prompt_turns: int) -> dict[str, float]:
             (final_state_bytes - initial_state_bytes) / prompt_turns
         ),
         "ledger_decision_latency_ms_mean_v1": statistics.fmean(ledger_latencies),
+        "ledger_checkpoint_serialization_latency_ms_mean_v1": statistics.fmean(
+            checkpoint_latencies
+        ),
         "ledger_entry_count_v1": float(len(execution_ledger)),
     }
 
@@ -262,7 +275,8 @@ def main() -> int:
                     max_consecutive_malformed_responses=2,
                     max_consecutive_tool_failures=2,
                     max_turns=6,
-                )
+                ),
+                persist_executing_state=_acknowledge_probe_checkpoint,
             )
             call_id = f"call-{iteration_index}"
             secret = f"SENSITIVE_PROBE_VALUE_{sample_index}_{iteration_index}"

@@ -36,6 +36,10 @@ def _fixture_runtime() -> DeterministicAgenticToolRuntime:
     )
 
 
+def _acknowledge_fixture_checkpoint(state: dict[str, object]) -> None:
+    json.dumps(state, sort_keys=True, separators=(",", ":"))
+
+
 def _prerequisite() -> AgenticToolPrerequisite:
     return AgenticToolPrerequisite(
         tool_name="image_search",
@@ -133,6 +137,7 @@ def build_diagnostic_bundle() -> dict[str, object]:
             max_turns=6,
         ),
         runtime=_fixture_runtime(),
+        persist_executing_state=_acknowledge_fixture_checkpoint,
     )
     exhausted = run_guarded_agentic_tool_loop(
         _responder(
@@ -158,6 +163,7 @@ def build_diagnostic_bundle() -> dict[str, object]:
             max_turns=4,
         ),
         runtime=_fixture_runtime(),
+        persist_executing_state=_acknowledge_fixture_checkpoint,
     )
     return {
         "schema_version": DIAGNOSTIC_BUNDLE_SCHEMA_VERSION,

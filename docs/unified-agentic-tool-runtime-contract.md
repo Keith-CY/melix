@@ -295,6 +295,9 @@ responses that may contain tool calls. It applies healing, admission,
 prerequisite checks, replay protection, deterministic execution, retry budgets,
 and final-answer handling in that order. A caller may drive one response at a
 time or use `run_guarded_agentic_tool_loop(...)` with a responder callback.
+Any path that can dispatch a tool must supply `persist_executing_state`; the
+callback must atomically persist the supplied protected-state snapshot and
+return only after that checkpoint is durable.
 
 The loop accepts `melix.agentic_tool_guardrail_config.v1` with:
 
@@ -317,6 +320,11 @@ retry counters, completion flags, and event sequence. It must survive prompt
 compaction and must never be reconstructed from retained messages. State may
 contain tool arguments required for matching and replay correctness, so it is
 protected request state rather than a diagnostic receipt.
+Every admitted tool argument must therefore be a strict v1 JSON value before
+fingerprinting or dispatch: null, boolean, integer, finite float, string, array,
+or string-keyed object. Python-only containers such as tuples and non-finite
+numbers are rejected as `invalid_arguments` even when a permissive encoder could
+serialize them, so every durable checkpoint remains restorable.
 
 Each response transition emits sanitized
 `melix.agentic_tool_guardrail_event.v1` records. The final summary is
@@ -347,17 +355,58 @@ tool name, and call lifecycle (`authorized`, `executing`, `completed`, or
 adapter dispatch; a completed observation records `completed`; and completion
 of all required steps records `retired` before the final-answer pass. A timeout
 or adapter failure leaves the call at `executing` because an external side
-effect may already have happened. An identical replay is suppressed in every
-ledger state; reuse of an existing call ID with changed tool name or arguments
-fails terminally.
+effect may already have happened. Before adapter dispatch, the loop requires a
+caller-owned durable checkpoint callback to acknowledge the full `executing`
+state; a missing or failed acknowledgement prevents dispatch. A restored
+`executing` call has an uncertain outcome and terminates automatic replay. A
+required tool in that state also rejects a fresh call identity, so operator
+reconciliation cannot be bypassed by renaming the call. Once a required tool
+reaches `completed`, a fresh call identity for that tool is retired without
+dispatch so the named required step cannot run twice. Reuse of an existing call
+ID with changed tool name or arguments fails terminally.
+
+A missing or failed durable acknowledgement produces a
+`tool_state_checkpoint_failed` terminal turn with `state_checkpoint` and
+`terminal_failure` events; no adapter is entered. Adapter errors, timeouts, and
+failed observations for a required tool terminate as
+`required_tool_execution_outcome_uncertain` instead of issuing a retry that the
+required-tool lifecycle would reject. Optional tools retain their independent,
+bounded tool-failure retry budget.
+
+Config, protected state, events, and diagnostics all carry
+`thread_scope_id`, `current_turn_tool_start`, and
+`tool_result_export_policy`. A restore is accepted only when all three values
+match the active config. `thread_scope_id` and `current_turn_tool_start` are
+passed to every runtime adapter and copied into its execution result; stateful
+adapters must namespace process state by the thread value.
+`current_turn_tool_start` identifies the first tool-call position owned by this
+turn, so a snapshot cannot be harvested into a later turn by changing the
+boundary. The loop rejects a runtime result whose call identity, tool identity,
+thread scope, or turn boundary does not match the dispatch, and it rechecks the
+thread and turn binding before projecting any result into the next model
+directive. A rejected projection emits `tool_result_export` with
+`tool_result_scope_mismatch` and exposes no observation content. The only v1
+export policy is `model_text_summary_ui_full`.
+The Swift request boundary rejects leading or trailing whitespace in request,
+thread, required-tool, prerequisite-tool, and argument-match-key identifiers;
+it also rejects empty or duplicate required-tool names. This keeps its encoded
+config identical to the Python worker's normalized config and restored state.
 
 The responder receives an `AgenticToolGuardrailModelDirective` for each turn.
 It carries the resolved tool choice, a typed corrective nudge when present, and
-the previous turn's typed `tool_observations`. The caller's provider/context
-adapter owns serialization of those observations into the next model request.
-The directive never carries the persisted guardrail state. When all required
-steps complete, tool choice becomes `none` and tool calls are retired while the
-loop requests one non-empty final answer. Required-step continuation,
+only the previous turn's `melix.agentic_tool_result_export.v1` model projection.
+That projection contains identity/status metadata plus a bounded text summary.
+Scalar, list, and object results are recursively projected into deterministic
+JSON text so the model can consume numeric compute results, retrieval records,
+and layout elements. Frontend media/binary fields, data URIs, and tool-wire
+sentinels are removed recursively before the 8 KiB UTF-8 limit is applied. The
+bounded representation remains valid JSON by switching oversized structured
+results to a deterministic `json_preview` envelope marked `truncated = true`. The
+full sanitized observation remains available only in the operator-facing
+`AgenticToolGuardrailTurn.tool_results`. The directive never carries the full
+operator payload or persisted guardrail state. When all required steps
+complete, tool choice becomes `none` and tool calls are retired while the loop
+requests one non-empty final answer. Required-step continuation,
 observation-ready, and finalization instructions emit `model_directive` events;
 only corrective recovery instructions increment `retry_nudge_count` and emit
 `retry_nudge` events.
@@ -372,9 +421,12 @@ canonical JSON under:
 - `melix.agentic_guardrail.state_json`, when restoring state
 
 Swift owns request shaping and typed transport only. Python remains the source
-of execution truth and the only owner of live state transitions. Worker request
-adapters use `agentic_tool_guardrail_inputs_from_execution_ext(...)` to reject
-missing, malformed, or unsupported metadata before constructing the loop.
+of execution truth and the only owner of live state transitions. Swift validates
+execution-ledger fingerprints as opaque lowercase SHA-256 values; Python owns
+their canonical JSON calculation and recomputes them against completed calls
+when restoring state. Worker request adapters use
+`agentic_tool_guardrail_inputs_from_execution_ext(...)` to reject missing,
+malformed, or unsupported metadata before constructing the loop.
 
 ## Approval Parking Contract
 
