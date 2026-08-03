@@ -501,7 +501,7 @@ jobs:
           app_pid="$!"
           health_url="http://127.0.0.1:$MELIX_HTTP_PORT/health"
           healthy="false"
-          for attempt in {1..300}; do
+          for _ in {1..300}; do
             if curl --fail --silent --show-error "$health_url" >/dev/null 2>&1; then
               healthy="true"
               break
@@ -517,7 +517,7 @@ jobs:
             cat "$stderr_log" >&2
             exit 1
           fi
-          for attempt in {1..50}; do
+          for _ in {1..50}; do
             if [ -s "$MELIX_RUNTIME_DIR/active-runtime.json" ]; then
               break
             fi
