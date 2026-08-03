@@ -275,12 +275,16 @@ def _measurable_non_comment_lines(
     ``str.splitlines()`` must not be used here: it additionally splits on
     ``\\v``, ``\\f``, ``\\x1c``-``\\x1e``, ``\\x85``, ``\\u2028`` and ``\\u2029``,
     which would shift every line number after such a character in the source.
+
+    The result is ascending regardless of the order of ``line_numbers``. The only
+    caller already passes a sorted list, so the sort is a linear no-op there, but
+    it keeps unsorted input from silently reordering the result.
     """
     with source_path.open("r", encoding="utf-8") as source_file:
         source_lines = source_file.readlines()
     line_count = len(source_lines)
     measurable: list[int] = []
-    for line_no in line_numbers:
+    for line_no in sorted(line_numbers):
         if not 1 <= line_no <= line_count:
             continue
         stripped = source_lines[line_no - 1].strip()

@@ -36,10 +36,23 @@ A fourth was introduced by the first cut of this refactor and caught in review:
 collapsing `scripts/changed_scope_coverage._measurable_non_comment_lines` to
 `read_text().splitlines()` changed line numbering, because `str.splitlines()` also
 breaks on `\v`, `\f`, `\x1c`–`\x1e`, `\x85`, ` ` and ` ` while the diff
-parser counts only `\n`-delimited lines. The old code shared the defect but only
-inside a narrow ASCII fast path; the collapse made it unconditional in the script that
-gates changed-line coverage for every PR. It now reads lines through the file object,
-which matches the diff parser exactly.
+parser counts only `\n`-delimited lines. It now reads lines through the file object,
+which matches the numbering the other scan strategies already produced.
+
+An earlier revision of this document said the pre-existing code "shared the defect but
+only inside a narrow ASCII fast path". That was wrong, and the direction matters. The
+ASCII fast path used `bytes.splitlines()`, which — unlike `str.splitlines()` — does not
+break on `\v`, `\f` or `\x1c`–`\x1e`, so it agreed with file iteration. The defect was
+in the *non-ASCII* fallback, `read_text(encoding="utf-8").splitlines()`, reached only
+when the file was not pure ASCII and more than 8 lines had changed. That is the worse
+of the two placements: `\x85`, ` ` and ` ` are themselves non-ASCII, so a file
+containing one was routed to the single strategy that mis-numbered it.
+
+One divergence is older than this change and survives it. Git counts lines by `\n`
+alone, while every strategy here — file iteration, `bytes.splitlines()`, and the
+`readlines()` this change settles on — also breaks on a bare `\r`. A source file
+containing a lone CR is still numbered inconsistently with the diff parser. This change
+does not fix that; it is recorded so the next person does not rediscover it as new.
 
 ## Scope
 
@@ -49,7 +62,7 @@ Reverted to a single straightforward implementation, preserving observable behav
 | --- | --- | --- |
 | `worker/trajectory_provenance.py` | 956 lines | 236 lines |
 | `worker/productization/report_evidence_gate.py` | 720 lines | 478 lines |
-| `scripts/changed_scope_coverage.py` `_measurable_non_comment_lines` | 5 duplicated scan strategies | 1 |
+| `scripts/changed_scope_coverage.py` `_measurable_non_comment_lines` | 5 duplicated scan strategies (6 by the time this landed) | 1 |
 | `worker/runtime/token_counting.py` | 2 hand-rolled scan loops | `len(text.split())` |
 | `worker/runtime/stream_assembler.py` `_whitespace_token_count` | 11-condition guard | `len(text.split())` |
 | `worker/model_ops/hub_catalog.py` `_string` / `_int` | exact-type pre-checks | `isinstance` |
@@ -69,6 +82,29 @@ Behavior tests were kept; tests that asserted an internal call pattern were eith
 rewritten to assert the observable result or removed. `_probe_phases` now returns
 `{}` for a `str`-subclass phase whose `strip()` is overridden the same way any other
 value is normalized, and `_dict_list` no longer returns the caller's list object.
+
+## Reconciling with `main`
+
+While this change was in review, `main` took 30 commits, 24 of them `perf:` slices of
+the same shape this document describes. Six touched files rewritten here, and the
+branch stopped being mergeable. The rebase resolved seven conflicting files:
+
+| File | Resolution |
+| --- | --- |
+| `worker/trajectory_provenance.py` | Collapse kept. The landed change (#3206) swapped `type(x)` for a module-level `_TYPE` alias inside the block this change deletes — no behavior to carry forward. |
+| `scripts/changed_scope_coverage.py` | Collapse kept for `_measurable_non_comment_lines` (#3202, #3205, #3224 added two more scan strategies and a third ASCII branch). The `covered_singleton` short-circuit (#3202) lands in `_measurable_changed_lines`, which this change does not touch, and is preserved. |
+| `changed_scope_coverage_measured_probe.py` | Landed sparse fixture kept and generalized (`expected_sparse_*`); the read-call counters dropped. Taking one side wholesale would have paired a five-line fixture with a two-line assertion and failed the probe at runtime. |
+| `tests/test_changed_scope_coverage.py` | Seven landed tests rewritten to assert results rather than call patterns. In five of them the fixture file is never created, so asserting the empty result already proves the source was not read — the `Path.read_text` monkeypatch was redundant. |
+| `tests/test_trajectory_provenance.py` | The `_TYPE`-binding test dropped; the payload test kept, minus its three fail-if-called patches, because its copy-isolation assertions are real. |
+| `tests/test_vision_runtime.py` | Two `str` subclasses counting `split()` calls replaced by the assertions on token counts they were wrapping. |
+| `infra/perf/pr_scoped_probes.json` | Deletions kept; node ids renamed to match the rewritten tests. |
+
+Whether the landed `perf:` commits should themselves be reverted is a separate
+decision, deliberately not taken here: they are other authors' merged work, reverting
+two dozen of them would make this change unreviewable, and the question is about the
+policy above rather than about this diff. The conflict is worth recording as evidence
+either way — the scaffolding was being re-added to two of these exact functions while
+the change removing it was in review.
 
 ## Rule going forward
 
