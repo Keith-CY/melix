@@ -42,7 +42,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: head
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
