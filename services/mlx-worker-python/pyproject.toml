@@ -18,22 +18,22 @@ dev = [
 
 [project.optional-dependencies]
 mlx = [
-  "mlx>=0.31.2,<0.32",
+  "mlx>=0.31.2,<0.33",
   "mlx-lm>=0.31.3,<0.32",
   "mlx-vlm>=0.5.0,<0.7",
-  "pyarrow>=23.0.1,<25",
+  "pyarrow>=23.0.1,<26",
 ]
 audio-stt = [
-  "mlx-audio==0.4.4",
+  "mlx-audio==0.4.6",
 ]
 audio-tts = [
-  "mlx-audio==0.4.4",
+  "mlx-audio==0.4.6",
 ]
 audio = [
-  "mlx-audio==0.4.4",
+  "mlx-audio==0.4.6",
 ]
 synthetic-data = [
-  "data-designer>=0.5.9,<0.8",
+  "data-designer>=0.5.9,<0.9",
 ]
 
 [tool.pytest.ini_options]
