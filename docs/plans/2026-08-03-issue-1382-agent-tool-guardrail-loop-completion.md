@@ -38,8 +38,9 @@ threaded capacity proof that later scheduling work must reuse.
 The Python worker owns a new request-scoped `AgenticToolGuardrailLoop`. It
 accepts a registry, deterministic runtime, required tools, prerequisites, and
 explicit budgets. It owns a serializable state snapshot containing completed
-steps and an execution ledger. Prompt messages are inputs to generation only;
-they are never the source of control-flow truth.
+steps, explicit required-tool lifecycle state, and a per-call execution ledger.
+Prompt messages are inputs to generation only; they are never the source of
+control-flow truth.
 
 Each model response follows one path:
 
@@ -47,8 +48,9 @@ Each model response follows one path:
 2. admit calls one at a time against the latest completed-step state;
 3. suppress exact replay by call identity and fail closed on identity reuse with
    different arguments;
-4. execute admitted calls and update the completed-step state only after a
-   completed observation;
+4. move required tools and admitted call identities through explicit
+   `required`, `authorized`, `executing`, `completed`, and `retired` states,
+   updating completed-step evidence only after a completed observation;
 5. apply independent consecutive malformed-response and tool-failure budgets;
 6. retire tool execution after all required steps complete and request one
    final answer without tools;
@@ -85,7 +87,7 @@ eviction, while globally unique request IDs remain the caller contract.
 | Structured events | Every preflight, response, admission, replay, execution, retry, completion, and terminal decision emits a v1 event. |
 | Swift contract | Swift Codable types validate and shape the same config/state/event/diagnostic schemas. |
 | Operator evidence | A CLI fixture writes JSON diagnostics with counts, last nudge kind, final outcome, failure reason, and no raw prompt or arguments. |
-| Exactly-once side effects | The execution ledger suppresses identical replay and rejects a reused call ID with changed arguments. |
+| Exactly-once side effects | Required tools and call IDs expose explicit lifecycle state; the execution ledger suppresses identical replay in every state and rejects a reused call ID with changed arguments. |
 | Bounded approval parking | A process-wide v1 helper and 100-thread barrier fixture permit 100 simultaneous approval waits while retaining at least two executor slots. |
 | Resume and cleanup | Concurrent resume preserves the executor reserve; concurrent cancel, timeout, duplicate release, and runtime reload release each held resource exactly once and finish with zero leaks. |
 | Open turns | A request that never waits for approval uses the normal executor path and never consumes parking capacity. |

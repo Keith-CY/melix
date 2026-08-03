@@ -41,6 +41,12 @@ _STATE_COUNTER_FIELDS = (
     "consecutive_tool_failures",
     "event_sequence",
 )
+_REQUIRED_TOOL_LIFECYCLE_STATES = frozenset(
+    {"required", "authorized", "executing", "completed", "retired"}
+)
+_EXECUTION_LEDGER_LIFECYCLE_STATES = frozenset(
+    {"authorized", "executing", "completed", "retired"}
+)
 
 
 class AgenticToolGuardrailLoopError(ValueError):
@@ -341,9 +347,9 @@ class AgenticToolGuardrailLoop:
                     events=events,
                     results=results,
                 )
-            previous_fingerprint = ledger.get(call_id)
-            if previous_fingerprint is not None:
-                if previous_fingerprint != fingerprint:
+            previous_entry = ledger.get(call_id)
+            if previous_entry is not None:
+                if previous_entry["fingerprint"] != fingerprint:
                     return self._terminal_turn(
                         "tool_call_identity_conflict",
                         events=events,
@@ -365,9 +371,33 @@ class AgenticToolGuardrailLoop:
                 )
                 continue
 
-            # Record dispatch before entering the adapter. A timeout or failure may
-            # still have produced an external side effect and must not be replayed.
-            ledger[call_id] = fingerprint
+            ledger[call_id] = {
+                "fingerprint": fingerprint,
+                "tool_name": tool_name,
+                "lifecycle_state": "authorized",
+            }
+            self._set_required_tool_lifecycle(tool_name, "authorized")
+            events.append(
+                self._event(
+                    "tool_lifecycle",
+                    "authorized",
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                )
+            )
+
+            # Record executing before entering the adapter. A timeout or failure
+            # may still have produced an external side effect and must not replay.
+            ledger[call_id]["lifecycle_state"] = "executing"
+            self._set_required_tool_lifecycle(tool_name, "executing")
+            events.append(
+                self._event(
+                    "tool_lifecycle",
+                    "executing",
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                )
+            )
             self._state["consecutive_malformed_responses"] = 0
             self._state["tool_execution_count"] = int(self._state["tool_execution_count"]) + 1
             try:
@@ -419,10 +449,21 @@ class AgenticToolGuardrailLoop:
             }
             completed_calls.append(completed_call)
             self._state["completed_tool_calls"] = completed_calls
+            ledger[call_id]["lifecycle_state"] = "completed"
+            self._set_required_tool_lifecycle(tool_name, "completed")
+            events.append(
+                self._event(
+                    "tool_lifecycle",
+                    "completed",
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                )
+            )
             if (
                 self._required_steps_complete()
                 and call_index + 1 < len(decision.normalized_calls)
             ):
+                self._retire_required_tools(events)
                 for retired_call in decision.normalized_calls[call_index + 1 :]:
                     events.append(
                         self._event(
@@ -436,6 +477,7 @@ class AgenticToolGuardrailLoop:
                 break
 
         if self._required_steps_complete():
+            self._retire_required_tools(events)
             self._state["awaiting_final_answer"] = True
             return self._nudge_turn(
                 action="finalize",
@@ -780,11 +822,47 @@ class AgenticToolGuardrailLoop:
             raise AgenticToolGuardrailLoopError("Guardrail state completed calls must be a list.")
         return value
 
-    def _execution_ledger(self) -> dict[str, str]:
+    def _execution_ledger(self) -> dict[str, dict[str, str]]:
         value = self._state["execution_ledger"]
         if not isinstance(value, dict):
             raise AgenticToolGuardrailLoopError("Guardrail execution ledger must be an object.")
         return value  # type: ignore[return-value]
+
+    def _required_tool_lifecycle(self) -> dict[str, str]:
+        value = self._state["required_tool_lifecycle"]
+        if not isinstance(value, dict):
+            raise AgenticToolGuardrailLoopError(
+                "Guardrail required tool lifecycle must be an object."
+            )
+        return value  # type: ignore[return-value]
+
+    def _set_required_tool_lifecycle(self, tool_name: str, state: str) -> None:
+        lifecycle = self._required_tool_lifecycle()
+        if tool_name in lifecycle:
+            lifecycle[tool_name] = state
+
+    def _retire_required_tools(
+        self, events: list[AgenticToolGuardrailEvent]
+    ) -> None:
+        lifecycle = self._required_tool_lifecycle()
+        ledger = self._execution_ledger()
+        required_tools = set(self.config.required_tools)
+        for tool_name in required_tools:
+            lifecycle[tool_name] = "retired"
+        for call_id, entry in ledger.items():
+            if (
+                entry["tool_name"] in required_tools
+                and entry["lifecycle_state"] == "completed"
+            ):
+                entry["lifecycle_state"] = "retired"
+                events.append(
+                    self._event(
+                        "tool_lifecycle",
+                        "retired",
+                        tool_call_id=call_id,
+                        tool_name=entry["tool_name"],
+                    )
+                )
 
     def _missing_required_tools(self) -> tuple[str, ...]:
         completed = {str(call.get("name", "")) for call in self._completed_calls()}
@@ -795,7 +873,9 @@ class AgenticToolGuardrailLoop:
 
     def _restore_state(self, state: dict[str, object] | None) -> dict[str, object]:
         if state is None:
-            return _new_guardrail_state(self.config.request_id)
+            return _new_guardrail_state(
+                self.config.request_id, self.config.required_tools
+            )
         if not isinstance(state, dict):
             raise AgenticToolGuardrailLoopError("Guardrail state must be an object.")
         restored = copy.deepcopy(state)
@@ -803,7 +883,9 @@ class AgenticToolGuardrailLoop:
             raise AgenticToolGuardrailLoopError("Unsupported guardrail state schema version.")
         if restored.get("request_id") != self.config.request_id:
             raise AgenticToolGuardrailLoopError("Guardrail state request id does not match config.")
-        expected_keys = set(_new_guardrail_state(self.config.request_id))
+        expected_keys = set(
+            _new_guardrail_state(self.config.request_id, self.config.required_tools)
+        )
         if set(restored) != expected_keys:
             raise AgenticToolGuardrailLoopError(
                 "Guardrail state fields do not match the v1 schema."
@@ -835,11 +917,37 @@ class AgenticToolGuardrailLoop:
             raise AgenticToolGuardrailLoopError(
                 "Guardrail state execution_ledger must be an object."
             )
-        for call_id, fingerprint in execution_ledger.items():
+        required_tool_lifecycle = restored["required_tool_lifecycle"]
+        if (
+            not isinstance(required_tool_lifecycle, dict)
+            or set(required_tool_lifecycle) != set(self.config.required_tools)
+            or any(
+                not isinstance(state, str)
+                or state not in _REQUIRED_TOOL_LIFECYCLE_STATES
+                for state in required_tool_lifecycle.values()
+            )
+        ):
+            raise AgenticToolGuardrailLoopError(
+                "Guardrail required tool lifecycle does not match config."
+            )
+
+        registry_names = set(self._registry.names())
+        for call_id, entry in execution_ledger.items():
             if not isinstance(call_id, str) or not call_id.strip():
                 raise AgenticToolGuardrailLoopError(
                     "Guardrail state execution-ledger ids must be nonempty strings."
                 )
+            if not isinstance(entry, dict) or set(entry) != {
+                "fingerprint",
+                "tool_name",
+                "lifecycle_state",
+            }:
+                raise AgenticToolGuardrailLoopError(
+                    "Guardrail execution-ledger entries must match the v1 shape."
+                )
+            fingerprint = entry["fingerprint"]
+            tool_name = entry["tool_name"]
+            lifecycle_state = entry["lifecycle_state"]
             if (
                 not isinstance(fingerprint, str)
                 or len(fingerprint) != 64
@@ -848,10 +956,17 @@ class AgenticToolGuardrailLoop:
                 raise AgenticToolGuardrailLoopError(
                     "Guardrail state execution-ledger fingerprints must be lowercase SHA-256."
                 )
+            if not isinstance(tool_name, str) or tool_name not in registry_names:
+                raise AgenticToolGuardrailLoopError(
+                    "Guardrail execution-ledger tools must exist in the selected registry."
+                )
+            if lifecycle_state not in _EXECUTION_LEDGER_LIFECYCLE_STATES:
+                raise AgenticToolGuardrailLoopError(
+                    "Guardrail execution-ledger lifecycle state is unsupported."
+                )
 
         completed_ids: set[str] = set()
         completed_names: set[str] = set()
-        registry_names = set(self._registry.names())
         for completed_call in completed_calls:
             if not isinstance(completed_call, dict) or set(completed_call) != {
                 "id",
@@ -880,7 +995,13 @@ class AgenticToolGuardrailLoop:
                 tool_name=tool_name,
                 arguments=arguments,
             )
-            if execution_ledger.get(call_id) != fingerprint:
+            ledger_entry = execution_ledger.get(call_id)
+            if (
+                not isinstance(ledger_entry, dict)
+                or ledger_entry.get("fingerprint") != fingerprint
+                or ledger_entry.get("tool_name") != tool_name
+                or ledger_entry.get("lifecycle_state") not in {"completed", "retired"}
+            ):
                 raise AgenticToolGuardrailLoopError(
                     "Guardrail state completed calls must match the execution ledger."
                 )
@@ -907,13 +1028,21 @@ class AgenticToolGuardrailLoop:
             raise AgenticToolGuardrailLoopError(
                 "Guardrail state admission rejections cannot exceed malformed responses."
             )
-        if tool_execution_count != len(execution_ledger):
+        executing_entries = sum(
+            entry["lifecycle_state"] == "executing"
+            for entry in execution_ledger.values()
+        )
+        dispatched_entries = sum(
+            entry["lifecycle_state"] != "authorized"
+            for entry in execution_ledger.values()
+        )
+        if tool_execution_count != dispatched_entries:
             raise AgenticToolGuardrailLoopError(
                 "Guardrail state tool execution count must match the execution ledger."
             )
-        if tool_failure_count != tool_execution_count - len(completed_calls):
+        if tool_failure_count != executing_entries:
             raise AgenticToolGuardrailLoopError(
-                "Guardrail state tool failures must match non-completed executions."
+                "Guardrail state tool failures must match uncertain executions."
             )
         if restored["duplicate_execution_count"] != 0:
             raise AgenticToolGuardrailLoopError(
@@ -939,6 +1068,26 @@ class AgenticToolGuardrailLoop:
             raise AgenticToolGuardrailLoopError(
                 "Guardrail state terminal failure count must be zero or one."
             )
+
+        for tool_name, lifecycle_state in required_tool_lifecycle.items():
+            matching_ledger_states = {
+                entry["lifecycle_state"]
+                for entry in execution_ledger.values()
+                if entry["tool_name"] == tool_name
+            }
+            if lifecycle_state == "required" and tool_name in completed_names:
+                raise AgenticToolGuardrailLoopError(
+                    "Required lifecycle cannot contain completed evidence."
+                )
+            if lifecycle_state in {"authorized", "executing", "completed", "retired"}:
+                if lifecycle_state not in matching_ledger_states:
+                    raise AgenticToolGuardrailLoopError(
+                        "Required lifecycle must match execution-ledger evidence."
+                    )
+            if lifecycle_state in {"completed", "retired"} and tool_name not in completed_names:
+                raise AgenticToolGuardrailLoopError(
+                    "Completed required lifecycle needs a completed call."
+                )
 
         preflight_emitted = restored["preflight_event_emitted"]
         event_sequence = restored["event_sequence"]
@@ -976,6 +1125,16 @@ class AgenticToolGuardrailLoop:
         elif not final_failure_reason or restored["terminal_failure_count"] != 1:
             raise AgenticToolGuardrailLoopError(
                 "Failed guardrail state requires one terminal failure and a reason."
+            )
+
+        all_required_retired = all(
+            state == "retired" for state in required_tool_lifecycle.values()
+        )
+        if (awaiting_final_answer or final_outcome == "completed") and (
+            self.config.required_tools and not all_required_retired
+        ):
+            raise AgenticToolGuardrailLoopError(
+                "Final-answer state requires retired required steps."
             )
 
         budget_counters = (
@@ -1163,12 +1322,17 @@ def run_guarded_agentic_tool_loop(
     )
 
 
-def _new_guardrail_state(request_id: str) -> dict[str, object]:
+def _new_guardrail_state(
+    request_id: str, required_tools: Iterable[str]
+) -> dict[str, object]:
     return {
         "schema_version": AGENTIC_TOOL_GUARDRAIL_STATE_SCHEMA_VERSION,
         "request_id": request_id,
         "completed_tool_calls": [],
         "execution_ledger": {},
+        "required_tool_lifecycle": {
+            tool_name: "required" for tool_name in required_tools
+        },
         "responses_seen": 0,
         "healed_response_count": 0,
         "admission_rejection_count": 0,

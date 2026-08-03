@@ -398,6 +398,37 @@ def test_execution_ledger_suppresses_replay_and_rejects_changed_arguments() -> N
     assert diagnostics["replay_suppression_count"] == 1
 
 
+def test_required_tool_lifecycle_is_explicit_and_retires_before_final_answer() -> None:
+    loop = AgenticToolGuardrailLoop(config=_config())
+    assert loop.state_snapshot()["required_tool_lifecycle"] == {
+        "local_compute": "required"
+    }
+
+    turn = loop.handle_response(_compute_call("compute-lifecycle"))
+    lifecycle_events = [
+        event.outcome
+        for event in turn.events
+        if event.event_type == "tool_lifecycle"
+    ]
+    state = loop.state_snapshot()
+    ledger = state["execution_ledger"]
+    assert isinstance(ledger, dict)
+    entry = ledger["compute-lifecycle"]
+    assert isinstance(entry, dict)
+
+    assert lifecycle_events == ["authorized", "executing", "completed", "retired"]
+    assert state["required_tool_lifecycle"] == {"local_compute": "retired"}
+    assert entry["tool_name"] == "local_compute"
+    assert entry["lifecycle_state"] == "retired"
+    assert isinstance(entry["fingerprint"], str)
+    assert len(entry["fingerprint"]) == 64
+    assert state["awaiting_final_answer"] is True
+    assert loop.next_model_directive().tool_choice == "none"
+    assert AgenticToolGuardrailLoop(
+        config=_config(), state=state
+    ).state_snapshot() == state
+
+
 def test_admitted_exact_replay_resets_malformed_response_budget() -> None:
     loop = AgenticToolGuardrailLoop(
         config=_config(required_tools=(), malformed_budget=1)
@@ -844,6 +875,7 @@ def test_state_restore_rejects_negative_and_boolean_counters(field: str) -> None
         lambda state: state.__setitem__("final_failure_reason", []),
         lambda state: state.__setitem__("completed_tool_calls", {}),
         lambda state: state.__setitem__("execution_ledger", []),
+        lambda state: state.__setitem__("required_tool_lifecycle", []),
         lambda state: state.__setitem__("responses_seen", 13),
         lambda state: state.__setitem__("terminal", True),
         lambda state: state.update({"final_outcome": "completed", "terminal": False}),
@@ -894,6 +926,36 @@ def test_state_restore_rejects_forged_execution_evidence(
     config = _config(required_tools=())
     loop = AgenticToolGuardrailLoop(config=config)
     loop.handle_response(_compute_call("compute-state"))
+    state = loop.state_snapshot()
+    mutate_state(state)
+
+    with pytest.raises(AgenticToolGuardrailLoopError):
+        AgenticToolGuardrailLoop(config=config, state=state)
+
+
+@pytest.mark.parametrize(
+    "mutate_state",
+    (
+        lambda state: state["required_tool_lifecycle"].__setitem__(  # type: ignore[union-attr]
+            "local_compute", "required"
+        ),
+        lambda state: state["required_tool_lifecycle"].__setitem__(  # type: ignore[union-attr]
+            "ghost_tool", "required"
+        ),
+        lambda state: state["execution_ledger"]["compute-lifecycle"].__setitem__(  # type: ignore[index,union-attr]
+            "lifecycle_state", "future"
+        ),
+        lambda state: state["execution_ledger"]["compute-lifecycle"].__setitem__(  # type: ignore[index,union-attr]
+            "tool_name", "ghost_tool"
+        ),
+    ),
+)
+def test_state_restore_rejects_forged_required_tool_lifecycle(
+    mutate_state: Callable[[dict[str, object]], object],
+) -> None:
+    config = _config()
+    loop = AgenticToolGuardrailLoop(config=config)
+    loop.handle_response(_compute_call("compute-lifecycle"))
     state = loop.state_snapshot()
     mutate_state(state)
 

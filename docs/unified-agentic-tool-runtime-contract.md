@@ -288,6 +288,111 @@ must serialize only the target tool plus, for prerequisite rejections, the
 serialize matched argument values or any observation payload from the
 prerequisite tool.
 
+## Live Guardrail Loop Contract
+
+`AgenticToolGuardrailLoop` is the worker-owned composition boundary for model
+responses that may contain tool calls. It applies healing, admission,
+prerequisite checks, replay protection, deterministic execution, retry budgets,
+and final-answer handling in that order. A caller may drive one response at a
+time or use `run_guarded_agentic_tool_loop(...)` with a responder callback.
+
+The loop accepts `melix.agentic_tool_guardrail_config.v1` with:
+
+- `request_id`
+- `required_tools[]`
+- `prerequisites[]`
+- `max_consecutive_malformed_responses`
+- `max_consecutive_tool_failures`
+- `max_turns`
+
+An empty `required_tools[]` permits a non-empty ordinary text or structured JSON
+response to complete immediately. It does not turn a fenced, tagged,
+provider-shaped, or pseudo-tool response with an unknown or invalid call into a
+final answer.
+
+Control-flow truth is persisted separately as
+`melix.agentic_tool_guardrail_state.v1`. The state includes completed calls and
+their matching arguments, the required-tool lifecycle, the execution ledger,
+retry counters, completion flags, and event sequence. It must survive prompt
+compaction and must never be reconstructed from retained messages. State may
+contain tool arguments required for matching and replay correctness, so it is
+protected request state rather than a diagnostic receipt.
+
+Each response transition emits sanitized
+`melix.agentic_tool_guardrail_event.v1` records. The final summary is
+`melix.agentic_tool_guardrail_diagnostic.v1` and includes response, healing,
+admission, execution, failure, replay, nudge, and terminal counts; the last
+nudge type; completed required tool names; final outcome; and final failure
+reason. Neither shape includes raw prompts, tool arguments, observation
+payloads, URLs, workspace paths, or account identifiers.
+
+Retry nudges preserve distinct classes for ordinary premature terminal text,
+malformed wire shapes, pseudo-tool text blobs, unknown tools, invalid or
+missing arguments, prerequisite violations, retired tools, and execution
+failures. A pseudo-tool nudge explicitly requires a declared tool-call wire
+shape and forbids tool-like prose or content-only JSON.
+
+Malformed-response and tool-execution-failure counters are independent.
+Healing a parseable response does not by itself reset the malformed-response
+counter. That counter resets only when a new call passes admission and is
+recorded for dispatch. Exact replay suppression and prerequisite rejection are
+not progress. The tool-failure counter resets after a completed observation.
+Each budget produces its own terminal failure reason when exhausted.
+
+`required_tool_lifecycle` explicitly maps every configured required tool through
+`required`, `authorized`, `executing`, `completed`, and `retired`. The
+`execution_ledger` maps each call identity to its deterministic fingerprint,
+tool name, and call lifecycle (`authorized`, `executing`, `completed`, or
+`retired`). Admission records `authorized`; the loop records `executing` before
+adapter dispatch; a completed observation records `completed`; and completion
+of all required steps records `retired` before the final-answer pass. A timeout
+or adapter failure leaves the call at `executing` because an external side
+effect may already have happened. An identical replay is suppressed in every
+ledger state; reuse of an existing call ID with changed tool name or arguments
+fails terminally.
+
+The responder receives an `AgenticToolGuardrailModelDirective` for each turn.
+It carries the resolved tool choice, a typed corrective nudge when present, and
+the previous turn's typed `tool_observations`. The caller's provider/context
+adapter owns serialization of those observations into the next model request.
+The directive never carries the persisted guardrail state. When all required
+steps complete, tool choice becomes `none` and tool calls are retired while the
+loop requests one non-empty final answer. Required-step continuation,
+observation-ready, and finalization instructions emit `model_directive` events;
+only corrective recovery instructions increment `retry_nudge_count` and emit
+`retry_nudge` events.
+
+The Swift control-plane types mirror the config, state, event, and diagnostic
+schemas. `AgenticToolGuardrailContract.workerExecutionExtFields(...)` emits
+canonical JSON under:
+
+- `melix.agentic_guardrail.config_schema`
+- `melix.agentic_guardrail.config_json`
+- `melix.agentic_guardrail.state_schema`, when restoring state
+- `melix.agentic_guardrail.state_json`, when restoring state
+
+Swift owns request shaping and typed transport only. Python remains the source
+of execution truth and the only owner of live state transitions. Worker request
+adapters use `agentic_tool_guardrail_inputs_from_execution_ext(...)` to reject
+missing, malformed, or unsupported metadata before constructing the loop.
+
+## Approval Parking Contract
+
+`AgenticToolApprovalParkingBudget` is the process-wide extension boundary for a
+future approval scheduler. Its public lifecycle operations, snapshots, event
+sequence, and diagnostics are serialized by one reentrant lock. An executing
+request owns an executor lease; a parked request owns one bounded parking permit
+and no executor lease. Resume may reacquire only capacity above the configured
+executor reserve.
+
+`melix.agentic_tool_approval_parking_config.v1` carries total and reserved
+executor capacity, maximum parked waits, and `max_released_tombstones` (1,000 by
+default). State keeps active entries plus the bounded released-request tombstone
+order. Cumulative release, release-reason, executor-acquisition, and park counts
+remain monotonic when old tombstones are evicted. Callers must use globally
+unique request IDs; a duplicate release outside the retained tombstone window
+is still suppressed as an unknown request.
+
 ## Observation Contract
 
 Every emitted observation must include:
