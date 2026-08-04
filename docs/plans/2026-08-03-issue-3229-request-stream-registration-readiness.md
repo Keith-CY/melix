@@ -106,6 +106,11 @@ Validated on 2026-08-03 against `origin/main` commit
   the same request-scoped registration evidence before emitting fixture events.
 - After the pull-request review fix, all 128 `RequestCoordinatorTests` passed
   again in 3.498 seconds on 2026-08-04.
+- GitHub's `text-worker` shard twice lacked a default MLX metallib and aborted in
+  two sampler tests that bypassed the suite's existing availability guard. Both
+  tests now use `withTemporaryDefaultMetallib`: they execute when the resource is
+  available and skip cleanly when it is absent. The focused pair passed 2/2
+  locally.
 - `git diff --check` passed.
 - Production changed-scope coverage and performance metrics are `N/A` because
   the change is confined to a test fixture, test ordering, and this plan.

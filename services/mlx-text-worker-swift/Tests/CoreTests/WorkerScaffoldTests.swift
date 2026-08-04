@@ -3430,33 +3430,37 @@ final class WorkerScaffoldTests: XCTestCase {
     }
 
     #if canImport(MLX) && canImport(MLXLMCommon)
-    func testTopKSamplerNeverSelectsTokensOutsideCandidateSet() {
-        let sampler = GenerateParameters(
-            temperature: 1,
-            topP: 1,
-            topK: 2
-        ).sampler()
-        let logits = MLXArray([Float(12), Float(11), Float(-100), Float(-100)], [1, 4])
+    func testTopKSamplerNeverSelectsTokensOutsideCandidateSet() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sampler = GenerateParameters(
+                temperature: 1,
+                topP: 1,
+                topK: 2
+            ).sampler()
+            let logits = MLXArray([Float(12), Float(11), Float(-100), Float(-100)], [1, 4])
 
-        let sampledTokens = (0 ..< 64).map { _ in
-            sampler.sample(logits: logits).item(Int.self)
+            let sampledTokens = (0 ..< 64).map { _ in
+                sampler.sample(logits: logits).item(Int.self)
+            }
+
+            XCTAssertTrue(sampledTokens.allSatisfy { $0 == 0 || $0 == 1 })
         }
-
-        XCTAssertTrue(sampledTokens.allSatisfy { $0 == 0 || $0 == 1 })
     }
 
-    func testTopKSamplerSupportsBFloat16NucleusSampling() {
-        let sampler = TopKSampler(temperature: 1, topP: 0.8, topK: 3)
-        let logits = MLXArray(
-            [Float(12), Float(11), Float(10), Float(-100)],
-            [1, 4]
-        ).asType(.bfloat16)
+    func testTopKSamplerSupportsBFloat16NucleusSampling() async throws {
+        try await withTemporaryDefaultMetallib {
+            let sampler = TopKSampler(temperature: 1, topP: 0.8, topK: 3)
+            let logits = MLXArray(
+                [Float(12), Float(11), Float(10), Float(-100)],
+                [1, 4]
+            ).asType(.bfloat16)
 
-        let sampledTokens = (0 ..< 32).map { _ in
-            sampler.sample(logits: logits).item(Int.self)
+            let sampledTokens = (0 ..< 32).map { _ in
+                sampler.sample(logits: logits).item(Int.self)
+            }
+
+            XCTAssertTrue(sampledTokens.allSatisfy { $0 >= 0 && $0 <= 2 })
         }
-
-        XCTAssertTrue(sampledTokens.allSatisfy { $0 >= 0 && $0 <= 2 })
     }
 
     func testVendoredSynchronousGenerateReportsLengthStopAndCallbackStopReasons() async throws {
