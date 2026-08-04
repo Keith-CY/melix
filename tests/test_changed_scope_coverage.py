@@ -60,6 +60,7 @@ SINGLETON_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_singleton_
 @pytest.fixture(autouse=True)
 def clear_probe_coverage_path_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", raising=False)
+    monkeypatch.delenv("MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM", raising=False)
     changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
     setattr(changed_scope_coverage, "_ALLOWLIST_LAST_RAW", "")
     setattr(
@@ -251,6 +252,58 @@ def test_changed_lines_by_path_includes_staged_and_unstaged_changes(
     changed = changed_scope_coverage._changed_lines_by_path(tmp_path, ["source.py"])
 
     assert changed == {"source.py": {1, 2}}
+
+
+def test_changed_lines_by_path_uses_explicit_committed_diff_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    source = tmp_path / "source.py"
+    source.write_text("one\ntwo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "source.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Coverage Test",
+            "-c",
+            "user.email=coverage@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    base_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    source.write_text("one changed\ntwo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "source.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Coverage Test",
+            "-c",
+            "user.email=coverage@example.invalid",
+            "commit",
+            "-qm",
+            "head",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    monkeypatch.setenv("MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM", base_sha)
+
+    assert changed_scope_coverage._changed_lines_by_path(tmp_path, ["source.py"]) == {
+        "source.py": {1}
+    }
 
 
 def test_changed_lines_by_path_short_circuits_empty_paths(monkeypatch, tmp_path: Path) -> None:

@@ -14,11 +14,7 @@ import worker.runtime.artifact_embedding_runtime as artifact_runtime
 import worker.model_registry.catalog as model_catalog
 import worker.runtime.mlx_embedding_encoder as mlx_encoder
 from worker.engine.embedding_core import EmbeddingCore
-from worker.registry import (
-    MemoryBudgetExceeded,
-    WorkerRegistry,
-    _spec_with_embedding_load_receipt,
-)
+from worker.registry import WorkerRegistry
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime.artifact_embedding_runtime import (
     ArtifactEmbeddingError,
@@ -134,33 +130,6 @@ class RecordingRouteRuntime:
 
     def close_loaded_model(self, loaded_model) -> None:
         self.calls.append(("close", loaded_model["model_id"]))
-
-
-class SnapshotEstimateRuntime:
-    def __init__(self, *, source_estimate: int, loaded_estimate: int) -> None:
-        self.source_estimate = source_estimate
-        self.loaded_estimate = loaded_estimate
-        self.closed_model_ids: list[str] = []
-
-    def estimate_resident_bytes(self, _model_spec) -> int:
-        return self.source_estimate
-
-    def load_model(self, model_spec) -> dict[str, object]:
-        return {
-            "model_id": model_spec.model_id,
-            "embedding_load_receipt": {
-                "estimated_resident_bytes": self.loaded_estimate,
-            },
-        }
-
-    @staticmethod
-    def estimate_loaded_resident_bytes(loaded_model) -> int:
-        return int(
-            loaded_model["embedding_load_receipt"]["estimated_resident_bytes"]
-        )
-
-    def close_loaded_model(self, loaded_model) -> None:
-        self.closed_model_ids.append(loaded_model["model_id"])
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -1195,59 +1164,6 @@ def test_worker_registry_routes_mlx_embedding_model_through_artifact_handle(
     assert summary_ext["melix.embedding.request.finite_output"] == "True"
 
 
-def test_worker_registry_reconciles_snapshot_bound_embedding_residency() -> None:
-    runtime = SnapshotEstimateRuntime(source_estimate=8, loaded_estimate=80)
-    registry = WorkerRegistry(
-        embedding_runtime=runtime,
-        process_memory_budget_bytes=100,
-    )
-    model_spec = common_pb2.ModelSpec(
-        model_id="snapshot-sized-embedding",
-        model_kind="embedding",
-        ext={"embedding_backend_id": "mlx-bert-v1"},
-    )
-
-    loaded = registry.load_model(model_spec, memory_budget_bytes=90)
-
-    assert loaded.estimated_resident_bytes == 80
-    assert registry.runtime_stats().model_resident_bytes == 80
-    assert registry._reserved_model_resident_bytes == 0
-    assert runtime.closed_model_ids == []
-
-
-@pytest.mark.parametrize(
-    ("process_budget", "request_budget", "expected_budget"),
-    [
-        (50, 0, 50),
-        (100, 50, 50),
-    ],
-)
-def test_worker_registry_rejects_snapshot_bound_embedding_residency_and_closes(
-    process_budget: int,
-    request_budget: int,
-    expected_budget: int,
-) -> None:
-    runtime = SnapshotEstimateRuntime(source_estimate=8, loaded_estimate=80)
-    registry = WorkerRegistry(
-        embedding_runtime=runtime,
-        process_memory_budget_bytes=process_budget,
-    )
-    model_spec = common_pb2.ModelSpec(
-        model_id="snapshot-too-large-embedding",
-        model_kind="embedding",
-        ext={"embedding_backend_id": "mlx-bert-v1"},
-    )
-
-    with pytest.raises(MemoryBudgetExceeded) as caught:
-        registry.load_model(model_spec, memory_budget_bytes=request_budget)
-
-    assert caught.value.budget_bytes == expected_budget
-    assert caught.value.projected_resident_bytes == 80
-    assert registry.runtime_stats().model_resident_bytes == 0
-    assert registry._reserved_model_resident_bytes == 0
-    assert runtime.closed_model_ids == ["snapshot-too-large-embedding"]
-
-
 def test_artifact_embedding_uses_shared_mlx_executor_owner_thread(
     tmp_path: Path,
 ) -> None:
@@ -1386,12 +1302,6 @@ def test_loaded_model_summary_exposes_artifact_embedding_load_receipt(
     assert receipt["melix.embedding.load.vector_kind"] == "single_dense"
     assert receipt["melix.embedding.load.dtype"] == "float32"
     assert int(receipt["melix.embedding.load.measured_resident_bytes"]) >= 0
-
-
-def test_load_receipt_projection_preserves_non_mapping_runtime_model() -> None:
-    model_spec = common_pb2.ModelSpec(model_id="fixture")
-
-    assert _spec_with_embedding_load_receipt(model_spec, object()) is model_spec
 
 
 def test_load_model_resolves_sentence_transformers_pooling_and_normalization(
@@ -2563,7 +2473,15 @@ def test_pr_scoped_probes_replay_artifact_embedding_coverage() -> None:
     artifact_test_file = (
         "services/mlx-worker-python/tests/test_artifact_embedding_runtime.py"
     )
-    artifact_probe_ids = (
+    registry_contract_test_file = (
+        "services/mlx-worker-python/tests/"
+        "test_artifact_embedding_registry_contract.py"
+    )
+    catalog_contract_test_file = (
+        "services/mlx-worker-python/tests/"
+        "test_artifact_embedding_catalog_contract.py"
+    )
+    linux_context_probe_ids = (
         "worker-registry-resident-bytes-accumulator",
         "model-registry-plain-local-manifest-stat-elision",
         "model-registry-readme-source-fastpath",
@@ -2591,11 +2509,34 @@ def test_pr_scoped_probes_replay_artifact_embedding_coverage() -> None:
     for probe_id in maintenance_probe_ids:
         for command_field in ("test_command", "coverage_command"):
             assert maintenance_test in probes_by_id[probe_id][command_field]
-    for probe_id in artifact_probe_ids:
+    for probe_id in linux_context_probe_ids:
         for command_field in ("test_command", "coverage_command"):
-            assert artifact_test_file in probes_by_id[probe_id][command_field]
-    for probe_id in maintenance_probe_ids + artifact_probe_ids:
+            assert artifact_test_file not in probes_by_id[probe_id][command_field]
+    worker_probe = probes_by_id["worker-registry-resident-bytes-accumulator"]
+    assert registry_contract_test_file in worker_probe["watch_globs"]
+    for probe_id in (
+        "model-registry-plain-local-manifest-stat-elision",
+        "model-registry-readme-source-fastpath",
+    ):
+        assert catalog_contract_test_file in probes_by_id[probe_id]["watch_globs"]
+        for command_field in ("test_command", "coverage_command"):
+            assert catalog_contract_test_file in probes_by_id[probe_id][command_field]
+    for command_field in ("test_command", "coverage_command"):
+        assert registry_contract_test_file in worker_probe[command_field]
+        artifact_command = probes_by_id["artifact-embedding-batch"][command_field]
+        assert artifact_test_file in artifact_command
+        assert catalog_contract_test_file in artifact_command
+        assert registry_contract_test_file in artifact_command
+        assert " --extra mlx " in artifact_command
+    contract_probe_ids = (
+        *maintenance_probe_ids,
+        *linux_context_probe_ids,
+    )
+    for probe_id in contract_probe_ids:
         for command_field in ("test_command", "coverage_command"):
             command = probes_by_id[probe_id][command_field]
             assert " --extra mlx " in command
-            assert all(test_node in command for test_node in performance_test_nodes)
+            for test_node in performance_test_nodes:
+                assert test_node in command, (
+                    f"{probe_id}.{command_field} is missing {test_node}"
+                )

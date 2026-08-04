@@ -29,6 +29,7 @@ _ASCII_LOWER_D = ord("d")
 _ASCII_COMMENT = ord("#")
 _DIFF_PARSER_ACCEPTS_BYTES = True
 _EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
+_DIFF_FROM_ENV = "MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM"
 _DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
 _SPARSE_SOURCE_LINE_SCAN_THRESHOLD = 8
 _ALLOWLIST_CACHE_MISS = object()
@@ -146,8 +147,9 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
 def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, set[int]]:
     if not rel_paths:
         return {}
+    diff_from = os.environ.get(_DIFF_FROM_ENV, "").strip() or "HEAD"
     proc = subprocess.run(
-        ["git", "diff", "--unified=0", "HEAD", "--", *rel_paths],
+        ["git", "diff", "--unified=0", diff_from, "--", *rel_paths],
         cwd=repo_root,
         capture_output=True,
         check=True,

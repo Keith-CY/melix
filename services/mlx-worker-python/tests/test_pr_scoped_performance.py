@@ -4421,10 +4421,27 @@ def test_embedding_core_inputs_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
-def test_artifact_embedding_batch_probe_script_emits_metrics() -> None:
+def test_artifact_embedding_batch_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def reject_mlx_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "mlx" or name.startswith("mlx."):
+            raise AssertionError(f"probe attempted to import {name}")
+        return original_import(name, *args, **kwargs)
+
+    assert reject_mlx_import("builtins") is builtins
+    with pytest.raises(AssertionError, match="probe attempted to import mlx.core"):
+        reject_mlx_import("mlx.core")
+    monkeypatch.setattr(builtins, "__import__", reject_mlx_import)
     probe_script = runpy.run_path(
         str(REPO_ROOT / "scripts/artifact_embedding_batch_probe.py")
     )
+    probe_backend, _probe_tokenizer, _probe_encoder = probe_script[
+        "_probe_backend"
+    ](work_units=1)
+    assert isinstance(probe_backend, probe_script["MLXArtifactEmbeddingBackend"])
 
     metrics = probe_script["measure"](sample_count=3, work_units=2_000)
 
@@ -5343,6 +5360,11 @@ def test_registered_probes_expose_focused_commands() -> None:
         assert "then python scripts/" not in probe.probe_command
         assert "else python - <<" not in probe.probe_command
         assert "if false; then python scripts/" not in probe.probe_command
+        if probe.runner == "ubuntu-latest":
+            artifact_runtime_test = (
+                "services/mlx-worker-python/tests/test_artifact_embedding_runtime.py"
+            )
+            assert artifact_runtime_test not in f"{probe.test_command} {probe.coverage_command}"
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
         if probe.probe_id == "model-registry-plain-local-manifest-stat-elision":
             registry_probe = probe
@@ -5365,6 +5387,14 @@ def test_registered_probes_expose_focused_commands() -> None:
         if probe.probe_id == "structured-output-json-object-constraint-cache":
             structured_output_probe = probe
 
+    workflow = (REPO_ROOT / ".github/workflows/pr-scoped-performance.yml").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM: "
+        "${{ github.event.pull_request.base.sha }}"
+    ) in workflow
+
     assert evaluation_store_samples_probe is not None
     evaluation_store_samples_metrics = {
         metric.key: metric for metric in evaluation_store_samples_probe.metrics
@@ -5374,6 +5404,21 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert evaluation_store_samples_metrics["peak_bytes_mean"].warn_pct == 5.0
 
     assert worker_registry_probe is not None
+    artifact_registry_contract_test = (
+        "services/mlx-worker-python/tests/"
+        "test_artifact_embedding_registry_contract.py"
+    )
+    artifact_catalog_contract_test = (
+        "services/mlx-worker-python/tests/"
+        "test_artifact_embedding_catalog_contract.py"
+    )
+    assert artifact_registry_contract_test in worker_registry_probe.watch_globs
+    assert artifact_registry_contract_test in worker_registry_probe.test_command
+    assert artifact_registry_contract_test in worker_registry_probe.coverage_command
+    assert registry_probe is not None
+    assert artifact_catalog_contract_test in registry_probe.watch_globs
+    assert artifact_catalog_contract_test in registry_probe.test_command
+    assert artifact_catalog_contract_test in registry_probe.coverage_command
     assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.test_command
     assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.test_command
     assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.coverage_command

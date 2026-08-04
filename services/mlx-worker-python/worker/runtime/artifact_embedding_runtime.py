@@ -12,7 +12,7 @@ from pathlib import Path
 import stat
 import tempfile
 from threading import Lock
-from typing import Any
+from typing import Any, Protocol
 
 from worker.runtime.artifact_embedding_contract import (
     normalized_embedding_hidden_activation,
@@ -101,6 +101,21 @@ class EmbeddingBatchResult:
     input_token_count: int
     forward_count: int
     dtype: str
+
+
+class ArtifactEmbeddingTensorOps(Protocol):
+    def int_array(self, rows: list[list[int]]) -> Any: ...
+
+    def pool(
+        self,
+        hidden_states: Any,
+        attention_mask: Any,
+        *,
+        pooling_mode: str,
+        normalization: str,
+    ) -> Any: ...
+
+    def evaluate(self, value: Any) -> None: ...
 
 
 class _ArtifactSnapshot:
@@ -853,6 +868,33 @@ def pool_mlx_hidden_states(
     return pooled
 
 
+class _MLXEmbeddingTensorOps:
+    def int_array(self, rows: list[list[int]]) -> Any:
+        import mlx.core as mx
+
+        return mx.array(rows, dtype=mx.int32)
+
+    def pool(
+        self,
+        hidden_states: Any,
+        attention_mask: Any,
+        *,
+        pooling_mode: str,
+        normalization: str,
+    ) -> Any:
+        return pool_mlx_hidden_states(
+            hidden_states,
+            attention_mask,
+            pooling_mode=pooling_mode,
+            normalization=normalization,
+        )
+
+    def evaluate(self, value: Any) -> None:
+        import mlx.core as mx
+
+        mx.eval(value)
+
+
 def _nested_int_rows(value: object, *, field_name: str) -> list[list[int]]:
     tolist = getattr(value, "tolist", None)
     if callable(tolist):
@@ -888,10 +930,12 @@ class MLXArtifactEmbeddingBackend:
         tokenizer: object,
         encoder: object,
         dtype: str | None = None,
+        tensor_ops: ArtifactEmbeddingTensorOps | None = None,
     ) -> None:
         self._tokenizer = tokenizer
         self._encoder = encoder
         self.dtype = dtype
+        self._tensor_ops = tensor_ops or _MLXEmbeddingTensorOps()
         self._closed = False
 
     def close(self) -> None:
@@ -965,10 +1009,8 @@ class MLXArtifactEmbeddingBackend:
                 "Embedding tokenizer produced a fully padded input row.",
             )
 
-        import mlx.core as mx
-
-        input_ids = mx.array(input_ids_rows, dtype=mx.int32)
-        attention_mask = mx.array(attention_mask_rows, dtype=mx.int32)
+        input_ids = self._tensor_ops.int_array(input_ids_rows)
+        attention_mask = self._tensor_ops.int_array(attention_mask_rows)
         encoder_kwargs: dict[str, object] = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -986,7 +1028,9 @@ class MLXArtifactEmbeddingBackend:
                     "embedding_tokenizer_shape_invalid",
                     "Embedding tokenizer token_type_ids do not match the token sequence shape.",
                 )
-            encoder_kwargs["token_type_ids"] = mx.array(token_type_rows, dtype=mx.int32)
+            encoder_kwargs["token_type_ids"] = self._tensor_ops.int_array(
+                token_type_rows
+            )
         hidden_states = self._encoder(**encoder_kwargs)
         if isinstance(hidden_states, Mapping):
             hidden_states = hidden_states.get("last_hidden_state")
@@ -997,13 +1041,13 @@ class MLXArtifactEmbeddingBackend:
                 "embedding_encoder_output_invalid",
                 "Embedding encoder did not return token hidden states.",
             )
-        vectors = pool_mlx_hidden_states(
+        vectors = self._tensor_ops.pool(
             hidden_states,
             attention_mask,
             pooling_mode=descriptor.pooling_mode,
             normalization=descriptor.normalization,
         )
-        mx.eval(vectors)
+        self._tensor_ops.evaluate(vectors)
         return EmbeddingBatchResult(
             vectors=tuple(tuple(float(value) for value in row) for row in vectors.tolist()),
             input_token_count=sum(active_token_counts),

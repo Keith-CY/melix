@@ -357,16 +357,16 @@ Implemented and independently reviewed through 2026-08-04:
 
 Focused evidence:
 
-- artifact runtime tests: `166` collected; the remediated worker and catalog
-  probe commands execute the complete file and pass with six dependency
-  deprecation warnings;
-- performance registry contract: all affected commands replay the exact
-  artifact, maintenance metadata, and ten performance-registry test nodes with
-  the explicit MLX dependency extra;
+- artifact runtime tests: `166` collected; the macOS artifact probe executes the
+  complete file with six dependency deprecation warnings, while Linux worker
+  and catalog probes execute the split platform-neutral contract suites;
+- performance registry contract: commands that replay the complete artifact
+  runtime use the explicit MLX dependency extra; Linux context probes retain
+  only platform-neutral contract nodes and do not collect the MLX runtime file;
 - isolated-environment command validation: the maintenance representative
   passed `34` tests and the worker-registry representative passed `187` tests
   after each installed its own 79-package MLX environment;
-- coverage-helper suite: `72 passed` in the final targeted runner replay;
+- coverage-helper suite: `73 passed` in each final targeted runner replay;
 - focused control-plane Swift coverage run: `353 tests` across the control-plane
   service, model catalog, and Python bridge suites;
 - changed-line Swift coverage: `75/75 = 100%` across `ModelCatalog.swift`,
@@ -378,8 +378,8 @@ Focused evidence:
   mismatches;
 - #3166 aggregate Python changed-scope coverage: `1,136/1,185` measurable
   changed lines, `95.86%`; the catalog scope is `97.62%` and the artifact
-  runtime is `93.88%`;
-- coverage-helper changed-scope coverage: `15/15` measurable changed lines,
+  runtime is `93.90%`;
+- coverage-helper changed-scope coverage: `63/63` measurable changed lines,
   `100%`, with staged, unstaged, and untracked paths included and zero
   measurable lines treated as failure.
 
@@ -427,3 +427,37 @@ safetensors and lacks the referenced `2_Normalize/config.json`; it is not a
 usable acceptance checkpoint for this runtime. No production default was
 switched to an artifact model, and the tiny local checkpoints are not
 represented as production evidence.
+
+PR CI exposed two portability defects in the performance evidence. First, the
+probe-only fake encoder entered production MLX tensor operations, so Linux
+coverage jobs failed while loading `libmlx.so` even though the workload was
+synthetic. `MLXArtifactEmbeddingBackend` now owns an injected tensor-operations
+boundary: production uses the same lazy MLX conversion, pooling, and evaluation
+implementation, while the probe supplies platform-neutral tensor operations and
+still exercises the real production batching method. The encoder call counter
+therefore remains independent evidence of one forward for a batch of 32 rather
+than a value synthesized by a probe-only backend. A focused regression guard is
+installed before the probe script loads and rejects any `mlx` import throughout
+script loading and measurement.
+
+Second, Linux context probes no longer collect the complete macOS-only artifact
+runtime test file; they retain the platform-neutral artifact probe contract
+nodes. Clean CI checkouts receive the exact pull-request base SHA through
+`MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM`, so the strict zero-measurable-lines
+failure now evaluates the committed PR diff. Local pre-commit use still defaults
+to `HEAD` and includes staged, unstaged, and untracked paths.
+
+The repaired registry entries were then replayed through the exact PR-scoped
+runner against the committed base and the candidate worktree. Every replay
+completed its focused tests, changed-scope coverage gate, base probe, and head
+probe:
+
+- worker registry: `78 passed`, `67/69 = 97.10%` changed-line coverage;
+- plain model-registry scan: `185 passed`, `278/282 = 98.58%`;
+- README model-registry scan: `186 passed`, `278/282 = 98.58%`;
+- artifact embedding: `248 passed` with six dependency warnings,
+  `1,417/1,463 = 96.86%`;
+- maintenance and VLM context probes: `36 passed` and `54 passed`, each at
+  `1/1 = 100%` for its selected changed line;
+- all four changed-scope helper probes: `73 passed` and `63/63 = 100%` in each
+  replay.

@@ -51,21 +51,59 @@ class ProbeEncoder:
         self.work_units = work_units
         self.calls = 0
 
-    def __call__(self, **kwargs: Any) -> Any:
-        import mlx.core as mx
-
+    def __call__(
+        self,
+        *,
+        input_ids: list[list[int]],
+        attention_mask: list[list[int]],
+        token_type_ids: list[list[int]] | None = None,
+    ) -> ProbeTensor:
         self.calls += 1
+        assert len(attention_mask) == len(input_ids)
+        assert token_type_ids is None or len(token_type_ids) == len(input_ids)
         accumulator = 0.0
         for index in range(self.work_units):
             accumulator += math.sin(index * 0.0001)
-        input_ids = kwargs["input_ids"]
-        batch_size, sequence_length = input_ids.shape
-        seed = mx.array(accumulator * 1e-12, dtype=mx.float32)
-        values = mx.arange(
-            batch_size * sequence_length * _DIMENSIONS,
-            dtype=mx.float32,
-        ).reshape(batch_size, sequence_length, _DIMENSIONS)
-        return values * mx.array(1e-4, dtype=mx.float32) + seed
+        seed = accumulator * 1e-12
+        return ProbeTensor(
+            tuple(
+                tuple(
+                    seed + (row_index * _DIMENSIONS + dimension) * 1e-4
+                    for dimension in range(_DIMENSIONS)
+                )
+                for row_index, _row in enumerate(input_ids)
+            )
+        )
+
+
+class ProbeTensor:
+    dtype = "float32"
+
+    def __init__(self, rows: tuple[tuple[float, ...], ...]) -> None:
+        self._rows = rows
+
+    def tolist(self) -> list[list[float]]:
+        return [list(row) for row in self._rows]
+
+
+class ProbeTensorOps:
+    def int_array(self, rows: list[list[int]]) -> list[list[int]]:
+        return rows
+
+    def pool(
+        self,
+        hidden_states: object,
+        _attention_mask: object,
+        *,
+        pooling_mode: str,
+        normalization: str,
+    ) -> object:
+        assert pooling_mode == "mean"
+        assert normalization == "l2"
+        return hidden_states
+
+    def evaluate(self, _value: object) -> None:
+        return None
 
 
 def _probe_backend(*, work_units: int) -> tuple[Any, ProbeTokenizer, ProbeEncoder]:
@@ -77,6 +115,7 @@ def _probe_backend(*, work_units: int) -> tuple[Any, ProbeTokenizer, ProbeEncode
             tokenizer=tokenizer,
             encoder=encoder,
             dtype="float32",
+            tensor_ops=ProbeTensorOps(),
         ),
         tokenizer,
         encoder,
