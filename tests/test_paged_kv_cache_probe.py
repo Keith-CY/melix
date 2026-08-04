@@ -133,6 +133,20 @@ def test_probe_fails_closed_when_behavioral_acceptance_regresses() -> None:
     assert metrics["failure_count"] == 1.0
 
 
+def test_probe_fails_closed_when_paired_sampling_is_insufficient() -> None:
+    payload = paired_payload()
+    paged = payload["paged"]
+    assert isinstance(paged, dict)
+    paged["sample_count"] = 1
+
+    metrics = probe.analyze_artifact(payload)
+
+    assert metrics["sample_count_min"] == 1.0
+    assert metrics["status_passed"] == 0.0
+    assert metrics["status_failed"] == 1.0
+    assert metrics["failure_count"] == 1.0
+
+
 def _write_swift_test_log(
     path: Path,
     test_names: list[str],
@@ -226,9 +240,44 @@ def test_registry_probe_command_has_explicit_base_fallback(tmp_path: Path) -> No
     }
 
 
+def test_registry_focused_gate_provisions_locked_mlx_extra() -> None:
+    registry_probe = next(
+        entry
+        for entry in load_probe_registry(REGISTRY_PATH)
+        if entry.probe_id == "paged-kv-cache-ownership-memory"
+    )
+
+    mlx_install = (
+        "uv run --frozen --project services/mlx-worker-python --extra mlx pytest"
+    )
+    assert mlx_install in registry_probe.test_command
+    assert registry_probe.test_command.index(mlx_install) < registry_probe.test_command.index(
+        "xcrun swift test"
+    )
+
+
+def test_registry_treats_raw_sample_count_as_informational() -> None:
+    registry_probe = next(
+        entry
+        for entry in load_probe_registry(REGISTRY_PATH)
+        if entry.probe_id == "paged-kv-cache-ownership-memory"
+    )
+    metrics = {metric.key: metric for metric in registry_probe.metrics}
+
+    assert metrics["sample_count_min"].direction == "informational"
+
+
 def test_coverage_gate_requires_ninety_five_percent() -> None:
     coverage_script = (REPO_ROOT / "scripts/paged_kv_cache_coverage.sh").read_text()
 
     assert "minimum_coverage_pct=95" in coverage_script
     assert 'MELIX_PAGED_KV_COVERAGE_DIFF_FROM:-origin/main' in coverage_script
     assert 'Paged KV changed-line coverage %.2f%% is below %.2f%%.' in coverage_script
+
+
+def test_coverage_gate_only_accepts_zero_lines_for_scoped_runs() -> None:
+    coverage_script = (REPO_ROOT / "scripts/paged_kv_cache_coverage.sh").read_text()
+
+    assert "MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON" in coverage_script
+    assert '"${scope_mode}" != "unfiltered"' in coverage_script
+    assert "$'TOTAL\\t100.00%\\t0/0'" in coverage_script

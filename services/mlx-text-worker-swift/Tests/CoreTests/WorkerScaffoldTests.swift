@@ -12955,31 +12955,35 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
-    func testPagedKVBlockPoolRejectsUnsupportedLayoutsAndBlockShapes() {
-        let pool = PagedKVBlockPool()
-        let unsupported = pool.store(
-            compatibilitySignature: "unsupported-layout",
-            tokenIDs: Array(0 ..< 4),
-            storedTokenBoundary: 4,
-            blockSize: 4,
-            caches: [KVCacheSimple()],
-            reusedLookup: nil,
-            budgetBytes: 1_024
-        )
-        let mismatched = pool.store(
-            compatibilitySignature: "mismatched-shape",
-            tokenIDs: Array(0 ..< 4),
-            storedTokenBoundary: 4,
-            blockSize: 4,
-            caches: [PagedKVCache(blockSize: 4, layerIndex: 0)],
-            reusedLookup: nil,
-            budgetBytes: 1_024
-        )
+    func testPagedKVBlockPoolRejectsUnsupportedLayoutsAndBlockShapes() async throws {
+        try await withTemporaryDefaultMetallib {
+            Device.withDefaultDevice(.cpu) {
+                let pool = PagedKVBlockPool()
+                let unsupported = pool.store(
+                    compatibilitySignature: "unsupported-layout",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: [KVCacheSimple()],
+                    reusedLookup: nil,
+                    budgetBytes: 1_024
+                )
+                let mismatched = pool.store(
+                    compatibilitySignature: "mismatched-shape",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: [PagedKVCache(blockSize: 4, layerIndex: 0)],
+                    reusedLookup: nil,
+                    budgetBytes: 1_024
+                )
 
-        XCTAssertNil(unsupported.snapshot)
-        XCTAssertEqual(unsupported.fallbackReason, "cache_layout_unsupported")
-        XCTAssertNil(mismatched.snapshot)
-        XCTAssertEqual(mismatched.fallbackReason, "cache_block_shape_mismatch")
+                XCTAssertNil(unsupported.snapshot)
+                XCTAssertEqual(unsupported.fallbackReason, "cache_layout_unsupported")
+                XCTAssertNil(mismatched.snapshot)
+                XCTAssertEqual(mismatched.fallbackReason, "cache_block_shape_mismatch")
+            }
+        }
     }
 
     func testPagedKVBlockPoolBudgetIncludesOtherActivePrivateOwners() async throws {

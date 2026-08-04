@@ -292,6 +292,12 @@ the throughput values are retained so the gather cost remains visible. The
 versioned acceptance artifact, including the focused test-derived counters, is
 `docs/metrics/issue-2601-paired-contiguous-paged-memory.json`.
 
+Sampling adequacy remains an absolute acceptance condition: both modes must
+produce more than one concurrent watermark sample, and the probe fails closed
+when either mode does not. The raw minimum sample count remains visible as an
+informational metric because it varies with host speed and scheduler timing; it
+is not a relative performance score against a historical artifact.
+
 The complete changed-line coverage run for the seven changed production files
 reported `97.01%` (`2238/2307`). The complete `WorkerScaffoldTests` suite passed
 all `349` tests with coverage enabled. Per-file coverage was `97.14%` for the
@@ -299,6 +305,11 @@ paged pool, `96.44%` for the backend, `97.96%` for disk-cache identity,
 `96.18%` for hot-cache identity, `99.19%` for the registry, and `100%` for the
 prefill engine. `TextRuntime.swift` reported `92.21%` (`71/77`) while the
 measured changed scope remained above the repository's 95 percent gate.
+When the PR-scoped runner evaluates a staged follow-up that changes only tests,
+registry metadata, or documentation, the coverage command treats the exact
+`100% (0/0)` result as N/A for that filtered scope. Unfiltered runs and filtered
+runs with measurable production lines remain fail-closed and must satisfy the
+95 percent threshold.
 
 Independent Standards and Spec review found no P0 or P1 issue. The remaining
 identity finding was resolved by sharing one complete logical-prefix key between
@@ -330,6 +341,11 @@ performance gate passed its `26 + 11 + 9 + 1` Swift groups, and the versioned
 artifact now asserts all 26 required acceptance tests by name.
 
 ## Verification
+
+The registered focused command must provision the locked Python `mlx` extra
+before launching the Swift live-bridge tests. PR-scoped performance runs verify
+the head in an isolated worktree, so they cannot depend on a developer's
+pre-existing `mlx.metallib` outside that worktree.
 
 Focused checks:
 

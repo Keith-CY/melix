@@ -10,6 +10,52 @@ diff_from="${MELIX_PAGED_KV_COVERAGE_DIFF_FROM:-origin/main}"
 minimum_coverage_pct=95
 mkdir -p "${coverage_root}" "${repo_root}/.uv-cache"
 
+coverage_scope_mode="$(python3 - <<'PY'
+import json
+import os
+
+raw = os.environ.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
+if not raw:
+    print("unfiltered")
+else:
+    try:
+        paths = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"invalid MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON: {exc}"
+        ) from exc
+    if not isinstance(paths, list):
+        raise SystemExit("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON must be a JSON list")
+    print("empty" if not paths else "filtered")
+PY
+)"
+
+run_changed_line_coverage() {
+  local scope_mode="$1"
+  shift
+
+  local output
+  local status
+  if output="$("$@" 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  printf '%s\n' "${output}"
+
+  if (( status == 0 )); then
+    return 0
+  fi
+  if [[ "${scope_mode}" != "unfiltered" ]]; then
+    while IFS= read -r coverage_line; do
+      if [[ "${coverage_line}" == $'TOTAL\t100.00%\t0/0' ]]; then
+        return 0
+      fi
+    done <<< "${output}"
+  fi
+  return "${status}"
+}
+
 PYTHONPATH="${repo_root}:${repo_root}/services/mlx-worker-python" \
 UV_CACHE_DIR="${repo_root}/.uv-cache" \
 uv run --frozen --project services/mlx-worker-python pytest -q \
@@ -26,8 +72,9 @@ xcrun swift test \
 
 bin_dir="$(xcrun swift build --package-path services/mlx-text-worker-swift --show-bin-path)"
 if coverage_output="$({
-  UV_CACHE_DIR="${repo_root}/.uv-cache" \
-  uv run --python 3.12 python3 scripts/swift_changed_line_coverage.py \
+  UV_CACHE_DIR="${repo_root}/.uv-cache" run_changed_line_coverage \
+    "${coverage_scope_mode}" \
+    uv run --python 3.12 python3 scripts/swift_changed_line_coverage.py \
     --binary "${bin_dir}/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests" \
     --profdata "${bin_dir}/codecov/default.profdata" \
     --diff-from "${diff_from}" \
