@@ -275,6 +275,20 @@ def test_coverage_gate_requires_ninety_five_percent() -> None:
     assert 'Paged KV changed-line coverage %.2f%% is below %.2f%%.' in coverage_script
 
 
+def test_coverage_gate_marks_instrumented_latency_measurements() -> None:
+    coverage_script = (REPO_ROOT / "scripts/paged_kv_cache_coverage.sh").read_text()
+    worker_tests = (
+        REPO_ROOT
+        / "services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift"
+    ).read_text()
+
+    marker = "MELIX_PAGED_KV_INSTRUMENTED_COVERAGE"
+    assert f"{marker}=1" in coverage_script
+    assert f'environment["{marker}"] != "1"' in worker_tests
+    assert "XCTAssertLessThan(results.2, 1_000)" in worker_tests
+    assert "XCTAssertLessThan(results.3, 1_000)" in worker_tests
+
+
 def test_pr_scoped_workflow_passes_exact_base_to_paged_kv_coverage() -> None:
     workflow = (REPO_ROOT / ".github/workflows/pr-scoped-performance.yml").read_text()
 

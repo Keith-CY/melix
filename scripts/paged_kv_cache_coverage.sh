@@ -63,6 +63,7 @@ uv run --frozen --project services/mlx-worker-python pytest -q \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands \
   services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs
 
+MELIX_PAGED_KV_INSTRUMENTED_COVERAGE=1 \
 HOME="${repo_root}/.swift-home/paged-kv-cache-coverage" \
 CLANG_MODULE_CACHE_PATH="${repo_root}/.build/ModuleCache.noindex/paged-kv-cache-coverage" \
 xcrun swift test \

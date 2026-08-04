@@ -14975,8 +14975,10 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThan(stats.residentBytes, 0)
         XCTAssertGreaterThan(stats.logicalBytes, stats.residentBytes)
         XCTAssertEqual(stats.sharedBlockCount, stats.blockCount)
-        XCTAssertLessThan(results.2, 1_000)
-        XCTAssertLessThan(results.3, 1_000)
+        if pagedKVLatencyBudgetsAreEnforced(environment: ProcessInfo.processInfo.environment) {
+            XCTAssertLessThan(results.2, 1_000)
+            XCTAssertLessThan(results.3, 1_000)
+        }
 
         if let outputPath = ProcessInfo.processInfo.environment["MELIX_PAGED_KV_PROBE_OUTPUT"] {
             let metrics: [String: Double] = [
@@ -15006,6 +15008,20 @@ final class WorkerScaffoldTests: XCTestCase {
 
         await backend.unloadModel(results.4)
         XCTAssertEqual(pool.stats().entryCount, 0)
+    }
+
+    func testPagedKVLatencyBudgetsRemainEnabledOutsideInstrumentedCoverage() {
+        XCTAssertTrue(pagedKVLatencyBudgetsAreEnforced(environment: [:]))
+        XCTAssertTrue(
+            pagedKVLatencyBudgetsAreEnforced(
+                environment: ["MELIX_PAGED_KV_INSTRUMENTED_COVERAGE": "0"]
+            )
+        )
+        XCTAssertFalse(
+            pagedKVLatencyBudgetsAreEnforced(
+                environment: ["MELIX_PAGED_KV_INSTRUMENTED_COVERAGE": "1"]
+            )
+        )
     }
 
     func testAutoSwiftMLXBackendKeepsPagedPrefixesIsolatedByScopeID() async throws {
@@ -19897,6 +19913,10 @@ private actor WorkerScaffoldAsyncGate {
         waitingContinuation?.resume()
         waitingContinuation = nil
     }
+}
+
+private func pagedKVLatencyBudgetsAreEnforced(environment: [String: String]) -> Bool {
+    environment["MELIX_PAGED_KV_INSTRUMENTED_COVERAGE"] != "1"
 }
 
 @available(macOS 15.0, *)
