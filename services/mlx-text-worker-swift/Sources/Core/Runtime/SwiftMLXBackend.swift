@@ -456,6 +456,33 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         pagedKVPool.stats()
     }
 
+    func pagedKVPoolProjection() async -> RuntimePagedKVPoolProjection {
+        pagedKVPool.projection()
+    }
+
+    func pagedKVPoolSnapshot() async -> RuntimePagedKVPoolSnapshot {
+        pagedKVPool.snapshot()
+    }
+
+    func setPagedKVPrefixPinned(
+        _ prefix: Melix_Worker_V1_PrefixRef,
+        pinned: Bool
+    ) async -> Bool {
+        pagedKVPool.setPinned(prefix, pinned: pinned)
+    }
+
+    func purgePagedKVCache(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) async -> UInt64 {
+        pagedKVPool.purge(
+            scope: scope,
+            cacheKey: cacheKey,
+            includePinned: includePinned
+        )
+    }
+
     func unloadModel(_ model: LoadedTextModel) async {
         pagedKVPool.removeAll(
             compatibilitySignaturePrefix: pagedKVCompatibilityComponent(model.cacheEpochID)
@@ -553,11 +580,38 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
+        try await prefill(
+            model: model,
+            execution: execution,
+            logicalCacheIdentity: HotCacheLogicalIdentity(
+                scope: execution.scope,
+                cacheKey: execution.cacheKey,
+                prefixID: makePrefixID(for: execution.cacheKey)
+            ),
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        logicalCacheIdentity: HotCacheLogicalIdentity,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
         let appliedAcceleration = resolveSwiftPrefillAcceleration(acceleration, messages: messages)
         let baseWindowSize = Int(clamping: max(prefillStepSize, 1))
         let prepared = try await makePreparedPromptContext(
             model: model,
             execution: execution,
+            logicalCacheIdentity: logicalCacheIdentity,
             messages: messages,
             additionalContext: try makeSwiftMLXPromptTemplateAdditionalContext(from: execution),
             prefillStepSize: prefillStepSize,
@@ -896,6 +950,7 @@ private func makePreparedTextGeneration(
 private func makePreparedPromptContext(
     model: LoadedTextModel,
     execution: Melix_Worker_V1_ExecutionMetadata,
+    logicalCacheIdentity: HotCacheLogicalIdentity,
     messages: [Melix_Worker_V1_ChatMessage],
     additionalContext: [String: any Sendable]?,
     prefillStepSize: UInt32,
@@ -932,6 +987,7 @@ private func makePreparedPromptContext(
             context: context,
             model: model,
             execution: execution,
+            logicalCacheIdentity: logicalCacheIdentity,
             acceleration: acceleration,
             effectiveWindowSize: effectiveWindowSize,
             pagedKVPool: pagedKVPool,
@@ -965,6 +1021,7 @@ private func makePagedOrContiguousPrefillState(
     context: ModelContext,
     model: LoadedTextModel,
     execution: Melix_Worker_V1_ExecutionMetadata,
+    logicalCacheIdentity: HotCacheLogicalIdentity,
     acceleration: Melix_Worker_V1_AccelerationPolicy,
     effectiveWindowSize: Int,
     pagedKVPool: PagedKVBlockPool,
@@ -1001,6 +1058,28 @@ private func makePagedOrContiguousPrefillState(
             shouldAbort: shouldAbort
         )
     }
+
+    #if canImport(MLXLLM)
+    guard context.model is any LLMModel else {
+        return try makeContiguousPrefillState(
+            input: input,
+            context: context,
+            acceleration: acceleration,
+            effectiveWindowSize: effectiveWindowSize,
+            fallbackReason: "composite_runtime_state_unsupported",
+            shouldAbort: shouldAbort
+        )
+    }
+    #else
+    return try makeContiguousPrefillState(
+        input: input,
+        context: context,
+        acceleration: acceleration,
+        effectiveWindowSize: effectiveWindowSize,
+        fallbackReason: "text_model_capability_unavailable",
+        shouldAbort: shouldAbort
+    )
+    #endif
 
     let modelCaches = context.model.newCache(parameters: nil)
     guard pagedKVCacheLayoutIsSupported(modelCaches) else {
@@ -1082,13 +1161,8 @@ private func makePagedOrContiguousPrefillState(
         let chunk = input.text[text: processedTokens ..< end][.newAxis]
         let output = context.model(chunk, cache: cache, state: nil)
         if output.state != nil {
-            return try makeContiguousPrefillState(
-                input: input,
-                context: context,
-                acceleration: acceleration,
-                effectiveWindowSize: effectiveWindowSize,
-                fallbackReason: "composite_runtime_state_unsupported",
-                shouldAbort: shouldAbort
+            throw RuntimeUnavailableError(
+                message: "MLXLLM.LLMModel violated the paged KV stateless-output contract."
             )
         }
         eval(cache)
@@ -1103,7 +1177,12 @@ private func makePagedOrContiguousPrefillState(
         blockSize: blockSize,
         caches: cache,
         reusedLookup: reusedSnapshot == nil ? nil : lookup,
-        budgetBytes: execution.cacheHints.cacheMemoryBudgetBytes
+        budgetBytes: execution.cacheHints.cacheMemoryBudgetBytes,
+        logicalPrefix: pagedKVLogicalPrefix(
+            identity: logicalCacheIdentity,
+            pinPrefixIDs: execution.cacheHints.pinPrefixIds,
+            promptTokenCount: promptTokenCount
+        )
     )
     let recoveredTokens = reusedSnapshot?.tokenCount ?? 0
     let hitMode = recoveredTokens == 0
@@ -1175,6 +1254,28 @@ private func makePagedOrContiguousPrefillState(
     )
 }
 
+private func pagedKVLogicalPrefix(
+    identity: HotCacheLogicalIdentity,
+    pinPrefixIDs: [String],
+    promptTokenCount: Int
+) -> Melix_Worker_V1_PrefixRef? {
+    let scope = identity.scope
+    let cacheKey = identity.cacheKey
+    guard !scope.scopeID.isEmpty,
+          !cacheKey.scopeID.isEmpty,
+          !cacheKey.prefixHash.isEmpty else {
+        return nil
+    }
+    var prefix = Melix_Worker_V1_PrefixRef()
+    prefix.prefixID = identity.prefixID
+    prefix.cacheKey = cacheKey
+    prefix.scope = scope
+    prefix.tokenLength = UInt32(clamping: promptTokenCount)
+    prefix.pinned = pinPrefixIDs.contains(prefix.prefixID)
+    prefix.tier = "l1"
+    return prefix
+}
+
 private func materializeContiguousCaches(from caches: [KVCache]) -> [KVCache] {
     let pagedCaches = caches.compactMap { $0 as? PagedKVCache }
     precondition(
@@ -1235,29 +1336,20 @@ private func pagedKVCompatibilitySignature(
     prefillShapeSignature: String
 ) -> String {
     let scope = execution.scope
-    return [
+    return (
+        [
         model.cacheEpochID,
         String(reflecting: ObjectIdentifier(streamOwner)),
         model.textFamilyID,
-        scope.scopeID,
-        scope.modelID,
-        scope.revision,
-        scope.tokenizerHash,
-        scope.quantProfileID,
-        scope.promptTemplateHash,
-        scope.parserMode,
-        scope.reasoningMode,
-        scope.reasoningEffort,
-        scope.toolParserMode,
-        scope.structuredOutputMode,
-        scope.chatTemplateKwargsHash,
-        scope.multimodalAdapterHash,
-        String(scope.reasoningContinuityPresent),
+        ]
+        + cacheScopeIdentityComponents(scope)
+        + [
         accelerationModeName(acceleration.mode),
         acceleration.profileID,
         prefillShapeSignature,
         String(blockSize),
-    ].map(pagedKVCompatibilityComponent).joined()
+        ]
+    ).map(pagedKVCompatibilityComponent).joined()
 }
 
 private func pagedKVCompatibilityComponent(_ value: String) -> String {

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import MelixWorkerProtocol
 import MLX
 import MLXFast
 import MLXLMCommon
@@ -60,6 +61,7 @@ struct RuntimePagedKVPoolStats: Sendable, Equatable {
     let blockCount: Int
     let sharedBlockCount: Int
     let entryCount: Int
+    let pinnedPrefixCount: Int
     let lookupCount: UInt64
     let hitCount: UInt64
     let restoredTokenCount: UInt64
@@ -74,11 +76,30 @@ struct RuntimePagedKVPoolStats: Sendable, Equatable {
         blockCount: 0,
         sharedBlockCount: 0,
         entryCount: 0,
+        pinnedPrefixCount: 0,
         lookupCount: 0,
         hitCount: 0,
         restoredTokenCount: 0,
         copyOnWriteBlockCount: 0
     )
+}
+
+struct RuntimePagedKVPoolEntryProjection: Sendable {
+    let prefix: Melix_Worker_V1_PrefixRef
+    let blocks: [RuntimeKVBlockDescriptor]
+}
+
+struct RuntimePagedKVPoolProjection: Sendable {
+    let entries: [RuntimePagedKVPoolEntryProjection]
+
+    static let empty = RuntimePagedKVPoolProjection(entries: [])
+}
+
+struct RuntimePagedKVPoolSnapshot: Sendable {
+    let stats: RuntimePagedKVPoolStats
+    let projection: RuntimePagedKVPoolProjection
+
+    static let empty = RuntimePagedKVPoolSnapshot(stats: .empty, projection: .empty)
 }
 
 private final class PagedKVPrivateAllocationOwner: @unchecked Sendable {
@@ -530,6 +551,7 @@ final class PagedKVPrefixSnapshot: @unchecked Sendable {
     let layerCount: Int
     let streamOwner: MLX.Stream
     let generation: UInt64
+    var logicalPrefix: Melix_Worker_V1_PrefixRef?
     var lastAccessOrdinal: UInt64
 
     var tokenCount: Int {
@@ -545,6 +567,7 @@ final class PagedKVPrefixSnapshot: @unchecked Sendable {
         layerCount: Int,
         streamOwner: MLX.Stream,
         generation: UInt64,
+        logicalPrefix: Melix_Worker_V1_PrefixRef?,
         lastAccessOrdinal: UInt64
     ) {
         self.entryID = entryID
@@ -555,6 +578,7 @@ final class PagedKVPrefixSnapshot: @unchecked Sendable {
         self.layerCount = layerCount
         self.streamOwner = streamOwner
         self.generation = generation
+        self.logicalPrefix = logicalPrefix
         self.lastAccessOrdinal = lastAccessOrdinal
     }
 
@@ -658,12 +682,18 @@ private final class PagedKVCacheLeaseTransfer: @unchecked Sendable {
     }
 }
 
+private struct PagedKVLogicalProjectionAccumulator {
+    var prefix: Melix_Worker_V1_PrefixRef
+    var blocksByID: [String: RuntimeKVBlockDescriptor]
+}
+
 final class PagedKVBlockPool: @unchecked Sendable {
     static let defaultBudgetBytes: UInt64 = 4 * 1_024 * 1_024 * 1_024
 
     private let lock = NSLock()
     private let testHookLock = NSLock()
     private var entriesByID: [String: PagedKVPrefixSnapshot] = [:]
+    private var pinnedLogicalPrefixes: Set<CacheLogicalPrefixKey> = []
     private var blocksByIdentity: [ObjectIdentifier: PagedKVBlock] = [:]
     private var privateBytesByOwnerID: [String: UInt64] = [:]
     private var nextGeneration: UInt64 = 1
@@ -674,10 +704,17 @@ final class PagedKVBlockPool: @unchecked Sendable {
     private var copyOnWriteBlockCount: UInt64 = 0
     private var peakResidentBytes: UInt64 = 0
     private var storeCommitBoundaryHookForTesting: (@Sendable () -> Void)?
+    private var snapshotBoundaryHookForTesting: (@Sendable () -> Void)?
 
     func setStoreCommitBoundaryHookForTesting(_ hook: (@Sendable () -> Void)?) {
         testHookLock.withLock {
             storeCommitBoundaryHookForTesting = hook
+        }
+    }
+
+    func setSnapshotBoundaryHookForTesting(_ hook: (@Sendable () -> Void)?) {
+        testHookLock.withLock {
+            snapshotBoundaryHookForTesting = hook
         }
     }
 
@@ -754,6 +791,7 @@ final class PagedKVBlockPool: @unchecked Sendable {
                 layerCount: sourceSnapshot.layerCount,
                 streamOwner: sourceSnapshot.streamOwner,
                 generation: sourceSnapshot.generation,
+                logicalPrefix: sourceSnapshot.logicalPrefix,
                 lastAccessOrdinal: sourceSnapshot.lastAccessOrdinal
             )
             let lease = PagedKVCacheLease(
@@ -785,7 +823,8 @@ final class PagedKVBlockPool: @unchecked Sendable {
         blockSize: Int,
         caches: [KVCache],
         reusedLookup: PagedKVLookupResult?,
-        budgetBytes: UInt64
+        budgetBytes: UInt64,
+        logicalPrefix: Melix_Worker_V1_PrefixRef? = nil
     ) -> PagedKVStoreResult {
         let pagedCaches = caches.compactMap { $0 as? PagedKVCache }
         guard pagedCaches.count == caches.count, !pagedCaches.isEmpty else {
@@ -810,7 +849,13 @@ final class PagedKVBlockPool: @unchecked Sendable {
             storedTokenBoundary: storedTokenBoundary,
             blockSize: blockSize
         )
-        let entryID = "pkv-\(pagedKVHash([compatibilitySignature] + digests))"
+        let logicalEntryIDComponents = logicalPrefix.map {
+            ["logical-prefix-v1"] + CacheLogicalPrefixKey($0).stableComponents
+        } ?? ["logical-prefix-none"]
+        let entryIDHash = pagedKVHash(
+            [compatibilitySignature] + digests + logicalEntryIDComponents
+        )
+        let entryID = "pkv-\(entryIDHash)"
         let expectedBlockCount = storedTokenBoundary / blockSize
         let payloadsByLayer = pagedCaches.map { $0.payloadsForSnapshot() }
         let privateAllocationOwner = pagedCaches.first?.allocationOwner
@@ -902,6 +947,18 @@ final class PagedKVBlockPool: @unchecked Sendable {
                         ))
                 }
 
+                var committedLogicalPrefix = logicalPrefix ?? entriesByID[entryID]?.logicalPrefix
+                let logicalPrefixKey = committedLogicalPrefix.map(CacheLogicalPrefixKey.init)
+                let logicalPrefixWasPinned = logicalPrefixKey.map { key in
+                    pinnedLogicalPrefixes.contains(key)
+                        || entriesByID.values.contains { candidate in
+                            candidate.logicalPrefix.map(CacheLogicalPrefixKey.init) == key
+                                && candidate.logicalPrefix?.pinned == true
+                        }
+                } ?? false
+                if committedLogicalPrefix?.pinned == true || logicalPrefixWasPinned {
+                    committedLogicalPrefix?.pinned = true
+                }
                 let snapshot = PagedKVPrefixSnapshot(
                     entryID: entryID,
                     compatibilitySignature: compatibilitySignature,
@@ -911,6 +968,7 @@ final class PagedKVBlockPool: @unchecked Sendable {
                     layerCount: caches.count,
                     streamOwner: streamOwner,
                     generation: nextGeneration,
+                    logicalPrefix: committedLogicalPrefix,
                     lastAccessOrdinal: nextAccessOrdinal
                 )
                 let limit = budgetBytes
@@ -928,6 +986,7 @@ final class PagedKVBlockPool: @unchecked Sendable {
                         let victim = proposedEntries.values
                             .filter({ candidate in
                                 candidate.entryID != entryID
+                                    && !isPinned(candidate)
                                     && candidate.blocks.allSatisfy { $0.leaseCount() == 0 }
                             })
                             .min(by: { $0.lastAccessOrdinal < $1.lastAccessOrdinal })
@@ -950,6 +1009,9 @@ final class PagedKVBlockPool: @unchecked Sendable {
 
                 entriesByID = proposedEntries
                 blocksByIdentity = residentBlocks
+                if committedLogicalPrefix?.pinned == true, let logicalPrefixKey {
+                    pinnedLogicalPrefixes.insert(logicalPrefixKey)
+                }
                 if let submittingOwnerID {
                     privateBytesByOwnerID.removeValue(forKey: submittingOwnerID)
                 }
@@ -994,9 +1056,11 @@ final class PagedKVBlockPool: @unchecked Sendable {
             )
     }
 
-    func stats() -> RuntimePagedKVPoolStats {
+    func snapshot() -> RuntimePagedKVPoolSnapshot {
         lock.withLock {
             pruneReleasedBlocks()
+            let boundaryHook = testHookLock.withLock { snapshotBoundaryHookForTesting }
+            boundaryHook?()
             let snapshots = Array(entriesByID.values)
             let blocks = Array(blocksByIdentity.values)
             let privateResidentBytes = privateBytesByOwnerID.values.reduce(UInt64(0), +)
@@ -1011,7 +1075,14 @@ final class PagedKVBlockPool: @unchecked Sendable {
                 }
                 return entryReferences + block.leaseCount() > 1
             }.count
-            return RuntimePagedKVPoolStats(
+            let pinnedLogicalPrefixCount = snapshots.reduce(
+                into: Set<CacheLogicalPrefixKey>()
+            ) { keys, snapshot in
+                guard let prefix = snapshot.logicalPrefix,
+                      isPinned(snapshot) else { return }
+                keys.insert(CacheLogicalPrefixKey(prefix))
+            }.count
+            let stats = RuntimePagedKVPoolStats(
                 residentBytes: blocks.reduce(UInt64(0)) { $0 + $1.bytes } + privateResidentBytes,
                 logicalBytes: logicalBytes,
                 peakResidentBytes: peakResidentBytes,
@@ -1020,11 +1091,111 @@ final class PagedKVBlockPool: @unchecked Sendable {
                 blockCount: blocks.count,
                 sharedBlockCount: sharedBlockCount,
                 entryCount: snapshots.count,
+                pinnedPrefixCount: pinnedLogicalPrefixCount,
                 lookupCount: lookupCount,
                 hitCount: hitCount,
                 restoredTokenCount: restoredTokenCount,
                 copyOnWriteBlockCount: copyOnWriteBlockCount
             )
+            var logicalEntries: [CacheLogicalPrefixKey: PagedKVLogicalProjectionAccumulator] = [:]
+            for entry in snapshots {
+                guard var prefix = entry.logicalPrefix else { continue }
+                let key = CacheLogicalPrefixKey(prefix)
+                prefix.pinned = isPinned(entry)
+                var accumulator = logicalEntries[key]
+                    ?? PagedKVLogicalProjectionAccumulator(prefix: prefix, blocksByID: [:])
+                accumulator.prefix.pinned = accumulator.prefix.pinned || prefix.pinned
+                accumulator.prefix.tokenLength = max(
+                    accumulator.prefix.tokenLength,
+                    prefix.tokenLength
+                )
+                for block in entry.descriptors {
+                    accumulator.blocksByID[block.blockID] = block
+                }
+                logicalEntries[key] = accumulator
+            }
+            let entries = logicalEntries.values.map { accumulator in
+                RuntimePagedKVPoolEntryProjection(
+                    prefix: accumulator.prefix,
+                    blocks: accumulator.blocksByID.values.sorted {
+                        if $0.tokenStart == $1.tokenStart {
+                            return $0.blockID < $1.blockID
+                        }
+                        return $0.tokenStart < $1.tokenStart
+                    }
+                )
+            }.sorted {
+                if $0.prefix.prefixID == $1.prefix.prefixID {
+                    return CacheLogicalPrefixKey($0.prefix).stableComponents
+                        .lexicographicallyPrecedes(
+                            CacheLogicalPrefixKey($1.prefix).stableComponents
+                        )
+                }
+                return $0.prefix.prefixID < $1.prefix.prefixID
+            }
+            return RuntimePagedKVPoolSnapshot(
+                stats: stats,
+                projection: RuntimePagedKVPoolProjection(entries: entries)
+            )
+        }
+    }
+
+    func stats() -> RuntimePagedKVPoolStats {
+        snapshot().stats
+    }
+
+    func projection() -> RuntimePagedKVPoolProjection {
+        snapshot().projection
+    }
+
+    func setPinned(_ requested: Melix_Worker_V1_PrefixRef, pinned: Bool) -> Bool {
+        lock.withLock {
+            let snapshots = entriesByID.values.filter { candidate in
+                guard let stored = candidate.logicalPrefix else { return false }
+                return pagedKVPrefixMatches(requested: requested, stored: stored)
+            }
+            guard !snapshots.isEmpty else { return false }
+            for snapshot in snapshots {
+                guard var prefix = snapshot.logicalPrefix else { continue }
+                let key = CacheLogicalPrefixKey(prefix)
+                prefix.pinned = pinned
+                snapshot.logicalPrefix = prefix
+                if pinned {
+                    pinnedLogicalPrefixes.insert(key)
+                } else {
+                    pinnedLogicalPrefixes.remove(key)
+                }
+            }
+            return true
+        }
+    }
+
+    func purge(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) -> UInt64 {
+        lock.withLock {
+            let matchingEntryIDs = entriesByID.values.compactMap { snapshot -> String? in
+                guard let prefix = snapshot.logicalPrefix,
+                      pagedKVPurgeMatches(scope: scope, cacheKey: cacheKey, prefix: prefix),
+                      includePinned || !isPinned(snapshot) else {
+                    return nil
+                }
+                return snapshot.entryID
+            }
+            guard !matchingEntryIDs.isEmpty else { return 0 }
+            let removedBlocks = Set(
+                matchingEntryIDs.compactMap { entriesByID[$0] }.flatMap(\.blocks).map(ObjectIdentifier.init)
+            )
+            for entryID in matchingEntryIDs {
+                entriesByID.removeValue(forKey: entryID)
+            }
+            prunePinnedLogicalPrefixes()
+            let retainedBlockIDs = Set(entriesByID.values.flatMap(\.blocks).map(ObjectIdentifier.init))
+            let purgedBlockCount = removedBlocks.subtracting(retainedBlockIDs).count
+            pruneReleasedBlocks()
+            return UInt64(purgedBlockCount)
         }
     }
 
@@ -1032,14 +1203,28 @@ final class PagedKVBlockPool: @unchecked Sendable {
         lock.withLock {
             guard let compatibilitySignaturePrefix else {
                 entriesByID.removeAll()
+                pinnedLogicalPrefixes.removeAll()
                 pruneReleasedBlocks()
                 return
             }
             entriesByID = entriesByID.filter {
                 !$0.value.compatibilitySignature.hasPrefix(compatibilitySignaturePrefix)
             }
+            prunePinnedLogicalPrefixes()
             pruneReleasedBlocks()
         }
+    }
+
+    private func isPinned(_ snapshot: PagedKVPrefixSnapshot) -> Bool {
+        guard let prefix = snapshot.logicalPrefix else { return false }
+        return prefix.pinned || pinnedLogicalPrefixes.contains(CacheLogicalPrefixKey(prefix))
+    }
+
+    private func prunePinnedLogicalPrefixes() {
+        let liveKeys = Set(entriesByID.values.compactMap { snapshot in
+            snapshot.logicalPrefix.map(CacheLogicalPrefixKey.init)
+        })
+        pinnedLogicalPrefixes.formIntersection(liveKeys)
     }
 
     private func retainedBlocks(
@@ -1101,6 +1286,50 @@ final class PagedKVBlockPool: @unchecked Sendable {
 
 }
 
+private func pagedKVPrefixMatches(
+    requested: Melix_Worker_V1_PrefixRef,
+    stored: Melix_Worker_V1_PrefixRef
+) -> Bool {
+    let requestedHasLogicalIdentity = !requested.scope.scopeID.isEmpty
+        || !requested.scope.modelID.isEmpty
+        || !requested.cacheKey.scopeID.isEmpty
+        || !requested.cacheKey.prefixHash.isEmpty
+        || !requested.cacheKey.fingerprintHash.isEmpty
+    guard requestedHasLogicalIdentity else { return false }
+    return CacheLogicalPrefixKey(requested) == CacheLogicalPrefixKey(stored)
+        && (requested.prefixID.isEmpty || requested.prefixID == stored.prefixID)
+}
+
+private func pagedKVScopeMatches(
+    _ scope: Melix_Worker_V1_CacheScope,
+    prefix: Melix_Worker_V1_PrefixRef
+) -> Bool {
+    if scope.scopeID.isEmpty && scope.modelID.isEmpty {
+        return true
+    }
+    if !scope.scopeID.isEmpty {
+        return scope.scopeID == prefix.scope.scopeID
+    }
+    return scope.modelID == prefix.scope.modelID
+}
+
+private func pagedKVPurgeMatches(
+    scope: Melix_Worker_V1_CacheScope,
+    cacheKey: Melix_Worker_V1_CacheKey,
+    prefix: Melix_Worker_V1_PrefixRef
+) -> Bool {
+    let targetsOneLogicalPrefix = !cacheKey.scopeID.isEmpty
+        || !cacheKey.prefixHash.isEmpty
+        || !cacheKey.fingerprintHash.isEmpty
+    if targetsOneLogicalPrefix {
+        var requested = Melix_Worker_V1_PrefixRef()
+        requested.scope = scope
+        requested.cacheKey = cacheKey
+        return CacheLogicalPrefixKey(requested) == CacheLogicalPrefixKey(prefix)
+    }
+    return pagedKVScopeMatches(scope, prefix: prefix)
+}
+
 func pagedKVCacheLayoutIsSupported(_ caches: [KVCache]) -> Bool {
     !caches.isEmpty
         && caches.allSatisfy { cache in
@@ -1130,7 +1359,10 @@ private func pagedKVTokenBlockDigests(
 }
 
 private func pagedKVHash(_ components: [String]) -> String {
-    SHA256.hash(data: Data(components.joined(separator: "\n").utf8))
+    let encoded = ([String(components.count)] + components).map { component in
+        "\(component.utf8.count):\(component)"
+    }.joined()
+    return SHA256.hash(data: Data(encoded.utf8))
         .prefix(16)
         .map { String(format: "%02x", $0) }
         .joined()

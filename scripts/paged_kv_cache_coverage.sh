@@ -34,6 +34,7 @@ if coverage_output="$({
     services/mlx-text-worker-swift/Sources/Core/Runtime/PagedKVCache.swift \
     services/mlx-text-worker-swift/Sources/Core/Runtime/SwiftMLXBackend.swift \
     services/mlx-text-worker-swift/Sources/Core/Runtime/TextRuntime.swift \
+    services/mlx-text-worker-swift/Sources/Core/DiskCacheStore.swift \
     services/mlx-text-worker-swift/Sources/Core/HotCacheStore.swift \
     services/mlx-text-worker-swift/Sources/Core/WorkerRuntimeRegistry.swift \
     services/mlx-text-worker-swift/Sources/Core/Inference/TextPrefillEngine.swift

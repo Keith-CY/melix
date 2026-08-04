@@ -567,6 +567,17 @@ protocol TextRuntimeBackend: Sendable {
     var supportsPagedKVCache: Bool { get }
     func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats?
     func pagedKVPoolStats() async -> RuntimePagedKVPoolStats
+    func pagedKVPoolProjection() async -> RuntimePagedKVPoolProjection
+    func pagedKVPoolSnapshot() async -> RuntimePagedKVPoolSnapshot
+    func setPagedKVPrefixPinned(
+        _ prefix: Melix_Worker_V1_PrefixRef,
+        pinned: Bool
+    ) async -> Bool
+    func purgePagedKVCache(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) async -> UInt64
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel
     func unloadModel(_ model: LoadedTextModel) async
     func prefill(
@@ -580,6 +591,16 @@ protocol TextRuntimeBackend: Sendable {
     func prefill(
         model: LoadedTextModel,
         execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        logicalCacheIdentity: HotCacheLogicalIdentity,
         messages: [Melix_Worker_V1_ChatMessage],
         prefillStepSize: UInt32,
         resumeHint: String,
@@ -628,6 +649,32 @@ extension TextRuntimeBackend {
         .empty
     }
 
+    func pagedKVPoolProjection() async -> RuntimePagedKVPoolProjection {
+        .empty
+    }
+
+    func pagedKVPoolSnapshot() async -> RuntimePagedKVPoolSnapshot {
+        RuntimePagedKVPoolSnapshot(
+            stats: await pagedKVPoolStats(),
+            projection: await pagedKVPoolProjection()
+        )
+    }
+
+    func setPagedKVPrefixPinned(
+        _ prefix: Melix_Worker_V1_PrefixRef,
+        pinned: Bool
+    ) async -> Bool {
+        false
+    }
+
+    func purgePagedKVCache(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) async -> UInt64 {
+        0
+    }
+
     func unloadModel(_ model: LoadedTextModel) async {}
 
     func prefill(
@@ -655,6 +702,28 @@ extension TextRuntimeBackend {
         _ = execution
         return try await prefill(
             model: model,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        logicalCacheIdentity: HotCacheLogicalIdentity,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        _ = logicalCacheIdentity
+        return try await prefill(
+            model: model,
+            execution: execution,
             messages: messages,
             prefillStepSize: prefillStepSize,
             resumeHint: resumeHint,
@@ -747,6 +816,33 @@ struct TextRuntime: Sendable {
         await backend.pagedKVPoolStats()
     }
 
+    func pagedKVPoolProjection() async -> RuntimePagedKVPoolProjection {
+        await backend.pagedKVPoolProjection()
+    }
+
+    func pagedKVPoolSnapshot() async -> RuntimePagedKVPoolSnapshot {
+        await backend.pagedKVPoolSnapshot()
+    }
+
+    func setPagedKVPrefixPinned(
+        _ prefix: Melix_Worker_V1_PrefixRef,
+        pinned: Bool
+    ) async -> Bool {
+        await backend.setPagedKVPrefixPinned(prefix, pinned: pinned)
+    }
+
+    func purgePagedKVCache(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) async -> UInt64 {
+        await backend.purgePagedKVCache(
+            scope: scope,
+            cacheKey: cacheKey,
+            includePinned: includePinned
+        )
+    }
+
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> RuntimeLoadResult {
         let residentBefore = residentMemoryReader()
         let loadedModel = try await backend.loadModel(spec: spec)
@@ -792,6 +888,28 @@ struct TextRuntime: Sendable {
         try await backend.prefill(
             model: model,
             execution: execution,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        logicalCacheIdentity: HotCacheLogicalIdentity,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        try await backend.prefill(
+            model: model,
+            execution: execution,
+            logicalCacheIdentity: logicalCacheIdentity,
             messages: messages,
             prefillStepSize: prefillStepSize,
             resumeHint: resumeHint,

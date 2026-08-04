@@ -9,6 +9,78 @@ struct HotCacheRegistration: Sendable {
     let cacheHit: Bool
 }
 
+struct HotCacheLogicalIdentity: Sendable {
+    let scope: Melix_Worker_V1_CacheScope
+    let cacheKey: Melix_Worker_V1_CacheKey
+    let prefixID: String
+}
+
+struct CacheScopeIdentity: Hashable, Sendable {
+    let components: [String]
+
+    init(_ scope: Melix_Worker_V1_CacheScope) {
+        self.components = cacheScopeIdentityComponents(scope)
+    }
+}
+
+struct CacheLogicalPrefixKey: Hashable, Sendable {
+    let scopeComponents: [String]
+    let cacheScopeID: String
+    let prefixHash: Data
+    let fingerprintHash: Data
+
+    init(scope: Melix_Worker_V1_CacheScope, cacheKey: Melix_Worker_V1_CacheKey) {
+        self.scopeComponents = cacheScopeIdentityComponents(scope)
+        self.cacheScopeID = cacheKey.scopeID
+        self.prefixHash = cacheKey.prefixHash
+        self.fingerprintHash = cacheKey.fingerprintHash
+    }
+
+    init(_ prefix: Melix_Worker_V1_PrefixRef) {
+        self.init(scope: prefix.scope, cacheKey: prefix.cacheKey)
+    }
+
+    init(_ identity: HotCacheLogicalIdentity) {
+        self.init(scope: identity.scope, cacheKey: identity.cacheKey)
+    }
+
+    var stableComponents: [String] {
+        scopeComponents + [
+            cacheScopeID,
+            prefixHash.base64EncodedString(),
+            fingerprintHash.base64EncodedString(),
+        ]
+    }
+
+    var storageIdentifier: String {
+        let encoded = stableComponents
+            .map { "\($0.utf8.count):\($0)" }
+            .joined(separator: "|")
+        return SHA256.hash(data: Data(encoded.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+}
+
+func resolveHotCacheLogicalIdentity(
+    execution: Melix_Worker_V1_ExecutionMetadata,
+    model: Melix_Worker_V1_ModelSpec,
+    messages: [Melix_Worker_V1_ChatMessage]
+) throws -> HotCacheLogicalIdentity {
+    let scope = resolveScope(execution.scope, fallback: model)
+    let messageIdentity = cacheMessageIdentityData(from: messages)
+    let cacheKey = resolveCacheKey(
+        execution.cacheKey,
+        scope: scope,
+        messageIdentity: messageIdentity
+    )
+    return HotCacheLogicalIdentity(
+        scope: scope,
+        cacheKey: cacheKey,
+        prefixID: makePrefixID(for: cacheKey)
+    )
+}
+
 struct HotCacheOwnershipSnapshot: Sendable {
     let prefixCount: Int
     let pageCount: Int
@@ -49,7 +121,17 @@ struct HotCacheHitTaxonomy: Sendable {
     let reconstructionFailureCount: UInt64
 }
 
+struct HotCachePurgeResult: Sendable {
+    let metadataBlockCount: UInt64
+    let diskBlockCount: UInt64
+
+    var totalBlockCount: UInt64 {
+        metadataBlockCount + diskBlockCount
+    }
+}
+
 private struct StoredHotPrefix: Sendable {
+    let logicalKey: CacheLogicalPrefixKey
     var prefix: Melix_Worker_V1_PrefixRef
     let blockTableID: String
     let blockTable: Melix_Worker_V1_BlockTable
@@ -62,7 +144,7 @@ private struct StoredHotPrefix: Sendable {
 private struct StoredHotPageOwnership: Sendable {
     var page: Melix_Worker_V1_PageRef
     let scopeID: String
-    var prefixIDs: Set<String>
+    var logicalPrefixKeys: Set<CacheLogicalPrefixKey>
     var blockTableIDs: Set<String>
     var referenceCount: UInt64
 }
@@ -70,7 +152,7 @@ private struct StoredHotPageOwnership: Sendable {
 private struct StoredHotBlockOwnership: Sendable {
     let block: Melix_Worker_V1_BlockRef
     let scopeID: String
-    var prefixIDs: Set<String>
+    var logicalPrefixKeys: Set<CacheLogicalPrefixKey>
     var pageIDs: Set<String>
     var referenceCount: UInt64
 }
@@ -81,8 +163,7 @@ actor HotCacheStore {
     private let runtimeCacheFingerprint: String
     private let initialCacheBlocks: UInt32
     private var activeMode: Melix_Worker_V1_CacheMode
-    private var prefixesByID: [String: StoredHotPrefix] = [:]
-    private var prefixIDByKey: [String: String] = [:]
+    private var prefixesByLogicalKey: [CacheLogicalPrefixKey: StoredHotPrefix] = [:]
     private var pagesByID: [String: StoredHotPageOwnership] = [:]
     private var blocksByID: [String: StoredHotBlockOwnership] = [:]
     private var totalLookups: UInt64 = 0
@@ -122,22 +203,21 @@ actor HotCacheStore {
         shouldAbort: @escaping @Sendable () -> Bool = { false }
     ) async throws -> HotCacheRegistration {
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
-        let resolvedScope = resolveScope(execution.scope, fallback: model)
-        let renderedPrompt = try renderPrompt(from: messages)
-        let resolvedKey = resolveCacheKey(
-            execution.cacheKey,
-            scope: resolvedScope,
-            prompt: renderedPrompt
+        let identity = try resolveHotCacheLogicalIdentity(
+            execution: execution,
+            model: model,
+            messages: messages
         )
+        let resolvedScope = identity.scope
+        let resolvedKey = identity.cacheKey
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
-        let keyID = cacheKeyIdentifier(resolvedKey)
+        let logicalKey = CacheLogicalPrefixKey(identity)
         totalLookups += 1
         let runtimeBlocks = pagedCacheEvidence?.admitted == true
             ? pagedCacheEvidence?.blocks ?? []
             : []
 
-        if let existingID = prefixIDByKey[keyID],
-           var existing = prefixesByID[existingID],
+        if var existing = prefixesByLogicalKey[logicalKey],
            pagedCacheEvidence?.admitted == true,
            pagedCacheEvidence?.cacheHitMode == "exact",
            existing.blockIDs == runtimeBlocks.map(\.blockID) {
@@ -147,7 +227,7 @@ actor HotCacheStore {
             if shouldPinPrefix(existing.prefix.prefixID, hints: execution.cacheHints) {
                 existing.prefix.pinned = true
             }
-            prefixesByID[existingID] = existing
+            prefixesByLogicalKey[logicalKey] = existing
             return HotCacheRegistration(
                 prefix: existing.prefix,
                 blockTableID: existing.blockTableID,
@@ -156,8 +236,7 @@ actor HotCacheStore {
             )
         }
 
-        if let existingID = prefixIDByKey[keyID],
-           let existing = prefixesByID[existingID],
+        if let existing = prefixesByLogicalKey[logicalKey],
            pagedCacheEvidence?.admitted != true {
             recordRuntimeCacheEvidence(pagedCacheEvidence)
             let metadataTable = normalizedBlockTable(makeBlockTable(
@@ -178,8 +257,8 @@ actor HotCacheStore {
         }
 
         recordRuntimeCacheEvidence(pagedCacheEvidence)
-        let existing = prefixIDByKey[keyID].flatMap { prefixesByID[$0] }
-        let prefixID = existing?.prefix.prefixID ?? makePrefixID(for: resolvedKey)
+        let existing = prefixesByLogicalKey[logicalKey]
+        let prefixID = existing?.prefix.prefixID ?? identity.prefixID
         let blockTableID = "bt-\(decodeHandle)"
         let blockTable = normalizedBlockTable(makeBlockTable(
             cacheKey: resolvedKey,
@@ -202,6 +281,7 @@ actor HotCacheStore {
         prefix.tier = runtimeBlocks.isEmpty ? "metadata-only" : "l1"
 
         let stored = StoredHotPrefix(
+            logicalKey: logicalKey,
             prefix: prefix,
             blockTableID: blockTableID,
             blockTable: blockTable,
@@ -217,8 +297,7 @@ actor HotCacheStore {
         if let existing {
             _ = unregisterOwnership(for: existing)
         }
-        prefixesByID[prefixID] = stored
-        prefixIDByKey[keyID] = prefixID
+        prefixesByLogicalKey[logicalKey] = stored
         registerOwnership(for: stored)
         if execution.cacheHints.allowL2 || execution.cacheHints.persistL2 {
             let l2QuantizedBytes = storageBoundaryQuantizedBytes(
@@ -295,15 +374,17 @@ actor HotCacheStore {
                 (key, value.referenceCount)
             }
         )
+        let pageIDsByPrefixID = Dictionary(
+            grouping: prefixesByLogicalKey.values,
+            by: { $0.prefix.prefixID }
+        ).mapValues { entries in
+            Array(Set(entries.flatMap(\.pageIDs))).sorted()
+        }
         return HotCacheOwnershipSnapshot(
-            prefixCount: prefixesByID.count,
+            prefixCount: prefixesByLogicalKey.count,
             pageCount: pagesByID.count,
             blockCount: blocksByID.count,
-            pageIDsByPrefixID: Dictionary(
-                uniqueKeysWithValues: prefixesByID.map { key, value in
-                    (key, value.pageIDs.sorted())
-                }
-            ),
+            pageIDsByPrefixID: pageIDsByPrefixID,
             blockIDsByPageID: Dictionary(
                 uniqueKeysWithValues: pagesByID.map { key, value in
                     (key, value.page.blockIds.sorted())
@@ -325,11 +406,8 @@ actor HotCacheStore {
         await buildSnapshot()
     }
 
-    func lookupPrefix(for cacheKey: Melix_Worker_V1_CacheKey) -> Melix_Worker_V1_PrefixRef? {
-        if let prefixID = prefixIDByKey[cacheKeyIdentifier(cacheKey)] {
-            return prefixesByID[prefixID]?.prefix
-        }
-        return nil
+    func lookupPrefix(for identity: HotCacheLogicalIdentity) -> Melix_Worker_V1_PrefixRef? {
+        prefixesByLogicalKey[CacheLogicalPrefixKey(identity)]?.prefix
     }
 
     func saveBoundarySnapshot(
@@ -395,7 +473,12 @@ actor HotCacheStore {
         let diskSummary = await diskStore.summary()
         snapshot.stats = buildStats(diskSummary: diskSummary)
 
-        let entries = prefixesByID.values.sorted { $0.prefix.prefixID < $1.prefix.prefixID }
+        let entries = prefixesByLogicalKey.values.sorted { lhs, rhs in
+            if lhs.prefix.prefixID != rhs.prefix.prefixID {
+                return lhs.prefix.prefixID < rhs.prefix.prefixID
+            }
+            return lhs.logicalKey.stableComponents.lexicographicallyPrecedes(rhs.logicalKey.stableComponents)
+        }
         snapshot.hotPrefixes = entries.map(\.prefix)
         snapshot.pinnedPrefixes = entries.filter(\.prefix.pinned).map(\.prefix)
         snapshot.snapshots = diskSummary.snapshots
@@ -416,23 +499,38 @@ actor HotCacheStore {
         cacheKey: Melix_Worker_V1_CacheKey,
         includePinned: Bool
     ) async -> UInt64 {
-        let allEntries = prefixesByID.values.map(\.prefix)
-        let matchingIDs = allEntries.compactMap { prefix -> String? in
-            guard matches(scope: scope, prefix: prefix), matches(cacheKey: cacheKey, prefix: prefix) else {
+        (await purgeCacheDetailed(
+            scope: scope,
+            cacheKey: cacheKey,
+            includePinned: includePinned
+        )).totalBlockCount
+    }
+
+    func purgeCacheDetailed(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) async -> HotCachePurgeResult {
+        let targetsOneLogicalPrefix = !cacheKey.scopeID.isEmpty
+            || !cacheKey.prefixHash.isEmpty
+            || !cacheKey.fingerprintHash.isEmpty
+        let requestedLogicalKey = CacheLogicalPrefixKey(scope: scope, cacheKey: cacheKey)
+        let matchingKeys = prefixesByLogicalKey.compactMap { logicalKey, stored -> CacheLogicalPrefixKey? in
+            let matchesRequest = targetsOneLogicalPrefix
+                ? logicalKey == requestedLogicalKey
+                : matches(scope: scope, prefix: stored.prefix)
+            guard matchesRequest else { return nil }
+            if !includePinned && stored.prefix.pinned {
                 return nil
             }
-            if !includePinned && prefix.pinned {
-                return nil
-            }
-            return prefix.prefixID
+            return logicalKey
         }
 
         var purgedBlocks: UInt64 = 0
-        for prefixID in matchingIDs {
-            guard let removed = prefixesByID.removeValue(forKey: prefixID) else {
+        for logicalKey in matchingKeys {
+            guard let removed = prefixesByLogicalKey.removeValue(forKey: logicalKey) else {
                 continue
             }
-            prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(removed.prefix.cacheKey))
             purgedBlocks += unregisterOwnership(for: removed)
         }
         let l2PurgedBlocks = await diskStore.purge(
@@ -440,30 +538,31 @@ actor HotCacheStore {
             cacheKey: cacheKey,
             includePinned: includePinned
         )
-        return purgedBlocks + l2PurgedBlocks
+        return HotCachePurgeResult(
+            metadataBlockCount: purgedBlocks,
+            diskBlockCount: l2PurgedBlocks
+        )
     }
 
     func purgeModel(modelID: String) async {
-        for prefixID in prefixesByID.values
+        for logicalKey in prefixesByLogicalKey.values
             .filter({ $0.prefix.scope.modelID == modelID })
-            .map(\.prefix.prefixID) {
-            guard let removed = prefixesByID.removeValue(forKey: prefixID) else {
+            .map(\.logicalKey) {
+            guard let removed = prefixesByLogicalKey.removeValue(forKey: logicalKey) else {
                 continue
             }
-            prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(removed.prefix.cacheKey))
             _ = unregisterOwnership(for: removed)
         }
         await diskStore.purgeModel(modelID: modelID)
     }
 
     func purgeScope(_ scope: Melix_Worker_V1_CacheScope) async {
-        for prefixID in prefixesByID.values
+        for logicalKey in prefixesByLogicalKey.values
             .filter({ matches(scope: scope, prefix: $0.prefix) })
-            .map(\.prefix.prefixID) {
-            guard let removed = prefixesByID.removeValue(forKey: prefixID) else {
+            .map(\.logicalKey) {
+            guard let removed = prefixesByLogicalKey.removeValue(forKey: logicalKey) else {
                 continue
             }
-            prefixIDByKey.removeValue(forKey: cacheKeyIdentifier(removed.prefix.cacheKey))
             _ = unregisterOwnership(for: removed)
         }
         await diskStore.purgeScope(scope)
@@ -473,25 +572,26 @@ actor HotCacheStore {
         for request: Melix_Worker_V1_PrefixRef,
         pinned: Bool
     ) -> Bool {
-        if !request.prefixID.isEmpty, var stored = prefixesByID[request.prefixID] {
-            stored.prefix.pinned = pinned
-            prefixesByID[request.prefixID] = stored
-            return true
-        }
-
-        guard let prefixID = prefixIDByKey[cacheKeyIdentifier(request.cacheKey)],
-              var stored = prefixesByID[prefixID] else {
+        let hasLogicalIdentity = !request.scope.scopeID.isEmpty
+            || !request.scope.modelID.isEmpty
+            || !request.cacheKey.scopeID.isEmpty
+            || !request.cacheKey.prefixHash.isEmpty
+            || !request.cacheKey.fingerprintHash.isEmpty
+        guard hasLogicalIdentity else { return false }
+        let logicalKey = CacheLogicalPrefixKey(request)
+        guard var stored = prefixesByLogicalKey[logicalKey],
+              request.prefixID.isEmpty || request.prefixID == stored.prefix.prefixID else {
             return false
         }
         stored.prefix.pinned = pinned
-        prefixesByID[prefixID] = stored
+        prefixesByLogicalKey[logicalKey] = stored
         return true
     }
 
     private func buildStats(
         diskSummary: DiskCacheSummary
     ) -> Melix_Worker_V1_CacheStats {
-        let entries = prefixesByID.values
+        let entries = prefixesByLogicalKey.values
         let l1Bytes = blocksByID.values.reduce(UInt64(0)) { $0 + $1.block.bytes }
         let l1QuantizedBytes = entries.reduce(UInt64(0)) { $0 + $1.quantizedBytes }
         let quantizedBytes = l1QuantizedBytes + diskSummary.quantizedBytes
@@ -536,43 +636,38 @@ actor HotCacheStore {
         diskSummary: DiskCacheSummary
     ) -> [Melix_Worker_V1_CacheScopeSummary] {
         let groups = Dictionary(grouping: entries) { entry in
-            entry.prefix.scope.scopeID
+            CacheScopeIdentity(entry.prefix.scope)
+        }
+        let diskScopes = Dictionary(grouping: diskSummary.scopes) {
+            CacheScopeIdentity($0.scope)
+        }
+        let scopeIdentities = Set(groups.keys).union(diskScopes.keys).sorted {
+            $0.components.lexicographicallyPrecedes($1.components)
         }
 
-        let diskScopes = Dictionary(uniqueKeysWithValues: diskSummary.scopes.map { ($0.scope.scopeID, $0) })
-        let scopeIDs = Set(groups.keys).union(diskScopes.keys).sorted()
-
-        return scopeIDs.compactMap { scopeID in
-            let group = groups[scopeID] ?? []
-            let diskScope = diskScopes[scopeID]
-            guard let first = group.first ?? diskScope.map({ scope in
-                var synthetic = StoredHotPrefix(
-                    prefix: Melix_Worker_V1_PrefixRef(),
-                    blockTableID: "",
-                    blockTable: Melix_Worker_V1_BlockTable(),
-                    pageIDs: [],
-                    blockIDs: [],
-                    quantizedBytes: 0,
-                    accessCount: 0
-                )
-                synthetic.prefix.scope = scope.scope
-                return synthetic
-            }) else {
+        return scopeIdentities.compactMap { scopeIdentity in
+            let group = groups[scopeIdentity] ?? []
+            let diskGroup = diskScopes[scopeIdentity] ?? []
+            guard let scope = group.first?.prefix.scope ?? diskGroup.first?.scope else {
                 return nil
             }
 
             var summary = Melix_Worker_V1_CacheScopeSummary()
-            summary.scopeID = scopeID
-            summary.scope = first.prefix.scope
+            summary.scopeID = scope.scopeID
+            summary.scope = scope
             let scopeBlocks = blocksByID.values
-                .filter { $0.scopeID == scopeID }
+                .filter { ownership in
+                    ownership.logicalPrefixKeys.contains {
+                        $0.scopeComponents == scopeIdentity.components
+                    }
+                }
                 .map(\.block)
                 .sorted { $0.blockID < $1.blockID }
             summary.l1Bytes = scopeBlocks.reduce(UInt64(0)) { $0 + $1.bytes }
-            summary.l2Bytes = diskScope?.l2Bytes ?? 0
+            summary.l2Bytes = diskGroup.reduce(UInt64(0)) { $0 + $1.l2Bytes }
             summary.blockCount = UInt64(scopeBlocks.count)
             summary.prefixCount = UInt64(group.count)
-            summary.snapshotCount = diskScope?.snapshotCount ?? 0
+            summary.snapshotCount = diskGroup.reduce(UInt64(0)) { $0 + $1.snapshotCount }
             summary.hotBlocks = scopeBlocks
             return summary
         }
@@ -590,14 +685,14 @@ actor HotCacheStore {
             var ownership = pagesByID[page.pageID] ?? StoredHotPageOwnership(
                 page: page,
                 scopeID: scopeID,
-                prefixIDs: [],
+                logicalPrefixKeys: [],
                 blockTableIDs: [],
                 referenceCount: 0
             )
             ownership.page = page
-            ownership.prefixIDs.insert(stored.prefix.prefixID)
+            ownership.logicalPrefixKeys.insert(stored.logicalKey)
             ownership.blockTableIDs.insert(stored.blockTableID)
-            ownership.referenceCount = UInt64(ownership.prefixIDs.count)
+            ownership.referenceCount = UInt64(ownership.logicalPrefixKeys.count)
             pagesByID[page.pageID] = ownership
         }
 
@@ -605,15 +700,15 @@ actor HotCacheStore {
             var ownership = blocksByID[block.blockID] ?? StoredHotBlockOwnership(
                 block: block,
                 scopeID: scopeID,
-                prefixIDs: [],
+                logicalPrefixKeys: [],
                 pageIDs: [],
                 referenceCount: 0
             )
-            ownership.prefixIDs.insert(stored.prefix.prefixID)
+            ownership.logicalPrefixKeys.insert(stored.logicalKey)
             if let pageID = pageIDByBlockID[block.blockID] {
                 ownership.pageIDs.insert(pageID)
             }
-            ownership.referenceCount = UInt64(ownership.prefixIDs.count)
+            ownership.referenceCount = UInt64(ownership.logicalPrefixKeys.count)
             blocksByID[block.blockID] = ownership
         }
     }
@@ -626,12 +721,12 @@ actor HotCacheStore {
             guard var ownership = pagesByID[pageID] else {
                 continue
             }
-            ownership.prefixIDs.remove(stored.prefix.prefixID)
+            ownership.logicalPrefixKeys.remove(stored.logicalKey)
             ownership.blockTableIDs.remove(stored.blockTableID)
-            if ownership.prefixIDs.isEmpty {
+            if ownership.logicalPrefixKeys.isEmpty {
                 pagesByID.removeValue(forKey: pageID)
             } else {
-                ownership.referenceCount = UInt64(ownership.prefixIDs.count)
+                ownership.referenceCount = UInt64(ownership.logicalPrefixKeys.count)
                 pagesByID[pageID] = ownership
             }
         }
@@ -640,12 +735,12 @@ actor HotCacheStore {
             guard var ownership = blocksByID[blockID] else {
                 continue
             }
-            ownership.prefixIDs.remove(stored.prefix.prefixID)
-            if ownership.prefixIDs.isEmpty {
+            ownership.logicalPrefixKeys.remove(stored.logicalKey)
+            if ownership.logicalPrefixKeys.isEmpty {
                 blocksByID.removeValue(forKey: blockID)
                 removedBlocks += 1
             } else {
-                ownership.referenceCount = UInt64(ownership.prefixIDs.count)
+                ownership.referenceCount = UInt64(ownership.logicalPrefixKeys.count)
                 blocksByID[blockID] = ownership
             }
         }
@@ -742,7 +837,7 @@ private func resolveScope(
         scope.multimodalAdapterHash = cacheAdapterSetHash(from: model)
     }
     if scope.scopeID.isEmpty {
-        scope.scopeID = makeScopeID(scope)
+        scope.scopeID = makeCacheScopeID(scope)
     }
     return scope
 }
@@ -750,14 +845,21 @@ private func resolveScope(
 private func resolveCacheKey(
     _ requested: Melix_Worker_V1_CacheKey,
     scope: Melix_Worker_V1_CacheScope,
-    prompt: String
+    messageIdentity: Data
 ) -> Melix_Worker_V1_CacheKey {
     var key = requested
     if key.prefixHash.isEmpty {
-        key.prefixHash = Data(SHA256.hash(data: Data("\(scope.scopeID)\n\(prompt)".utf8)))
+        let scopeIdentity = cacheIdentityData(
+            cacheScopeIdentityComponents(scope).map { Data($0.utf8) }
+        )
+        key.prefixHash = Data(SHA256.hash(data: cacheIdentityData([
+            Data("melix-cache-prefix-v2".utf8),
+            scopeIdentity,
+            messageIdentity,
+        ])))
     }
     if key.fingerprintHash.isEmpty {
-        key.fingerprintHash = Data(SHA256.hash(data: Data(prompt.utf8)))
+        key.fingerprintHash = Data(SHA256.hash(data: messageIdentity))
     }
     if key.scopeID.isEmpty {
         key.scopeID = scope.scopeID
@@ -765,46 +867,87 @@ private func resolveCacheKey(
     return key
 }
 
-private func renderPrompt(
+private func cacheMessageIdentityData(
     from messages: [Melix_Worker_V1_ChatMessage]
-) throws -> String {
-    messages
-        .map(renderCachePrompt(from:))
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-        .joined(separator: "\n")
+) -> Data {
+    var fields = [
+        Data("melix-cache-messages-v2".utf8),
+        Data(String(messages.count).utf8),
+    ]
+    fields.append(contentsOf: messages.map { message in
+        cacheIdentityData([
+            Data(message.role.utf8),
+            Data(message.name.utf8),
+            Data(String(message.parts.count).utf8),
+            cacheIdentityData(message.parts.map(cacheMessagePartIdentityData)),
+        ])
+    })
+    return cacheIdentityData(fields)
 }
 
-private func renderCachePrompt(
-    from message: Melix_Worker_V1_ChatMessage
-) -> String {
-    message.parts.compactMap { part in
-        switch part.part {
-        case .text(let text):
-            return text
-        case .imageUri(let uri):
-            return "image_uri:\(uri)"
-        case .imageBytes(let bytes):
-            return "image_bytes:\(sha256Hex(bytes))"
-        case .audioUri(let uri):
-            return "audio_uri:\(uri)"
-        case .audioBytes(let bytes):
-            return "audio_bytes:\(sha256Hex(bytes))"
-        case .videoUri(let uri):
-            return "video_uri:\(uri)"
-        case .videoBytes(let bytes):
-            return "video_bytes:\(sha256Hex(bytes))"
-        case nil:
-            return nil
-        }
+private func cacheMessagePartIdentityData(
+    _ part: Melix_Worker_V1_MessagePart
+) -> Data {
+    let kind: String
+    let value: Data
+    switch part.part {
+    case .text(let text):
+        kind = "text"
+        value = Data(text.utf8)
+    case .imageUri(let uri):
+        kind = "image-uri"
+        value = Data(uri.utf8)
+    case .imageBytes(let bytes):
+        kind = "image-bytes-sha256"
+        value = Data(SHA256.hash(data: bytes))
+    case .audioUri(let uri):
+        kind = "audio-uri"
+        value = Data(uri.utf8)
+    case .audioBytes(let bytes):
+        kind = "audio-bytes-sha256"
+        value = Data(SHA256.hash(data: bytes))
+    case .videoUri(let uri):
+        kind = "video-uri"
+        value = Data(uri.utf8)
+    case .videoBytes(let bytes):
+        kind = "video-bytes-sha256"
+        value = Data(SHA256.hash(data: bytes))
+    case nil:
+        kind = "none"
+        value = Data()
     }
-    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-    .filter { !$0.isEmpty }
-    .joined(separator: "\n")
+
+    let metadata = part.media
+    let preprocessingHints = metadata.preprocessingHints
+        .sorted { $0.key < $1.key }
+        .flatMap { [Data($0.key.utf8), Data($0.value.utf8)] }
+    return cacheIdentityData([
+        Data(kind.utf8),
+        value,
+        Data(String(metadata.mediaType.rawValue).utf8),
+        Data(String(metadata.sourceKind.rawValue).utf8),
+        Data(metadata.mimeType.utf8),
+        Data(metadata.format.utf8),
+        Data(metadata.filename.utf8),
+        Data(String(metadata.byteLength).utf8),
+        Data(String(metadata.durationMs).utf8),
+        Data(String(metadata.width).utf8),
+        Data(String(metadata.height).utf8),
+        cacheIdentityData(preprocessingHints),
+        Data(String(metadata.frameBudget).utf8),
+        Data(String(metadata.startMs).utf8),
+        Data(String(metadata.endMs).utf8),
+    ])
 }
 
-private func sha256Hex(_ data: Data) -> String {
-    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+private func cacheIdentityData(_ fields: [Data]) -> Data {
+    var result = Data()
+    for field in fields {
+        var length = UInt64(field.count).bigEndian
+        withUnsafeBytes(of: &length) { result.append(contentsOf: $0) }
+        result.append(field)
+    }
+    return result
 }
 
 private func makeBlockTable(
@@ -893,7 +1036,18 @@ private func shouldPinPrefix(
     hints.pinPrefixIds.contains(prefixID)
 }
 
-private func makeScopeID(_ scope: Melix_Worker_V1_CacheScope) -> String {
+func makeCacheScopeID(_ scope: Melix_Worker_V1_CacheScope) -> String {
+    let encoded = cacheScopeSemanticComponents(scope)
+        .map { "\($0.utf8.count):\($0)" }
+        .joined(separator: "|")
+    return "scope-\(SHA256.hash(data: Data(encoded.utf8)).map { String(format: "%02x", $0) }.joined())"
+}
+
+func cacheScopeIdentityComponents(_ scope: Melix_Worker_V1_CacheScope) -> [String] {
+    [scope.scopeID] + cacheScopeSemanticComponents(scope)
+}
+
+private func cacheScopeSemanticComponents(_ scope: Melix_Worker_V1_CacheScope) -> [String] {
     [
         scope.modelID,
         scope.revision,
@@ -903,7 +1057,12 @@ private func makeScopeID(_ scope: Melix_Worker_V1_CacheScope) -> String {
         scope.parserMode,
         scope.reasoningMode,
         scope.multimodalAdapterHash,
-    ].joined(separator: "::")
+        scope.reasoningEffort,
+        scope.toolParserMode,
+        scope.structuredOutputMode,
+        scope.chatTemplateKwargsHash,
+        String(scope.reasoningContinuityPresent),
+    ]
 }
 
 private func cacheAdapterSetHash(from model: Melix_Worker_V1_ModelSpec) -> String {
@@ -916,12 +1075,8 @@ private func cacheAdapterSetHash(from model: Melix_Worker_V1_ModelSpec) -> Strin
     return ""
 }
 
-private func makePrefixID(for key: Melix_Worker_V1_CacheKey) -> String {
+func makePrefixID(for key: Melix_Worker_V1_CacheKey) -> String {
     "pfx-\(shortHex(key.prefixHash))"
-}
-
-private func cacheKeyIdentifier(_ key: Melix_Worker_V1_CacheKey) -> String {
-    "\(key.scopeID)::\(Data(key.prefixHash).base64EncodedString())::\(Data(key.fingerprintHash).base64EncodedString())"
 }
 
 private func shortHex(_ data: Data) -> String {
@@ -939,14 +1094,4 @@ private func matches(
         return prefix.scope.scopeID == scope.scopeID
     }
     return prefix.scope.modelID == scope.modelID
-}
-
-private func matches(
-    cacheKey: Melix_Worker_V1_CacheKey,
-    prefix: Melix_Worker_V1_PrefixRef
-) -> Bool {
-    guard !(cacheKey.prefixHash.isEmpty && cacheKey.fingerprintHash.isEmpty && cacheKey.scopeID.isEmpty) else {
-        return true
-    }
-    return cacheKeyIdentifier(cacheKey) == cacheKeyIdentifier(prefix.cacheKey)
 }

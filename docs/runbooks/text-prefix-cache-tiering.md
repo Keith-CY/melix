@@ -1,6 +1,6 @@
 # Text Prefix KV Cache Tiering
 
-_Last updated: 2026-08-03_
+_Last updated: 2026-08-04_
 
 This runbook describes session-scoped prefix KV reuse for both text workers.
 The Python worker has hot and opt-in cold payload tiers. The Swift worker has a
@@ -130,6 +130,26 @@ chunk tokens, model-prefill call count, and actual min/max call token counts.
 `GetCacheStats` and runtime statistics source L1 bytes, block count, hit rate,
 and dedup ratio from the real tensor pool.
 
+Operator pin state is keyed by the complete resolved scope and cache key, not
+by one physical compatibility entry. Pin and unpin update every resident
+physical version of that logical prefix, and a later version inherits the same
+state. Pinned logical prefixes are excluded from budget LRU. The pool also
+groups those versions into one hot/pinned prefix projection while retaining
+the union of their real block descriptors for scope byte and block counts.
+Automatically derived cache hashes use a versioned length-prefixed encoding of
+the complete resolved scope and the exact structured messages. Role, name,
+message and part boundaries, original whitespace, part kind and payload, and
+media metadata all participate; explicit caller-provided hash fields remain
+unchanged. Operator scope summaries also group by the complete resolved scope,
+so distinct variants may expose separate rows with the same external
+`scope_id`.
+`PinPrefix` and `UnpinPrefix` report success from the real pool in paged mode;
+metadata-only updates cannot make an L1 operation appear successful or mutate
+the mirror after a failed L1 operation. Logical purge matches the complete
+scope and cache key and removes every matching physical version from lookup and
+projection. `GetCacheStats` reads pool statistics and this projection from one
+locked generation so concurrent cache mutation cannot combine two snapshots.
+
 Compatible paged decode sessions remain eligible for homogeneous batching. The
 batch adapter keeps each row's original cache and lease, applies incoming K/V
 updates to each row, and concatenates the resulting K/V only for the attention
@@ -151,11 +171,13 @@ Common Swift fallback reasons include:
 - `cache_stream_owner_mismatch`
 - `paged_stream_owner_mismatch`
 
-The Swift `DiskCacheStore` persists identity and block-table metadata only. It
-does not serialize KV payloads, so an L2 metadata match is reported as
-`metadata-only-l2` with zero recovered tokens. The Swift handshake must keep
-`supportsDiskCache=false` and `supportsBoundarySnapshots=false` until payload
-restore is implemented and verified.
+The Swift `DiskCacheStore` persists identity and block-table metadata only. Its
+records and filenames use the same complete logical scope-and-cache key as L1;
+legacy prefix-ID filenames migrate on load, and ambiguous CacheKey-only restore
+fails closed. It does not serialize KV payloads, so an L2 metadata match is
+reported as `metadata-only-l2` with zero recovered tokens. The Swift handshake
+must keep `supportsDiskCache=false` and `supportsBoundarySnapshots=false` until
+payload restore is implemented and verified.
 
 ### Swift operator checks
 
@@ -173,6 +195,13 @@ parity, and zero paged private owners or block leases after context release. A
 snapshot race may retain audit evidence for a prefix that was actually used,
 but it must not return an admitted paged decode context. An L2 metadata record
 by itself is never proof of saved model work.
+
+For operator mutations, inspect `GetCacheStats` after each step. One logical
+prefix must appear once even when multiple physical compatibility versions are
+resident. Pinning must set `pinned_prefix_count=1`, prevent a lower-budget
+candidate from evicting any version, and unpinning must permit that eviction.
+After purge, hot prefixes, pinned prefixes, L1 bytes, scope block tables, and
+the next request's hit mode must all show that the tensor entry is gone.
 
 Run the same-load paired physical-watermark probe from the repository root:
 
@@ -193,9 +222,9 @@ throughput, and logical session bytes greater than resident block bytes. Paged
 MLX active and allocator-reported peak deltas must both be strictly lower than
 contiguous; otherwise the test fails and the paged path is not ready.
 
-The checked-in 2026-08-03 result is
+The checked-in 2026-08-04 result is
 `docs/metrics/issue-2601-paired-contiguous-paged-memory.json`. It reports a
-`2059968`-byte MLX active peak-delta reduction and a `2686976`-byte RSS
+`2076772`-byte MLX active peak-delta reduction and a `2605056`-byte RSS
 peak-delta reduction for paged execution. Its `40960` resident bytes include
 active private tails and remain below the `172032` logical session bytes. The
 artifact also retains both throughput values so attention-gather cost is

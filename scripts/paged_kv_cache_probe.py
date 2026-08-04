@@ -40,6 +40,7 @@ ACCEPTANCE_TESTS: dict[str, tuple[str, ...]] = {
     ),
     "fallback_second_prefill_count": (
         "testAutoSwiftMLXBackendBudgetRejectionFallsBackToContiguousWithoutSecondPrefill",
+        "testAutoSwiftMLXBackendRejectsCompositeLanguageModelBeforePagedWork",
         "testAutoSwiftMLXBackendSnapshotRaceFallsBackToContiguousWithoutSecondPrefillOrLeaseLeak",
     ),
     "batch_row_cache_identity_mismatch_count": (
@@ -47,9 +48,22 @@ ACCEPTANCE_TESTS: dict[str, tuple[str, ...]] = {
     ),
     "scope_cross_hit_count": (
         "testAutoSwiftMLXBackendKeepsPagedPrefixesIsolatedByScopeID",
+        "testBoundarySnapshotRestoreSurvivesRestartAndPreservesExecutionMetadata",
+        "testDiskCacheStoreExactPurgeNeverInfersLegacySnapshotIdentityFromRemainingPrefixes",
+        "testDiskCacheStoreKeepsCompleteScopeVariantsIndependentAcrossRestart",
+        "testAutomaticCacheKeyPreservesStructuredMessageIdentity",
+        "testHotCacheStoreKeepsConflictingExplicitScopeVariantsIndependent",
+        "testHotCacheLogicalIdentityScopeIDIncludesExecutionScopeVariants",
+        "testPagedKVBlockPoolKeepsLogicalIdentityWhileSharingIdenticalTokenBlocks",
+        "testPagedKVBlockPoolPurgesOneCompleteLogicalIdentity",
+        "testWorkerRuntimeRegistryReportsCompletePagedScopeVariantsSeparately",
     ),
     "leased_entry_eviction_count": (
+        "testPagedKVBlockPoolClearsLogicalPinsAcrossPurgeAndRemoveAll",
+        "testPagedKVBlockPoolPinsEveryPhysicalVersionOfOneLogicalPrefix",
+        "testPagedKVBlockPoolSnapshotExcludesConcurrentLogicalPurge",
         "testPagedKVBlockPoolEvictsUnleasedEntryBeforeOlderLeasedEntry",
+        "testWorkerRuntimeRegistryUsesRealPagedPoolForLogicalPinAndPurge",
     ),
     "trimmed_shared_block_resident_bytes": (
         "testPagedKVCacheReleasesSharedBlockAfterEveryLayerTrimsIt",

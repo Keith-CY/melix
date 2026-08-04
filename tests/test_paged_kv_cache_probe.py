@@ -75,6 +75,38 @@ def test_scope_selects_dedicated_paged_kv_probe_for_core_pool() -> None:
     assert "paged-kv-cache-ownership-memory" in selected
 
 
+def test_scope_selects_dedicated_paged_kv_probe_for_disk_cache_identity() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-text-worker-swift/Sources/Core/DiskCacheStore.swift"],
+    )
+
+    selected = {entry["id"] for entry in scope["selected_probes"]}
+    assert "paged-kv-cache-ownership-memory" in selected
+
+
+def test_versioned_acceptance_artifact_passes_the_default_probe() -> None:
+    artifact = json.loads((REPO_ROOT / probe.DEFAULT_ARTIFACT).read_text(encoding="utf-8"))
+
+    metrics = probe.analyze_artifact(artifact)
+
+    assert metrics["status_passed"] == 1.0
+    assert metrics["failure_count"] == 0.0
+
+
+def test_versioned_acceptance_artifact_cites_every_required_regression() -> None:
+    artifact = json.loads((REPO_ROOT / probe.DEFAULT_ARTIFACT).read_text(encoding="utf-8"))
+    acceptance_source = artifact["acceptance_source"]
+    required_tests = {
+        test_name
+        for test_names in probe.ACCEPTANCE_TESTS.values()
+        for test_name in test_names
+    }
+
+    assert acceptance_source["kind"] == "swift-test-log-focused-gate-v1"
+    assert set(acceptance_source["passing_tests"]) == required_tests
+
+
 def test_probe_emits_numeric_passing_metrics() -> None:
     metrics = probe.analyze_artifact(paired_payload())
 

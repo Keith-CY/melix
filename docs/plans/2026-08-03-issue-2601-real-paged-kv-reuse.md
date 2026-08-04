@@ -72,6 +72,27 @@ The first executed paged-cache contract is deliberately narrow and complete:
   committed shared ownership. LRU eviction never selects an entry whose blocks
   still have an active decode lease, and a shared block is released after every
   layer view has trimmed or replaced it.
+- The registry resolves the effective `CacheScope`, `CacheKey`, and logical
+  prefix ID before entering the model runtime. Each committed L1 entry owns that
+  logical identity together with its tensor snapshot. The pool lock is the
+  authoritative transaction boundary for operator pin state, LRU selection,
+  logical purge, and the L1 prefix/block projection. Metadata and disk records
+  may mirror this state, but they cannot override or independently represent a
+  live L1 entry.
+- Logical purge removes an entry from lookup and L1 projection atomically.
+  Active decode leases may retain its physical blocks until release, but the
+  purged generation cannot hit again. Operator-pinned entries are ineligible for
+  LRU eviction until the same logical prefix is unpinned.
+- Physical entry identity includes the complete resolved logical scope and
+  cache key in addition to execution compatibility and token-block digests.
+  Distinct logical prefixes that tokenize identically may share immutable
+  tensor blocks through lookup, but cannot overwrite each other's operator
+  pin, purge, or projection identity.
+- Paged admission accepts only the production `MLXLLM.LLMModel` text-model
+  contract with an all-`KVCacheSimple` layout. Composite or otherwise
+  state-carrying generic language models fail closed before lookup, paged cache
+  allocation, or a paged model call. Their fallback evidence describes one
+  ordinary contiguous prepare and no discarded paged work.
 
 ## Fail-Closed Boundaries
 
@@ -145,6 +166,24 @@ false. No L2 metadata restore may be credited as saved prefill work.
     project the exact admission budget into each prefill response, and derive
     behavioral acceptance metrics from passing Swift test logs plus the real
     paired-memory artifact.
+15. Resolve one logical cache identity before runtime entry and attach it to the
+    committed tensor snapshot. Route registry pin, unpin, and purge through the
+    real pool transaction, derive exposed L1 prefix/block/statistics projections
+    from the pool, and treat metadata/disk mutation as secondary bookkeeping.
+16. Add a pre-model-call text-model capability gate for composite runtime state.
+    Prove with a model-call counter that fallback performs exactly one
+    contiguous prepare and zero paged model calls, and include that test in the
+    `fallback_second_prefill_count` acceptance probe.
+17. Derive scope IDs, runtime compatibility, and pool logical keys from one
+    complete field list. Return pool statistics and operator projection from one
+    lock generation, and keep failed paged pin/unpin operations from mutating the
+    metadata mirror.
+18. Use that complete logical key for HotCache and DiskCache indexing, exact
+    purge, and persisted prefix filenames. Migrate legacy prefix-ID filenames on
+    load, fail ambiguous CacheKey-only L2 restore closed, and require typed
+    execution identity before an exact purge can delete one of several boundary
+    snapshots. Legacy snapshots without typed execution identity always remain
+    fail-closed under exact purge, even after only one matching prefix remains.
 
 ## Performance Probes
 
@@ -205,6 +244,17 @@ false. No L2 metadata restore may be credited as saved prefill work.
 - Budget rejection and stale-snapshot races use ordinary `KVCacheSimple`
   decode state after exactly one model-prefill pass, preserve contiguous output
   parity, and leave no paged block lease or private allocation owner alive.
+- With the real Swift backend behind `WorkerRuntimeRegistry`, pinning a logical
+  prefix prevents budget LRU eviction, unpinning permits eviction, and purging
+  removes the tensor entry so the next identical request cannot report an exact
+  hit. Cache statistics, scope summaries, hot-prefix projection, pinned-prefix
+  projection, and the real block table agree after every mutation.
+- Concurrent store or purge cannot split `GetCacheStats` across two pool
+  generations; its statistics and logical projection come from one locked
+  snapshot.
+- A composite-state model is rejected before paged lookup, allocation, or model
+  evaluation. Its evidence records one contiguous prepare, zero paged model
+  calls, and zero second-prefill fallbacks.
 - Changes to any Paged KV execution or projection file select the dedicated
   Paged KV PR-scoped probe, whose final report has zero regression and zero
   verification failure.
@@ -216,13 +266,13 @@ false. No L2 metadata restore may be credited as saved prefill work.
 
 ## Paired memory result
 
-The 2026-08-03 local Apple Silicon probe used the same loaded deterministic
+The 2026-08-04 local Apple Silicon probe used the same loaded deterministic
 model, 33-token prompt, four sessions, and two output tokens per session. Both
 modes started from `600336` MLX active bytes. Contiguous execution reached a
-`2246920`-byte MLX active peak delta and a `2686976`-byte RSS peak delta. Paged
-execution reached a `165436`-byte MLX active peak delta and a `229376`-byte RSS
-peak delta. The paged reductions were therefore `2081484` MLX active bytes and
-`2457600` RSS bytes. The allocator-reported peak reduction was `2217044` bytes.
+`2249888`-byte MLX active peak delta and a `2916352`-byte RSS peak delta. Paged
+execution reached a `173116`-byte MLX active peak delta and a `311296`-byte RSS
+peak delta. The paged reductions were therefore `2076772` MLX active bytes and
+`2605056` RSS bytes. The allocator-reported peak reduction was `2224216` bytes.
 Pool accounting reported `40960` real resident bytes, including active private
 tails, versus `172032` logical session bytes.
 
@@ -235,16 +285,49 @@ after all layer views trim a block, and tightest-budget violations. Three
 cross-stream decode fallbacks, one direct and two from rejected batch rows, are
 retained as positive evidence that both stream-owner guards executed.
 
-The tiny-fixture batched decode throughput was `1385.52` tokens/second for
-contiguous execution and `919.86` tokens/second for paged execution. This probe
+The tiny-fixture batched decode throughput was `1402.28` tokens/second for
+contiguous execution and `860.03` tokens/second for paged execution. This probe
 is a memory acceptance gate, not a representative serving-throughput benchmark;
 the throughput values are retained so the gather cost remains visible. The
-versioned raw artifact is
+versioned acceptance artifact, including the focused test-derived counters, is
 `docs/metrics/issue-2601-paired-contiguous-paged-memory.json`.
 
-The complete changed-line coverage run for the six changed production files
-reported `96.77%` (`1470/1519`). The complete `WorkerScaffoldTests` suite passed
-all `336` tests with coverage enabled.
+The complete changed-line coverage run for the seven changed production files
+reported `97.01%` (`2238/2307`). The complete `WorkerScaffoldTests` suite passed
+all `349` tests with coverage enabled. Per-file coverage was `97.14%` for the
+paged pool, `96.44%` for the backend, `97.96%` for disk-cache identity,
+`96.18%` for hot-cache identity, `99.19%` for the registry, and `100%` for the
+prefill engine. `TextRuntime.swift` reported `92.21%` (`71/77`) while the
+measured changed scope remained above the repository's 95 percent gate.
+
+Independent Standards and Spec review found no P0 or P1 issue. The remaining
+identity finding was resolved by sharing one complete logical-prefix key between
+the paged pool and the hot-cache metadata mirror. Metadata indexing, pinning,
+ownership, lookup, and exact purge no longer select entries by the externally
+visible prefix ID or CacheKey alone. A regression test covers two prefixes with
+the same explicit scope ID, CacheKey, and prefix ID but different reasoning
+scope: both remain visible, and pin or purge of one cannot mutate the other. The
+affected HotCache/paged-pool group passed `21/21` tests, and the real-pool
+registry pin/purge integration passed `1/1`.
+
+A follow-up Standards review found that L2 metadata still used the old short
+prefix index. Disk records now use the shared complete key in memory and on disk;
+exact purge isolates both prefix records and typed boundary snapshots, while a
+legacy untyped snapshot always remains fail-closed under exact purge. Regression
+tests persist colliding explicit scope variants, restart the store, purge each
+variant in turn, and verify typed snapshot isolation, legacy snapshot retention,
+and legacy-filename migration.
+
+The final independent review found two remaining operator-identity gaps. The
+worker's automatic cache-key derivation now encodes the exact structured
+messages and complete resolved scope with versioned length-prefixed fields,
+rather than trimming and joining text fragments. Hot, disk, and real-pool
+operator summaries now group by complete `CacheScope` identity instead of the
+external `scope_id`; colliding low/high reasoning variants remain separate in
+all three projections. The obsolete CacheKey-only disk comparison helper was
+removed. Focused regressions for all four paths passed `4/4`; the registered
+performance gate passed its `26 + 11 + 9 + 1` Swift groups, and the versioned
+artifact now asserts all 26 required acceptance tests by name.
 
 ## Verification
 
@@ -286,4 +369,4 @@ make integration-test
 The paged module remains behind strict runtime admission. Removing the runtime
 admission call and restoring `supportsPagedCache=false` returns all requests to
 the existing contiguous prefill/decode path without changing protocol data or
-persisted metadata formats.
+persisted metadata envelope formats.

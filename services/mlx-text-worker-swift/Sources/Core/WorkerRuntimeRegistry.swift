@@ -817,6 +817,13 @@ actor WorkerRuntimeRegistry {
                 ? requestedCacheBudget
                 : PagedKVBlockPool.defaultBudgetBytes
         }
+        let logicalIdentity = try resolveHotCacheLogicalIdentity(
+            execution: effectiveExecution,
+            model: loaded.spec,
+            messages: messages
+        )
+        effectiveExecution.scope = logicalIdentity.scope
+        effectiveExecution.cacheKey = logicalIdentity.cacheKey
         let cacheMode = CacheModePolicy.resolve(from: effectiveExecution.cacheHints)
         await cacheStore.setActiveMode(cacheMode)
 
@@ -870,6 +877,14 @@ actor WorkerRuntimeRegistry {
                 cacheMode: cacheMode
             )
             if let restorePlan = walkedBackPlan {
+                var restoreExecution = effectiveExecution
+                let restoreIdentity = try resolveHotCacheLogicalIdentity(
+                    execution: restoreExecution,
+                    model: loaded.spec,
+                    messages: requestMessages
+                )
+                restoreExecution.scope = restoreIdentity.scope
+                restoreExecution.cacheKey = restoreIdentity.cacheKey
                 let restoreResumeHint = restoreResumeHint(
                     snapshotID: restored.snapshot.snapshotID,
                     restorePlan: restorePlan,
@@ -877,7 +892,8 @@ actor WorkerRuntimeRegistry {
                 )
                 let runtimePrefill = try await runtime.prefill(
                     model: loaded.runtimeModel,
-                    execution: effectiveExecution,
+                    execution: restoreExecution,
+                    logicalCacheIdentity: restoreIdentity,
                     messages: requestMessages,
                     prefillStepSize: prefillStepSize,
                     resumeHint: restoreResumeHint,
@@ -889,7 +905,7 @@ actor WorkerRuntimeRegistry {
                 let decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
                 nextDecodeHandle += 1
                 let registration = try await cacheStore.registerPrefill(
-                    execution: effectiveExecution,
+                    execution: restoreExecution,
                     model: loaded.spec,
                     messages: requestMessages,
                     promptTokens: runtimePrefill.promptTokens,
@@ -912,7 +928,7 @@ actor WorkerRuntimeRegistry {
                     decodeHandle: decodeHandle,
                     modelHandle: loaded.handle,
                     requestID: requestID,
-                    execution: effectiveExecution,
+                    execution: restoreExecution,
                     promptTokens: runtimePrefill.promptTokens,
                     messages: requestMessages,
                     resumeHint: restoreResumeHint,
@@ -925,11 +941,17 @@ actor WorkerRuntimeRegistry {
                     context: runtimePrefill.context
                 )
 
-                let cacheSnapshot = await cacheStore.snapshot()
+                let baseCacheSnapshot = await cacheStore.snapshot()
+                let pagedKVSnapshot = await runtime.pagedKVPoolSnapshot()
                 let cacheStats = cacheStatsWithRuntimeContext(
-                    cacheSnapshot.stats,
-                    pagedKVStats: await runtime.pagedKVPoolStats(),
-                    effectiveCacheBudgetOverride: effectiveExecution.cacheHints.cacheMemoryBudgetBytes
+                    baseCacheSnapshot.stats,
+                    pagedKVStats: pagedKVSnapshot.stats,
+                    effectiveCacheBudgetOverride: restoreExecution.cacheHints.cacheMemoryBudgetBytes
+                )
+                let cacheSnapshot = cacheSnapshotWithRuntimeContext(
+                    baseCacheSnapshot,
+                    stats: cacheStats,
+                    projection: pagedKVSnapshot.projection
                 )
                 let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
                 return WorkerPrefillResult(
@@ -970,6 +992,7 @@ actor WorkerRuntimeRegistry {
         let result = try await runtime.prefill(
             model: loaded.runtimeModel,
             execution: effectiveExecution,
+            logicalCacheIdentity: logicalIdentity,
             messages: messages,
             prefillStepSize: prefillStepSize,
             resumeHint: resumeHint,
@@ -1015,11 +1038,17 @@ actor WorkerRuntimeRegistry {
             )
         }
 
-        let cacheSnapshot = await cacheStore.snapshot()
+        let baseCacheSnapshot = await cacheStore.snapshot()
+        let pagedKVSnapshot = await runtime.pagedKVPoolSnapshot()
         let cacheStats = cacheStatsWithRuntimeContext(
-            cacheSnapshot.stats,
-            pagedKVStats: await runtime.pagedKVPoolStats(),
+            baseCacheSnapshot.stats,
+            pagedKVStats: pagedKVSnapshot.stats,
             effectiveCacheBudgetOverride: effectiveExecution.cacheHints.cacheMemoryBudgetBytes
+        )
+        let cacheSnapshot = cacheSnapshotWithRuntimeContext(
+            baseCacheSnapshot,
+            stats: cacheStats,
+            projection: pagedKVSnapshot.projection
         )
         let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
 
@@ -1332,12 +1361,17 @@ actor WorkerRuntimeRegistry {
 
     func cacheStatsResponse() async -> Melix_Worker_V1_GetCacheStatsResponse {
         var response = Melix_Worker_V1_GetCacheStatsResponse()
-        var snapshot = await cacheStore.snapshot()
+        let baseSnapshot = await cacheStore.snapshot()
+        let pagedKVSnapshot = await runtime.pagedKVPoolSnapshot()
         let stats = cacheStatsWithRuntimeContext(
-            snapshot.stats,
-            pagedKVStats: await runtime.pagedKVPoolStats()
+            baseSnapshot.stats,
+            pagedKVStats: pagedKVSnapshot.stats
         )
-        snapshot.stats = stats
+        let snapshot = cacheSnapshotWithRuntimeContext(
+            baseSnapshot,
+            stats: stats,
+            projection: pagedKVSnapshot.projection
+        )
         response.stats = stats
         response.snapshot = snapshot
         return response
@@ -1348,11 +1382,25 @@ actor WorkerRuntimeRegistry {
     }
 
     func pinPrefix(_ prefix: Melix_Worker_V1_PrefixRef) async -> Bool {
-        await cacheStore.pinPrefix(prefix)
+        guard runtime.supportsPagedKVCache else {
+            return await cacheStore.pinPrefix(prefix)
+        }
+        guard await runtime.setPagedKVPrefixPinned(prefix, pinned: true) else {
+            return false
+        }
+        _ = await cacheStore.pinPrefix(prefix)
+        return true
     }
 
     func unpinPrefix(_ prefix: Melix_Worker_V1_PrefixRef) async -> Bool {
-        await cacheStore.unpinPrefix(prefix)
+        guard runtime.supportsPagedKVCache else {
+            return await cacheStore.unpinPrefix(prefix)
+        }
+        guard await runtime.setPagedKVPrefixPinned(prefix, pinned: false) else {
+            return false
+        }
+        _ = await cacheStore.unpinPrefix(prefix)
+        return true
     }
 
     func purgeCache(
@@ -1360,7 +1408,20 @@ actor WorkerRuntimeRegistry {
         cacheKey: Melix_Worker_V1_CacheKey,
         includePinned: Bool
     ) async -> UInt64 {
-        await cacheStore.purgeCache(scope: scope, cacheKey: cacheKey, includePinned: includePinned)
+        let runtimePurgedBlocks = await runtime.purgePagedKVCache(
+            scope: scope,
+            cacheKey: cacheKey,
+            includePinned: includePinned
+        )
+        let metadataResult = await cacheStore.purgeCacheDetailed(
+            scope: scope,
+            cacheKey: cacheKey,
+            includePinned: includePinned
+        )
+        if runtime.supportsPagedKVCache {
+            return runtimePurgedBlocks + metadataResult.diskBlockCount
+        }
+        return metadataResult.totalBlockCount
     }
 
     func saveBoundarySnapshot(
@@ -1431,10 +1492,18 @@ actor WorkerRuntimeRegistry {
         execution.backendIdentity = loaded.backendIdentity
         let effectiveRequestID = requestID.isEmpty ? restored.snapshot.requestID : requestID
         execution.id.requestID = effectiveRequestID
+        let logicalIdentity = try resolveHotCacheLogicalIdentity(
+            execution: execution,
+            model: loaded.spec,
+            messages: restored.messages
+        )
+        execution.scope = logicalIdentity.scope
+        execution.cacheKey = logicalIdentity.cacheKey
 
         let runtimePrefill = try await runtime.prefill(
             model: loaded.runtimeModel,
             execution: execution,
+            logicalCacheIdentity: logicalIdentity,
             messages: restored.messages,
             prefillStepSize: 0,
             resumeHint: restored.resumeHint,
@@ -1444,7 +1513,7 @@ actor WorkerRuntimeRegistry {
 
         let decodeHandle = "\(loaded.handle)::decode::\(nextDecodeHandle)"
         nextDecodeHandle += 1
-        let restoredPrefix = await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey)
+        let restoredPrefix = await cacheStore.lookupPrefix(for: logicalIdentity)
         prefillContexts[decodeHandle] = StoredPrefillContext(
             decodeHandle: decodeHandle,
             modelHandle: loaded.handle,
@@ -1586,6 +1655,7 @@ actor WorkerRuntimeRegistry {
         if runtime.supportsPagedKVCache {
             stats.l1Bytes = pagedKVStats.residentBytes
             stats.blockCount = UInt64(pagedKVStats.blockCount)
+            stats.pinnedPrefixCount = UInt64(pagedKVStats.pinnedPrefixCount)
             stats.l1HitRate = pagedKVStats.lookupCount > 0
                 ? Double(pagedKVStats.hitCount) / Double(pagedKVStats.lookupCount)
                 : 0
@@ -1602,6 +1672,67 @@ actor WorkerRuntimeRegistry {
         stats.effectiveCacheBudgetBytes = effectiveCacheBudgetOverride
             ?? effectiveCacheBudgetBytes(modelResidentBytes: resolvedModelResidentBytes)
         return stats
+    }
+
+    private func cacheSnapshotWithRuntimeContext(
+        _ cacheSnapshot: Melix_Worker_V1_CacheSnapshot,
+        stats: Melix_Worker_V1_CacheStats,
+        projection: RuntimePagedKVPoolProjection
+    ) -> Melix_Worker_V1_CacheSnapshot {
+        var snapshot = cacheSnapshot
+        snapshot.stats = stats
+        guard runtime.supportsPagedKVCache else { return snapshot }
+
+        snapshot.hotPrefixes = projection.entries.map(\.prefix)
+        snapshot.pinnedPrefixes = projection.entries
+            .map(\.prefix)
+            .filter(\.pinned)
+
+        let projectedByScope = Dictionary(grouping: projection.entries) {
+            CacheScopeIdentity($0.prefix.scope)
+        }
+        let existingByScope = Dictionary(grouping: snapshot.scopes) {
+            CacheScopeIdentity($0.scope)
+        }
+        let scopeIdentities = Set(existingByScope.keys).union(projectedByScope.keys).sorted {
+            $0.components.lexicographicallyPrecedes($1.components)
+        }
+        snapshot.scopes = scopeIdentities.compactMap { scopeIdentity in
+            let entries = projectedByScope[scopeIdentity] ?? []
+            let existing = existingByScope[scopeIdentity] ?? []
+            guard var summary = existing.first
+                    ?? entries.first.map({ entry in
+                        var value = Melix_Worker_V1_CacheScopeSummary()
+                        value.scopeID = entry.prefix.scope.scopeID
+                        value.scope = entry.prefix.scope
+                        return value
+                    }) else {
+                return nil
+            }
+            summary.l2Bytes = existing.reduce(UInt64(0)) { $0 + $1.l2Bytes }
+            summary.snapshotCount = existing.reduce(UInt64(0)) { $0 + $1.snapshotCount }
+            if let first = entries.first {
+                summary.scopeID = first.prefix.scope.scopeID
+                summary.scope = first.prefix.scope
+            }
+            let uniqueBlocks = Dictionary(
+                entries.flatMap(\.blocks).map { ($0.blockID, $0) },
+                uniquingKeysWith: { first, _ in first }
+            ).values.sorted { $0.blockID < $1.blockID }
+            summary.l1Bytes = uniqueBlocks.reduce(UInt64(0)) { $0 + $1.bytes }
+            summary.blockCount = UInt64(uniqueBlocks.count)
+            summary.prefixCount = UInt64(entries.count)
+            summary.hotBlocks = uniqueBlocks.map { descriptor in
+                var block = Melix_Worker_V1_BlockRef()
+                block.blockID = descriptor.blockID
+                block.tokenStart = Int32(clamping: descriptor.tokenStart)
+                block.tokenEnd = Int32(clamping: descriptor.tokenEnd)
+                block.bytes = descriptor.bytes
+                return block
+            }
+            return summary
+        }
+        return snapshot
     }
 
     private func effectiveCacheBudgetBytes(modelResidentBytes: UInt64) -> UInt64 {
@@ -2170,19 +2301,6 @@ private func resolveCacheScope(
         scope.scopeID = makeCacheScopeID(scope)
     }
     return scope
-}
-
-private func makeCacheScopeID(_ scope: Melix_Worker_V1_CacheScope) -> String {
-    [
-        scope.modelID,
-        scope.revision,
-        scope.tokenizerHash,
-        scope.quantProfileID,
-        scope.promptTemplateHash,
-        scope.parserMode,
-        scope.reasoningMode,
-        scope.multimodalAdapterHash,
-    ].joined(separator: "::")
 }
 
 private func cacheAdapterSetHash(from model: Melix_Worker_V1_ModelSpec) -> String {

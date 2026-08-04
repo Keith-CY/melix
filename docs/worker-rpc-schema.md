@@ -246,6 +246,18 @@ message CacheKey {
 
 `prefix_hash` should identify the concrete reusable prefix. `fingerprint_hash` should identify the deterministic request fingerprint used for cache matching. `scope_id` should be the normalized identifier derived from `CacheScope`.
 
+When the worker derives these hashes, it must use an unambiguous versioned
+encoding. The prefix identity includes the complete resolved `CacheScope`; the
+message identity preserves role, name, message count and boundaries, part count
+and boundaries, part kind and exact value, media metadata, and original text
+whitespace. Every variable-length value is length-prefixed, and map fields are
+sorted before encoding. Caller-supplied hash fields remain authoritative.
+
+`CacheScopeSummary.scope_id` is an external label, not a unique aggregation
+key. Operator summaries group by the complete resolved `CacheScope`, so two
+rows may intentionally carry the same `scope_id` when any other scope field
+differs.
+
 This is required for cross-session reuse and cache dedup without overloading `CacheScope` itself.
 
 ### SamplingConfig

@@ -868,6 +868,7 @@ final class WorkerScaffoldTests: XCTestCase {
             blockCount: 1,
             sharedBlockCount: 1,
             entryCount: 2,
+            pinnedPrefixCount: 0,
             lookupCount: 2,
             hitCount: 1,
             restoredTokenCount: 1,
@@ -10279,6 +10280,10 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertTrue(restoredExecution.reasoning.enabled)
             XCTAssertEqual(restoredExecution.reasoning.mode, "enabled")
             XCTAssertEqual(restoredExecution.reasoning.effort, "high")
+            XCTAssertFalse(restoredExecution.scope.scopeID.isEmpty)
+            XCTAssertEqual(restoredExecution.cacheKey.scopeID, restoredExecution.scope.scopeID)
+            XCTAssertFalse(restoredExecution.cacheKey.prefixHash.isEmpty)
+            XCTAssertFalse(restoredExecution.cacheKey.fingerprintHash.isEmpty)
             XCTAssertEqual(
                 restoredExecution.ext["melix.chat_template_kwargs.effective_json"],
                 #"{"custom_label":"persisted"}"#
@@ -11209,6 +11214,53 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.first?.scope.scopeID, prefill.blockTable.scopeID)
     }
 
+    func testAutomaticCacheKeyPreservesStructuredMessageIdentity() throws {
+        var execution = Melix_Worker_V1_ExecutionMetadata()
+        execution.scope = makeCacheScope(scopeID: "structured-message-scope", modelID: "logical-model")
+        let model = makeModelSpec(modelID: "logical-model")
+
+        func cacheKey(
+            _ messages: [Melix_Worker_V1_ChatMessage]
+        ) throws -> Melix_Worker_V1_CacheKey {
+            try resolveHotCacheLogicalIdentity(
+                execution: execution,
+                model: model,
+                messages: messages
+            ).cacheKey
+        }
+
+        let baseMessage = makeUserMessage("same content")
+        let baseKey = try cacheKey([baseMessage])
+        XCTAssertEqual(baseKey, try cacheKey([baseMessage]))
+
+        var roleVariant = baseMessage
+        roleVariant.role = "assistant"
+        var nameVariant = baseMessage
+        nameVariant.name = "named-source"
+        let whitespaceVariant = makeUserMessage(" same content ")
+
+        let splitMessages = [makeUserMessage("first"), makeUserMessage("second")]
+        let joinedMessage = makeUserMessage("first\nsecond")
+        var splitParts = makeUserMessage("")
+        var firstPart = Melix_Worker_V1_MessagePart()
+        firstPart.text = "first"
+        var secondPart = Melix_Worker_V1_MessagePart()
+        secondPart.text = "second"
+        splitParts.parts = [firstPart, secondPart]
+
+        var nilPartMessage = makeUserMessage("")
+        nilPartMessage.parts = [Melix_Worker_V1_MessagePart()]
+        var emptyPartsMessage = makeUserMessage("")
+        emptyPartsMessage.parts = []
+
+        for variant in [roleVariant, nameVariant, whitespaceVariant] {
+            XCTAssertNotEqual(baseKey, try cacheKey([variant]))
+        }
+        XCTAssertNotEqual(try cacheKey(splitMessages), try cacheKey([joinedMessage]))
+        XCTAssertNotEqual(try cacheKey([splitParts]), try cacheKey([joinedMessage]))
+        XCTAssertNotEqual(try cacheKey([nilPartMessage]), try cacheKey([emptyPartsMessage]))
+    }
+
     func testDiskCacheStorePurgeScopeSupportsEmptyAndModelOnlyScopes() async throws {
         try await withTemporaryCacheRoot { cacheRoot in
             let fileManager = FileManager.default
@@ -11304,6 +11356,45 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testHotCacheLogicalIdentityScopeIDIncludesExecutionScopeVariants() throws {
+        let model = makeModelSpec(modelID: "scope-identity-model")
+        let messages = [makeUserMessage("same logical prompt")]
+        var baseline = Melix_Worker_V1_ExecutionMetadata()
+        baseline.scope.reasoningEffort = "low"
+        let low = try resolveHotCacheLogicalIdentity(
+            execution: baseline,
+            model: model,
+            messages: messages
+        )
+
+        var highExecution = baseline
+        highExecution.scope.reasoningEffort = "high"
+        let high = try resolveHotCacheLogicalIdentity(
+            execution: highExecution,
+            model: model,
+            messages: messages
+        )
+        var toolExecution = baseline
+        toolExecution.scope.toolParserMode = "strict-tools"
+        toolExecution.scope.structuredOutputMode = "json-schema"
+        toolExecution.scope.chatTemplateKwargsHash = "kwargs-v2"
+        toolExecution.scope.reasoningContinuityPresent = true
+        let tool = try resolveHotCacheLogicalIdentity(
+            execution: toolExecution,
+            model: model,
+            messages: messages
+        )
+
+        XCTAssertNotEqual(low.scope.scopeID, high.scope.scopeID)
+        XCTAssertNotEqual(low.scope.scopeID, tool.scope.scopeID)
+        XCTAssertNotEqual(high.scope.scopeID, tool.scope.scopeID)
+        XCTAssertEqual(low.cacheKey.scopeID, low.scope.scopeID)
+        XCTAssertEqual(high.cacheKey.scopeID, high.scope.scopeID)
+        XCTAssertEqual(tool.cacheKey.scopeID, tool.scope.scopeID)
+        XCTAssertNotEqual(low.cacheKey.prefixHash, high.cacheKey.prefixHash)
+        XCTAssertNotEqual(low.cacheKey.prefixHash, tool.cacheKey.prefixHash)
+    }
+
     func testDiskCacheStoreSupportsPurgesRestoreMissesAndModelEviction() async throws {
         try await withTemporaryCacheRoot { cacheRoot in
             let fileManager = FileManager.default
@@ -11349,9 +11440,13 @@ final class WorkerScaffoldTests: XCTestCase {
             let model = makeModelSpec(modelID: "model-alpha")
             let snapshotRef = makeSnapshotRef(snapshotID: "snapshot-alpha")
             let messages = [makeUserMessage("alpha snapshot")]
+            var execution = Melix_Worker_V1_ExecutionMetadata()
+            execution.scope = scope
+            execution.cacheKey = cacheKey
             await store.saveSnapshot(
                 snapshot: snapshotRef,
                 model: model,
+                execution: execution,
                 messages: messages,
                 resumeHint: "resume-alpha",
                 acceleration: makeAccelerationPolicy(mode: .baseline),
@@ -11411,6 +11506,214 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(finalSummary.snapshotCount, 0)
             XCTAssertEqual(finalSummary.l2Bytes, 0)
             XCTAssertEqual(finalSummary.l2RestoreHitRate, 0.5, accuracy: 0.0001)
+        }
+    }
+
+    func testDiskCacheStoreExactPurgeNeverInfersLegacySnapshotIdentityFromRemainingPrefixes() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = DiskCacheStore(rootPath: cacheRoot.path)
+            var lowScope = makeCacheScope(scopeID: "shared-legacy-scope", modelID: "legacy-model")
+            lowScope.reasoningEffort = "low"
+            var highScope = lowScope
+            highScope.reasoningEffort = "high"
+            let cacheKey = makeCacheKey(
+                scopeID: lowScope.scopeID,
+                prefixSeed: "shared-legacy-prefix",
+                fingerprintSeed: "shared-legacy-fingerprint"
+            )
+
+            func persistLegacyVariant(
+                scope: Melix_Worker_V1_CacheScope,
+                suffix: String
+            ) async {
+                let prefix = makePrefixRef(
+                    prefixID: "legacy-prefix-\(suffix)",
+                    scope: scope,
+                    cacheKey: cacheKey
+                )
+                let blockTable = makeBlockTable(
+                    scopeID: scope.scopeID,
+                    cacheKey: cacheKey,
+                    blockIDs: ["legacy-block-\(suffix)"],
+                    bytes: [64]
+                )
+                await store.persistPrefix(
+                    prefix: prefix,
+                    blockTableID: "legacy-table-\(suffix)",
+                    blockTable: blockTable,
+                    quantizedBytes: 32
+                )
+                await store.saveSnapshot(
+                    snapshot: makeSnapshotRef(snapshotID: "legacy-snapshot-\(suffix)"),
+                    model: makeModelSpec(modelID: "legacy-model"),
+                    messages: [makeUserMessage("legacy snapshot \(suffix)")],
+                    resumeHint: "legacy-resume-\(suffix)",
+                    acceleration: makeAccelerationPolicy(mode: .baseline),
+                    promptTokens: 4,
+                    blockTableID: "legacy-table-\(suffix)",
+                    blockTable: blockTable,
+                    prefix: nil
+                )
+            }
+
+            await persistLegacyVariant(scope: lowScope, suffix: "low")
+            await persistLegacyVariant(scope: highScope, suffix: "high")
+
+            let lowPurged = await store.purge(
+                scope: lowScope,
+                cacheKey: cacheKey,
+                includePinned: true
+            )
+            let highPurged = await store.purge(
+                scope: highScope,
+                cacheKey: cacheKey,
+                includePinned: true
+            )
+
+            let ownership = await store.ownershipSnapshot()
+            let lowSnapshot = await store.restoreSnapshot(snapshotID: "legacy-snapshot-low")
+            let highSnapshot = await store.restoreSnapshot(snapshotID: "legacy-snapshot-high")
+            XCTAssertEqual(lowPurged, 1)
+            XCTAssertEqual(highPurged, 1)
+            XCTAssertEqual(ownership.prefixCount, 0)
+            XCTAssertEqual(ownership.snapshotCount, 2)
+            XCTAssertNotNil(lowSnapshot)
+            XCTAssertNotNil(highSnapshot)
+        }
+    }
+
+    func testDiskCacheStoreKeepsCompleteScopeVariantsIndependentAcrossRestart() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let fileManager = FileManager.default
+            let store = DiskCacheStore(rootPath: cacheRoot.path)
+            var lowScope = makeCacheScope(scopeID: "shared-explicit-scope", modelID: "logical-model")
+            lowScope.reasoningEffort = "low"
+            var highScope = lowScope
+            highScope.reasoningEffort = "high"
+            let cacheKey = makeCacheKey(
+                scopeID: lowScope.scopeID,
+                prefixSeed: "shared-explicit-prefix",
+                fingerprintSeed: "shared-explicit-fingerprint"
+            )
+
+            func persist(
+                scope: Melix_Worker_V1_CacheScope,
+                suffix: String
+            ) async {
+                let prefix = makePrefixRef(
+                    prefixID: "shared-prefix-id",
+                    scope: scope,
+                    cacheKey: cacheKey
+                )
+                let blockTable = makeBlockTable(
+                    scopeID: scope.scopeID,
+                    cacheKey: cacheKey,
+                    blockIDs: ["block-\(suffix)"],
+                    bytes: [64]
+                )
+                var execution = Melix_Worker_V1_ExecutionMetadata()
+                execution.scope = scope
+                execution.cacheKey = cacheKey
+                await store.persistPrefix(
+                    prefix: prefix,
+                    blockTableID: "table-\(suffix)",
+                    blockTable: blockTable,
+                    quantizedBytes: 32
+                )
+                await store.saveSnapshot(
+                    snapshot: makeSnapshotRef(snapshotID: "snapshot-\(suffix)"),
+                    model: makeModelSpec(modelID: "logical-model"),
+                    execution: execution,
+                    messages: [makeUserMessage("snapshot \(suffix)")],
+                    resumeHint: "resume-\(suffix)",
+                    acceleration: makeAccelerationPolicy(mode: .baseline),
+                    promptTokens: 4,
+                    blockTableID: "table-\(suffix)",
+                    blockTable: blockTable,
+                    prefix: nil
+                )
+            }
+
+            await persist(scope: lowScope, suffix: "low")
+            await persist(scope: highScope, suffix: "high")
+            let initialOwnership = await store.ownershipSnapshot()
+            let initialSummary = await store.summary()
+            let ambiguousRestore = await store.restorePrefix(cacheKey: cacheKey)
+            XCTAssertEqual(initialOwnership.prefixCount, 2)
+            XCTAssertNil(ambiguousRestore)
+            XCTAssertEqual(initialSummary.scopes.count, 2)
+            XCTAssertEqual(
+                initialSummary.scopes.map(\.scope.scopeID),
+                ["shared-explicit-scope", "shared-explicit-scope"]
+            )
+            XCTAssertEqual(
+                initialSummary.scopes.map(\.scope.reasoningEffort).sorted(),
+                ["high", "low"]
+            )
+            XCTAssertTrue(initialSummary.scopes.allSatisfy {
+                $0.l2Bytes == 32 && $0.snapshotCount == 1
+            })
+
+            let reloaded = DiskCacheStore(rootPath: cacheRoot.path)
+            let reloadedOwnership = await reloaded.ownershipSnapshot()
+            let reloadedAmbiguousRestore = await reloaded.restorePrefix(cacheKey: cacheKey)
+            XCTAssertEqual(reloadedOwnership.prefixCount, 2)
+            XCTAssertNil(reloadedAmbiguousRestore)
+
+            let purged = await reloaded.purge(
+                scope: highScope,
+                cacheKey: cacheKey,
+                includePinned: true
+            )
+            let afterPurge = await reloaded.ownershipSnapshot()
+            let lowSnapshot = await reloaded.restoreSnapshot(snapshotID: "snapshot-low")
+            let highSnapshot = await reloaded.restoreSnapshot(snapshotID: "snapshot-high")
+            let lowRestore = await reloaded.restorePrefix(cacheKey: cacheKey)
+            XCTAssertEqual(purged, 1)
+            XCTAssertEqual(afterPurge.prefixCount, 1)
+            XCTAssertNotNil(lowSnapshot)
+            XCTAssertNil(highSnapshot)
+            XCTAssertEqual(lowRestore?.prefix.scope.reasoningEffort, "low")
+
+            let lowPrefix = try XCTUnwrap(lowRestore?.prefix)
+            let canonicalURL = cacheRoot
+                .appendingPathComponent("prefixes", isDirectory: true)
+                .appendingPathComponent(
+                    "logical-\(CacheLogicalPrefixKey(lowPrefix).storageIdentifier).json"
+                )
+            let legacyURL = cacheRoot
+                .appendingPathComponent("prefixes", isDirectory: true)
+                .appendingPathComponent("shared-prefix-id.json")
+            try fileManager.moveItem(at: canonicalURL, to: legacyURL)
+
+            let migrated = DiskCacheStore(rootPath: cacheRoot.path)
+            let migratedOwnership = await migrated.ownershipSnapshot()
+            let migratedRestore = await migrated.restorePrefix(cacheKey: cacheKey)
+            XCTAssertTrue(fileManager.fileExists(atPath: canonicalURL.path))
+            XCTAssertFalse(fileManager.fileExists(atPath: legacyURL.path))
+            XCTAssertEqual(migratedOwnership.prefixCount, 1)
+            XCTAssertEqual(migratedRestore?.prefix.scope.reasoningEffort, "low")
+
+            let staleLegacyData = try Data(contentsOf: canonicalURL)
+            let updatedBlockTable = makeBlockTable(
+                scopeID: lowScope.scopeID,
+                cacheKey: cacheKey,
+                blockIDs: ["block-canonical"],
+                bytes: [96]
+            )
+            await migrated.persistPrefix(
+                prefix: lowPrefix,
+                blockTableID: "table-canonical",
+                blockTable: updatedBlockTable,
+                quantizedBytes: 48
+            )
+            try staleLegacyData.write(to: legacyURL, options: [.atomic])
+
+            let canonicalPreferred = DiskCacheStore(rootPath: cacheRoot.path)
+            let canonicalRestore = await canonicalPreferred.restorePrefix(cacheKey: cacheKey)
+            XCTAssertEqual(canonicalRestore?.blockTableID, "table-canonical")
+            XCTAssertEqual(canonicalRestore?.blockTable.blocks.first?.blockID, "block-canonical")
+            XCTAssertFalse(fileManager.fileExists(atPath: legacyURL.path))
         }
     }
 
@@ -11517,6 +11820,90 @@ final class WorkerScaffoldTests: XCTestCase {
             XCTAssertEqual(postPurgeOwnership.prefixCount, 0)
             XCTAssertEqual(postPurgeOwnership.pageCount, 0)
             XCTAssertEqual(postPurgeOwnership.blockCount, 0)
+        }
+    }
+
+    func testHotCacheStoreKeepsConflictingExplicitScopeVariantsIndependent() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            let store = HotCacheStore(
+                diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                initialCacheBlocks: 0
+            )
+            var lowScope = makeCacheScope(scopeID: "shared-explicit-scope", modelID: "logical-model")
+            lowScope.reasoningEffort = "low"
+            var highScope = lowScope
+            highScope.reasoningEffort = "high"
+            let cacheKey = makeCacheKey(
+                scopeID: lowScope.scopeID,
+                prefixSeed: "shared-explicit-prefix",
+                fingerprintSeed: "shared-explicit-fingerprint"
+            )
+
+            func register(
+                scope: Melix_Worker_V1_CacheScope,
+                decodeHandle: String
+            ) async throws -> HotCacheRegistration {
+                var execution = Melix_Worker_V1_ExecutionMetadata()
+                execution.scope = scope
+                execution.cacheKey = cacheKey
+                execution.cacheHints.preferredBlockSize = 16
+                return try await store.registerPrefill(
+                    execution: execution,
+                    model: makeModelSpec(modelID: "logical-model"),
+                    messages: [makeUserMessage("shared explicit scope")],
+                    promptTokens: 16,
+                    decodeHandle: decodeHandle,
+                    activeKVQuantizationRatio: 50
+                )
+            }
+
+            let low = try await register(scope: lowScope, decodeHandle: "decode-low")
+            let high = try await register(scope: highScope, decodeHandle: "decode-high")
+            let initialOwnership = await store.ownershipSnapshot()
+            var snapshot = await store.snapshot()
+            XCTAssertEqual(low.prefix.prefixID, high.prefix.prefixID)
+            XCTAssertEqual(initialOwnership.prefixCount, 2)
+            XCTAssertEqual(snapshot.scopes.count, 2)
+            XCTAssertEqual(
+                snapshot.scopes.map(\.scope.scopeID),
+                ["shared-explicit-scope", "shared-explicit-scope"]
+            )
+            XCTAssertEqual(
+                snapshot.scopes.map(\.scope.reasoningEffort).sorted(),
+                ["high", "low"]
+            )
+            XCTAssertTrue(snapshot.scopes.allSatisfy {
+                $0.prefixCount == 1 && $0.blockCount == 1
+            })
+
+            let lowPinned = await store.pinPrefix(low.prefix)
+            XCTAssertTrue(lowPinned)
+            snapshot = await store.snapshot()
+            XCTAssertEqual(snapshot.hotPrefixes.count, 2)
+            XCTAssertEqual(snapshot.pinnedPrefixes.count, 1)
+            XCTAssertEqual(snapshot.pinnedPrefixes.first?.scope.reasoningEffort, "low")
+
+            let highPurge = await store.purgeCacheDetailed(
+                scope: high.prefix.scope,
+                cacheKey: high.prefix.cacheKey,
+                includePinned: true
+            )
+            XCTAssertEqual(highPurge.metadataBlockCount, 1)
+            snapshot = await store.snapshot()
+            XCTAssertEqual(snapshot.hotPrefixes.count, 1)
+            XCTAssertEqual(snapshot.hotPrefixes.first?.scope.reasoningEffort, "low")
+            XCTAssertTrue(snapshot.hotPrefixes.first?.pinned == true)
+
+            let lowUnpinned = await store.unpinPrefix(low.prefix)
+            XCTAssertTrue(lowUnpinned)
+            let lowPurge = await store.purgeCacheDetailed(
+                scope: low.prefix.scope,
+                cacheKey: low.prefix.cacheKey,
+                includePinned: true
+            )
+            XCTAssertEqual(lowPurge.metadataBlockCount, 1)
+            let finalOwnership = await store.ownershipSnapshot()
+            XCTAssertEqual(finalOwnership.prefixCount, 0)
         }
     }
 
@@ -13115,6 +13502,445 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    func testPagedKVBlockPoolPinsEveryPhysicalVersionOfOneLogicalPrefix() async throws {
+        try await withTemporaryDefaultMetallib {
+            try Device.withDefaultDevice(.cpu) {
+                func makeCache(value: Float) -> PagedKVCache {
+                    let cache = PagedKVCache(blockSize: 4, layerIndex: 0)
+                    _ = cache.update(
+                        keys: MLXArray(Array(repeating: value, count: 8), [1, 1, 4, 2]),
+                        values: MLXArray(Array(repeating: -value, count: 8), [1, 1, 4, 2])
+                    )
+                    return cache
+                }
+
+                let scope = makeCacheScope(scopeID: "logical-pin-scope", modelID: "logical-pin-model")
+                let cacheKey = makeCacheKey(
+                    scopeID: scope.scopeID,
+                    prefixSeed: "logical-pin-prefix",
+                    fingerprintSeed: "logical-pin-fingerprint"
+                )
+                let logicalPrefix = makePrefixRef(
+                    prefixID: "logical-pin-prefix",
+                    scope: scope,
+                    cacheKey: cacheKey
+                )
+                let pool = PagedKVBlockPool()
+
+                for index in 0 ..< 2 {
+                    XCTAssertNotNil(pool.store(
+                        compatibilitySignature: "logical-pin-version-\(index)",
+                        tokenIDs: Array((index * 4) ..< (index * 4) + 4),
+                        storedTokenBoundary: 4,
+                        blockSize: 4,
+                        caches: [makeCache(value: Float(index + 1))],
+                        reusedLookup: nil,
+                        budgetBytes: 192,
+                        logicalPrefix: logicalPrefix
+                    ).snapshot)
+                }
+                XCTAssertEqual(pool.stats().entryCount, 2)
+                XCTAssertEqual(pool.projection().entries.count, 1)
+
+                var ambiguousPrefix = Melix_Worker_V1_PrefixRef()
+                ambiguousPrefix.prefixID = logicalPrefix.prefixID
+                XCTAssertFalse(pool.setPinned(ambiguousPrefix, pinned: true))
+                XCTAssertEqual(pool.stats().pinnedPrefixCount, 0)
+
+                XCTAssertTrue(pool.setPinned(logicalPrefix, pinned: true))
+                XCTAssertEqual(pool.stats().pinnedPrefixCount, 1)
+                XCTAssertEqual(pool.projection().entries.map(\.prefix.pinned), [true])
+
+                XCTAssertNotNil(pool.store(
+                    compatibilitySignature: "logical-pin-future-version",
+                    tokenIDs: Array(8 ..< 12),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: [makeCache(value: 3)],
+                    reusedLookup: nil,
+                    budgetBytes: 192,
+                    logicalPrefix: logicalPrefix
+                ).snapshot)
+                XCTAssertEqual(pool.stats().entryCount, 3)
+                XCTAssertEqual(pool.stats().pinnedPrefixCount, 1)
+                XCTAssertEqual(pool.projection().entries.count, 1)
+                XCTAssertTrue(try XCTUnwrap(pool.projection().entries.first).prefix.pinned)
+
+                let blocked = pool.store(
+                    compatibilitySignature: "logical-pin-competing-entry",
+                    tokenIDs: Array(12 ..< 16),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: [makeCache(value: 4)],
+                    reusedLookup: nil,
+                    budgetBytes: 64
+                )
+                XCTAssertNil(blocked.snapshot)
+                XCTAssertEqual(blocked.fallbackReason, "cache_memory_budget_exceeded")
+                XCTAssertEqual(pool.stats().entryCount, 3)
+
+                XCTAssertTrue(pool.setPinned(logicalPrefix, pinned: false))
+                XCTAssertEqual(pool.stats().pinnedPrefixCount, 0)
+                XCTAssertEqual(pool.projection().entries.map(\.prefix.pinned), [false])
+
+                let admitted = pool.store(
+                    compatibilitySignature: "logical-pin-competing-entry",
+                    tokenIDs: Array(12 ..< 16),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: [makeCache(value: 4)],
+                    reusedLookup: nil,
+                    budgetBytes: 64
+                )
+                XCTAssertNotNil(admitted.snapshot)
+                XCTAssertEqual(pool.stats().entryCount, 1)
+                XCTAssertEqual(pool.projection().entries.count, 0)
+            }
+        }
+    }
+
+    func testPagedKVBlockPoolSnapshotExcludesConcurrentLogicalPurge() async throws {
+        try await withTemporaryDefaultMetallib {
+            try Device.withDefaultDevice(.cpu) {
+                let pool = PagedKVBlockPool()
+                let scope = makeCacheScope(scopeID: "snapshot-scope", modelID: "snapshot-model")
+                let cacheKey = makeCacheKey(
+                    scopeID: scope.scopeID,
+                    prefixSeed: "snapshot-prefix",
+                    fingerprintSeed: "snapshot-fingerprint"
+                )
+                let prefix = makePrefixRef(
+                    prefixID: "snapshot-prefix",
+                    scope: scope,
+                    cacheKey: cacheKey
+                )
+                let cache = PagedKVCache(blockSize: 4, layerIndex: 0)
+                _ = cache.update(
+                    keys: MLXArray(Array(repeating: Float(1), count: 8), [1, 1, 4, 2]),
+                    values: MLXArray(Array(repeating: Float(-1), count: 8), [1, 1, 4, 2])
+                )
+                XCTAssertNotNil(pool.store(
+                    compatibilitySignature: "snapshot-generation",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: [cache],
+                    reusedLookup: nil,
+                    budgetBytes: 128,
+                    logicalPrefix: prefix
+                ).snapshot)
+
+                let snapshotEntered = DispatchSemaphore(value: 0)
+                let releaseSnapshot = DispatchSemaphore(value: 0)
+                let snapshotFinished = DispatchSemaphore(value: 0)
+                let purgeStarted = DispatchSemaphore(value: 0)
+                let purgeFinished = DispatchSemaphore(value: 0)
+                let recorder = PagedKVPoolSnapshotRecorder()
+                pool.setSnapshotBoundaryHookForTesting {
+                    snapshotEntered.signal()
+                    _ = releaseSnapshot.wait(timeout: .now() + 5)
+                }
+                defer {
+                    releaseSnapshot.signal()
+                    pool.setSnapshotBoundaryHookForTesting(nil)
+                }
+
+                DispatchQueue.global().async {
+                    recorder.record(pool.snapshot())
+                    snapshotFinished.signal()
+                }
+                XCTAssertEqual(snapshotEntered.wait(timeout: .now() + 5), .success)
+                DispatchQueue.global().async {
+                    purgeStarted.signal()
+                    _ = pool.purge(scope: scope, cacheKey: cacheKey, includePinned: true)
+                    purgeFinished.signal()
+                }
+                XCTAssertEqual(purgeStarted.wait(timeout: .now() + 5), .success)
+                XCTAssertEqual(purgeFinished.wait(timeout: .now() + 0.05), .timedOut)
+
+                releaseSnapshot.signal()
+                XCTAssertEqual(snapshotFinished.wait(timeout: .now() + 5), .success)
+                XCTAssertEqual(purgeFinished.wait(timeout: .now() + 5), .success)
+                pool.setSnapshotBoundaryHookForTesting(nil)
+                let captured = try XCTUnwrap(recorder.value)
+                XCTAssertEqual(captured.stats.entryCount, 1)
+                XCTAssertEqual(captured.stats.blockCount, 1)
+                XCTAssertEqual(captured.projection.entries.count, 1)
+                XCTAssertEqual(captured.projection.entries[0].blocks.count, 1)
+                XCTAssertEqual(pool.snapshot().stats.entryCount, 0)
+                XCTAssertEqual(pool.snapshot().projection.entries.count, 0)
+            }
+        }
+    }
+
+    func testPagedKVBlockPoolPurgesOneCompleteLogicalIdentity() async throws {
+        try await withTemporaryDefaultMetallib {
+            Device.withDefaultDevice(.cpu) {
+                let pool = PagedKVBlockPool()
+                var lowScope = makeCacheScope(scopeID: "shared-explicit-scope", modelID: "logical-model")
+                lowScope.reasoningEffort = "low"
+                var highScope = lowScope
+                highScope.reasoningEffort = "high"
+                let cacheKey = makeCacheKey(
+                    scopeID: lowScope.scopeID,
+                    prefixSeed: "shared-explicit-prefix",
+                    fingerprintSeed: "shared-explicit-fingerprint"
+                )
+                let lowPrefix = makePrefixRef(
+                    prefixID: "shared-explicit-prefix",
+                    scope: lowScope,
+                    cacheKey: cacheKey
+                )
+                let highPrefix = makePrefixRef(
+                    prefixID: "shared-explicit-prefix",
+                    scope: highScope,
+                    cacheKey: cacheKey
+                )
+
+                for (index, prefix) in [lowPrefix, highPrefix].enumerated() {
+                    let cache = PagedKVCache(blockSize: 4, layerIndex: 0)
+                    _ = cache.update(
+                        keys: MLXArray(Array(repeating: Float(index + 1), count: 8), [1, 1, 4, 2]),
+                        values: MLXArray(Array(repeating: -Float(index + 1), count: 8), [1, 1, 4, 2])
+                    )
+                    XCTAssertNotNil(pool.store(
+                        compatibilitySignature: "logical-scope-\(index)",
+                        tokenIDs: Array((index * 4) ..< (index * 4) + 4),
+                        storedTokenBoundary: 4,
+                        blockSize: 4,
+                        caches: [cache],
+                        reusedLookup: nil,
+                        budgetBytes: 256,
+                        logicalPrefix: prefix
+                    ).snapshot)
+                }
+
+                let initialProjection = pool.projection().entries
+                XCTAssertEqual(initialProjection.count, 2)
+                XCTAssertEqual(
+                    initialProjection.map(\.prefix.scope.reasoningEffort),
+                    ["high", "low"]
+                )
+                XCTAssertEqual(pool.purge(
+                    scope: lowPrefix.scope,
+                    cacheKey: lowPrefix.cacheKey,
+                    includePinned: true
+                ), 1)
+                let remaining = pool.projection().entries
+                XCTAssertEqual(remaining.count, 1)
+                XCTAssertEqual(remaining[0].prefix.scope.reasoningEffort, "high")
+            }
+        }
+    }
+
+    func testWorkerRuntimeRegistryReportsCompletePagedScopeVariantsSeparately() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            try await withTemporaryDefaultMetallib {
+                await Device.withDefaultDevice(.cpu) {
+                    let pool = PagedKVBlockPool()
+                    var lowScope = makeCacheScope(
+                        scopeID: "shared-registry-scope",
+                        modelID: "logical-model"
+                    )
+                    lowScope.reasoningEffort = "low"
+                    var highScope = lowScope
+                    highScope.reasoningEffort = "high"
+                    let cacheKey = makeCacheKey(
+                        scopeID: lowScope.scopeID,
+                        prefixSeed: "shared-registry-prefix",
+                        fingerprintSeed: "shared-registry-fingerprint"
+                    )
+
+                    for (index, scope) in [lowScope, highScope].enumerated() {
+                        let cache = PagedKVCache(blockSize: 4, layerIndex: 0)
+                        _ = cache.update(
+                            keys: MLXArray(Array(repeating: Float(index + 1), count: 8), [1, 1, 4, 2]),
+                            values: MLXArray(Array(repeating: -Float(index + 1), count: 8), [1, 1, 4, 2])
+                        )
+                        XCTAssertNotNil(pool.store(
+                            compatibilitySignature: "registry-scope-\(index)",
+                            tokenIDs: Array((index * 4) ..< (index * 4) + 4),
+                            storedTokenBoundary: 4,
+                            blockSize: 4,
+                            caches: [cache],
+                            reusedLookup: nil,
+                            budgetBytes: 256,
+                            logicalPrefix: makePrefixRef(
+                                prefixID: "shared-registry-prefix",
+                                scope: scope,
+                                cacheKey: cacheKey
+                            )
+                        ).snapshot)
+                    }
+
+                    let registry = WorkerRuntimeRegistry(
+                        configuration: WorkerConfiguration(
+                            cacheRootPath: cacheRoot.path,
+                            memoryEnforcementDisabled: true
+                        ),
+                        runtime: TextRuntime(
+                            backend: AutoSwiftMLXBackend(pagedKVPool: pool)
+                        ),
+                        cacheStore: HotCacheStore(
+                            diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                            cacheRootPath: cacheRoot.path
+                        )
+                    )
+                    let response = await registry.cacheStatsResponse()
+
+                    XCTAssertEqual(response.snapshot.scopes.count, 2)
+                    XCTAssertEqual(
+                        response.snapshot.scopes.map(\.scope.scopeID),
+                        ["shared-registry-scope", "shared-registry-scope"]
+                    )
+                    XCTAssertEqual(
+                        response.snapshot.scopes.map(\.scope.reasoningEffort).sorted(),
+                        ["high", "low"]
+                    )
+                    XCTAssertTrue(response.snapshot.scopes.allSatisfy {
+                        $0.prefixCount == 1 && $0.blockCount == 1 && $0.l1Bytes > 0
+                    })
+                }
+            }
+        }
+    }
+
+    func testPagedKVBlockPoolClearsLogicalPinsAcrossPurgeAndRemoveAll() async throws {
+        try await withTemporaryDefaultMetallib {
+            try Device.withDefaultDevice(.cpu) {
+                func store(_ signature: String, in pool: PagedKVBlockPool, prefix: Melix_Worker_V1_PrefixRef) {
+                    let cache = PagedKVCache(blockSize: 4, layerIndex: 0)
+                    _ = cache.update(
+                        keys: MLXArray(Array(repeating: Float(1), count: 8), [1, 1, 4, 2]),
+                        values: MLXArray(Array(repeating: Float(-1), count: 8), [1, 1, 4, 2])
+                    )
+                    XCTAssertNotNil(pool.store(
+                        compatibilitySignature: signature,
+                        tokenIDs: Array(0 ..< 4),
+                        storedTokenBoundary: 4,
+                        blockSize: 4,
+                        caches: [cache],
+                        reusedLookup: nil,
+                        budgetBytes: 128,
+                        logicalPrefix: prefix
+                    ).snapshot)
+                }
+
+                let pool = PagedKVBlockPool()
+                let scope = makeCacheScope(scopeID: "pin-cleanup-scope", modelID: "pin-cleanup-model")
+                let prefix = makePrefixRef(
+                    prefixID: "pin-cleanup-prefix",
+                    scope: scope,
+                    cacheKey: makeCacheKey(
+                        scopeID: scope.scopeID,
+                        prefixSeed: "pin-cleanup-prefix",
+                        fingerprintSeed: "pin-cleanup-fingerprint"
+                    )
+                )
+                store("pin-cleanup-purge", in: pool, prefix: prefix)
+                XCTAssertTrue(pool.setPinned(prefix, pinned: true))
+                XCTAssertEqual(pool.purge(
+                    scope: prefix.scope,
+                    cacheKey: prefix.cacheKey,
+                    includePinned: false
+                ), 0)
+                XCTAssertEqual(pool.stats().pinnedPrefixCount, 1)
+                XCTAssertEqual(pool.purge(
+                    scope: prefix.scope,
+                    cacheKey: prefix.cacheKey,
+                    includePinned: true
+                ), 1)
+                XCTAssertEqual(pool.stats().pinnedPrefixCount, 0)
+
+                store("pin-cleanup-remove-all", in: pool, prefix: prefix)
+                XCTAssertFalse(try XCTUnwrap(pool.projection().entries.first).prefix.pinned)
+                XCTAssertTrue(pool.setPinned(prefix, pinned: true))
+                pool.removeAll()
+                store("pin-cleanup-after-remove-all", in: pool, prefix: prefix)
+                XCTAssertFalse(try XCTUnwrap(pool.projection().entries.first).prefix.pinned)
+            }
+        }
+    }
+
+    func testPagedKVBlockPoolKeepsLogicalIdentityWhileSharingIdenticalTokenBlocks() async throws {
+        try await withTemporaryDefaultMetallib {
+            try Device.withDefaultDevice(.cpu) {
+                let pool = PagedKVBlockPool()
+                let scope = makeCacheScope(scopeID: "shared-tensor-scope", modelID: "shared-tensor-model")
+                let firstPrefix = makePrefixRef(
+                    prefixID: "shared-tensor-first",
+                    scope: scope,
+                    cacheKey: makeCacheKey(
+                        scopeID: scope.scopeID,
+                        prefixSeed: "shared-tensor-first",
+                        fingerprintSeed: "shared-tensor-first-fingerprint"
+                    )
+                )
+                let secondPrefix = makePrefixRef(
+                    prefixID: "shared-tensor-second",
+                    scope: scope,
+                    cacheKey: makeCacheKey(
+                        scopeID: scope.scopeID,
+                        prefixSeed: "shared-tensor-second",
+                        fingerprintSeed: "shared-tensor-second-fingerprint"
+                    )
+                )
+                let seedCache = PagedKVCache(blockSize: 4, layerIndex: 0)
+                _ = seedCache.update(
+                    keys: MLXArray(Array(repeating: Float(1), count: 8), [1, 1, 4, 2]),
+                    values: MLXArray(Array(repeating: Float(-1), count: 8), [1, 1, 4, 2])
+                )
+                let firstSnapshot = try XCTUnwrap(pool.store(
+                    compatibilitySignature: "shared-tensor-compatibility",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: [seedCache],
+                    reusedLookup: nil,
+                    budgetBytes: 128,
+                    logicalPrefix: firstPrefix
+                ).snapshot)
+
+                let lookup = pool.lookup(
+                    compatibilitySignature: "shared-tensor-compatibility",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4
+                )
+                let reusedCaches = try XCTUnwrap(lookup.makeCaches())
+                let secondSnapshot = try XCTUnwrap(pool.store(
+                    compatibilitySignature: "shared-tensor-compatibility",
+                    tokenIDs: Array(0 ..< 4),
+                    storedTokenBoundary: 4,
+                    blockSize: 4,
+                    caches: reusedCaches,
+                    reusedLookup: lookup,
+                    budgetBytes: 128,
+                    logicalPrefix: secondPrefix
+                ).snapshot)
+
+                XCTAssertNotEqual(firstSnapshot.entryID, secondSnapshot.entryID)
+                XCTAssertTrue(firstSnapshot.blocks[0] === secondSnapshot.blocks[0])
+                XCTAssertEqual(pool.stats().entryCount, 2)
+                XCTAssertEqual(pool.stats().blockCount, 1)
+                XCTAssertEqual(pool.stats().sharedBlockCount, 1)
+                XCTAssertEqual(
+                    Set(pool.projection().entries.map(\.prefix.prefixID)),
+                    Set([firstPrefix.prefixID, secondPrefix.prefixID])
+                )
+
+                XCTAssertEqual(pool.purge(
+                    scope: firstPrefix.scope,
+                    cacheKey: firstPrefix.cacheKey,
+                    includePinned: true
+                ), 0)
+                XCTAssertEqual(pool.stats().entryCount, 1)
+                XCTAssertEqual(pool.stats().blockCount, 1)
+                XCTAssertEqual(pool.projection().entries.map(\.prefix.prefixID), [secondPrefix.prefixID])
+            }
+        }
+    }
+
     func testPagedKVCacheReleasesSharedBlockAfterEveryLayerTrimsIt() async throws {
         try await withTemporaryDefaultMetallib {
             try Device.withDefaultDevice(.cpu) {
@@ -13496,6 +14322,214 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(evidence.modelPrefillCallTokenCounts, [64, 32])
         XCTAssertEqual(recorder.batchSizes, [1, 1])
         XCTAssertEqual(recorder.sequenceLengths, [64, 32])
+    }
+
+    func testAutoSwiftMLXBackendRejectsCompositeLanguageModelBeforePagedWork() async throws {
+        let pool = PagedKVBlockPool()
+        let backend = AutoSwiftMLXBackend(pagedKVPool: pool)
+        let counter = CountingLanguageModelCallCounter()
+        var execution = Melix_Worker_V1_ExecutionMetadata()
+        execution.scope.scopeID = "composite-fallback-scope"
+        execution.cacheKey.scopeID = execution.scope.scopeID
+        execution.cacheKey.prefixHash = Data("composite-fallback-prefix".utf8)
+        execution.cacheKey.fingerprintHash = Data("composite-fallback-fingerprint".utf8)
+        execution.cacheHints.cacheMode = .tiered
+        execution.cacheHints.preferredBlockSize = 16
+        execution.cacheHints.cacheMemoryBudgetBytes = 16 * 1_024 * 1_024
+
+        let result = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                try await backend.prefill(
+                    model: LoadedTextModel(
+                        storage: makeCountingPreparedLogitsModelContainer(counter: counter)
+                    ),
+                    execution: execution,
+                    messages: [makeUserMessage("composite state fallback")],
+                    prefillStepSize: 16,
+                    resumeHint: "composite-state-fallback",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+            }
+        }
+
+        let evidence = try XCTUnwrap(result.pagedCacheEvidence)
+        XCTAssertFalse(evidence.admitted)
+        XCTAssertEqual(evidence.fallbackReason, "composite_runtime_state_unsupported")
+        XCTAssertEqual(counter.prepareCallCount, 1)
+        XCTAssertEqual(counter.stepCallCount, 0)
+        XCTAssertEqual(pool.stats().lookupCount, 0)
+        XCTAssertEqual(pool.stats().entryCount, 0)
+        XCTAssertEqual(pool.stats().blockCount, 0)
+        XCTAssertEqual(pool.stats().activePrivateOwnerCount, 0)
+    }
+
+    func testWorkerRuntimeRegistryUsesRealPagedPoolForLogicalPinAndPurge() async throws {
+        try await withTemporaryCacheRoot { cacheRoot in
+            try await withTemporaryDefaultMetallib {
+                try await Device.withDefaultDevice(.cpu) {
+                    let promptTokens = (0 ..< 65).map { $0 % 31 }
+                    let pool = PagedKVBlockPool()
+                    let modelPath = "tests/fixtures/registry-paged-model"
+                    let backend = AutoSwiftMLXBackend(
+                        loader: { _ in
+                            makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                        },
+                        pagedKVPool: pool
+                    )
+                    let cacheStore = HotCacheStore(
+                        diskStore: DiskCacheStore(rootPath: cacheRoot.path),
+                        cacheRootPath: cacheRoot.path,
+                        runtimeCacheFingerprint: "registry-paged-test"
+                    )
+                    let registry = WorkerRuntimeRegistry(
+                        configuration: WorkerConfiguration(
+                            cacheRootPath: cacheRoot.path,
+                            memoryEnforcementDisabled: true
+                        ),
+                        modelCatalog: WorkerModelCatalog(environment: [
+                            "MELIX_DEV_TEXT_MODEL_PATH": modelPath
+                        ]),
+                        runtime: TextRuntime(backend: backend),
+                        cacheStore: cacheStore
+                    )
+                    var modelSpec = Melix_Worker_V1_ModelSpec()
+                    modelSpec.modelID = "melix-dev-text"
+                    let loaded = try await registry.loadModel(modelSpec)
+
+                    func prefill(
+                        requestID: String,
+                        message: String,
+                        blockSize: UInt32,
+                        budgetBytes: UInt64
+                    ) async throws -> WorkerPrefillResult {
+                        var execution = Melix_Worker_V1_ExecutionMetadata()
+                        execution.id.requestID = requestID
+                        execution.modelHandle = loaded.handle
+                        execution.cacheHints.cacheMode = .tiered
+                        execution.cacheHints.preferredBlockSize = blockSize
+                        execution.cacheHints.cacheMemoryBudgetBytes = budgetBytes
+                        return try await registry.prefill(
+                            execution: execution,
+                            messages: [makeUserMessage(message)],
+                            prefillStepSize: blockSize,
+                            returnDecodeHandle: false,
+                            resumeHint: requestID,
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        )
+                    }
+
+                    let largeBudget: UInt64 = 64 * 1_024 * 1_024
+                    let first = try await prefill(
+                        requestID: "registry-paged-logical-16",
+                        message: "registry shared logical prefix",
+                        blockSize: 16,
+                        budgetBytes: largeBudget
+                    )
+                    let second = try await prefill(
+                        requestID: "registry-paged-logical-32",
+                        message: "registry shared logical prefix",
+                        blockSize: 32,
+                        budgetBytes: largeBudget
+                    )
+                    XCTAssertEqual(first.cacheHitMode, "none")
+                    XCTAssertEqual(second.cacheHitMode, "none")
+                    XCTAssertEqual(pool.stats().entryCount, 2)
+                    XCTAssertEqual(pool.stats().activePrivateOwnerCount, 0)
+
+                    var cacheResponse = await registry.cacheStatsResponse()
+                    let logicalPrefix = try XCTUnwrap(cacheResponse.snapshot.hotPrefixes.first)
+                    XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
+                    XCTAssertEqual(logicalPrefix.prefixID, makePrefixID(for: logicalPrefix.cacheKey))
+                    XCTAssertEqual(cacheResponse.stats.l1Bytes, pool.stats().residentBytes)
+                    XCTAssertEqual(cacheResponse.stats.blockCount, UInt64(pool.stats().blockCount))
+                    XCTAssertEqual(cacheResponse.snapshot.scopes.count, 1)
+                    XCTAssertEqual(cacheResponse.snapshot.scopes[0].prefixCount, 1)
+                    XCTAssertEqual(cacheResponse.snapshot.scopes[0].l1Bytes, cacheResponse.stats.l1Bytes)
+                    XCTAssertEqual(
+                        cacheResponse.snapshot.scopes[0].blockCount,
+                        cacheResponse.stats.blockCount
+                    )
+
+                    var mismatchedRuntimePrefix = logicalPrefix
+                    mismatchedRuntimePrefix.prefixID = "metadata-only-pin-mismatch"
+                    let mismatchedPinResult = await registry.pinPrefix(mismatchedRuntimePrefix)
+                    let metadataAfterMismatchedPin = await cacheStore.snapshot()
+                    XCTAssertFalse(mismatchedPinResult)
+                    XCTAssertEqual(metadataAfterMismatchedPin.pinnedPrefixes.count, 0)
+
+                    let pinned = await registry.pinPrefix(logicalPrefix)
+                    XCTAssertTrue(pinned)
+                    cacheResponse = await registry.cacheStatsResponse()
+                    XCTAssertEqual(cacheResponse.stats.pinnedPrefixCount, 1)
+                    XCTAssertEqual(cacheResponse.snapshot.pinnedPrefixes.count, 1)
+                    XCTAssertTrue(try XCTUnwrap(cacheResponse.snapshot.hotPrefixes.first).pinned)
+
+                    let evictionBudget = try XCTUnwrap(
+                        pool.stats().residentBytes > 1 ? pool.stats().residentBytes - 1 : nil
+                    )
+                    let blocked = try await prefill(
+                        requestID: "registry-paged-candidate-blocked",
+                        message: "registry competing logical prefix",
+                        blockSize: 64,
+                        budgetBytes: evictionBudget
+                    )
+                    XCTAssertEqual(blocked.cacheFallbackReason, "cache_memory_budget_exceeded")
+                    XCTAssertEqual(pool.stats().entryCount, 2)
+                    XCTAssertEqual(pool.projection().entries.count, 1)
+
+                    let unpinned = await registry.unpinPrefix(logicalPrefix)
+                    XCTAssertTrue(unpinned)
+                    cacheResponse = await registry.cacheStatsResponse()
+                    XCTAssertEqual(cacheResponse.stats.pinnedPrefixCount, 0)
+                    XCTAssertEqual(cacheResponse.snapshot.pinnedPrefixes.count, 0)
+                    XCTAssertFalse(try XCTUnwrap(cacheResponse.snapshot.hotPrefixes.first).pinned)
+
+                    let admitted = try await prefill(
+                        requestID: "registry-paged-candidate-admitted",
+                        message: "registry competing logical prefix",
+                        blockSize: 64,
+                        budgetBytes: evictionBudget
+                    )
+                    XCTAssertTrue(admitted.cacheFallbackReason.isEmpty)
+                    XCTAssertEqual(admitted.cacheHitMode, "none")
+                    XCTAssertEqual(pool.stats().entryCount, 1)
+                    cacheResponse = await registry.cacheStatsResponse()
+                    let competingPrefix = try XCTUnwrap(cacheResponse.snapshot.hotPrefixes.first)
+                    XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 1)
+                    XCTAssertNotEqual(competingPrefix.cacheKey, logicalPrefix.cacheKey)
+                    XCTAssertEqual(cacheResponse.stats.l1Bytes, pool.stats().residentBytes)
+                    XCTAssertEqual(cacheResponse.stats.blockCount, UInt64(pool.stats().blockCount))
+                    XCTAssertEqual(cacheResponse.snapshot.scopes[0].prefixCount, 1)
+                    XCTAssertEqual(cacheResponse.snapshot.scopes[0].l1Bytes, cacheResponse.stats.l1Bytes)
+
+                    let purgedBlockCount = await registry.purgeCache(
+                        scope: competingPrefix.scope,
+                        cacheKey: competingPrefix.cacheKey,
+                        includePinned: true
+                    )
+                    XCTAssertGreaterThan(purgedBlockCount, 0)
+                    XCTAssertEqual(pool.stats().entryCount, 0)
+                    cacheResponse = await registry.cacheStatsResponse()
+                    XCTAssertEqual(cacheResponse.stats.l1Bytes, 0)
+                    XCTAssertEqual(cacheResponse.stats.blockCount, 0)
+                    XCTAssertEqual(cacheResponse.snapshot.hotPrefixes.count, 0)
+                    XCTAssertEqual(cacheResponse.snapshot.pinnedPrefixes.count, 0)
+
+                    let afterPurge = try await prefill(
+                        requestID: "registry-paged-candidate-after-purge",
+                        message: "registry competing logical prefix",
+                        blockSize: 64,
+                        budgetBytes: largeBudget
+                    )
+                    XCTAssertEqual(afterPurge.cacheHitMode, "none")
+                    XCTAssertTrue(afterPurge.cacheFallbackReason.isEmpty)
+                    XCTAssertEqual(pool.stats().entryCount, 1)
+                    XCTAssertEqual(pool.stats().activePrivateOwnerCount, 0)
+                }
+            }
+        }
     }
 
     func testAutoSwiftMLXBackendBudgetRejectionFallsBackToContiguousWithoutSecondPrefill() async throws {
@@ -17936,6 +18970,7 @@ private func makeQuantizableLiveSwiftMLXModelContainer(promptTokens: [Int]) -> M
 
 @available(macOS 15.0, *)
 private final class CountingLanguageModelCallCounter: @unchecked Sendable {
+    var prepareCallCount = 0
     var stepCallCount = 0
 }
 
@@ -17950,7 +18985,8 @@ private final class CountingPreparedLogitsLanguageModel: Module, LanguageModel {
     }
 
     func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
-        .logits(LMOutput(logits: logitsForToken(2)))
+        counter.prepareCallCount += 1
+        return .logits(LMOutput(logits: logitsForToken(2)))
     }
 
     func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {
@@ -18097,13 +19133,29 @@ private final class PagedKVPoolStatsRecorder: @unchecked Sendable {
 }
 
 @available(macOS 15.0, *)
+private final class PagedKVPoolSnapshotRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedValue: RuntimePagedKVPoolSnapshot?
+
+    var value: RuntimePagedKVPoolSnapshot? {
+        lock.withLock { recordedValue }
+    }
+
+    func record(_ value: RuntimePagedKVPoolSnapshot) {
+        lock.withLock {
+            recordedValue = value
+        }
+    }
+}
+
+@available(macOS 15.0, *)
 private enum TestBatchCacheKind {
     case simple
     case rotating(maxSize: Int)
 }
 
 @available(macOS 15.0, *)
-private final class BatchCacheIdentityLanguageModel: Module, LanguageModel {
+private final class BatchCacheIdentityLanguageModel: Module, LLMModel {
     let recorder: BatchCacheIdentityRecorder
     let cacheKind: TestBatchCacheKind
     let vocabularySize = 32
@@ -18113,6 +19165,8 @@ private final class BatchCacheIdentityLanguageModel: Module, LanguageModel {
         self.cacheKind = cacheKind
         super.init()
     }
+
+    var loraLayers: [Module] { [] }
 
     func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
         recorder.recordPrepare()
