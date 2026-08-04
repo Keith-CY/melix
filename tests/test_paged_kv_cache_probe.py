@@ -275,6 +275,15 @@ def test_coverage_gate_requires_ninety_five_percent() -> None:
     assert 'Paged KV changed-line coverage %.2f%% is below %.2f%%.' in coverage_script
 
 
+def test_pr_scoped_workflow_passes_exact_base_to_paged_kv_coverage() -> None:
+    workflow = (REPO_ROOT / ".github/workflows/pr-scoped-performance.yml").read_text()
+
+    assert (
+        "MELIX_PAGED_KV_COVERAGE_DIFF_FROM: "
+        "${{ github.event.pull_request.base.sha }}"
+    ) in workflow
+
+
 def test_coverage_gate_only_accepts_zero_lines_for_scoped_runs() -> None:
     coverage_script = (REPO_ROOT / "scripts/paged_kv_cache_coverage.sh").read_text()
 

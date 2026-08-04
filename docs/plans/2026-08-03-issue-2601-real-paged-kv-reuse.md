@@ -347,6 +347,11 @@ before launching the Swift live-bridge tests. PR-scoped performance runs verify
 the head in an isolated worktree, so they cannot depend on a developer's
 pre-existing `mlx.metallib` outside that worktree.
 
+The PR-scoped workflow must also pass the immutable pull-request base SHA as
+`MELIX_PAGED_KV_COVERAGE_DIFF_FROM`. The head checkout fetches that exact commit
+object before the gate runs; coverage must not assume that a mutable
+`origin/main` remote-tracking ref exists in the isolated checkout.
+
 Focused checks:
 
 ```bash

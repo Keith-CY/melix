@@ -131,6 +131,7 @@ jobs:
         id: run_probe
         env:
           MELIX_BACKEND_IDENTITY_COVERAGE_DIFF_FROM: ${{ github.event.pull_request.base.sha }}
+          MELIX_PAGED_KV_COVERAGE_DIFF_FROM: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/probes
