@@ -902,6 +902,7 @@ struct RequestCoordinatorTests {
             return events
         }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-resume-grace")
         await workerClient.emitToken(requestID: "req-resume-grace", text: "resumed")
         await workerClient.finishDecode(requestID: "req-resume-grace", assistantText: "resumed")
 

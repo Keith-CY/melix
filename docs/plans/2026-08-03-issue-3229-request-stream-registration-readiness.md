@@ -101,8 +101,11 @@ Validated on 2026-08-03 against `origin/main` commit
   addressed by scaling both dedicated readiness-test deadlines through the
   repository helper. Its P3 findings were addressed by extracting the repeated
   readiness assertion and correcting the deadline-cancellation comment.
-- After those review fixes, all 128 `RequestCoordinatorTests` passed again in
-  3.517 seconds on 2026-08-04.
+- Pull-request review identified the resumed disconnect-grace consumer as one
+  remaining call site that relied on incidental elapsed time. It now requires
+  the same request-scoped registration evidence before emitting fixture events.
+- After the pull-request review fix, all 128 `RequestCoordinatorTests` passed
+  again in 3.498 seconds on 2026-08-04.
 - `git diff --check` passed.
 - Production changed-scope coverage and performance metrics are `N/A` because
   the change is confined to a test fixture, test ordering, and this plan.
