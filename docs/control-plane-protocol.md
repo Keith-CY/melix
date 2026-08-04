@@ -818,6 +818,20 @@ The control plane protocol is richer than the public HTTP surface, but it must m
 | `GET /v1/models` | aggregate from model catalog and EnginePool |
 | `/admin/*` | expose local operational state from the same control plane truth |
 
+Embedding admission preserves the public response schema and backend identity
+binding. Development seed models may use only the explicit
+`deterministic-fixture-v1` backend. Product BERT and XLM-R routes require
+artifact metadata advertising `mlx-bert-v1` or `mlx-xlmr-v1`; the control plane
+must not infer those execution claims from a model path. Loaded-model summaries
+carry the worker's `melix.embedding.load.*` receipt so operators can compare the
+catalog request with the effective artifact hash, tokenizer hash, pooling,
+normalization, dimensions, maximum length, vector kind, dtype, and residency.
+Registry-discovered embedding summaries must materialize a generic worker
+`ModelSpec` with the admitted local path. A Python worker route without an
+executable spec or available client fails closed; it must never be recorded as
+a synthetic `::local` load success. The latest worker request receipt is exposed
+under `melix.embedding.request.*` in loaded-model diagnostics.
+
 Text-generation compatibility routes normalize visible generation controls before
 dispatch. `max_tokens` and `max_completion_tokens` resolve to one effective
 output cap; malformed, zero, negative, non-finite, or conflicting cap values

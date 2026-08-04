@@ -1647,7 +1647,7 @@ public actor ModelCatalog {
             resolvedFamilyID = configuredFamilyID
             resolvedBackendID = configuredBackendID ?? embeddingBackendID(for: resolvedFamilyID)
         } else {
-            resolvedBackendID = configuredBackendID ?? detected.backendID
+            resolvedBackendID = configuredBackendID ?? "deterministic-fixture-v1"
             resolvedFamilyID = defaultEmbeddingFamilyID(
                 for: resolvedBackendID,
                 detectedFamilyID: detected.familyID
@@ -1688,6 +1688,9 @@ public actor ModelCatalog {
         model.settings.ext["embedding_pooling_mode"] = resolvedPoolingMode
         model.settings.ext["embedding_normalization"] = resolvedNormalization
         model.settings.ext["embedding_dimensions"] = resolvedDimensions
+        model.settings.ext["embedding_execution_kind"] = ["mlx-bert-v1", "mlx-xlmr-v1"].contains(resolvedBackendID)
+            ? "artifact"
+            : "fixture"
         model.settings.ext["model_architecture"] = resolvedArchitecture
         model.settings.ext["detected_architecture"] = detected.architecture
         model.settings.ext["detected_family_id"] = detected.familyID
@@ -2282,27 +2285,26 @@ public actor ModelCatalog {
     private static func inferEmbeddingIdentity(from modelPath: String) -> (
         architecture: String,
         familyID: String,
-        backendID: String,
         source: String
     ) {
         let normalizedPath = modelPath.lowercased()
         if normalizedPath.contains("mxbai") {
-            return ("bert", "mxbai-embed", "bert-v1", "directory_name")
+            return ("bert", "mxbai-embed", "directory_name")
         }
         if normalizedPath.contains("bge") {
-            return ("bert", "bge-m3", "bert-v1", "directory_name")
+            return ("bert", "bge-m3", "directory_name")
         }
         if normalizedPath.contains("xlmr") || normalizedPath.contains("xlm-r") {
-            return ("xlmr", "xlmr", "xlmr-v1", "directory_name")
+            return ("xlmr", "xlmr", "directory_name")
         }
         if normalizedPath.contains("bert") {
-            return ("bert", "bert", "bert-v1", "directory_name")
+            return ("bert", "bert", "directory_name")
         }
-        return ("bert", "bert", "bert-v1", "default")
+        return ("bert", "bert", "default")
     }
 
     private static func embeddingBackendID(for familyID: String) -> String {
-        familyID == "xlmr" ? "xlmr-v1" : "bert-v1"
+        "deterministic-fixture-v1"
     }
 
     private static func embeddingArchitecture(for familyID: String) -> String {
@@ -2313,10 +2315,10 @@ public actor ModelCatalog {
         for backendID: String,
         detectedFamilyID: String
     ) -> String {
-        if backendID == "xlmr-v1" {
+        if ["mlx-xlmr-v1", "xlmr-v1"].contains(backendID) {
             return "xlmr"
         }
-        if ["bert", "bge-m3", "mxbai-embed"].contains(detectedFamilyID) {
+        if ["bert", "xlmr", "bge-m3", "mxbai-embed"].contains(detectedFamilyID) {
             return detectedFamilyID
         }
         return "bert"

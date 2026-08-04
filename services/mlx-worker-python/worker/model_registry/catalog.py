@@ -13,6 +13,11 @@ import time
 from typing import Iterable, Mapping
 
 from packages.protocol.python.worker.v1 import common_pb2
+from worker.runtime.artifact_embedding_contract import (
+    supported_sentence_transformer_pooling_mode,
+    unsupported_embedding_encoder_config,
+    unsupported_embedding_media_components,
+)
 from worker.runtime.image_family_adapters import (
     detect_image_family_identity,
     resolve_image_family_config,
@@ -76,6 +81,24 @@ _MODEL_INVENTORY_SOURCE_KINDS = (
 )
 _MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
 _MODEL_WEIGHT_FILE_SUFFIX_LAST_CHARS = frozenset("sz")
+_ARTIFACT_EMBEDDING_TOKENIZER_FILENAMES = (
+    "added_tokens.json",
+    "merges.txt",
+    "sentencepiece.bpe.model",
+    "special_tokens_map.json",
+    "spiece.model",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "tokenizer.model",
+    "vocab.json",
+    "vocab.model",
+    "vocab.txt",
+)
+_ARTIFACT_EMBEDDING_MODULE_TYPES = {
+    "sentence_transformers.models.Transformer": "Transformer",
+    "sentence_transformers.models.Pooling": "Pooling",
+    "sentence_transformers.models.Normalize": "Normalize",
+}
 _REGISTRY_SCAN_SENTINEL_FILENAMES = frozenset(
     {
         "manifest.json",
@@ -1467,40 +1490,35 @@ def _infer_embedding_identity(model_path: str) -> dict[str, str]:
         return {
             "architecture": "bert",
             "family_id": "mxbai-embed",
-            "backend_id": "bert-v1",
             "source": "directory_name",
         }
     if "bge" in normalized_path:
         return {
             "architecture": "bert",
             "family_id": "bge-m3",
-            "backend_id": "bert-v1",
             "source": "directory_name",
         }
     if "xlmr" in normalized_path or "xlm-r" in normalized_path:
         return {
             "architecture": "xlmr",
             "family_id": "xlmr",
-            "backend_id": "xlmr-v1",
             "source": "directory_name",
         }
     if "bert" in normalized_path:
         return {
             "architecture": "bert",
             "family_id": "bert",
-            "backend_id": "bert-v1",
             "source": "directory_name",
         }
     return {
         "architecture": "bert",
         "family_id": "bert",
-        "backend_id": "bert-v1",
         "source": "default",
     }
 
 
 def _embedding_backend_for_family(family_id: str) -> str:
-    return "xlmr-v1" if family_id == "xlmr" else "bert-v1"
+    return "deterministic-fixture-v1"
 
 
 def _embedding_architecture_for_family(family_id: str) -> str:
@@ -1508,9 +1526,9 @@ def _embedding_architecture_for_family(family_id: str) -> str:
 
 
 def _default_embedding_family_for_backend(backend_id: str, detected_family_id: str) -> str:
-    if backend_id == "xlmr-v1":
+    if backend_id in {"mlx-xlmr-v1", "xlmr-v1"}:
         return "xlmr"
-    if detected_family_id in {"bert", "bge-m3", "mxbai-embed"}:
+    if detected_family_id in {"bert", "xlmr", "bge-m3", "mxbai-embed"}:
         return detected_family_id
     return "bert"
 
@@ -1526,6 +1544,198 @@ def _default_embedding_pooling_mode(family_id: str) -> str:
 
 def _default_embedding_dimensions(family_id: str) -> str:
     return {"mxbai-embed": "10"}.get(family_id, "8")
+
+
+def _artifact_embedding_module_paths(
+    model_dir: Path,
+) -> tuple[Path, Path | None] | None:
+    modules_path = model_dir / "modules.json"
+    if modules_path.exists() or modules_path.is_symlink():
+        if not _artifact_embedding_regular_file(model_dir, modules_path):
+            return None
+        try:
+            modules = _JSON_LOADS(modules_path.read_bytes())
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(modules, list):
+            return None
+        stages: list[str] = []
+        stage_paths: dict[str, Path] = {}
+        for position, module in enumerate(modules):
+            if not isinstance(module, Mapping):
+                return None
+            module_index = module.get("idx")
+            if (
+                not isinstance(module_index, int)
+                or isinstance(module_index, bool)
+                or module_index != position
+            ):
+                return None
+            stage = _ARTIFACT_EMBEDDING_MODULE_TYPES.get(
+                str(module.get("type", "") or "").strip()
+            )
+            if stage is None:
+                return None
+            raw_module_path = str(module.get("path", "") or "").strip()
+            if stage == "Transformer":
+                if raw_module_path not in {"", "."}:
+                    return None
+            else:
+                relative_path = Path(raw_module_path)
+                if (
+                    not raw_module_path
+                    or relative_path.is_absolute()
+                    or any(part in {"", ".", ".."} for part in relative_path.parts)
+                ):
+                    return None
+                stage_paths[stage] = model_dir / relative_path / "config.json"
+            stages.append(stage)
+        if tuple(stages) not in {
+            ("Transformer", "Pooling"),
+            ("Transformer", "Pooling", "Normalize"),
+        }:
+            return None
+        pooling_path = stage_paths.get("Pooling")
+        normalize_path = stage_paths.get("Normalize")
+        if pooling_path is None or not _artifact_embedding_regular_file(
+            model_dir, pooling_path
+        ):
+            return None
+        if normalize_path is not None and not _artifact_embedding_regular_file(
+            model_dir, normalize_path
+        ):
+            return None
+        return pooling_path, normalize_path
+
+    pooling_paths = tuple(sorted(model_dir.glob("*_Pooling/config.json")))
+    normalize_paths = tuple(sorted(model_dir.glob("*_Normalize/config.json")))
+    if any(
+        not _artifact_embedding_regular_file(model_dir, path)
+        for path in (*pooling_paths, *normalize_paths)
+    ):
+        return None
+    if len(pooling_paths) != 1 or len(normalize_paths) > 1:
+        return None
+    return pooling_paths[0], normalize_paths[0] if normalize_paths else None
+
+
+def _artifact_embedding_regular_file(model_dir: Path, path: Path) -> bool:
+    try:
+        relative_path = path.relative_to(model_dir)
+    except ValueError:
+        return False
+    current = model_dir
+    try:
+        for component in relative_path.parts[:-1]:
+            current /= component
+            if not stat.S_ISDIR(current.lstat().st_mode):
+                return False
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _artifact_embedding_metadata(
+    model_dir: Path,
+    config_payload: Mapping[str, object] | None,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]],
+) -> dict[str, str] | None:
+    if not isinstance(config_payload, Mapping):
+        return None
+    model_type = _normalized(str(config_payload.get("model_type", ""))).lower()
+    if model_type == "bert":
+        architecture = "bert"
+        backend_id = "mlx-bert-v1"
+        family_id = "bert"
+    elif model_type in {"xlm-roberta", "xlm_roberta"}:
+        architecture = "xlmr"
+        backend_id = "mlx-xlmr-v1"
+        family_id = "xlmr"
+    else:
+        return None
+    if unsupported_embedding_encoder_config(config_payload):
+        return None
+    if unsupported_embedding_media_components(config_payload):
+        return None
+
+    config_path = model_dir / "config.json"
+    if not _artifact_embedding_regular_file(model_dir, config_path):
+        return None
+
+    raw_input_modalities = config_payload.get("embedding_input_modalities", "text")
+    input_modalities = {
+        value.strip().lower()
+        for value in str(raw_input_modalities or "").split(",")
+        if value.strip()
+    }
+    vector_kind = str(
+        config_payload.get("embedding_vector_kind", "single_dense") or ""
+    ).strip().lower()
+    if input_modalities != {"text"} or vector_kind != "single_dense":
+        return None
+
+    weight_paths = tuple(sorted(model_dir.glob("*.safetensors")))
+    tokenizer_paths = tuple(
+        path
+        for filename in _ARTIFACT_EMBEDDING_TOKENIZER_FILENAMES
+        if (path := model_dir / filename).exists() or path.is_symlink()
+    )
+    if (
+        not weight_paths
+        or any(
+            not _artifact_embedding_regular_file(model_dir, path)
+            for path in weight_paths
+        )
+        or not tokenizer_paths
+        or any(
+            not _artifact_embedding_regular_file(model_dir, path)
+            for path in tokenizer_paths
+        )
+    ):
+        return None
+
+    module_paths = _artifact_embedding_module_paths(model_dir)
+    if module_paths is None:
+        return None
+    pooling_path, normalize_path = module_paths
+    pooling_config = _load_json_dict_file(pooling_path, json_cache=json_cache)
+    if not pooling_config:
+        return None
+    if normalize_path is not None:
+        try:
+            normalize_config = _JSON_LOADS(normalize_path.read_bytes())
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(normalize_config, Mapping):
+            return None
+    pooling_mode = supported_sentence_transformer_pooling_mode(pooling_config)
+    if pooling_mode is None:
+        return None
+    dimensions = _config_positive_int(config_payload, "hidden_size")
+    pooling_dimensions = _inventory_nonnegative_int(
+        pooling_config.get("word_embedding_dimension")
+    )
+    if dimensions <= 0 or (pooling_dimensions > 0 and pooling_dimensions != dimensions):
+        return None
+    normalization = "l2" if normalize_path is not None else "none"
+    return {
+        **_embedding_capability_metadata(family_id),
+        **_embedding_lora_support_metadata(family_id),
+        "embedding_backend_id": backend_id,
+        "embedding_execution_kind": "artifact",
+        "embedding_family_id": family_id,
+        "embedding_pooling_mode": pooling_mode,
+        "embedding_normalization": normalization,
+        "embedding_dimensions": str(dimensions),
+        "embedding_vector_kind": vector_kind,
+        "embedding_input_modalities": ",".join(sorted(input_modalities)),
+        "model_architecture": architecture,
+        "detected_architecture": architecture,
+        "detected_family_id": family_id,
+        "detected_identity_source": "artifact_metadata",
+        "identity_override": "false",
+    }
 
 
 def _rerank_capability_metadata(family_id: str) -> dict[str, str]:
@@ -4109,7 +4319,16 @@ class WorkerModelCatalog:
             max_context_source = "default.8192"
         ext["melix.context_window.source"] = max_context_source
         ext.update(dflash_draft_metadata(config_payload))
-        model_kind = "vlm" if _is_gemma4_vlm_config(config_payload) else "text"
+        embedding_metadata = _artifact_embedding_metadata(
+            model_dir,
+            config_payload,
+            json_cache=json_cache,
+        )
+        if embedding_metadata is not None:
+            model_kind = "embedding"
+            ext.update(embedding_metadata)
+        else:
+            model_kind = "vlm" if _is_gemma4_vlm_config(config_payload) else "text"
         if model_kind == "text":
             ext.update(
                 _text_capability_metadata(
@@ -4120,7 +4339,7 @@ class WorkerModelCatalog:
                 )
             )
             _merge_text_layer_count_metadata(ext, config_payload)
-        else:
+        elif model_kind == "vlm":
             ext.update(
                 _vlm_capability_metadata(
                     model_path=runtime_model_path,
@@ -4333,7 +4552,7 @@ class WorkerModelCatalog:
             family_id = configured_family_id
             backend_id = configured_backend_id or _embedding_backend_for_family(family_id)
         else:
-            backend_id = configured_backend_id or detected["backend_id"]
+            backend_id = configured_backend_id or "deterministic-fixture-v1"
             family_id = _default_embedding_family_for_backend(backend_id, detected["family_id"])
 
         architecture = _embedding_architecture_for_family(family_id)
@@ -4366,6 +4585,9 @@ class WorkerModelCatalog:
                 "embedding_pooling_mode": pooling_mode,
                 "embedding_normalization": normalization,
                 "embedding_dimensions": dimensions,
+                "embedding_execution_kind": (
+                    "artifact" if backend_id in {"mlx-bert-v1", "mlx-xlmr-v1"} else "fixture"
+                ),
                 "model_architecture": architecture,
                 "detected_architecture": detected["architecture"],
                 "detected_family_id": detected["family_id"],

@@ -147,12 +147,28 @@ def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, s
     if not rel_paths:
         return {}
     proc = subprocess.run(
-        ["git", "diff", "--unified=0", "--", *rel_paths],
+        ["git", "diff", "--unified=0", "HEAD", "--", *rel_paths],
         cwd=repo_root,
         capture_output=True,
         check=True,
     )
     changed_by_path = _parse_changed_lines(proc.stdout)
+    untracked_proc = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", *rel_paths],
+        cwd=repo_root,
+        capture_output=True,
+        check=True,
+    )
+    for raw_path in untracked_proc.stdout.split(b"\0"):
+        if not raw_path:
+            continue
+        rel_path = raw_path.decode("utf-8", errors="surrogateescape")
+        path = repo_root / rel_path
+        try:
+            line_count = len(path.read_bytes().splitlines())
+        except OSError:
+            line_count = 0
+        changed_by_path[rel_path] = set(range(1, line_count + 1))
     return {rel_path: changed_by_path.get(rel_path, set()) for rel_path in rel_paths}
 
 
@@ -618,11 +634,14 @@ def main() -> int:
         print(f"changed_line_coverage={file_pct:.2f}%")
         print()
 
-    overall_pct = 100.0 if total_measurable == 0 else total_covered / total_measurable * 100.0
+    overall_pct = 0.0 if total_measurable == 0 else total_covered / total_measurable * 100.0
     print(f"aggregate_measurable_changed_lines={total_measurable}")
     print(f"aggregate_covered_changed_lines={total_covered}")
     print(f"aggregate_missed_changed_lines={total_missed}")
     print(f"TOTAL {total_measurable} {total_missed} {overall_pct:.0f}%")
+    if total_measurable == 0:
+        print("coverage_error=no_measurable_changed_lines")
+        return 1
     return 0 if overall_pct >= 95.0 else 1
 
 

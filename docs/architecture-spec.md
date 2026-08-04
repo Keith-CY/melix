@@ -137,6 +137,38 @@ Python workers remain the broader execution layer. They should continue to own:
 - convert, quantize, upload, download, train, doctor, info, and bench flows
 - any text-compatible compatibility path retained during migration
 
+Embedding execution uses one worker runtime interface with explicit backend
+identity. `mlx-bert-v1` and `mlx-xlmr-v1` load a local tokenizer,
+`config.json`, and safetensors into the existing model-handle lifecycle. They
+tokenize one request batch and perform exactly one encoder forward before
+device-side pooling and normalization. `deterministic-fixture-v1` is reserved
+for repository fixtures and development seed models; catalog metadata must not
+advertise its digest projection as BERT or XLM-R execution. The legacy
+`bert-v1` and `xlmr-v1` identifiers are not executable aliases; callers must
+migrate explicitly to the named fixture backend or to an artifact backend.
+
+Artifact-backed embedding discovery requires both an explicit MLX signal and
+structured embedding metadata such as a supported Sentence Transformers
+pooling module. A BERT-shaped `model_type` or directory name alone is not
+enough to create an embedding route. The runtime verifies the artifact again at
+load, copies supported files through no-symlink descriptors into a private
+read-only snapshot, and computes model and tokenizer hashes from that snapshot.
+Tokenizer construction and weight loading may consume only the bound snapshot;
+the source model path remains provenance and is not reopened by the backend.
+Media or multi-vector artifacts are refused before model execution. Decoder,
+encoder-decoder, cross-attention, and non-absolute-position BERT configurations
+are rejected until the local encoder implements them. An active Sentence
+Transformers pipeline must be exactly `Transformer -> Pooling -> optional
+Normalize`; unsupported or reordered modules fail closed. Snapshot file
+identity and content hashes are verified after tokenizer and weight loading so
+a receipt cannot describe bytes different from those consumed for execution.
+
+Artifact embedding load, inference, and teardown share the Python worker's
+single-owner MLX executor with text and VLM execution. The public embedding
+response remains a list of dense vectors. Effective load evidence and the
+latest bounded request receipt are projected through the loaded model summary
+rather than added to that response.
+
 MLX-backed Python text compatibility and VLM runtimes must execute model load,
 warmup, prompt/template preparation, and token streaming on an executor-owned
 runtime thread. The executor is responsible for initializing the MLX stream

@@ -4823,7 +4823,7 @@ def test_get_model_info_returns_known_dev_model_metadata(tmp_path: Path) -> None
     assert embed.supported_modalities == ["text"]
     assert embed.supported_tasks == ["embed"]
     assert embed.supported_parsers == ["text"]
-    assert embed.backend_id == "bert-v1"
+    assert embed.backend_id == "deterministic-fixture-v1"
     assert embed.family_id == "bert"
     assert embed.model_path == "models/melix-dev-embed"
     assert embed.model_revision == "dev"

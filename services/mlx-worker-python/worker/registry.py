@@ -32,6 +32,8 @@ from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.mlx_vlm_runtime import MLXVLMRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
+from worker.runtime.embedding_runtime import EmbeddingRuntime
+from worker.runtime.artifact_embedding_runtime import embedding_request_receipt_snapshot
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 from worker.runtime.runtime_utils import callable_accepts_kwarg
 
@@ -63,6 +65,77 @@ _DEFAULT_SPECULATIVE_PROBE_RECEIPT_PROBE = (
     False,
     False,
 )
+
+_EMBEDDING_LOAD_RECEIPT_FIELDS = (
+    "requested_backend_id",
+    "effective_backend_id",
+    "model_hash",
+    "tokenizer_hash",
+    "requested_pooling_mode",
+    "effective_pooling_mode",
+    "requested_normalization",
+    "effective_normalization",
+    "requested_dimensions",
+    "effective_dimensions",
+    "requested_max_length",
+    "effective_max_length",
+    "requested_vector_kind",
+    "effective_vector_kind",
+    "requested_dtype",
+    "effective_dtype",
+    "vector_kind",
+    "dtype",
+    "estimated_resident_bytes",
+    "measured_resident_bytes",
+)
+_EMBEDDING_REQUEST_RECEIPT_FIELDS = (
+    "request_id",
+    "backend_id",
+    "batch_size",
+    "input_token_count",
+    "forward_count",
+    "output_row_count",
+    "dimensions",
+    "vector_kind",
+    "dtype",
+    "finite_output",
+)
+
+
+def _spec_with_embedding_load_receipt(
+    model_spec: common_pb2.ModelSpec,
+    runtime_model: object,
+) -> common_pb2.ModelSpec:
+    if not isinstance(runtime_model, Mapping):
+        return model_spec
+    receipt = runtime_model.get("embedding_load_receipt")
+    if not isinstance(receipt, Mapping):
+        return model_spec
+    projected = common_pb2.ModelSpec()
+    projected.CopyFrom(model_spec)
+    projected.ext["melix.embedding.load.schema"] = "melix.embedding_load_receipt.v1"
+    for field_name in _EMBEDDING_LOAD_RECEIPT_FIELDS:
+        value = receipt.get(field_name)
+        if value is not None:
+            projected.ext[f"melix.embedding.load.{field_name}"] = str(value)
+    return projected
+
+
+def _loaded_model_estimated_resident_bytes(
+    runtime: object,
+    runtime_model: object,
+    *,
+    fallback: int,
+) -> int:
+    estimator = getattr(runtime, "estimate_loaded_resident_bytes", None)
+    if not callable(estimator):
+        return fallback
+    estimated = estimator(runtime_model)
+    if estimated is None:
+        return fallback
+    if isinstance(estimated, bool) or not isinstance(estimated, int) or estimated < 0:
+        raise RuntimeError("Runtime returned an invalid loaded-model resident-byte estimate.")
+    return estimated
 
 
 @dataclass(slots=True)
@@ -278,7 +351,7 @@ class WorkerRegistry:
     def __init__(
         self,
         runtime: MLXTextRuntime | None = None,
-        embedding_runtime: DeterministicEmbeddingRuntime | None = None,
+        embedding_runtime: DeterministicEmbeddingRuntime | EmbeddingRuntime | None = None,
         rerank_runtime: DeterministicRerankRuntime | None = None,
         ocr_runtime: DeterministicOCRRuntime | None = None,
         vlm_runtime: DeterministicVLMRuntime | None = None,
@@ -297,7 +370,7 @@ class WorkerRegistry:
     ) -> None:
         self._mlx_executor = mlx_executor or MLXRuntimeExecutor()
         self.runtime = runtime or MLXTextRuntime(executor=self._mlx_executor)
-        self.embedding_runtime = embedding_runtime or DeterministicEmbeddingRuntime()
+        self.embedding_runtime = embedding_runtime or EmbeddingRuntime(executor=self._mlx_executor)
         self.rerank_runtime = rerank_runtime or DeterministicRerankRuntime()
         self.ocr_runtime = ocr_runtime or DeterministicOCRRuntime()
         self.vlm_runtime = vlm_runtime or DeterministicVLMRuntime()
@@ -561,6 +634,8 @@ class WorkerRegistry:
                 required_bytes=required_request_bytes,
             )
 
+        runtime_model: object | None = None
+        reservation_active = True
         try:
             if trust_remote_code:
                 runtime_model = self._load_runtime_model(
@@ -570,6 +645,49 @@ class WorkerRegistry:
                 )
             else:
                 runtime_model = runtime.load_model(resolved)
+            loaded_estimated = _loaded_model_estimated_resident_bytes(
+                runtime,
+                runtime_model,
+                fallback=estimated,
+            )
+            if loaded_estimated != estimated:
+                with self._lock:
+                    self._reserved_model_resident_bytes -= estimated
+                    reservation_active = False
+                    projected_resident_bytes = (
+                        self._loaded_model_resident_bytes
+                        + self._reserved_model_resident_bytes
+                        + loaded_estimated
+                    )
+                    required_process_bytes = (
+                        projected_resident_bytes + self._memory_headroom_bytes
+                    )
+                    if (
+                        self._process_memory_budget_bytes > 0
+                        and required_process_bytes > self._process_memory_budget_bytes
+                    ):
+                        raise MemoryBudgetExceeded(
+                            budget_bytes=self._process_memory_budget_bytes,
+                            headroom_bytes=self._memory_headroom_bytes,
+                            projected_resident_bytes=projected_resident_bytes,
+                            required_bytes=required_process_bytes,
+                        )
+                    self._reserved_model_resident_bytes += loaded_estimated
+                    estimated = loaded_estimated
+                    reservation_active = True
+            required_request_bytes = estimated + self._memory_headroom_bytes
+            if (
+                effective_request_budget_bytes > 0
+                and required_request_bytes > effective_request_budget_bytes
+            ):
+                raise MemoryBudgetExceeded(
+                    budget_bytes=effective_request_budget_bytes,
+                    headroom_bytes=self._memory_headroom_bytes,
+                    projected_resident_bytes=estimated,
+                    required_bytes=required_request_bytes,
+                )
+            if runtime_kind == "embedding":
+                resolved = _spec_with_embedding_load_receipt(resolved, runtime_model)
             if not has_settings and not pin_on_load:
                 residency = self._default_loaded_residency(requested_disk_streaming_mode)
             else:
@@ -579,8 +697,16 @@ class WorkerRegistry:
                     effective_disk_streaming_mode=requested_disk_streaming_mode,
                 )
         except Exception:
-            with self._lock:
-                self._reserved_model_resident_bytes -= estimated
+            if runtime_model is not None:
+                close_loaded_model = getattr(runtime, "close_loaded_model", None)
+                if callable(close_loaded_model):
+                    try:
+                        close_loaded_model(runtime_model)
+                    except Exception:
+                        pass
+            if reservation_active:
+                with self._lock:
+                    self._reserved_model_resident_bytes -= estimated
             raise
 
         with self._lock:
@@ -1056,6 +1182,11 @@ class WorkerRegistry:
             if generation_value is not None:
                 loaded.generation_tps = generation_value
             self._loaded_model_summaries = None
+
+    def record_embedding_request_receipt(self, handle: str) -> None:
+        with self._lock:
+            if handle in self._loaded_models:
+                self._loaded_model_summaries = None
 
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)
@@ -2029,6 +2160,15 @@ class WorkerRegistry:
         if loaded.generation_tps != 0.0:
             summary.generation_tps = loaded.generation_tps
         summary.backend_identity.CopyFrom(loaded.backend_identity)
+        request_receipt = embedding_request_receipt_snapshot(loaded.runtime_model)
+        if request_receipt is not None:
+            summary.model.ext["melix.embedding.request.schema"] = (
+                "melix.embedding_request_receipt.v1"
+            )
+            for field_name in _EMBEDDING_REQUEST_RECEIPT_FIELDS:
+                value = request_receipt.get(field_name)
+                if value is not None:
+                    summary.model.ext[f"melix.embedding.request.{field_name}"] = str(value)
         return summary
 
     @staticmethod
