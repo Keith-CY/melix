@@ -7946,6 +7946,7 @@ private actor BackendIdentityRecoveryWorkerClient:
     private(set) var loadCallCount = 0
     private(set) var requestedIdentities: [Melix_Worker_V1_BackendModelIdentity] = []
     private(set) var loadedIdentities: [Melix_Worker_V1_BackendModelIdentity] = []
+    private let concurrentInitialGenerateGate = DelayedSchedulerEventGate()
 
     init(script: Script) {
         self.script = script
@@ -7968,6 +7969,12 @@ private actor BackendIdentityRecoveryWorkerClient:
         requestedIdentities.append(request.execution.backendIdentity)
         let callIndex = generateCallCount
         let script = self.script
+        if case .concurrentIdentityMismatchThenSuccess = script, callIndex <= 2 {
+            if callIndex == 2 {
+                await concurrentInitialGenerateGate.open()
+            }
+            await concurrentInitialGenerateGate.wait()
+        }
         return AsyncThrowingStream { continuation in
             switch script {
             case .emptyThenSuccess where callIndex == 1,

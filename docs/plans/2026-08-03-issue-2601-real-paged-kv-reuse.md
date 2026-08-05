@@ -357,6 +357,13 @@ The PR-scoped workflow must also pass the immutable pull-request base SHA as
 object before the gate runs; coverage must not assume that a mutable
 `origin/main` remote-tracking ref exists in the isolated checkout.
 
+Changing the runtime registry also selects the existing backend-model-identity
+probe. Its concurrent recovery fixture must hold both initial generate calls
+until both requests have captured the original backend binding. This makes the
+coalescing measurement independent of task scheduling and prevents the first
+recovery from invalidating the binding before the second request reaches worker
+dispatch.
+
 Focused checks:
 
 ```bash
