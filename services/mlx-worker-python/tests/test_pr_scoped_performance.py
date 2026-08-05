@@ -2256,10 +2256,11 @@ def test_scope_report_selects_worker_registry_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/registry.py"],
     )
 
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert set(_selected_probe_ids(scope)) == {
         "backend-model-identity-boundary",
         "worker-registry-resident-bytes-accumulator",
+        "artifact-embedding-batch",
     }
 
 
@@ -2915,10 +2916,11 @@ def test_scope_report_selects_model_registry_catalog_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/model_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert [probe["id"] for probe in scope["selected_probes"]] == [
         "model-registry-plain-local-manifest-stat-elision",
         "model-registry-readme-source-fastpath",
+        "artifact-embedding-batch",
     ]
 
 
@@ -2938,8 +2940,11 @@ def test_scope_report_selects_embedding_project_digest_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/embedding_backends.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "deterministic-embedding-project-digest-allocation"
+    assert scope["selected_count"] == 2
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "deterministic-embedding-project-digest-allocation",
+        "artifact-embedding-batch",
+    ]
 
 
 def test_deterministic_embedding_project_digest_probe_script_smoke(capsys: pytest.CaptureFixture[str]) -> None:
@@ -3061,10 +3066,11 @@ def test_scope_report_selects_deterministic_embedding_probe() -> None:
     )
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 2
+    assert scope["selected_count"] == 3
     assert probe_ids == {
         "deterministic-embedding-duplicate-input-cache",
         "embedding-core-inputs-view",
+        "artifact-embedding-batch",
     }
 
 
@@ -3074,8 +3080,23 @@ def test_scope_report_selects_embedding_core_inputs_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/engine/embedding_core.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "embedding-core-inputs-view"
+    assert scope["selected_count"] == 2
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "embedding-core-inputs-view",
+        "artifact-embedding-batch",
+    ]
+
+
+def test_scope_report_selects_artifact_embedding_batch_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/runtime/artifact_embedding_runtime.py"
+        ],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "artifact-embedding-batch" in probe_ids
 
 
 def test_scope_report_selects_benchmark_export_probe() -> None:
@@ -4400,6 +4421,128 @@ def test_embedding_core_inputs_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_artifact_embedding_batch_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def reject_mlx_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "mlx" or name.startswith("mlx."):
+            raise AssertionError(f"probe attempted to import {name}")
+        return original_import(name, *args, **kwargs)
+
+    assert reject_mlx_import("builtins") is builtins
+    with pytest.raises(AssertionError, match="probe attempted to import mlx.core"):
+        reject_mlx_import("mlx.core")
+    monkeypatch.setattr(builtins, "__import__", reject_mlx_import)
+    probe_script = runpy.run_path(
+        str(REPO_ROOT / "scripts/artifact_embedding_batch_probe.py")
+    )
+    probe_backend, _probe_tokenizer, _probe_encoder = probe_script[
+        "_probe_backend"
+    ](work_units=1)
+    assert isinstance(probe_backend, probe_script["MLXArtifactEmbeddingBackend"])
+
+    metrics = probe_script["measure"](sample_count=3, work_units=2_000)
+
+    assert metrics["batch_32_forward_count"] == 1.0
+    assert metrics["batch_32_tokenizer_count"] == 1.0
+    assert metrics["singleton_32_forward_count"] == 32.0
+    assert metrics["singleton_32_tokenizer_count"] == 32.0
+    assert metrics["batch_speedup_ratio"] >= 2.0
+    assert metrics["nonfinite_output_count"] == 0.0
+    assert metrics["output_dimension_mismatch_count"] == 0.0
+
+
+def test_artifact_embedding_batch_coverage_measures_changed_contract_tests() -> None:
+    registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    probe = next(item for item in registry if item["id"] == "artifact-embedding-batch")
+    worker_probe = next(
+        item
+        for item in registry
+        if item["id"] == "worker-registry-resident-bytes-accumulator"
+    )
+    readme_probe = next(
+        item
+        for item in registry
+        if item["id"] == "model-registry-readme-source-fastpath"
+    )
+    coverage_paths = probe["coverage_command"].split(
+        "python3 scripts/changed_scope_coverage.py --coverage-json coverage.json ",
+        1,
+    )[1].split()
+    worker_coverage_paths = worker_probe["coverage_command"].split(
+        "python3 scripts/changed_scope_coverage.py --coverage-json coverage.json ",
+        1,
+    )[1].split()
+    test_selector = (
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
+        "test_artifact_embedding_batch_coverage_measures_changed_contract_tests"
+    )
+
+    assert test_selector in probe["test_command"]
+    assert test_selector in probe["coverage_command"].split("&&", 1)[0]
+    assert test_selector in worker_probe["test_command"]
+    assert test_selector in worker_probe["coverage_command"].split("&&", 1)[0]
+    assert (
+        "services/mlx-worker-python/tests/test_artifact_embedding_registry_contract.py"
+        in worker_coverage_paths
+    )
+    assert test_selector in readme_probe["test_command"]
+    assert test_selector in readme_probe["coverage_command"].split("&&", 1)[0]
+    assert "MELIX_ARTIFACT_EMBEDDING_WORK_UNITS=100000" in probe["probe_command"]
+    batch_metrics = {metric["key"]: metric for metric in probe["metrics"]}
+    assert batch_metrics["batch_speedup_ratio"]["warn_pct"] == 5.0
+    readme_metrics = {metric["key"]: metric for metric in readme_probe["metrics"]}
+    assert readme_metrics["new_elapsed_ms_mean"]["warn_abs"] == 0.00005
+    assert (
+        "services/mlx-worker-python/tests/test_artifact_embedding_runtime.py"
+        in coverage_paths
+    )
+    assert (
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py"
+        in coverage_paths
+    )
+
+
+def test_artifact_embedding_batch_probe_reports_legacy_base_strategy() -> None:
+    probe_script = runpy.run_path(
+        str(REPO_ROOT / "scripts/artifact_embedding_batch_probe.py")
+    )
+    probe_script["measure"].__globals__["MLXEmbeddingRuntime"] = None
+    probe_script["measure"].__globals__["ArtifactEmbeddingDescriptor"] = None
+
+    metrics = probe_script["measure"](sample_count=2, work_units=1_000)
+
+    assert metrics["batch_32_forward_count"] == 32.0
+    assert metrics["batch_32_tokenizer_count"] == 32.0
+    assert metrics["singleton_32_forward_count"] == 32.0
+    assert metrics["singleton_32_tokenizer_count"] == 32.0
+    assert metrics["nonfinite_output_count"] == 0.0
+    assert metrics["output_dimension_mismatch_count"] == 0.0
+
+
+def test_artifact_embedding_batch_probe_main_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_ARTIFACT_EMBEDDING_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_ARTIFACT_EMBEDDING_WORK_UNITS", "100")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/artifact_embedding_batch_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["batch_32_forward_count"] == 1.0
+    assert metrics["batch_32_tokenizer_count"] == 1.0
+    assert metrics["singleton_32_forward_count"] == 32.0
+    assert metrics["singleton_32_tokenizer_count"] == 32.0
+
+
 def test_stream_assembler_parser_mode_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -5096,6 +5239,7 @@ def test_text_family_config_probe_script_emits_metrics(
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "agentic-tool-guardrail-loop",
+        "artifact-embedding-batch",
         "backend-model-identity-boundary",
         "prefix-cold-index-scandir",
         "prefix-cache-snapshot-byte-streaming",
@@ -5267,6 +5411,11 @@ def test_registered_probes_expose_focused_commands() -> None:
         assert "then python scripts/" not in probe.probe_command
         assert "else python - <<" not in probe.probe_command
         assert "if false; then python scripts/" not in probe.probe_command
+        if probe.runner == "ubuntu-latest":
+            artifact_runtime_test = (
+                "services/mlx-worker-python/tests/test_artifact_embedding_runtime.py"
+            )
+            assert artifact_runtime_test not in f"{probe.test_command} {probe.coverage_command}"
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
         if probe.probe_id == "model-registry-plain-local-manifest-stat-elision":
             registry_probe = probe
@@ -5289,6 +5438,14 @@ def test_registered_probes_expose_focused_commands() -> None:
         if probe.probe_id == "structured-output-json-object-constraint-cache":
             structured_output_probe = probe
 
+    workflow = (REPO_ROOT / ".github/workflows/pr-scoped-performance.yml").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM: "
+        "${{ github.event.pull_request.base.sha }}"
+    ) in workflow
+
     assert evaluation_store_samples_probe is not None
     evaluation_store_samples_metrics = {
         metric.key: metric for metric in evaluation_store_samples_probe.metrics
@@ -5298,6 +5455,21 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert evaluation_store_samples_metrics["peak_bytes_mean"].warn_pct == 5.0
 
     assert worker_registry_probe is not None
+    artifact_registry_contract_test = (
+        "services/mlx-worker-python/tests/"
+        "test_artifact_embedding_registry_contract.py"
+    )
+    artifact_catalog_contract_test = (
+        "services/mlx-worker-python/tests/"
+        "test_artifact_embedding_catalog_contract.py"
+    )
+    assert artifact_registry_contract_test in worker_registry_probe.watch_globs
+    assert artifact_registry_contract_test in worker_registry_probe.test_command
+    assert artifact_registry_contract_test in worker_registry_probe.coverage_command
+    assert registry_probe is not None
+    assert artifact_catalog_contract_test in registry_probe.watch_globs
+    assert artifact_catalog_contract_test in registry_probe.test_command
+    assert artifact_catalog_contract_test in registry_probe.coverage_command
     assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.test_command
     assert "test_load_model_returns_handle_and_lists_model" in worker_registry_probe.test_command
     assert "test_worker_registry_reuses_sorted_handles_across_listing_calls" in worker_registry_probe.coverage_command
@@ -7391,7 +7563,7 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     assert metrics["root_identity_comparisons_mean"] == 0.0
     assert metrics["plain_scan_count_mean"] == metrics["model_count"] == 400.0
     assert metrics["manifest_count_mean"] == 400.0
-    assert metrics["sample_count"] == 5.0
+    assert metrics["sample_count"] == 20.0
 
     monkeypatch.setenv("MELIX_MODEL_REGISTRY_PLAIN_CHILD_PROBE_MODELS", "3")
     monkeypatch.setenv("MELIX_MODEL_REGISTRY_PLAIN_CHILD_PROBE_SAMPLES", "1")

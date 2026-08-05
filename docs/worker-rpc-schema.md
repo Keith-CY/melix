@@ -583,6 +583,40 @@ V1 should support dedicated RPCs for:
 
 These should not be forced through the text-generation path.
 
+`Embed` preserves its existing request and response messages. Artifact-backed
+BERT and XLM-R execution is selected by the loaded model's explicit backend ID,
+not by changing `EmbedResponse`. The Python worker loads only local tokenizer,
+configuration, and safetensors files through a private read-only snapshot.
+Tokenizer construction and weight loading consume only snapshot paths, and the
+snapshot hashes become the load receipt identity. An active Sentence
+Transformers contract must be the ordered `Transformer -> Pooling -> optional
+Normalize` pipeline. The worker must tokenize the complete request batch,
+validate integral rectangular and shape-equal `input_ids`, `attention_mask`,
+and optional `token_type_ids`, reject fully padded rows before the encoder,
+execute one forward, apply `cls`, `mean`, or `last_token` pooling with the
+active-token mask, normalize in float32 when requested, and validate finite
+single-dense output before constructing the response.
+
+Artifact load evidence is projected into `LoadedModelSummary.model.ext` under
+the versioned `melix.embedding.load.*` namespace. It records requested and
+effective backend, pooling, normalization, dimensions, and maximum length plus
+model hash, tokenizer hash, vector kind, dtype, estimated resident bytes, and
+measured resident bytes. Unrequested numeric fields remain zero rather than
+copying effective values; an explicitly supplied invalid dimension is refused
+rather than represented as unrequested. Artifact-declared pooling and normalization are
+recorded separately from requested overrides and effective execution values.
+Request-local batch size, token count, forward count,
+shape, dtype, and finite-output evidence is retained in a bounded,
+request-ID-keyed worker store. `ListLoadedModels` projects the latest entry into
+`LoadedModelSummary.model.ext` under `melix.embedding.request.*`. Typed artifact
+refusal codes pass through both `LoadModelResponse.error` and
+`EmbedResponse.error`; no partial vectors may accompany a refusal.
+
+Artifact embedding MLX work uses the same single-owner executor as the worker's
+other MLX runtimes. Load-time measured residency is captured inside that owner
+transaction so concurrent gRPC handlers cannot interleave another MLX load with
+the before/after memory sample.
+
 ## Cache Service
 
 Workers need a dedicated cache service so the control plane can inspect and mutate cache state without directly touching worker storage.

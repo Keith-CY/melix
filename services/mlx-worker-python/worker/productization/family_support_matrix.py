@@ -96,7 +96,7 @@ _FAMILY_VARIANTS: tuple[dict[str, Any], ...] = (
         "capability": "embedding",
         "family_id": "xlmr",
         "model_id": "melix-dev-embed",
-        "environment": {"MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1"},
+        "environment": {"MELIX_DEV_EMBED_FAMILY_ID": "xlmr"},
         "integration_tests": [
             "tests/integration/test_non_text_endpoints.py::test_embeddings_endpoint_supports_xlmr_backend_override",
         ],
