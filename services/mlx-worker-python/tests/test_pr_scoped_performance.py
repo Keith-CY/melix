@@ -4454,6 +4454,57 @@ def test_artifact_embedding_batch_probe_script_emits_metrics(
     assert metrics["output_dimension_mismatch_count"] == 0.0
 
 
+def test_artifact_embedding_batch_coverage_measures_changed_contract_tests() -> None:
+    registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    probe = next(item for item in registry if item["id"] == "artifact-embedding-batch")
+    worker_probe = next(
+        item
+        for item in registry
+        if item["id"] == "worker-registry-resident-bytes-accumulator"
+    )
+    readme_probe = next(
+        item
+        for item in registry
+        if item["id"] == "model-registry-readme-source-fastpath"
+    )
+    coverage_paths = probe["coverage_command"].split(
+        "python3 scripts/changed_scope_coverage.py --coverage-json coverage.json ",
+        1,
+    )[1].split()
+    worker_coverage_paths = worker_probe["coverage_command"].split(
+        "python3 scripts/changed_scope_coverage.py --coverage-json coverage.json ",
+        1,
+    )[1].split()
+    test_selector = (
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py::"
+        "test_artifact_embedding_batch_coverage_measures_changed_contract_tests"
+    )
+
+    assert test_selector in probe["test_command"]
+    assert test_selector in probe["coverage_command"].split("&&", 1)[0]
+    assert test_selector in worker_probe["test_command"]
+    assert test_selector in worker_probe["coverage_command"].split("&&", 1)[0]
+    assert (
+        "services/mlx-worker-python/tests/test_artifact_embedding_registry_contract.py"
+        in worker_coverage_paths
+    )
+    assert test_selector in readme_probe["test_command"]
+    assert test_selector in readme_probe["coverage_command"].split("&&", 1)[0]
+    assert "MELIX_ARTIFACT_EMBEDDING_WORK_UNITS=100000" in probe["probe_command"]
+    batch_metrics = {metric["key"]: metric for metric in probe["metrics"]}
+    assert batch_metrics["batch_speedup_ratio"]["warn_pct"] == 5.0
+    readme_metrics = {metric["key"]: metric for metric in readme_probe["metrics"]}
+    assert readme_metrics["new_elapsed_ms_mean"]["warn_abs"] == 0.00005
+    assert (
+        "services/mlx-worker-python/tests/test_artifact_embedding_runtime.py"
+        in coverage_paths
+    )
+    assert (
+        "services/mlx-worker-python/tests/test_pr_scoped_performance.py"
+        in coverage_paths
+    )
+
+
 def test_artifact_embedding_batch_probe_reports_legacy_base_strategy() -> None:
     probe_script = runpy.run_path(
         str(REPO_ROOT / "scripts/artifact_embedding_batch_probe.py")

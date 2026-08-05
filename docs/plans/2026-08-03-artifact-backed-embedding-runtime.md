@@ -461,3 +461,30 @@ probe:
   `1/1 = 100%` for its selected changed line;
 - all four changed-scope helper probes: `73 passed` and `63/63 = 100%` in each
   replay.
+
+## Pull Request Review Remediation
+
+The final review pass tightens the artifact admission boundary without changing
+the public embedding response schema:
+
+- catalog admission and runtime inspection require a vocabulary-bearing
+  tokenizer artifact; auxiliary token metadata alone is not executable;
+- the shared encoder contract requires a positive `num_hidden_layers`, so an
+  empty encoder stack or fractional layer count cannot be admitted as a model;
+- MLX active-memory lookup selects the top-level API lazily, falls back to the
+  legacy `metal` API only when present, and otherwise fails with a typed runtime
+  error;
+- load receipts preserve `0` for unrequested numeric limits and record the
+  artifact-declared pooling and normalization alongside requested and effective
+  values, keeping the audited override contract visible; an explicit invalid
+  dimension override fails typed rather than being collapsed into that `0`;
+- the production router surfaces the same migration guidance as the fixture
+  backend resolver for retired digest backend IDs.
+
+Focused tests must cover each refusal and receipt branch with at least 95%
+changed-scope coverage, including changed runtime and registry test code rather
+than production files alone. The artifact batch probe remains the direct performance
+measurement point: it must preserve one tokenizer call, one encoder forward for
+the 32-row batch, finite vectors, exact dimensions, and no direct regression.
+The full versioned pre-commit gate remains mandatory before the remediation
+commit.

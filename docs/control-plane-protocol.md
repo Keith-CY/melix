@@ -826,6 +826,9 @@ must not infer those execution claims from a model path. Loaded-model summaries
 carry the worker's `melix.embedding.load.*` receipt so operators can compare the
 catalog request with the effective artifact hash, tokenizer hash, pooling,
 normalization, dimensions, maximum length, vector kind, dtype, and residency.
+The receipt retains artifact-declared pooling and normalization separately from
+requested overrides and effective values, and preserves zero for an unrequested
+numeric limit.
 Registry-discovered embedding summaries must materialize a generic worker
 `ModelSpec` with the admitted local path. A Python worker route without an
 executable spec or available client fails closed; it must never be recorded as

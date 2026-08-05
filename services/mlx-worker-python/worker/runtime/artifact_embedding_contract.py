@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 
 _SENTENCE_TRANSFORMER_POOLING_MODES = {
@@ -22,21 +22,46 @@ _EMBEDDING_MEDIA_COMPONENT_KEYS = (
 )
 _EMBEDDING_ENCODER_POSITIVE_INT_KEYS = (
     "hidden_size",
+    "num_hidden_layers",
     "num_attention_heads",
     "intermediate_size",
     "vocab_size",
     "max_position_embeddings",
+)
+_EMBEDDING_TOKENIZER_SINGLE_FILE_CONTRACTS = frozenset(
+    {
+        "sentencepiece.bpe.model",
+        "spiece.model",
+        "tokenizer.json",
+        "tokenizer.model",
+        "vocab.txt",
+    }
 )
 
 
 def _positive_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return None
+    else:
         return None
     return parsed if parsed > 0 else None
+
+
+def invalid_embedding_encoder_positive_int_fields(
+    config: Mapping[str, object],
+) -> tuple[str, ...]:
+    return tuple(
+        key
+        for key in _EMBEDDING_ENCODER_POSITIVE_INT_KEYS
+        if _positive_int(config.get(key)) is None
+    )
 
 
 def normalized_embedding_hidden_activation(config: Mapping[str, object]) -> str:
@@ -64,9 +89,7 @@ def unsupported_embedding_encoder_config(
         key: _positive_int(config.get(key))
         for key in _EMBEDDING_ENCODER_POSITIVE_INT_KEYS
     }
-    unsupported.extend(
-        key for key, value in parsed_positive_ints.items() if value is None
-    )
+    unsupported.extend(invalid_embedding_encoder_positive_int_fields(config))
     hidden_size = parsed_positive_ints["hidden_size"]
     attention_heads = parsed_positive_ints["num_attention_heads"]
     if (
@@ -87,6 +110,14 @@ def unsupported_embedding_media_components(
     return tuple(
         key for key in _EMBEDDING_MEDIA_COMPONENT_KEYS if config.get(key) is not None
     )
+
+
+def has_supported_embedding_tokenizer_files(filenames: Collection[str]) -> bool:
+    available = frozenset(filenames)
+    return bool(available & _EMBEDDING_TOKENIZER_SINGLE_FILE_CONTRACTS) or {
+        "merges.txt",
+        "vocab.json",
+    }.issubset(available)
 
 
 def supported_sentence_transformer_pooling_mode(

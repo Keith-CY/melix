@@ -14,6 +14,7 @@ from typing import Iterable, Mapping
 
 from packages.protocol.python.worker.v1 import common_pb2
 from worker.runtime.artifact_embedding_contract import (
+    has_supported_embedding_tokenizer_files,
     supported_sentence_transformer_pooling_mode,
     unsupported_embedding_encoder_config,
     unsupported_embedding_media_components,
@@ -1687,7 +1688,9 @@ def _artifact_embedding_metadata(
             not _artifact_embedding_regular_file(model_dir, path)
             for path in weight_paths
         )
-        or not tokenizer_paths
+        or not has_supported_embedding_tokenizer_files(
+            {path.name for path in tokenizer_paths}
+        )
         or any(
             not _artifact_embedding_regular_file(model_dir, path)
             for path in tokenizer_paths

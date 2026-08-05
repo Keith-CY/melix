@@ -7,6 +7,7 @@ from worker.runtime.artifact_embedding_runtime import (
     MLXEmbeddingRuntime,
 )
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
+from worker.runtime.embedding_backends import legacy_embedding_backend_error_message
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.runtime_utils import callable_accepts_kwarg
 
@@ -15,6 +16,7 @@ _ARTIFACT_BACKEND_IDS = {"mlx-bert-v1", "mlx-xlmr-v1"}
 _FIXTURE_BACKEND_IDS = {
     "deterministic-fixture-v1",
 }
+_LEGACY_BACKEND_IDS = {"bert-v1", "xlmr-v1"}
 
 
 class EmbeddingRuntime:
@@ -36,6 +38,11 @@ class EmbeddingRuntime:
             return self._artifact_runtime
         if normalized in _FIXTURE_BACKEND_IDS:
             return self._fixture_runtime
+        if normalized in _LEGACY_BACKEND_IDS:
+            raise ArtifactEmbeddingError(
+                "embedding_backend_unsupported",
+                legacy_embedding_backend_error_message(backend_id),
+            )
         raise ArtifactEmbeddingError(
             "embedding_backend_unsupported",
             f"Unsupported embedding backend: {backend_id or '<missing>'}.",

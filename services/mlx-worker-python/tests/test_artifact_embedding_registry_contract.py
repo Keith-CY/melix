@@ -47,8 +47,10 @@ class ReceiptRuntime:
         "model_hash": "sha256:model",
         "tokenizer_hash": "sha256:tokenizer",
         "requested_pooling_mode": "mean",
+        "artifact_pooling_mode": "mean",
         "effective_pooling_mode": "mean",
         "requested_normalization": "l2",
+        "artifact_normalization": "l2",
         "effective_normalization": "l2",
         "requested_dimensions": 4,
         "effective_dimensions": 4,
@@ -211,6 +213,8 @@ def test_registry_projects_complete_embedding_receipts_and_invalidates_summary()
     )
     for field_name, value in runtime.load_receipt.items():
         assert loaded.spec.ext[f"melix.embedding.load.{field_name}"] == str(value)
+    assert loaded.spec.ext["melix.embedding.load.artifact_pooling_mode"] == "mean"
+    assert loaded.spec.ext["melix.embedding.load.artifact_normalization"] == "l2"
 
     first_summary = registry.list_loaded_model_summaries()[0]
     assert first_summary.model.ext["melix.embedding.request.schema"] == (

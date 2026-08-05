@@ -15,6 +15,7 @@ from threading import Lock
 from typing import Any, Protocol
 
 from worker.runtime.artifact_embedding_contract import (
+    has_supported_embedding_tokenizer_files,
     normalized_embedding_hidden_activation,
     supported_sentence_transformer_pooling_mode,
     unsupported_embedding_encoder_config,
@@ -72,6 +73,17 @@ def _positive_int(value: object) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _requested_embedding_dimensions(ext: Mapping[str, object]) -> int | None:
+    raw_value = str(ext.get("embedding_dimensions", "") or "").strip()
+    requested_dimensions = _positive_int(raw_value)
+    if raw_value and requested_dimensions is None:
+        raise ArtifactEmbeddingError(
+            "embedding_dimension_invalid",
+            "Requested embedding dimensions must be a positive integer.",
+        )
+    return requested_dimensions
+
+
 @dataclass(frozen=True)
 class ArtifactEmbeddingDescriptor:
     model_path: Path
@@ -85,6 +97,8 @@ class ArtifactEmbeddingDescriptor:
     tokenizer_hash: str
     pooling_mode: str
     normalization: str
+    artifact_pooling_mode: str
+    artifact_normalization: str
     dimensions: int
     max_length: int
     vector_kind: str
@@ -615,7 +629,7 @@ def inspect_embedding_artifact(model_spec: Any) -> ArtifactEmbeddingDescriptor:
             f"Backend {backend_id} cannot execute model_type {model_type}.",
         )
 
-    requested_dimensions = _positive_int(ext.get("embedding_dimensions"))
+    requested_dimensions = _requested_embedding_dimensions(ext)
     if requested_dimensions is not None and requested_dimensions != dimensions:
         raise ArtifactEmbeddingError(
             "embedding_dimension_mismatch",
@@ -670,10 +684,12 @@ def inspect_embedding_artifact(model_spec: Any) -> ArtifactEmbeddingDescriptor:
         for filename in _TOKENIZER_FILENAMES
         if (candidate := model_path / filename).exists()
     )
-    if not tokenizer_paths:
+    if not has_supported_embedding_tokenizer_files(
+        {path.name for path in tokenizer_paths}
+    ):
         raise ArtifactEmbeddingError(
             "embedding_tokenizer_missing",
-            "Artifact-backed embedding requires local tokenizer files.",
+            "Artifact-backed embedding requires a local vocabulary-bearing tokenizer artifact.",
         )
     tokenizer_config_path = model_path / "tokenizer_config.json"
     tokenizer_config = (
@@ -728,6 +744,8 @@ def inspect_embedding_artifact(model_spec: Any) -> ArtifactEmbeddingDescriptor:
         tokenizer_hash=tokenizer_hash,
         pooling_mode=pooling_mode,
         normalization=normalization,
+        artifact_pooling_mode=artifact_pooling or "",
+        artifact_normalization=artifact_normalization or "",
         dimensions=dimensions,
         max_length=_resolved_max_length(
             model_spec,
@@ -809,13 +827,37 @@ def _record_embedding_request_receipt(
         loaded_model["embedding_request_receipt"] = dict(receipt_copy)
 
 
+def _mlx_active_memory_bytes_from_module(mx: Any) -> int:
+    get_active_memory = getattr(mx, "get_active_memory", None)
+    if not callable(get_active_memory):
+        metal = getattr(mx, "metal", None)
+        get_active_memory = getattr(metal, "get_active_memory", None)
+    if not callable(get_active_memory):
+        raise ArtifactEmbeddingError(
+            "embedding_memory_measurement_unavailable",
+            "The MLX runtime does not expose an active-memory measurement API.",
+        )
+    try:
+        active_memory = int(get_active_memory())
+    except Exception as exc:
+        raise ArtifactEmbeddingError(
+            "embedding_memory_measurement_failed",
+            f"Cannot measure active MLX memory: {exc}",
+        ) from exc
+    if active_memory < 0:
+        raise ArtifactEmbeddingError(
+            "embedding_memory_measurement_failed",
+            "The MLX runtime returned a negative active-memory measurement.",
+        )
+    return active_memory
+
+
 def _mlx_active_memory_bytes() -> int:
     try:
         import mlx.core as mx
     except ImportError:
         return 0
-    get_active_memory = getattr(mx, "get_active_memory", mx.metal.get_active_memory)
-    return int(get_active_memory())
+    return _mlx_active_memory_bytes_from_module(mx)
 
 
 def finite_attention_mask_bias(attention_mask: Any, dtype: Any) -> Any:
@@ -1122,8 +1164,8 @@ class MLXEmbeddingRuntime:
         finally:
             snapshot.close()
         ext = getattr(model_spec, "ext", {})
-        requested_dimensions = _positive_int(ext.get("embedding_dimensions")) or descriptor.dimensions
-        requested_max_length = _positive_int(getattr(model_spec, "max_context", 0)) or descriptor.max_length
+        requested_dimensions = _requested_embedding_dimensions(ext) or 0
+        requested_max_length = _positive_int(getattr(model_spec, "max_context", 0)) or 0
         effective_dtype = str(getattr(backend, "dtype", "") or descriptor.dtype)
         receipt: dict[str, object] = {
             "requested_backend_id": str(ext.get("embedding_backend_id", "") or "").strip(),
@@ -1131,8 +1173,10 @@ class MLXEmbeddingRuntime:
             "model_hash": descriptor.model_hash,
             "tokenizer_hash": descriptor.tokenizer_hash,
             "requested_pooling_mode": str(ext.get("embedding_pooling_mode", "") or "").strip(),
+            "artifact_pooling_mode": descriptor.artifact_pooling_mode,
             "effective_pooling_mode": descriptor.pooling_mode,
             "requested_normalization": str(ext.get("embedding_normalization", "") or "").strip(),
+            "artifact_normalization": descriptor.artifact_normalization,
             "effective_normalization": descriptor.normalization,
             "requested_dimensions": requested_dimensions,
             "effective_dimensions": descriptor.dimensions,

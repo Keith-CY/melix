@@ -21,6 +21,7 @@ def _embedding_config(
     config: dict[str, object] = {
         "model_type": model_type,
         "hidden_size": 4,
+        "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "intermediate_size": 4,
         "vocab_size": 7,
@@ -235,6 +236,7 @@ def test_catalog_projects_supported_artifact_metadata_and_xlmr_identity(
         _embedding_config(position_embedding_type="relative_key"),
         _embedding_config(is_decoder=True),
         _embedding_config(hidden_size=5),
+        _embedding_config(num_hidden_layers=1.5),
         _embedding_config(hidden_act="relu"),
         _embedding_config(vision_config={"component_type": "unsupported"}),
         _embedding_config(embedding_input_modalities="text,image"),
@@ -263,6 +265,7 @@ def test_catalog_refuses_unsupported_artifact_config_contracts(
     "missing_key",
     [
         "hidden_size",
+        "num_hidden_layers",
         "num_attention_heads",
         "intermediate_size",
         "vocab_size",
@@ -309,6 +312,64 @@ def test_catalog_requires_loader_compatible_embedding_files(
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    "auxiliary_filename",
+    ["added_tokens.json", "special_tokens_map.json", "tokenizer_config.json"],
+)
+def test_catalog_refuses_auxiliary_only_tokenizer_artifacts(
+    tmp_path: Path,
+    auxiliary_filename: str,
+) -> None:
+    config = _embedding_config()
+    _write_embedding_files(tmp_path, config)
+    _write_pooling(tmp_path)
+    (tmp_path / "tokenizer.json").unlink()
+    _write_json(tmp_path / auxiliary_filename, {})
+
+    assert model_catalog._artifact_embedding_metadata(
+        tmp_path,
+        config,
+        json_cache={},
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "primary_filenames",
+    [
+        ("tokenizer.json",),
+        ("vocab.txt",),
+        ("sentencepiece.bpe.model",),
+        ("spiece.model",),
+        ("tokenizer.model",),
+        ("vocab.json", "merges.txt"),
+    ],
+)
+def test_catalog_accepts_supported_primary_tokenizer_artifacts(
+    tmp_path: Path,
+    primary_filenames: tuple[str, ...],
+) -> None:
+    config = _embedding_config()
+    _write_embedding_files(tmp_path, config)
+    _write_pooling(tmp_path)
+    (tmp_path / "tokenizer.json").unlink()
+    for filename in primary_filenames:
+        (tmp_path / filename).write_text("{}", encoding="utf-8")
+
+    assert model_catalog._artifact_embedding_metadata(
+        tmp_path,
+        config,
+        json_cache={},
+    ) is not None
+
+    if set(primary_filenames) == {"vocab.json", "merges.txt"}:
+        (tmp_path / "merges.txt").unlink()
+        assert model_catalog._artifact_embedding_metadata(
+            tmp_path,
+            config,
+            json_cache={},
+        ) is None
 
 
 @pytest.mark.parametrize(

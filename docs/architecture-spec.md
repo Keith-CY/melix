@@ -153,6 +153,9 @@ pooling module. A BERT-shaped `model_type` or directory name alone is not
 enough to create an embedding route. The runtime verifies the artifact again at
 load, copies supported files through no-symlink descriptors into a private
 read-only snapshot, and computes model and tokenizer hashes from that snapshot.
+Admission requires a vocabulary-bearing tokenizer artifact; auxiliary token
+metadata alone is not executable. Encoder dimensions include a positive layer
+count, so an empty encoder stack is refused.
 Tokenizer construction and weight loading may consume only the bound snapshot;
 the source model path remains provenance and is not reopened by the backend.
 Media or multi-vector artifacts are refused before model execution. Decoder,

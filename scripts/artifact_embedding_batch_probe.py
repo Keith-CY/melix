@@ -135,6 +135,8 @@ def _descriptor() -> Any:
         tokenizer_hash="sha256:probe",
         pooling_mode="mean",
         normalization="l2",
+        artifact_pooling_mode="",
+        artifact_normalization="",
         dimensions=_DIMENSIONS,
         max_length=32,
         vector_kind="single_dense",

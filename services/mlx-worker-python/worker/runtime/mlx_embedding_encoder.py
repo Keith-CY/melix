@@ -7,6 +7,9 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
+from worker.runtime.artifact_embedding_contract import (
+    invalid_embedding_encoder_positive_int_fields,
+)
 from worker.runtime.artifact_embedding_runtime import (
     ArtifactEmbeddingDescriptor,
     ArtifactEmbeddingError,
@@ -254,23 +257,13 @@ def load_mlx_artifact_backend(
         ) from exc
 
     config = dict(descriptor.config)
-    required_positive_ints = (
-        "hidden_size",
-        "num_attention_heads",
-        "intermediate_size",
-        "vocab_size",
-        "max_position_embeddings",
-    )
-    for key in required_positive_ints:
-        try:
-            valid = int(config.get(key, 0)) > 0
-        except (TypeError, ValueError):
-            valid = False
-        if not valid:
-            raise ArtifactEmbeddingError(
-                "embedding_artifact_invalid_config",
-                f"Embedding config field {key} must be a positive integer.",
-            )
+    invalid_positive_int_fields = invalid_embedding_encoder_positive_int_fields(config)
+    if invalid_positive_int_fields:
+        key = invalid_positive_int_fields[0]
+        raise ArtifactEmbeddingError(
+            "embedding_artifact_invalid_config",
+            f"Embedding config field {key} must be a positive integer.",
+        )
     encoder = MLXBERTEncoder(config, architecture=descriptor.architecture)
     weights = _load_weights(descriptor)
     embedding_weight = weights.get("embeddings.word_embeddings.weight")

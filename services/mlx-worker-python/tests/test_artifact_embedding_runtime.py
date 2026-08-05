@@ -5,6 +5,7 @@ import math
 from dataclasses import replace
 from pathlib import Path
 from threading import get_ident
+from types import SimpleNamespace
 
 import pytest
 
@@ -144,6 +145,7 @@ def _loadable_embedding_config(
     config: dict[str, object] = {
         "model_type": model_type,
         "hidden_size": 4,
+        "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "intermediate_size": 4,
         "vocab_size": 7,
@@ -182,7 +184,7 @@ def _bert_model_spec(model_dir: Path) -> common_pb2.ModelSpec:
 def _write_tiny_bert_checkpoint(
     model_dir: Path,
     *,
-    num_hidden_layers: int = 0,
+    num_hidden_layers: int = 1,
     dtype: str = "float32",
 ) -> None:
     import mlx.core as mx
@@ -291,7 +293,7 @@ def _write_tiny_xlmr_checkpoint(model_dir: Path) -> list[list[float]]:
             "model_type": "xlm-roberta",
             "architectures": ["XLMRobertaModel"],
             "hidden_size": 4,
-            "num_hidden_layers": 0,
+            "num_hidden_layers": 1,
             "num_attention_heads": 2,
             "intermediate_size": 4,
             "vocab_size": vocab_size,
@@ -323,16 +325,28 @@ def _write_tiny_xlmr_checkpoint(model_dir: Path) -> list[list[float]]:
         (-1.0, -1.0, 1.0, 1.0),
     )
     word_embeddings = [list(patterns[index % len(patterns)]) for index in range(vocab_size)]
-    mx.save_safetensors(
-        str(model_dir / "model.safetensors"),
-        {
-            "roberta.embeddings.word_embeddings.weight": mx.array(word_embeddings),
-            "roberta.embeddings.position_embeddings.weight": mx.zeros((16, 4)),
-            "roberta.embeddings.token_type_embeddings.weight": mx.zeros((1, 4)),
-            "roberta.embeddings.LayerNorm.weight": mx.ones((4,)),
-            "roberta.embeddings.LayerNorm.bias": mx.zeros((4,)),
-        },
-    )
+    weights = {
+        "roberta.embeddings.word_embeddings.weight": mx.array(word_embeddings),
+        "roberta.embeddings.position_embeddings.weight": mx.zeros((16, 4)),
+        "roberta.embeddings.token_type_embeddings.weight": mx.zeros((1, 4)),
+        "roberta.embeddings.LayerNorm.weight": mx.ones((4,)),
+        "roberta.embeddings.LayerNorm.bias": mx.zeros((4,)),
+    }
+    prefix = "roberta.encoder.layer.0"
+    for projection in ("query", "key", "value"):
+        weights[f"{prefix}.attention.self.{projection}.weight"] = mx.zeros((4, 4))
+        weights[f"{prefix}.attention.self.{projection}.bias"] = mx.zeros((4,))
+    weights[f"{prefix}.attention.output.dense.weight"] = mx.zeros((4, 4))
+    weights[f"{prefix}.attention.output.dense.bias"] = mx.zeros((4,))
+    weights[f"{prefix}.attention.output.LayerNorm.weight"] = mx.ones((4,))
+    weights[f"{prefix}.attention.output.LayerNorm.bias"] = mx.zeros((4,))
+    weights[f"{prefix}.intermediate.dense.weight"] = mx.zeros((4, 4))
+    weights[f"{prefix}.intermediate.dense.bias"] = mx.zeros((4,))
+    weights[f"{prefix}.output.dense.weight"] = mx.zeros((4, 4))
+    weights[f"{prefix}.output.dense.bias"] = mx.zeros((4,))
+    weights[f"{prefix}.output.LayerNorm.weight"] = mx.ones((4,))
+    weights[f"{prefix}.output.LayerNorm.bias"] = mx.zeros((4,))
+    mx.save_safetensors(str(model_dir / "model.safetensors"), weights)
     return word_embeddings
 
 
@@ -390,8 +404,10 @@ def test_load_model_binds_local_bert_artifact_and_effective_receipt(
     assert receipt["requested_backend_id"] == "mlx-bert-v1"
     assert receipt["effective_backend_id"] == "mlx-bert-v1"
     assert receipt["requested_pooling_mode"] == "mean"
+    assert receipt["artifact_pooling_mode"] == ""
     assert receipt["effective_pooling_mode"] == "mean"
     assert receipt["requested_normalization"] == "l2"
+    assert receipt["artifact_normalization"] == ""
     assert receipt["effective_normalization"] == "l2"
     assert receipt["requested_dimensions"] == 4
     assert receipt["effective_dimensions"] == 4
@@ -480,6 +496,7 @@ def test_load_model_does_not_misclassify_roberta_as_xlmr(tmp_path: Path) -> None
         ("pooling_unsupported", "embedding_pooling_unsupported"),
         ("normalization_unsupported", "embedding_normalization_unsupported"),
         ("tokenizer_missing", "embedding_tokenizer_missing"),
+        ("tokenizer_incomplete_bpe", "embedding_tokenizer_missing"),
         ("weights_missing", "embedding_weights_missing"),
         ("max_length_missing", "embedding_artifact_unsupported_config"),
         ("multi_vector", "embedding_multi_vector_unsupported"),
@@ -522,6 +539,10 @@ def test_artifact_inspection_fails_closed_for_invalid_contracts(
         model_spec.ext["embedding_normalization"] = "layer_norm"
     elif case == "tokenizer_missing":
         (model_dir / "tokenizer.json").unlink()
+        _write_json(model_dir / "tokenizer_config.json", {"model_max_length": 16})
+    elif case == "tokenizer_incomplete_bpe":
+        (model_dir / "tokenizer.json").unlink()
+        _write_json(model_dir / "vocab.json", {"alpha": 0})
     elif case == "weights_missing":
         (model_dir / "model.safetensors").unlink()
     elif case == "max_length_missing":
@@ -554,6 +575,25 @@ def test_artifact_inspection_fails_closed_for_invalid_contracts(
         inspect_embedding_artifact(model_spec)
 
     assert caught.value.code == expected_code
+
+
+@pytest.mark.parametrize("requested_dimensions", ["0", "-1", "invalid"])
+def test_artifact_inspection_rejects_explicit_invalid_dimension_overrides(
+    tmp_path: Path,
+    requested_dimensions: str,
+) -> None:
+    model_dir = tmp_path / "artifact"
+    model_dir.mkdir()
+    _write_json(model_dir / "config.json", _loadable_embedding_config())
+    _write_json(model_dir / "tokenizer.json", {"version": "1.0"})
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    model_spec = _bert_model_spec(model_dir)
+    model_spec.ext["embedding_dimensions"] = requested_dimensions
+
+    with pytest.raises(ArtifactEmbeddingError) as caught:
+        inspect_embedding_artifact(model_spec)
+
+    assert caught.value.code == "embedding_dimension_invalid"
 
 
 @pytest.mark.parametrize(
@@ -929,6 +969,47 @@ def test_embedding_runtime_routes_artifacts_fixtures_and_fallback_handles() -> N
         runtime.load_model(common_pb2.ModelSpec(model_id="missing-backend"))
     assert missing_backend.value.code == "embedding_backend_unsupported"
 
+    for legacy_backend_id in ("bert-v1", "xlmr-v1"):
+        with pytest.raises(
+            ArtifactEmbeddingError,
+            match="use deterministic-fixture-v1.*explicit mlx-",
+        ) as legacy_backend:
+            runtime.load_model(
+                common_pb2.ModelSpec(
+                    model_id="legacy",
+                    ext={"embedding_backend_id": legacy_backend_id},
+                )
+            )
+        assert legacy_backend.value.code == "embedding_backend_unsupported"
+
+
+def test_mlx_memory_measurement_selects_available_api_and_fails_typed() -> None:
+    assert artifact_runtime._mlx_active_memory_bytes_from_module(
+        SimpleNamespace(get_active_memory=lambda: 123)
+    ) == 123
+    assert artifact_runtime._mlx_active_memory_bytes_from_module(
+        SimpleNamespace(metal=SimpleNamespace(get_active_memory=lambda: 456))
+    ) == 456
+
+    with pytest.raises(ArtifactEmbeddingError) as unavailable:
+        artifact_runtime._mlx_active_memory_bytes_from_module(SimpleNamespace())
+    assert unavailable.value.code == "embedding_memory_measurement_unavailable"
+
+    with pytest.raises(ArtifactEmbeddingError) as failed:
+        artifact_runtime._mlx_active_memory_bytes_from_module(
+            SimpleNamespace(get_active_memory=lambda: -1)
+        )
+    assert failed.value.code == "embedding_memory_measurement_failed"
+
+    def fail_measurement() -> int:
+        raise RuntimeError("measurement failed")
+
+    with pytest.raises(ArtifactEmbeddingError) as raised:
+        artifact_runtime._mlx_active_memory_bytes_from_module(
+            SimpleNamespace(get_active_memory=fail_measurement)
+        )
+    assert raised.value.code == "embedding_memory_measurement_failed"
+
 
 def test_mlx_encoder_rejects_invalid_attention_activation_and_weights(
     tmp_path: Path,
@@ -1019,6 +1100,15 @@ def test_mlx_loader_normalizes_tokenizer_config_and_weight_failures(
     with pytest.raises(ArtifactEmbeddingError) as config_error:
         mlx_encoder.load_mlx_artifact_backend(invalid_config)
     assert config_error.value.code == "embedding_artifact_invalid_config"
+
+    for layer_count in (None, 0, 1.5, "invalid"):
+        invalid_layers = replace(
+            descriptor,
+            config={**descriptor.config, "num_hidden_layers": layer_count},
+        )
+        with pytest.raises(ArtifactEmbeddingError) as layer_error:
+            mlx_encoder.load_mlx_artifact_backend(invalid_layers)
+        assert layer_error.value.code == "embedding_artifact_invalid_config"
 
     monkeypatch.setattr(mlx_encoder, "_load_weights", lambda _descriptor: {})
     with pytest.raises(ArtifactEmbeddingError) as weights_error:
@@ -1344,9 +1434,52 @@ def test_load_model_resolves_sentence_transformers_pooling_and_normalization(
     assert descriptor.pooling_mode == "mean"
     assert descriptor.normalization == "l2"
     assert loaded["embedding_load_receipt"]["requested_pooling_mode"] == ""
+    assert loaded["embedding_load_receipt"]["artifact_pooling_mode"] == "mean"
     assert loaded["embedding_load_receipt"]["effective_pooling_mode"] == "mean"
     assert loaded["embedding_load_receipt"]["requested_normalization"] == ""
+    assert loaded["embedding_load_receipt"]["artifact_normalization"] == "l2"
     assert loaded["embedding_load_receipt"]["effective_normalization"] == "l2"
+
+
+def test_load_receipt_distinguishes_artifact_contract_overrides_and_unset_limits(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "sentence-transformers-override"
+    _write_tiny_bert_checkpoint(model_dir)
+    pooling_dir = model_dir / "1_Pooling"
+    pooling_dir.mkdir()
+    _write_json(
+        pooling_dir / "config.json",
+        {
+            "pooling_mode_mean_tokens": True,
+            "word_embedding_dimension": 4,
+        },
+    )
+    normalize_dir = model_dir / "2_Normalize"
+    normalize_dir.mkdir()
+    _write_json(normalize_dir / "config.json", {})
+    model_spec = _bert_model_spec(model_dir)
+    model_spec.ext["embedding_pooling_mode"] = "cls"
+    model_spec.ext["embedding_normalization"] = "none"
+    del model_spec.ext["embedding_dimensions"]
+    model_spec.max_context = 0
+
+    loaded = MLXEmbeddingRuntime(
+        backend_loader=RecordingBackendLoader(),
+        active_memory_bytes=lambda: 0,
+    ).load_model(model_spec)
+    receipt = loaded["embedding_load_receipt"]
+
+    assert receipt["requested_pooling_mode"] == "cls"
+    assert receipt["artifact_pooling_mode"] == "mean"
+    assert receipt["effective_pooling_mode"] == "cls"
+    assert receipt["requested_normalization"] == "none"
+    assert receipt["artifact_normalization"] == "l2"
+    assert receipt["effective_normalization"] == "none"
+    assert receipt["requested_dimensions"] == 0
+    assert receipt["effective_dimensions"] == 4
+    assert receipt["requested_max_length"] == 0
+    assert receipt["effective_max_length"] == 8
 
 
 def test_sentence_transformers_modules_select_contract_and_max_length(
@@ -2038,6 +2171,8 @@ def test_catalog_refuses_unsupported_artifact_embedding_output_contracts(
         {"add_cross_attention": True},
         {"cross_attention_hidden_size": 4},
         {"hidden_size": 0},
+        {"num_hidden_layers": 0},
+        {"num_hidden_layers": 1.5},
         {"num_attention_heads": 0},
         {"intermediate_size": 0},
         {"vocab_size": 0},
@@ -2094,6 +2229,7 @@ def test_catalog_and_encoder_share_hidden_activation_normalization(
     "missing_key",
     [
         "hidden_size",
+        "num_hidden_layers",
         "num_attention_heads",
         "intermediate_size",
         "vocab_size",

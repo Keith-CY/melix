@@ -601,7 +601,11 @@ Artifact load evidence is projected into `LoadedModelSummary.model.ext` under
 the versioned `melix.embedding.load.*` namespace. It records requested and
 effective backend, pooling, normalization, dimensions, and maximum length plus
 model hash, tokenizer hash, vector kind, dtype, estimated resident bytes, and
-measured resident bytes. Request-local batch size, token count, forward count,
+measured resident bytes. Unrequested numeric fields remain zero rather than
+copying effective values; an explicitly supplied invalid dimension is refused
+rather than represented as unrequested. Artifact-declared pooling and normalization are
+recorded separately from requested overrides and effective execution values.
+Request-local batch size, token count, forward count,
 shape, dtype, and finite-output evidence is retained in a bounded,
 request-ID-keyed worker store. `ListLoadedModels` projects the latest entry into
 `LoadedModelSummary.model.ext` under `melix.embedding.request.*`. Typed artifact
