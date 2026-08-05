@@ -226,10 +226,11 @@ false. No L2 metadata restore may be credited as saved prefill work.
   negative reference counts, p95 warm lookup plus view construction below
   1 ms, and p95 single-layer attention gather for one decode update below 1 ms
   on the local Apple Silicon host. These latency budgets are enforced by the
-  non-instrumented focused test. The changed-line coverage run still executes
-  the measurement and correctness paths, but it marks its instrumented process
-  and does not enforce wall-clock microbenchmark budgets because coverage
-  instrumentation is not a valid latency environment.
+  non-instrumented focused test on local and controlled self-hosted runners.
+  The GitHub-hosted and changed-line coverage runs still execute the measurement
+  and correctness paths, but do not enforce wall-clock microbenchmark budgets:
+  shared-runner scheduling and coverage instrumentation are not valid absolute
+  latency environments.
 - The paired probe starts contiguous and paged measurement from MLX active
   baselines within 64 KiB, reports more than one concurrent sample for each
   mode, and covers at least four live sessions through prefill and batched

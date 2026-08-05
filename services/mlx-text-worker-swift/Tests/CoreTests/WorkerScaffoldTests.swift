@@ -15010,7 +15010,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(pool.stats().entryCount, 0)
     }
 
-    func testPagedKVLatencyBudgetsRemainEnabledOutsideInstrumentedCoverage() {
+    func testPagedKVLatencyBudgetsRemainEnabledOnlyOnStableHosts() {
         XCTAssertTrue(pagedKVLatencyBudgetsAreEnforced(environment: [:]))
         XCTAssertTrue(
             pagedKVLatencyBudgetsAreEnforced(
@@ -15020,6 +15020,16 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertFalse(
             pagedKVLatencyBudgetsAreEnforced(
                 environment: ["MELIX_PAGED_KV_INSTRUMENTED_COVERAGE": "1"]
+            )
+        )
+        XCTAssertTrue(
+            pagedKVLatencyBudgetsAreEnforced(
+                environment: ["RUNNER_ENVIRONMENT": "self-hosted"]
+            )
+        )
+        XCTAssertFalse(
+            pagedKVLatencyBudgetsAreEnforced(
+                environment: ["RUNNER_ENVIRONMENT": "github-hosted"]
             )
         )
     }
@@ -19917,6 +19927,7 @@ private actor WorkerScaffoldAsyncGate {
 
 private func pagedKVLatencyBudgetsAreEnforced(environment: [String: String]) -> Bool {
     environment["MELIX_PAGED_KV_INSTRUMENTED_COVERAGE"] != "1"
+        && environment["RUNNER_ENVIRONMENT"] != "github-hosted"
 }
 
 @available(macOS 15.0, *)
