@@ -69,7 +69,7 @@ def test_embeddings_endpoint_supports_xlmr_backend_override() -> None:
     bert_stack = LiveMelixStack(repo_root)
     xlmr_stack = LiveMelixStack(
         repo_root,
-        environment_overrides={"MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1"},
+        environment_overrides={"MELIX_DEV_EMBED_FAMILY_ID": "xlmr"},
     )
 
     try:

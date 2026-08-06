@@ -248,12 +248,25 @@ class MXBAIEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
         )
 
 
-def resolve_embedding_backend(backend_id: str) -> DeterministicEmbeddingBackend:
+def legacy_embedding_backend_error_message(backend_id: str) -> str:
+    return (
+        f"Legacy embedding backend {backend_id} is no longer executable; "
+        "use deterministic-fixture-v1 for development fixtures or an explicit mlx-* artifact backend."
+    )
+
+
+def resolve_embedding_backend(
+    backend_id: str,
+    family_id: str = "",
+) -> DeterministicEmbeddingBackend:
     normalized = backend_id.strip().lower()
-    if normalized == "" or normalized == "bert-v1":
-        return BERTEmbeddingBackend()
-    if normalized == "xlmr-v1":
-        return XLMREmbeddingBackend()
+    normalized_family = family_id.strip().lower()
+    if normalized == "deterministic-fixture-v1":
+        return XLMREmbeddingBackend() if normalized_family == "xlmr" else BERTEmbeddingBackend()
+    if normalized in {"bert-v1", "xlmr-v1"}:
+        raise ValueError(legacy_embedding_backend_error_message(backend_id))
+    if normalized == "":
+        raise ValueError("Embedding backend must be explicit.")
     raise ValueError(f"Unsupported embedding backend: {backend_id}")
 
 

@@ -1106,7 +1106,8 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.ext["text_family_id"] == "llama")
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.ext["melix.capability.route_kind"] == "swift_text")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.routeClass == .workerRoutePythonEmbedding)
-        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_backend_id"] == "bert-v1")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_backend_id"] == "deterministic-fixture-v1")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_execution_kind"] == "fixture")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_family_id"] == "bert")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["melix.adapter_set_hash"] == "embedding-family-bert")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["melix.capability.route_kind"] == "python_embedding")
@@ -1216,7 +1217,8 @@ struct ModelCatalogTests {
             "MELIX_DEV_EMBED_MODEL_PATH": "models/mxbai-embed-large-v1",
         ])
 
-        #expect(model.settings.ext["embedding_backend_id"] == "bert-v1")
+        #expect(model.settings.ext["embedding_backend_id"] == "deterministic-fixture-v1")
+        #expect(model.settings.ext["embedding_execution_kind"] == "fixture")
         #expect(model.settings.ext["embedding_family_id"] == "mxbai-embed")
         #expect(model.settings.ext["embedding_pooling_mode"] == "mean")
         #expect(model.settings.ext["embedding_dimensions"] == "10")
@@ -1241,7 +1243,7 @@ struct ModelCatalogTests {
 
         #expect(bge.settings.ext["embedding_family_id"] == "bge-m3")
         #expect(bge.settings.ext["detected_family_id"] == "bge-m3")
-        #expect(xlmr.settings.ext["embedding_backend_id"] == "xlmr-v1")
+        #expect(xlmr.settings.ext["embedding_backend_id"] == "deterministic-fixture-v1")
         #expect(xlmr.settings.ext["embedding_family_id"] == "xlmr")
         #expect(xlmr.settings.ext["model_architecture"] == "xlmr")
         #expect(bert.settings.ext["embedding_family_id"] == "bert")
@@ -1255,14 +1257,15 @@ struct ModelCatalogTests {
         ])
         let backendOverride = ModelCatalog.devEmbeddingModel(environment: [
             "MELIX_DEV_EMBED_MODEL_PATH": "models/bert-base",
-            "MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1",
+            "MELIX_DEV_EMBED_BACKEND_ID": "mlx-xlmr-v1",
         ])
 
-        #expect(familyOverride.settings.ext["embedding_backend_id"] == "xlmr-v1")
+        #expect(familyOverride.settings.ext["embedding_backend_id"] == "deterministic-fixture-v1")
         #expect(familyOverride.settings.ext["embedding_family_id"] == "xlmr")
         #expect(familyOverride.settings.ext["model_architecture"] == "xlmr")
         #expect(familyOverride.settings.ext["identity_override"] == "true")
         #expect(backendOverride.settings.ext["embedding_family_id"] == "xlmr")
+        #expect(backendOverride.settings.ext["embedding_backend_id"] == "mlx-xlmr-v1")
         #expect(backendOverride.settings.ext["model_architecture"] == "xlmr")
     }
 
