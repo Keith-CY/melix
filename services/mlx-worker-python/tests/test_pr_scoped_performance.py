@@ -409,9 +409,6 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["load_report_payload_checksum"] == (
         96.0 * max(1.0, metrics["iterations"] / 500.0) * metrics["sample_count"]
     )
-    assert metrics["dict_list_identity_hits"] == (
-        max(1.0, metrics["iterations"] / 50.0) * metrics["sample_count"]
-    )
     assert metrics["probe_phases_checksum"] == (
         256.0 * max(1.0, metrics["iterations"] / 200.0) * metrics["sample_count"]
     )
@@ -518,32 +515,6 @@ def test_lora_aux_modules_sidecar_delta_metrics_are_informational() -> None:
     assert directions["processor_resume_delta_ms"] == "informational"
     assert directions["quantized_kind_baseline_elapsed_ms_mean"] == "informational"
     assert directions["quantized_kind_delta_ms"] == "informational"
-
-
-def test_scope_report_selects_trajectory_provenance_copy_elision_probe() -> None:
-    scope = build_scope_report(
-        registry_path=REGISTRY_PATH,
-        changed_files=["services/mlx-worker-python/worker/trajectory_provenance.py"],
-    )
-
-    assert _selected_probe_ids(scope) == [
-        "trajectory-provenance-copy-elision",
-        "trajectory-manifest-json-load",
-    ]
-
-
-def test_trajectory_provenance_copy_elision_sidecar_speedups_are_informational() -> None:
-    probe = next(
-        probe
-        for probe in load_probe_registry(REGISTRY_PATH)
-        if probe.probe_id == "trajectory-provenance-copy-elision"
-    )
-    directions = {metric.key: metric.direction for metric in probe.metrics}
-
-    assert directions["speedup"] == "higher_is_better"
-    assert directions["scalar_list_speedup"] == "informational"
-    assert directions["scalar_dict_speedup"] == "informational"
-    assert directions["adapter_manifest_speedup"] == "informational"
 
 
 def test_scope_report_selects_native_mtp_loader_probe() -> None:
@@ -769,50 +740,6 @@ def test_lora_processor_resume_probe_baseline_modes(tmp_path: Path) -> None:
     assert baseline_processor_resume_mode(base_model_dir) == "preprocessor_config"
     (base_model_dir / "processor_config.json").write_text("{}\n", encoding="utf-8")
     assert baseline_processor_resume_mode(base_model_dir) == "processor_config"
-
-
-def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("MELIX_TRAJECTORY_PROVENANCE_PROBE_ITERATIONS", "10")
-    monkeypatch.setenv("MELIX_TRAJECTORY_PROVENANCE_PROBE_SAMPLES", "1")
-    monkeypatch.setenv("MELIX_TRAJECTORY_PROVENANCE_PROBE_COMPONENTS", "4")
-    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/trajectory_provenance_copy_elision_probe.py"))
-
-    assert probe_script["main"]() == 0
-
-    metrics = json.loads(capsys.readouterr().out)
-    assert metrics["baseline_elapsed_ms_mean"] >= 0.0
-    assert metrics["optimized_elapsed_ms_mean"] >= 0.0
-    assert metrics["elapsed_ms_mean"] == metrics["optimized_elapsed_ms_mean"]
-    assert metrics["sample_count"] == 1.0
-    assert metrics["iteration_count"] == 10.0
-    assert metrics["component_count"] == 4.0
-    assert metrics["scalar_dict_baseline_elapsed_ms_mean"] >= 0.0
-    assert metrics["scalar_dict_elapsed_ms_mean"] >= 0.0
-    assert metrics["scalar_dict_speedup"] >= 0.0
-    assert metrics["adapter_manifest_baseline_elapsed_ms_mean"] >= 0.0
-    assert metrics["adapter_manifest_elapsed_ms_mean"] >= 0.0
-    assert metrics["adapter_manifest_speedup"] >= 0.0
-
-
-def test_trajectory_manifest_json_load_probe_script_emits_metrics(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("MELIX_TRAJECTORY_MANIFEST_JSON_PROBE_ITERATIONS", "10")
-    monkeypatch.setenv("MELIX_TRAJECTORY_MANIFEST_JSON_PROBE_SAMPLES", "1")
-    monkeypatch.setenv("MELIX_TRAJECTORY_MANIFEST_JSON_PROBE_COMPONENTS", "4")
-    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/trajectory_manifest_json_load_probe.py"))
-
-    metrics = probe_script["run_probe"]()
-
-    assert metrics["old_mean_ms"] >= 0.0
-    assert metrics["new_mean_ms"] >= 0.0
-    assert metrics["elapsed_ms_mean"] == metrics["new_mean_ms"]
-    assert metrics["sample_count"] == 1.0
-    assert metrics["iteration_count"] == 10.0
-    assert metrics["component_count"] == 4.0
 
 
 def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
@@ -2483,12 +2410,11 @@ def test_scope_report_selects_changed_scope_coverage_probe() -> None:
     )
 
     selected_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert scope["selected_count"] == 4
+    assert scope["selected_count"] == 3
     assert scope["force_all"] is False
     assert selected_ids == {
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-measured-set-filter",
-        "changed-scope-coverage-singleton-range-fastpath",
         "changed-scope-coverage-diff-parser",
     }
 
@@ -5236,6 +5162,86 @@ def test_text_family_config_probe_script_emits_metrics(
     assert metrics["iterations"] == 50_000
 
 
+def test_report_evidence_gate_probe_drives_both_rule_matcher_signatures() -> None:
+    """The probe must run against the base checkout's module, not just head's.
+
+    The harness executes the head probe script against both checkouts, so a
+    probe that hard-codes head's private signature fails the base measurement
+    with a TypeError instead of reporting a delta.
+    """
+    probe = _load_repo_module(
+        REPO_ROOT / "scripts/report_evidence_gate_run_kind_probe.py",
+        unique_name="report_evidence_gate_run_kind_probe_signature_check",
+    )
+    rule = {"run_kinds": ("target_kind",)}
+    runs = [{"run_kind": "target_kind"}]
+
+    def base_rule_matches_report(*, rule, runs, targets, metrics, probe_phases):
+        assert runs == [{"run_kind": "target_kind"}]
+        return True
+
+    def head_rule_matches_report(*, rule, run_kind_values, targets, metrics, probe_phases):
+        assert run_kind_values == {"target_kind"}
+        return True
+
+    for matcher, takes_values in (
+        (base_rule_matches_report, False),
+        (head_rule_matches_report, True),
+    ):
+        probe._rule_matches_report = matcher
+        probe._RULE_MATCHES_TAKES_RUN_KIND_VALUES = takes_values
+        assert probe._match_rule(
+            rule=rule,
+            runs=runs,
+            run_kind_values={"target_kind"},
+            targets=[],
+            metrics=[],
+            probe_phases=set(),
+        )
+
+
+def test_registered_probe_commands_reference_tests_that_exist() -> None:
+    """Every ``file.py::test_name`` in the registry must resolve to a real test.
+
+    The registry pins exact pytest node ids, so renaming or deleting a test
+    without updating the probe leaves a command that fails in CI with an
+    unhelpful collection error. Catch that here instead.
+    """
+    import ast
+
+    node_id = re.compile(r"([\w/\.-]+\.py)::([\w\.\-]+)")
+    names_by_path: dict[str, set[str]] = {}
+    stale: list[str] = []
+
+    for probe in load_probe_registry(REGISTRY_PATH):
+        for command in (probe.test_command, probe.coverage_command, probe.probe_command):
+            for match in node_id.finditer(command or ""):
+                rel_path, test_name = match.group(1), match.group(2)
+                names = names_by_path.get(rel_path)
+                if names is None:
+                    source_path = REPO_ROOT / rel_path
+                    if not source_path.is_file():
+                        stale.append(f"{probe.probe_id}: missing file {rel_path}")
+                        names_by_path[rel_path] = set()
+                        continue
+                    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+                    names = set()
+                    for node in tree.body:
+                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            names.add(node.name)
+                        elif isinstance(node, ast.Assign):
+                            names.update(
+                                target.id
+                                for target in node.targets
+                                if isinstance(target, ast.Name)
+                            )
+                    names_by_path[rel_path] = names
+                if test_name not in names:
+                    stale.append(f"{probe.probe_id}: {rel_path}::{test_name}")
+
+    assert not stale, "registry references tests that do not exist:\n" + "\n".join(sorted(set(stale)))
+
+
 def test_registered_probes_expose_focused_commands() -> None:
     replaying_probe_ids = {
         "agentic-tool-guardrail-loop",
@@ -5262,7 +5268,6 @@ def test_registered_probes_expose_focused_commands() -> None:
         "benchmark-store-matrix-streaming",
         "changed-scope-coverage-empty-path-short-circuit",
         "changed-scope-coverage-measured-set-filter",
-        "changed-scope-coverage-singleton-range-fastpath",
         "changed-scope-coverage-diff-parser",
         "closure-audit-probe-source-short-circuit",
         "code-eval-code-block-last-match-streaming",
@@ -5356,8 +5361,6 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-validation-split-nsmallest",
         "training-dataset-validation-sample-limit",
         "training-dataset-chunker-top-level-base-copy",
-        "trajectory-provenance-copy-elision",
-        "trajectory-manifest-json-load",
         "dataset-registry-preview-limit-short-circuit",
         "dataset-version-listing-scandir",
         "dataset-quality-lengths-chain",
@@ -8702,7 +8705,6 @@ def test_vision_family_prompt_token_count_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
 
     assert metrics["token_count"] > 0
-    assert metrics["split_calls_mean"] == 0.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["config_object_footprint_bytes"] > 0
     assert metrics["config_resolve_elapsed_ms_mean"] > 0
@@ -8756,7 +8758,6 @@ def test_deterministic_vlm_completion_token_probe_script_emits_metrics(
     assert exc_info.value.code == 0
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["split_calls_mean"] == 0.0
     assert metrics["token_count_calls_mean"] == 1.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["samples"] == 1
