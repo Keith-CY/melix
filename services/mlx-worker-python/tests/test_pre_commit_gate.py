@@ -589,7 +589,7 @@ def test_run_gate_uses_merge_head_as_performance_scope_base(monkeypatch, tmp_pat
 def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path: Path) -> None:
     observed_base_refs: list[str] = []
     observed_head_base_refs: list[str | None] = []
-    observed_probe_base_refs: list[str | None] = []
+    observed_probe_base_refs: list[tuple[str | None, str | None]] = []
     monkeypatch.setattr(pre_commit_gate, "_report_run_dir", lambda root: tmp_path / "run")
     monkeypatch.setattr(
         pre_commit_gate,
@@ -619,7 +619,10 @@ def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path
     monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", export_base)
     def run_probe(**kwargs):
         observed_probe_base_refs.append(
-            kwargs["env"].get("MELIX_BACKEND_IDENTITY_COVERAGE_DIFF_FROM")
+            (
+                kwargs["env"].get("MELIX_BACKEND_IDENTITY_COVERAGE_DIFF_FROM"),
+                kwargs["env"].get("MELIX_PAGED_KV_COVERAGE_DIFF_FROM"),
+            )
         )
         return ({"probe": {"id": "probe-one"}}, True)
 
@@ -645,7 +648,7 @@ def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path
     assert outcome.status == "ok"
     assert observed_head_base_refs == ["merge-head"]
     assert observed_base_refs == ["merge-head"]
-    assert observed_probe_base_refs == ["HEAD"]
+    assert observed_probe_base_refs == [("HEAD", "HEAD")]
 
 
 def test_run_performance_report_preserves_repeat_group_report_rows(

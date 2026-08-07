@@ -869,10 +869,41 @@ def test_package_workflow_builds_isolated_tag_candidate_without_release_trust() 
     package_step = find_workflow_step(workflow, "Package self-contained Melix.app")
     assert "IS_RELEASE_CANDIDATE:" in package_step
     assert 'if [ "$IS_RELEASE_CANDIDATE" = "true" ]; then' in package_step
+    assert "candidate_arguments" not in package_step
+    assert 'bundle_id="io.melix.menubar.preview"' in package_step
+    assert 'packaging_target_id="macos_app_bundle_preview"' in package_step
+    assert '--bundle-id "$bundle_id"' in package_step
+    assert '--packaging-target-id "$packaging_target_id"' in package_step
     assert '"io.melix.menubar.release-candidate"' in package_step
     assert '"macos_app_bundle_github_release_candidate"' in package_step
     for protected_input in ("secrets.", "vars.", "--sparkle-public-ed-key", "--codesign-identity"):
         assert protected_input not in package_step
+
+
+def test_package_workflow_launches_assembled_app_and_requires_health() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    package_step = find_named_workflow_step(workflow, "Package self-contained Melix.app")
+    launch_step = find_run_workflow_step(
+        workflow,
+        "Verify packaged Melix.app launch",
+        'curl --fail --silent --show-error "$health_url"',
+    )
+    launch_body = launch_step.group(0)
+
+    assert package_step.end() < launch_step.start()
+    assert "MELIX_HOME:" in launch_body
+    assert "MELIX_RUNTIME_DIR:" in launch_body
+    assert "MELIX_HTTP_PORT:" in launch_body
+    assert "MELIX_SERVICE_INSTANCE_NAME:" in launch_body
+    assert '"$RUNNER_TEMP/Melix.app/Contents/MacOS/Melix"' in launch_body
+    assert "active-runtime.json" in launch_body
+    assert "control_plane_process_id" in launch_body
+    assert "python_worker_process_id" in launch_body
+    assert "swift_text_worker_process_id" in launch_body
+    assert "os.kill(process_id, 0)" in launch_body
+    assert "time.monotonic() + 5.0" in launch_body
+    assert "trap cleanup EXIT" in launch_body
 
 
 def test_package_workflow_prepares_and_cleans_identity_only_in_protected_job() -> None:

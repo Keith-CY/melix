@@ -4615,10 +4615,15 @@ public actor ControlPlaneService {
             controlPlaneDiskStreamingMode(for: $0.settings.diskStreamingMode)
         } ?? .diskStreamingDisabled
         let resolvedRoute: WorkerRouteKind?
-        if let workerRegistry {
+        if let workerRegistry,
+           let resolvedModel = hydratedCatalogModel ?? catalogModel {
+            resolvedRoute = await workerRegistry.route(for: resolvedModel)
+        } else if let workerRegistry {
             resolvedRoute = await workerRegistry.route(forModelID: modelID)
         } else {
-            resolvedRoute = nil
+            resolvedRoute = (hydratedCatalogModel ?? catalogModel).flatMap {
+                WorkerRouteKind(routeClass: $0.routeClass)
+            }
         }
         guard let workerRegistry,
               let modelSpec = hydratedPreparedModelSpec ?? preparedModelSpec,
@@ -4628,6 +4633,25 @@ public actor ControlPlaneService {
             let fallbackRouteKind = resolvedRoute ?? .swiftText
             let loadTrustPolicy = fallbackRoute.map {
                 ModelLoadTrustPolicyResolver.resolvePolicy(for: $0, route: fallbackRouteKind)
+            }
+            if fallbackRouteKind.isPythonWorkerRoute {
+                let missingSpec = (hydratedPreparedModelSpec ?? preparedModelSpec) == nil
+                let errorCode = missingSpec ? "worker_model_spec_missing" : "worker_unavailable"
+                let failedModel = await modelCatalog.recordLoadFailed(
+                    id: modelID,
+                    reason: "\(reason)_\(errorCode)",
+                    loadTrust: loadTrustPolicy
+                ) ?? Melix_Controlplane_V1_ModelSummary()
+                var error = Melix_Controlplane_V1_ErrorStatus()
+                error.code = errorCode
+                error.message = missingSpec
+                    ? "The worker-backed model is missing an executable model specification."
+                    : "The required worker route is unavailable."
+                error.details = [
+                    "model_id": modelID,
+                    "route": fallbackRouteKind.rawValue,
+                ]
+                return ModelLoadOutcome(model: hydrate(failedModel), error: error)
             }
             if requestedDiskStreamingMode == .diskStreamingPreferDisk
                 || requestedDiskStreamingMode == .diskStreamingRequireDisk {

@@ -57,8 +57,18 @@ _SPARKLE_EXECUTABLE_RPATH = "@loader_path/../Frameworks"
 _CERTIFICATE_SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 _CERTIFICATE_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MACOS_PLATFORM_RE = re.compile(r"\.macOS\(\.v(?P<major>[1-9][0-9]*)\)")
+_VERSIONED_PYTHON_EXECUTABLE_RE = re.compile(r"^python3\.[1-9][0-9]*$")
 _RELEASE_BUNDLE_ID = "io.melix.menubar"
 _RELEASE_PACKAGING_TARGET_ID = "macos_app_bundle_github_release"
+_DISABLE_LIBRARY_VALIDATION_ENTITLEMENTS = {
+    "com.apple.security.cs.disable-library-validation": True,
+}
+_DYNAMIC_CODE_HOST_RELATIVE_PATHS = frozenset(
+    (
+        Path("Contents/Resources/melix-menubar"),
+        Path("Contents/Resources/melix-text-worker-swift"),
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -1383,6 +1393,17 @@ class MacOSCodeSigningTarget:
     path: Path
     role: str
     preserve_entitlements: bool = False
+    disable_library_validation: bool = False
+
+
+def _is_packaged_dynamic_code_host(app: Path, path: Path) -> bool:
+    relative_path = path.relative_to(app)
+    if relative_path in _DYNAMIC_CODE_HOST_RELATIVE_PATHS:
+        return True
+    return (
+        relative_path.parent == Path("Contents/Resources/python-runtime/bin")
+        and _VERSIONED_PYTHON_EXECUTABLE_RE.fullmatch(relative_path.name) is not None
+    )
 
 
 def macos_code_signing_plan(app_path: str | Path) -> list[MacOSCodeSigningTarget]:
@@ -1429,7 +1450,12 @@ def macos_code_signing_plan(app_path: str | Path) -> list[MacOSCodeSigningTarget
         key=lambda path: (-len(path.relative_to(app).parts), path.as_posix())
     )
     plan.extend(
-        MacOSCodeSigningTarget(path, "nested_macho") for path in other_macho_targets
+        MacOSCodeSigningTarget(
+            path,
+            "nested_macho",
+            disable_library_validation=_is_packaged_dynamic_code_host(app, path),
+        )
+        for path in other_macho_targets
     )
     plan.append(MacOSCodeSigningTarget(app, "outer_app"))
     return plan
@@ -1572,7 +1598,11 @@ def sign_macos_app_bundle(
             "Code-signing identity must match the expected certificate SHA-1"
         )
 
-    def sign_command(target: MacOSCodeSigningTarget) -> list[str]:
+    def sign_command(
+        target: MacOSCodeSigningTarget,
+        *,
+        library_validation_entitlements_path: Path,
+    ) -> list[str]:
         command = [
             codesign,
             "--force",
@@ -1586,18 +1616,54 @@ def sign_macos_app_bundle(
             command.extend(["--keychain", os.fspath(normalized_keychain)])
         if target.preserve_entitlements:
             command.append("--preserve-metadata=entitlements")
+        elif target.disable_library_validation:
+            command.extend(
+                ["--entitlements", os.fspath(library_validation_entitlements_path)]
+            )
         command.append(os.fspath(target.path))
         return command
 
     try:
         plan = macos_code_signing_plan(app)
-        entitlement_snapshots = {
-            target.path: _canonical_codesign_entitlements(codesign, target.path)
+        if any(
+            target.preserve_entitlements and target.disable_library_validation
             for target in plan
-            if target.preserve_entitlements
-        }
+        ):
+            raise RuntimeError(
+                "A code-signing target cannot preserve entitlements and receive the "
+                "library-validation exception"
+            )
+        expected_library_validation_entitlements = plistlib.dumps(
+            _DISABLE_LIBRARY_VALIDATION_ENTITLEMENTS,
+            fmt=plistlib.FMT_XML,
+            sort_keys=True,
+        )
+        entitlement_snapshots = {}
         for target in plan:
-            subprocess.run(sign_command(target), check=True)
+            if target.preserve_entitlements:
+                entitlement_snapshots[target.path] = _canonical_codesign_entitlements(
+                    codesign, target.path
+                )
+            elif target.disable_library_validation:
+                entitlement_snapshots[target.path] = expected_library_validation_entitlements
+
+        with tempfile.TemporaryDirectory(prefix="melix-codesign-entitlements-") as directory:
+            library_validation_entitlements_path = (
+                Path(directory) / "disable-library-validation.plist"
+            )
+            library_validation_entitlements_path.write_bytes(
+                expected_library_validation_entitlements
+            )
+            for target in plan:
+                subprocess.run(
+                    sign_command(
+                        target,
+                        library_validation_entitlements_path=(
+                            library_validation_entitlements_path
+                        ),
+                    ),
+                    check=True,
+                )
         for target in plan:
             subprocess.run(
                 [
@@ -1612,10 +1678,11 @@ def sign_macos_app_bundle(
             details = _codesign_details(codesign, target.path)
             if "runtime" not in details:
                 raise RuntimeError(f"hardened runtime is missing on {target.path}")
-            if target.preserve_entitlements:
-                if _canonical_codesign_entitlements(codesign, target.path) != entitlement_snapshots[
-                    target.path
-                ]:
+            if target.path in entitlement_snapshots:
+                if (
+                    _canonical_codesign_entitlements(codesign, target.path)
+                    != entitlement_snapshots[target.path]
+                ):
                     raise RuntimeError(f"entitlements changed while signing {target.path}")
             if normalized_expected_sha1 is not None:
                 assert normalized_expected_sha256 is not None

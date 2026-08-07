@@ -142,6 +142,10 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
   packaging-target manifest before the bundle is signed and verified
 - signs every nested component and the complete App with the stable self-signed
   identity `Melix GitHub Release Signing`
+- grants `com.apple.security.cs.disable-library-validation` only to the bundled
+  menu-bar executable, Swift text worker, and versioned Python interpreter that
+  intentionally load signed non-platform code; all other nested targets retain
+  library validation
 - signs Sparkle inside-out (`Installer.xpc`, `Downloader.xpc` with its legal
   empty entitlement plist preserved, `Autoupdate`, `Updater.app`,
   `Sparkle.framework`, remaining Mach-O, outer App) with hardened runtime and
@@ -218,6 +222,12 @@ When `main` has changed since the last successful scheduled app artifact, the wo
 self-contained `Melix.app` archive and uploads it as a workflow artifact. These scheduled artifacts
 are retained for 14 days. Release assets finalized from validated version tags use the protected
 GitHub Release path and are not governed by the scheduled artifact retention period.
+
+Before upload, every preview and release-candidate package is launched with an isolated `MELIX_HOME`,
+runtime directory, instance name, and HTTP port. The workflow requires the packaged control-plane
+health endpoint and active-runtime descriptor, then terminates the App and proves every
+descriptor-recorded process has exited before removing the isolated descriptor. Static archive and
+code-signing verification alone do not satisfy this runtime gate.
 
 ## Deterministic Validation
 

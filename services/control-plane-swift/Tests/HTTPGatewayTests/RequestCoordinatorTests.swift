@@ -902,6 +902,7 @@ struct RequestCoordinatorTests {
             return events
         }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-resume-grace")
         await workerClient.emitToken(requestID: "req-resume-grace", text: "resumed")
         await workerClient.finishDecode(requestID: "req-resume-grace", assistantText: "resumed")
 
@@ -1482,6 +1483,45 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("phase-aware worker stream readiness wakes only for its request registration")
+    func phaseAwareWorkerStreamReadinessWakesOnlyForItsRequestRegistration() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let requestID = "req-readiness-registered"
+        let readiness = Task {
+            await workerClient.waitForRequestStream(requestID: requestID)
+        }
+
+        await workerClient.waitUntilRequestStreamWaiterInstalled(requestID: requestID)
+        #expect(await workerClient.requestStreamWaiterCount(requestID: requestID) == 1)
+
+        var unrelatedRequest = Melix_Worker_V1_GenerateRequest()
+        unrelatedRequest.execution.id.requestID = "req-readiness-unrelated"
+        _ = try await workerClient.generate(request: unrelatedRequest)
+        #expect(await workerClient.requestStreamWaiterCount(requestID: requestID) == 1)
+
+        var matchingRequest = Melix_Worker_V1_GenerateRequest()
+        matchingRequest.execution.id.requestID = requestID
+        _ = try await workerClient.generate(request: matchingRequest)
+
+        #expect(await readiness.value)
+        #expect(await workerClient.requestStreamWaiterCount(requestID: requestID) == 0)
+    }
+
+    @Test("phase-aware worker stream readiness fails within its deadline")
+    func phaseAwareWorkerStreamReadinessFailsWithinItsDeadline() async {
+        let workerClient = PhaseAwareWorkerClient()
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        #expect(
+            await workerClient.waitForRequestStream(
+                requestID: "req-readiness-missing",
+                timeout: ciScaledWaitDuration(milliseconds: 20)
+            ) == false
+        )
+        #expect(started.duration(to: clock.now) < ciScaledWaitDuration(milliseconds: 1_000))
+    }
+
     @Test("admitted text requests refresh model recency for same-family eviction planning")
     func admittedTextRequestsRefreshModelRecencyForSameFamilyEvictionPlanning() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -1502,6 +1542,8 @@ struct RequestCoordinatorTests {
         let consumer = Task {
             for try await _ in execution.stream {}
         }
+        defer { consumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-recency")
         await workerClient.emitToken(requestID: "req-recency", text: "assistant")
         await workerClient.finish(requestID: "req-recency")
         _ = try await consumer.value
@@ -2003,6 +2045,8 @@ struct RequestCoordinatorTests {
         let firstConsumer = Task {
             for try await _ in first.stream {}
         }
+        defer { firstConsumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-vlm-dispatch-cache-1")
         await workerClient.emitToken(requestID: "req-vlm-dispatch-cache-1", text: "one")
         await workerClient.finish(requestID: "req-vlm-dispatch-cache-1")
         _ = await firstConsumer.result
@@ -2017,6 +2061,8 @@ struct RequestCoordinatorTests {
         let secondConsumer = Task {
             for try await _ in second.stream {}
         }
+        defer { secondConsumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-vlm-dispatch-cache-2")
         await workerClient.emitToken(requestID: "req-vlm-dispatch-cache-2", text: "two")
         await workerClient.finish(requestID: "req-vlm-dispatch-cache-2")
         _ = await secondConsumer.result
@@ -2104,6 +2150,8 @@ struct RequestCoordinatorTests {
         let consumer = Task {
             for try await _ in execution.stream {}
         }
+        defer { consumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-text-under-load")
         await workerClient.emitToken(requestID: "req-text-under-load", text: "Hello")
         await workerClient.finish(requestID: "req-text-under-load")
         _ = try await consumer.value
@@ -2654,6 +2702,8 @@ struct RequestCoordinatorTests {
         let consumer = Task {
             for try await _ in execution.stream {}
         }
+        defer { consumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-vlm-video-metrics")
         await workerClient.emitToken(requestID: "req-vlm-video-metrics", text: "video")
         await workerClient.finish(requestID: "req-vlm-video-metrics")
         _ = try await consumer.value
@@ -2909,6 +2959,8 @@ struct RequestCoordinatorTests {
             for try await _ in parentExecution.stream {
             }
         }
+        defer { parentCollector.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-continuity-parent")
         await workerClient.emitToken(requestID: "req-continuity-parent", text: "visible answer")
         await workerClient.finishDecode(
             requestID: "req-continuity-parent",
@@ -3094,6 +3146,8 @@ struct RequestCoordinatorTests {
             for try await _ in execution.stream {
             }
         }
+        defer { collector.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-parser-metrics")
         await workerClient.finishDecode(
             requestID: "req-parser-metrics",
             assistantText: "visible",
@@ -3764,6 +3818,7 @@ struct RequestCoordinatorTests {
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "true"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "1"]) == 4)
+        #expect(ciScaledWaitDuration(milliseconds: 500, environment: ["CI": "true"]) == .seconds(2))
     }
 
     @Test("CI_WAIT_MULTIPLIER overrides the default when set within range")
@@ -4723,6 +4778,7 @@ struct RequestCoordinatorTests {
         }
         defer { prefillConsumer.cancel() }
 
+        try await requireRequestStreamRegistration(prefillWorker, requestID: "req-prefill-abort")
         await prefillWorker.emitPrefillStarted(requestID: "req-prefill-abort")
         _ = try #require(await waitForDecodeRequest(workerClient: prefillWorker))
         let prefillCancelled = try await prefillCoordinator.cancel(requestID: "req-prefill-abort")
@@ -4802,6 +4858,7 @@ struct RequestCoordinatorTests {
         }
         defer { consumer.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-phase-metadata")
         await workerClient.emitPrefillStarted(
             requestID: "req-phase-metadata",
             accelerationMode: .acceleratedPrefill
@@ -4901,6 +4958,7 @@ struct RequestCoordinatorTests {
         }
         defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-first-token-fast-delivery")
         await workerClient.emitToken(requestID: "req-first-token-fast-delivery", text: "fast")
         let deliveredBeforeProgressPublisherFinished = await waitForRecordedWorkerEvent(
             streamRecorder,
@@ -4980,6 +5038,7 @@ struct RequestCoordinatorTests {
         }
         defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-follow-up-token-fast-delivery")
         await workerClient.emitToken(requestID: "req-follow-up-token-fast-delivery", text: "first")
         _ = await waitForRecordedWorkerEvent(
             streamRecorder,
@@ -5045,6 +5104,7 @@ struct RequestCoordinatorTests {
         }
         defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-follow-up-token-progress")
         await workerClient.emitToken(requestID: "req-follow-up-token-progress", text: "first")
         await workerClient.emitToken(requestID: "req-follow-up-token-progress", text: "second")
         await workerClient.finishDecode(requestID: "req-follow-up-token-progress")
@@ -5088,6 +5148,7 @@ struct RequestCoordinatorTests {
         }
         defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-decode-start-progress")
         await workerClient.emitDecodeStarted(
             requestID: "req-decode-start-progress",
             decodeHandle: "decode-req-decode-start-progress"
@@ -5181,7 +5242,9 @@ struct RequestCoordinatorTests {
             }
             return events
         }
+        defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-reasoning-budget")
         await workerClient.emitPrefillStarted(requestID: "req-reasoning-budget")
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitDecodeStarted(
@@ -5255,7 +5318,9 @@ struct RequestCoordinatorTests {
             }
             return events
         }
+        defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-reasoning-completed")
         await workerClient.emitPrefillStarted(requestID: "req-reasoning-completed")
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitDecodeStarted(
@@ -6546,6 +6611,16 @@ struct RequestCoordinatorTests {
 
 }
 
+private func requireRequestStreamRegistration(
+    _ workerClient: PhaseAwareWorkerClient,
+    requestID: String
+) async throws {
+    try #require(
+        await workerClient.waitForRequestStream(requestID: requestID),
+        "Phase-aware worker stream did not register before the readiness deadline."
+    )
+}
+
 private func waitForFileContents(
     atPath path: String,
     attempts: Int = 100
@@ -6986,7 +7061,14 @@ private actor PhaseAwareWorkerClient:
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol
 {
+    private struct RequestStreamRegistrationWaiter {
+        let continuation: CheckedContinuation<Bool, Never>
+        let timeoutTask: Task<Void, Never>
+    }
+
     private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
+    private var requestStreamRegistrationWaiters: [String: [UUID: RequestStreamRegistrationWaiter]] = [:]
+    private var requestStreamWaiterInstalledWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     private var prefillRequests: [Melix_Worker_V1_PrefillRequest] = []
     private var decodeRequests: [Melix_Worker_V1_DecodeRequest] = []
     private(set) var abortedRequestIDs: [String] = []
@@ -7018,7 +7100,7 @@ private actor PhaseAwareWorkerClient:
         generatedRequests.append(request)
         let requestID = request.execution.id.requestID
         return AsyncThrowingStream { continuation in
-            continuations[requestID] = continuation
+            registerRequestStream(continuation, requestID: requestID)
         }
     }
 
@@ -7104,8 +7186,75 @@ private actor PhaseAwareWorkerClient:
         decodeRequests.append(request)
         let requestID = request.execution.id.requestID
         return AsyncThrowingStream { continuation in
-            continuations[requestID] = continuation
+            registerRequestStream(continuation, requestID: requestID)
         }
+    }
+
+    func waitForRequestStream(
+        requestID: String,
+        timeout: Duration = ciScaledWaitDuration(milliseconds: 1_000)
+    ) async -> Bool {
+        if continuations[requestID] != nil {
+            return true
+        }
+
+        let waiterID = UUID()
+        return await withCheckedContinuation { continuation in
+            let timeoutTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    // Registration cancels the deadline task before resuming the waiter.
+                }
+                await self?.expireRequestStreamWaiter(
+                    requestID: requestID,
+                    waiterID: waiterID
+                )
+            }
+            requestStreamRegistrationWaiters[requestID, default: [:]][waiterID] = .init(
+                continuation: continuation,
+                timeoutTask: timeoutTask
+            )
+            let installedWaiters = requestStreamWaiterInstalledWaiters.removeValue(forKey: requestID) ?? []
+            installedWaiters.forEach { $0.resume() }
+        }
+    }
+
+    func waitUntilRequestStreamWaiterInstalled(requestID: String) async {
+        if requestStreamRegistrationWaiters[requestID]?.isEmpty == false {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            requestStreamWaiterInstalledWaiters[requestID, default: []].append(continuation)
+        }
+    }
+
+    func requestStreamWaiterCount(requestID: String) -> Int {
+        requestStreamRegistrationWaiters[requestID]?.count ?? 0
+    }
+
+    private func registerRequestStream(
+        _ continuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation,
+        requestID: String
+    ) {
+        continuations[requestID] = continuation
+        let waiters = requestStreamRegistrationWaiters.removeValue(forKey: requestID) ?? [:]
+        for waiter in waiters.values {
+            waiter.timeoutTask.cancel()
+            waiter.continuation.resume(returning: true)
+        }
+    }
+
+    private func expireRequestStreamWaiter(requestID: String, waiterID: UUID) {
+        guard var waiters = requestStreamRegistrationWaiters.removeValue(forKey: requestID),
+              let waiter = waiters.removeValue(forKey: waiterID)
+        else {
+            return
+        }
+        if !waiters.isEmpty {
+            requestStreamRegistrationWaiters[requestID] = waiters
+        }
+        waiter.continuation.resume(returning: false)
     }
 
     func abort(requestID: String) async throws -> Bool {
@@ -7797,6 +7946,7 @@ private actor BackendIdentityRecoveryWorkerClient:
     private(set) var loadCallCount = 0
     private(set) var requestedIdentities: [Melix_Worker_V1_BackendModelIdentity] = []
     private(set) var loadedIdentities: [Melix_Worker_V1_BackendModelIdentity] = []
+    private let concurrentInitialGenerateGate = DelayedSchedulerEventGate()
 
     init(script: Script) {
         self.script = script
@@ -7819,6 +7969,12 @@ private actor BackendIdentityRecoveryWorkerClient:
         requestedIdentities.append(request.execution.backendIdentity)
         let callIndex = generateCallCount
         let script = self.script
+        if case .concurrentIdentityMismatchThenSuccess = script, callIndex <= 2 {
+            if callIndex == 2 {
+                await concurrentInitialGenerateGate.open()
+            }
+            await concurrentInitialGenerateGate.wait()
+        }
         return AsyncThrowingStream { continuation in
             switch script {
             case .emptyThenSuccess where callIndex == 1,
@@ -8196,51 +8352,6 @@ private func makeCoordinatorTextModel(
     model.modelID = id
     model.state = state
     return model
-}
-
-/// Multiplier applied to polling-based wait helpers in this test file.
-///
-/// Local runs stay on the fast defaults; CI machines (GitHub-hosted macOS
-/// runners are slower and noisier than developer laptops) get a 4× budget so
-/// phase-transition polls can't race the scheduler under contention. The
-/// actual numerical default still passes locally in a few tens of ms — the
-/// multiplier only affects the *ceiling* before a timeout returns nil.
-///
-/// `CI_WAIT_MULTIPLIER` overrides the default when set to a positive integer
-/// within the accepted range, so future tuning doesn't require a code change.
-private let waitAttemptsMultiplier: Int = {
-    computedWaitAttemptsMultiplier(environment: ProcessInfo.processInfo.environment)
-}()
-
-private let defaultCIWaitMultiplier: Int = 4
-private let maximumCIWaitMultiplier: Int = 100
-
-private func computedWaitAttemptsMultiplier(environment: [String: String]) -> Int {
-    let ciActive = isTruthyEnvironmentFlag(environment["CI"])
-        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"])
-    guard ciActive else {
-        return 1
-    }
-    if let raw = environment["CI_WAIT_MULTIPLIER"]?
-        .trimmingCharacters(in: .whitespacesAndNewlines),
-       let parsed = Int(raw),
-       (1...maximumCIWaitMultiplier).contains(parsed) {
-        return parsed
-    }
-    return defaultCIWaitMultiplier
-}
-
-private func isTruthyEnvironmentFlag(_ value: String?) -> Bool {
-    guard let value else {
-        return false
-    }
-
-    switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-    case "1", "true", "yes", "on":
-        return true
-    default:
-        return false
-    }
 }
 
 private func waitForProgress(

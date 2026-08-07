@@ -48,6 +48,7 @@ MEASURED_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_measured_pr
 @pytest.fixture(autouse=True)
 def clear_probe_coverage_path_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", raising=False)
+    monkeypatch.delenv("MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM", raising=False)
     changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
     setattr(changed_scope_coverage, "_ALLOWLIST_LAST_RAW", "")
     setattr(
@@ -139,7 +140,10 @@ def test_parse_changed_lines_ignores_hunks_with_missing_new_range_delimiter() ->
     assert changed_scope_coverage._parse_changed_lines(diff_text) == {"foo.py": set()}
 
 
-def test_changed_lines_by_path_uses_one_batched_git_diff(monkeypatch, tmp_path: Path) -> None:
+def test_changed_lines_by_path_combines_head_diff_and_untracked_files(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     observed_commands: list[list[str]] = []
     diff_text = "\n".join(
         [
@@ -156,20 +160,137 @@ def test_changed_lines_by_path_uses_one_batched_git_diff(monkeypatch, tmp_path: 
         ]
     )
 
+    (tmp_path / "baz.py").write_text("first\nsecond\n", encoding="utf-8")
+
     def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[bytes]:
         observed_commands.append(command)
         assert kwargs.get("text") is None
-        return subprocess.CompletedProcess(command, 0, stdout=diff_text.encode(), stderr=b"")
+        stdout = (
+            b"baz.py\0"
+            if command[1] == "ls-files"
+            else diff_text.encode()
+        )
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr=b"")
 
     monkeypatch.setattr(changed_scope_coverage.subprocess, "run", fake_run)
 
     changed = changed_scope_coverage._changed_lines_by_path(tmp_path, ["foo.py", "bar.py", "baz.py"])
 
-    assert observed_commands == [["git", "diff", "--unified=0", "--", "foo.py", "bar.py", "baz.py"]]
+    assert observed_commands == [
+        ["git", "diff", "--unified=0", "HEAD", "--", "foo.py", "bar.py", "baz.py"],
+        [
+            "git",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            "foo.py",
+            "bar.py",
+            "baz.py",
+        ],
+    ]
     assert changed == {
         "foo.py": {2},
         "bar.py": {5},
-        "baz.py": set(),
+        "baz.py": {1, 2},
+    }
+
+
+def test_changed_lines_by_path_tolerates_disappearing_untracked_file(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[bytes]:
+        stdout = b"gone.py\0" if command[1] == "ls-files" else b""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr=b"")
+
+    monkeypatch.setattr(changed_scope_coverage.subprocess, "run", fake_run)
+
+    assert changed_scope_coverage._changed_lines_by_path(tmp_path, ["gone.py"]) == {
+        "gone.py": set()
+    }
+
+
+def test_changed_lines_by_path_includes_staged_and_unstaged_changes(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    source = tmp_path / "source.py"
+    source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    subprocess.run(["git", "add", "source.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Coverage Test",
+            "-c",
+            "user.email=coverage@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    source.write_text("one staged\ntwo\nthree\n", encoding="utf-8")
+    subprocess.run(["git", "add", "source.py"], cwd=tmp_path, check=True)
+    source.write_text("one staged\ntwo unstaged\nthree\n", encoding="utf-8")
+
+    changed = changed_scope_coverage._changed_lines_by_path(tmp_path, ["source.py"])
+
+    assert changed == {"source.py": {1, 2}}
+
+
+def test_changed_lines_by_path_uses_explicit_committed_diff_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    source = tmp_path / "source.py"
+    source.write_text("one\ntwo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "source.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Coverage Test",
+            "-c",
+            "user.email=coverage@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    base_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    source.write_text("one changed\ntwo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "source.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Coverage Test",
+            "-c",
+            "user.email=coverage@example.invalid",
+            "commit",
+            "-qm",
+            "head",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    monkeypatch.setenv("MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM", base_sha)
+
+    assert changed_scope_coverage._changed_lines_by_path(tmp_path, ["source.py"]) == {
+        "source.py": {1}
     }
 
 
@@ -262,6 +383,42 @@ def test_main_short_circuits_empty_filtered_paths_without_reading_coverage(
         "aggregate_missed_changed_lines=0\n"
         "TOTAL 0 0 100%\n"
     )
+
+
+def test_main_fails_closed_when_requested_paths_have_no_measurable_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "comments.py").write_text("# comment only\n", encoding="utf-8")
+    coverage_json = tmp_path / "coverage.json"
+    coverage_json.write_text(
+        json.dumps(
+            {"files": {"comments.py": {"executed_lines": [], "missing_lines": []}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "changed_scope_coverage.py",
+            "--coverage-json",
+            str(coverage_json),
+            "comments.py",
+        ],
+    )
+    monkeypatch.setattr(changed_scope_coverage.Path, "cwd", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        changed_scope_coverage,
+        "_changed_lines_by_path",
+        lambda _repo_root, _rel_paths: {"comments.py": {1}},
+    )
+
+    assert changed_scope_coverage.main() == 1
+    output = capsys.readouterr().out
+    assert "TOTAL 0 0 0%" in output
+    assert "coverage_error=no_measurable_changed_lines" in output
 
 
 def test_coverage_path_allowlist_rejects_invalid_json() -> None:

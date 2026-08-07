@@ -18,6 +18,7 @@ from worker.runtime.deterministic_embedding_runtime import (
     DeterministicEmbeddingRuntime,
     _repeated_input_cycle_length,
 )
+from worker.runtime.artifact_embedding_runtime import ArtifactEmbeddingError
 from worker.runtime.embedding_backends import (
     BERTEmbeddingBackend,
     DeterministicEmbeddingBackend,
@@ -86,6 +87,25 @@ class RecordingEmbeddingRuntime(DeterministicEmbeddingRuntime):
 class FailingEmbeddingRuntime(DeterministicEmbeddingRuntime):
     def embed_inputs(self, loaded_model, inputs):
         raise RuntimeError("embedding backend unavailable")
+
+
+class RefusingEmbeddingRuntime(DeterministicEmbeddingRuntime):
+    def embed_inputs(self, loaded_model, inputs):
+        raise ArtifactEmbeddingError(
+            "embedding_fully_padded_input",
+            "Embedding tokenizer produced a fully padded input row.",
+        )
+
+
+class LoadRefusingEmbeddingRuntime(DeterministicEmbeddingRuntime):
+    def estimate_resident_bytes(self, _model_spec):
+        return 0
+
+    def load_model(self, _model_spec):
+        raise ArtifactEmbeddingError(
+            "embedding_media_artifact_unsupported",
+            "Artifact-backed embeddings do not support media model components.",
+        )
 
 
 def build_services(
@@ -324,11 +344,50 @@ def test_embed_returns_runtime_error_when_backend_raises() -> None:
     assert response.error.message == "embedding backend unavailable"
 
 
+def test_embed_preserves_typed_artifact_runtime_refusal() -> None:
+    _, runtime_service, inference_service = build_services(
+        embedding_runtime=RefusingEmbeddingRuntime()
+    )
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
+
+    response = inference_service.Embed(
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.EmbedRequest(
+                id=common_pb2.RequestIdentity(request_id="embed-typed-refusal"),
+                model_handle=model_handle,
+                inputs=["fully padded"],
+            ),
+        ),
+        context=None,
+    )
+
+    assert response.error.code == "embedding_fully_padded_input"
+    assert response.error.message == "Embedding tokenizer produced a fully padded input row."
+
+
+def test_load_model_preserves_typed_artifact_runtime_refusal() -> None:
+    _, runtime_service, _ = build_services(
+        embedding_runtime=LoadRefusingEmbeddingRuntime()
+    )
+
+    response = runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_embedding_model()),
+        context=None,
+    )
+
+    assert response.ok is False
+    assert response.error.code == "embedding_media_artifact_unsupported"
+    assert response.error.message == (
+        "Artifact-backed embeddings do not support media model components."
+    )
+
+
 def test_load_model_exposes_embedding_backend_metadata_for_bert_and_xlmr() -> None:
     registry, runtime_service, _ = build_services()
     bert_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
     xlmr_model = WorkerModelCatalog.dev_embedding_model(
-        environment={"MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1"}
+        environment={"MELIX_DEV_EMBED_FAMILY_ID": "xlmr"}
     )
     xlmr_model.model_id = "melix-dev-embed-xlmr"
     xlmr_handle = load_model(runtime_service, xlmr_model)
@@ -338,9 +397,9 @@ def test_load_model_exposes_embedding_backend_metadata_for_bert_and_xlmr() -> No
 
     assert bert_loaded is not None
     assert xlmr_loaded is not None
-    assert bert_loaded.runtime_model["embedding_backend_id"] == "bert-v1"
+    assert bert_loaded.runtime_model["embedding_backend_id"] == "deterministic-fixture-v1"
     assert bert_loaded.runtime_model["embedding_family_id"] == "bert"
-    assert xlmr_loaded.runtime_model["embedding_backend_id"] == "xlmr-v1"
+    assert xlmr_loaded.runtime_model["embedding_backend_id"] == "deterministic-fixture-v1"
     assert xlmr_loaded.runtime_model["embedding_family_id"] == "xlmr"
 
 
@@ -348,7 +407,7 @@ def test_embed_returns_distinct_vectors_for_xlmr_backend_selection() -> None:
     _, runtime_service, inference_service = build_services()
     bert_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
     xlmr_model = WorkerModelCatalog.dev_embedding_model(
-        environment={"MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1"}
+        environment={"MELIX_DEV_EMBED_FAMILY_ID": "xlmr"}
     )
     xlmr_model.model_id = "melix-dev-embed-xlmr"
     xlmr_handle = load_model(runtime_service, xlmr_model)
@@ -400,11 +459,11 @@ def test_load_model_exposes_embedding_family_metadata_for_bge_and_mxbai() -> Non
 
     assert bge_loaded is not None
     assert mxbai_loaded is not None
-    assert bge_loaded.runtime_model["embedding_backend_id"] == "bert-v1"
+    assert bge_loaded.runtime_model["embedding_backend_id"] == "deterministic-fixture-v1"
     assert bge_loaded.runtime_model["embedding_family_id"] == "bge-m3"
     assert bge_loaded.runtime_model["embedding_pooling_mode"] == "cls"
     assert bge_loaded.runtime_model["dimensions"] == 8
-    assert mxbai_loaded.runtime_model["embedding_backend_id"] == "bert-v1"
+    assert mxbai_loaded.runtime_model["embedding_backend_id"] == "deterministic-fixture-v1"
     assert mxbai_loaded.runtime_model["embedding_family_id"] == "mxbai-embed"
     assert mxbai_loaded.runtime_model["embedding_pooling_mode"] == "mean"
     assert mxbai_loaded.runtime_model["dimensions"] == 10
@@ -415,7 +474,8 @@ def test_embedding_model_infers_identity_from_directory_name() -> None:
         environment={"MELIX_DEV_EMBED_MODEL_PATH": "models/mxbai-embed-large-v1"}
     )
 
-    assert model.ext["embedding_backend_id"] == "bert-v1"
+    assert model.ext["embedding_backend_id"] == "deterministic-fixture-v1"
+    assert model.ext["embedding_execution_kind"] == "fixture"
     assert model.ext["embedding_family_id"] == "mxbai-embed"
     assert model.ext["embedding_pooling_mode"] == "mean"
     assert model.ext["embedding_dimensions"] == "10"
@@ -434,7 +494,8 @@ def test_embedding_model_preserves_detected_identity_when_override_is_applied() 
         }
     )
 
-    assert model.ext["embedding_backend_id"] == "bert-v1"
+    assert model.ext["embedding_backend_id"] == "deterministic-fixture-v1"
+    assert model.ext["embedding_execution_kind"] == "fixture"
     assert model.ext["embedding_family_id"] == "bge-m3"
     assert model.ext["model_architecture"] == "bert"
     assert model.ext["detected_architecture"] == "xlmr"
@@ -486,14 +547,15 @@ def test_embed_returns_family_specific_dimensions_for_mxbai() -> None:
     assert len(mxbai.embeddings[0].values) == 10
 
 
-def test_embed_runtime_resolves_backend_from_loaded_model_metadata() -> None:
+def test_embed_runtime_resolves_explicit_fixture_family_from_loaded_model_metadata() -> None:
     runtime = DeterministicEmbeddingRuntime()
 
     vectors = runtime.embed_inputs(
         {
             "model_id": "melix-dev-embed-xlmr",
             "dimensions": 8,
-            "embedding_backend_id": "xlmr-v1",
+            "embedding_backend_id": "deterministic-fixture-v1",
+            "embedding_family_id": "xlmr",
         },
         ["Straße"],
     )
@@ -623,6 +685,26 @@ def test_load_model_rejects_unsupported_embedding_backend() -> None:
 
     with pytest.raises(ValueError, match="Unsupported embedding backend"):
         runtime.load_model(model)
+
+
+def test_load_model_rejects_missing_fixture_backend() -> None:
+    model = WorkerModelCatalog.dev_embedding_model()
+    del model.ext["embedding_backend_id"]
+
+    with pytest.raises(ArtifactEmbeddingError) as caught:
+        DeterministicEmbeddingRuntime().load_model(model)
+
+    assert caught.value.code == "embedding_backend_unsupported"
+
+
+@pytest.mark.parametrize("backend_id", ["bert-v1", "xlmr-v1"])
+def test_load_model_rejects_legacy_digest_backend_ids(backend_id: str) -> None:
+    model = WorkerModelCatalog.dev_embedding_model(
+        environment={"MELIX_DEV_EMBED_BACKEND_ID": backend_id}
+    )
+
+    with pytest.raises(ValueError, match="Legacy embedding backend"):
+        DeterministicEmbeddingRuntime().load_model(model)
 
 
 def test_load_model_rejects_unsupported_embedding_family() -> None:
