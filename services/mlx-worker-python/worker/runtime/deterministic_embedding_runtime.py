@@ -2,10 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from worker.runtime.artifact_embedding_runtime import ArtifactEmbeddingError
 from worker.runtime.embedding_backends import (
     resolve_embedding_backend,
     resolve_embedding_family,
 )
+
+
+def _explicit_fixture_backend_id(value: object) -> str:
+    backend_id = str(value or "").strip()
+    if not backend_id:
+        raise ArtifactEmbeddingError(
+            "embedding_backend_unsupported",
+            "Embedding backend must be explicit.",
+        )
+    return backend_id
 
 
 def _repeated_input_cycle_length(inputs: Sequence[str]) -> int:
@@ -48,25 +59,44 @@ class DeterministicEmbeddingRuntime:
         self.dimensions = dimensions
 
     def load_model(self, model_spec):
-        backend = resolve_embedding_backend(model_spec.ext.get("embedding_backend_id", "bert-v1"))
-        family = resolve_embedding_family(model_spec.ext.get("embedding_family_id", ""), backend)
+        backend_id = _explicit_fixture_backend_id(
+            model_spec.ext.get("embedding_backend_id", "")
+        )
+        family_id = model_spec.ext.get("embedding_family_id", "")
+        backend = resolve_embedding_backend(backend_id, family_id)
+        family = resolve_embedding_family(family_id, backend)
         dimensions = family.dimensions(model_spec.ext.get("embedding_dimensions", self.dimensions))
         metadata = backend.metadata(dimensions)
         metadata.update(family.metadata(dimensions))
+        metadata["embedding_backend_id"] = backend_id
+        metadata["embedding_execution_kind"] = "fixture"
         return {
             "model_id": model_spec.model_id,
             **metadata,
         }
 
     def estimate_resident_bytes(self, model_spec):
-        backend = resolve_embedding_backend(model_spec.ext.get("embedding_backend_id", "bert-v1"))
+        backend = resolve_embedding_backend(
+            _explicit_fixture_backend_id(model_spec.ext.get("embedding_backend_id", "")),
+            model_spec.ext.get("embedding_family_id", ""),
+        )
         return int(backend.descriptor.estimated_resident_bytes)
 
-    def embed_inputs(self, loaded_model, inputs: Sequence[str]) -> list[list[float]]:
+    def embed_inputs(
+        self,
+        loaded_model,
+        inputs: Sequence[str],
+        *,
+        request_id: str = "",
+    ) -> list[list[float]]:
+        _ = request_id
         dimensions = int(loaded_model.get("dimensions", self.dimensions))
         backend = loaded_model.get("embedding_backend")
         if backend is None:
-            backend = resolve_embedding_backend(loaded_model.get("embedding_backend_id", "bert-v1"))
+            backend = resolve_embedding_backend(
+                _explicit_fixture_backend_id(loaded_model.get("embedding_backend_id", "")),
+                loaded_model.get("embedding_family_id", ""),
+            )
         family = loaded_model.get("embedding_family_adapter")
         if family is None:
             family = resolve_embedding_family(loaded_model.get("embedding_family_id", ""), backend)

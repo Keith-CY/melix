@@ -53,6 +53,8 @@ class AgenticToolExecutionResult:
     status: str
     observation: ToolObservationRecord
     duration_ms: float = 0.0
+    thread_scope_id: str = ""
+    current_turn_tool_start: int = 0
 
     def as_trace_turns(self, *, arguments: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         return (
@@ -775,6 +777,8 @@ class DeterministicAgenticToolRuntime:
         tool_name: str,
         arguments: dict[str, Any],
         tool_call_id: str,
+        thread_scope_id: str = "",
+        current_turn_tool_start: int = 0,
     ) -> AgenticToolExecutionResult:
         descriptor = self._tool_by_name.get(tool_name)
         if descriptor is None:
@@ -815,6 +819,8 @@ class DeterministicAgenticToolRuntime:
             status=status,
             observation=observation,
             duration_ms=round(max(0.0, (perf_counter() - started_at) * 1_000.0), 6),
+            thread_scope_id=thread_scope_id,
+            current_turn_tool_start=current_turn_tool_start,
         )
 
     def registry_receipt(self) -> dict[str, Any]:

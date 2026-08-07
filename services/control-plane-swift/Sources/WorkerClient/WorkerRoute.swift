@@ -13,6 +13,17 @@ public enum WorkerRouteKind: String, Sendable, Equatable, Hashable {
     case pythonSpeech = "python_speech"
     case pythonImage = "python_image"
 
+    public var isPythonWorkerRoute: Bool {
+        switch self {
+        case .swiftText, .swiftVision:
+            return false
+        case .pythonCompatibility, .pythonEmbedding, .pythonRerank,
+             .pythonModelOperations, .pythonOCR, .pythonVLM,
+             .pythonTranscription, .pythonSpeech, .pythonImage:
+            return true
+        }
+    }
+
     public init?(metadataIdentifier rawValue: String?) {
         guard let rawValue else {
             return nil

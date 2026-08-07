@@ -442,6 +442,7 @@ def run_performance_report(root: Path, changed_files: list[str], *, base_ref: st
             }
             if base_ref is not None:
                 probe_env["MELIX_BACKEND_IDENTITY_COVERAGE_DIFF_FROM"] = "HEAD"
+                probe_env["MELIX_PAGED_KV_COVERAGE_DIFF_FROM"] = "HEAD"
             for probe_entry in selected_probes:
                 if not isinstance(probe_entry, dict):
                     continue

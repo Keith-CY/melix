@@ -729,10 +729,13 @@ public enum BootstrapWorkerPreparation {
     ]
     private static let embeddingExtKeys = [
         "embedding_backend_id",
+        "embedding_execution_kind",
         "embedding_family_id",
         "embedding_pooling_mode",
         "embedding_normalization",
         "embedding_dimensions",
+        "embedding_vector_kind",
+        "embedding_input_modalities",
     ]
     private static let rerankExtKeys = [
         "rerank_backend_id",
@@ -852,6 +855,8 @@ public enum BootstrapWorkerPreparation {
             baseSpec = generic
         } else if let generic = genericImageModel(from: summary) {
             baseSpec = generic
+        } else if let generic = genericEmbeddingModel(from: summary) {
+            baseSpec = generic
         } else if let generic = genericTextModel(from: summary) {
             baseSpec = generic
         } else {
@@ -917,6 +922,32 @@ public enum BootstrapWorkerPreparation {
         ) ?? .unspecified
         spec.requestRoutes = summary.requestRoutes.map(workerRouteDeclaration(from:))
         return spec
+    }
+
+    private static func genericEmbeddingModel(
+        from summary: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Worker_V1_ModelSpec? {
+        guard summary.kind == "embedding" else {
+            return nil
+        }
+        let modelPath = summary.settings.ext["melix.model_path"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !modelPath.isEmpty else {
+            return nil
+        }
+
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = summary.modelID
+        model.modelPath = modelPath
+        model.modelKind = "embedding"
+        model.revision = summary.settings.ext["melix.model_revision"] ?? "registry"
+        model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? ""
+        model.quantProfileID = summary.quantProfileID
+        model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
+        model.reasoningMode = "off"
+        model.maxContext = summary.maxContext
+        model.ext.merge(summary.settings.ext) { _, new in new }
+        return model
     }
 
     private static func genericTextModel(
@@ -1469,7 +1500,8 @@ public enum BootstrapWorkerPreparation {
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 8192
-        model.ext["embedding_backend_id"] = "bert-v1"
+        model.ext["embedding_backend_id"] = "deterministic-fixture-v1"
+        model.ext["embedding_execution_kind"] = "fixture"
         model.ext["embedding_family_id"] = "bert"
         model.ext["embedding_pooling_mode"] = "cls"
         model.ext["embedding_normalization"] = "l2"

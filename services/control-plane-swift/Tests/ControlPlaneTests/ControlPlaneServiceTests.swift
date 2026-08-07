@@ -2447,6 +2447,75 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::local")
     }
 
+    @Test("execute workerless Python embedding load fails closed")
+    func executeWorkerlessPythonEmbeddingLoadFailsClosed() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        let service = ControlPlaneService(modelCatalog: catalog)
+
+        let response = try await service.execute(
+            makeLoadModelRequest(modelID: "melix-dev-embed")
+        )
+        let model = try #require(await catalog.model(id: "melix-dev-embed"))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "worker_unavailable")
+        #expect(response.error.details["route"] == "python_embedding")
+        #expect(model.state == .modelFailed)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-embed") == nil)
+    }
+
+    @Test("execute model.load routes from the service catalog when registry catalog differs")
+    func executeModelLoadUsesServiceCatalogRouteWhenRegistryCatalogDiffers() async throws {
+        let serviceCatalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        let registryCatalog = ModelCatalog(seedModels: [])
+        let textClient = ModelLifecycleWorkerClient()
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            modelCatalog: registryCatalog
+        )
+        let service = ControlPlaneService(
+            modelCatalog: serviceCatalog,
+            workerRegistry: registry
+        )
+
+        let response = try await service.execute(
+            makeLoadModelRequest(modelID: "melix-dev-embed")
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "worker_unavailable")
+        #expect(response.error.details["route"] == "python_embedding")
+        #expect(await textClient.loadRequests.isEmpty)
+    }
+
+    @Test("execute worker-backed model.load fails closed without an executable spec")
+    func executeWorkerBackedModelLoadFailsClosedWithoutExecutableSpec() async throws {
+        var model = ModelCatalog.devEmbeddingModel()
+        model.modelID = "registry-artifact-without-path"
+        model.settings.ext["embedding_backend_id"] = "mlx-bert-v1"
+        model.settings.ext["embedding_execution_kind"] = "artifact"
+        model.settings.ext.removeValue(forKey: "melix.model_path")
+        let catalog = ModelCatalog(seedModels: [model])
+        let registry = WorkerRegistry(
+            defaultTextClient: NullWorkerClient(),
+            modelCatalog: catalog
+        )
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: registry
+        )
+
+        let response = try await service.execute(
+            makeLoadModelRequest(modelID: model.modelID)
+        )
+        let failedModel = try #require(await catalog.model(id: model.modelID))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "worker_model_spec_missing")
+        #expect(failedModel.state == .modelFailed)
+        #expect(await catalog.dispatchHandle(for: model.modelID) == nil)
+    }
+
     @Test("execute model.load reports a missing managed Hugging Face cache before worker load")
     func executeModelLoadReportsMissingManagedHuggingFaceCacheBeforeWorkerLoad() async throws {
         var model = ModelCatalog.devTextModel()
@@ -9447,10 +9516,9 @@ struct ControlPlaneServiceTests {
             )
         )
         let loadRequest = try #require(await textClient.lastLoadModelRequest)
+        _ = try await Array(execution.stream)
         let generated = try #require(await textClient.lastGenerateRequest)
         let model = await modelCatalog.model(id: "melix-dev-text")
-
-        _ = try await Array(execution.stream)
 
         #expect(loadRequest.model.modelID == "melix-dev-text")
         #expect(loadRequest.pinOnLoad == false)
