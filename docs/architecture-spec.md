@@ -393,9 +393,16 @@ Melix uses three cache tiers:
 - `L1`: in-memory shared prefix and paged block cache with dedup, refcounting, pinning, and copy-on-write
 - `L2`: SSD-backed block and snapshot store for restart-safe reuse
 
-This layout exists to balance hot-path latency with persistence.
+This layout is the product architecture and exists to balance hot-path latency
+with persistence. Runtime capabilities must still describe the payloads that a
+particular worker can execute; a metadata index alone is not an implemented
+cache tier.
 
-The default cache mode should remain `tiered`, which means `L1` plus `L2` reuse without experimental eviction or rolling-window behavior. Melix should also reserve explicit protocol-visible cache modes for experimental long-context execution:
+The default cache mode should remain `tiered`, which requests compatible L1 and
+L2 reuse without experimental eviction or rolling-window behavior. A worker
+that does not own executable payloads for one of those tiers must fail that tier
+closed and advertise the narrower capability. Melix should also reserve
+explicit protocol-visible cache modes for experimental long-context execution:
 
 - `rotating`: a rolling active-window strategy for long decode paths where earlier KV state may be compacted behind a stable restore boundary
 - `hybrid`: a mixed strategy that keeps tiered prefix reuse while allowing a rotating active window for the tail of execution
@@ -419,6 +426,92 @@ Prompt reuse should rely on stable fingerprints and block tables rather than raw
 The control plane should expose logical cache identity through cache keys and block or snapshot references, while keeping cache payloads worker-side.
 
 The worker schema should define typed `CacheKey` and `BlockTable` structures so cache reuse and resume are computable protocol concepts rather than opaque identifiers. KV cache quantization should happen at the storage boundary so active execution can stay accuracy-aware while persisted cache assets remain space-efficient.
+
+### Current Swift Text L1 Contract
+
+The Swift MLX text worker implements executable L1 paged KV reuse for models
+whose complete cache layout is append-only `KVCacheSimple` state. Each admitted
+block owns the real per-layer key and value tensors. Its reported bytes are the
+sum of those tensor shapes and dtypes, never a token-count estimate.
+
+The worker restores and pins the longest block-aligned production-token prefix
+atomically. Restored immutable blocks can be shared by stored prefixes and
+active decode sessions; request-private suffixes append separately, and a
+partial trim copies only the affected shared block. Attention receives a paged
+cache view that gathers the shared block table plus the private tail. Physical
+resident bytes count each shared tensor block once and each active private
+allocation owner's current per-layer tensors once. Logical bytes include stored
+prefix ownership, active shared-block leases, and active private tails. Private
+owner bytes are refreshed after append, trim, copy-on-write, state replacement,
+and release, so L1 and runtime `kv_cache_bytes` cannot report zero while a
+private paged tail is live.
+
+Compatibility includes the loaded model residency epoch, MLX stream owner,
+full cache scope, acceleration profile, prefill-shape signature, block size,
+and every layer cache type. Every variable compatibility component is encoded
+as a UTF-8 byte-length-prefixed value, so delimiter characters inside scope or
+model fields cannot create a cross-scope signature collision. The backend derives the prefill-shape signature
+from the prepared `LMInput` tensor rank, dtype, non-token dimensions, mask and
+multimodal presence, plus the block-aligned maximum model-call shape derived
+from the effective prefill window. The same configured chunk and the actual
+call count and min/max token shapes are execution metrics; request extension
+fields cannot supply or override them. The token block digest chain is the
+stored boundary identity. A reuse store is accepted only with the still-current,
+same-generation lookup-and-pin result whose signature, block size, layer count,
+digest prefix, lease, and pool membership all validate under the pool lock.
+Materializing a lookup transfers its lease into one cache set exactly once;
+subsequent materialization attempts return no caches, and the lookup retains
+only a weak lease reference for the later atomic store validation. Successful
+stores also pin the new generation under that lock and transfer the committed
+lease exactly once into the decode caches. The submitting private owner is
+removed from private accounting only inside the same owner-to-pool transaction
+that transfers those tensors into committed shared blocks; a failed store
+leaves the owner accounting unchanged. Arbitrary snapshots cannot construct an
+unaccounted decode view.
+Rotating or moving-window caches, recurrent or composite state, mixed layouts,
+unsupported input shapes, stale lookup handles, and active-KV-quantized state
+are not admitted. Those requests use ordinary contiguous prefill and return a
+typed fallback reason without recovered-token credit.
+
+If budget admission or atomic snapshot validation fails after paged model
+prefill has already computed K/V, the worker does not run model prefill again.
+It materializes that evaluated state once into ordinary `KVCacheSimple`
+instances, releases the paged private owner and block lease, and continues
+decode on the contiguous caches with `admitted=false` and the typed failure
+reason. Any reused-prefix evidence remains audit evidence for work already
+executed; it is not an active paged-cache admission claim.
+
+Paged cache views retain the exact MLX stream that created their tensor state.
+Decode on a different current stream materializes the already-computed state
+once into `KVCacheSimple` caches and records `paged_stream_owner_mismatch` in
+the decode fallback summary. Homogeneous batch admission rejects such paged
+rows before model evaluation so each request takes the same per-request
+materialization path.
+
+The pool enforces the effective request/model/process cache budget against real
+resident tensor bytes, including other active private owners. The submitting
+owner is not double-counted when its tensors become the proposed shared blocks.
+The prefill response reports this same tightest effective budget; global cache
+statistics without a request context continue to report process headroom.
+The pool evicts least-recently-used unleased entries only; active decode leases
+and private owners remain resident, and an admission that cannot fit without
+reclaiming them is rejected without mutating the prior pool state.
+
+Homogeneous decode remains available for compatible paged sessions. The batch
+adapter retains each request's original paged cache and block lease, splits
+incoming K/V updates by batch row, and concatenates the resulting full K/V
+state for attention. When a cohort shrinks or materializes, the adapter returns
+the same row cache objects rather than reconstructing dense caches. Admission
+requires equal paged layout signatures, offsets, per-block tensor shapes, and
+metadata across all layers.
+
+The current Swift disk records and boundary snapshot records contain cache
+identity and block-table metadata, not executable KV tensor payloads. Therefore
+the Swift worker advertises `supportsDiskCache=false` and
+`supportsBoundarySnapshots=false`; an L2 metadata match cannot restore tokens,
+increment an executed hit, or populate an L1 tensor block. A future Swift L2
+implementation must persist and validate architecture-aware tensor payloads
+before those capabilities can become true.
 
 ### Pinned Prefixes
 

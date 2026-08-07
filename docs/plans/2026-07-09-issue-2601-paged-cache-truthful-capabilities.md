@@ -185,3 +185,14 @@ Expected result: pre-commit runs `make swift-test`, `make py-test`, `make integr
   `UV_PYTHON=3.12 uv run --python 3.12 python3 scripts/swift_changed_line_coverage.py ...`
   passed with `TOTAL 100.00% 7/7`.
 - `git diff --check` passed.
+
+## Follow-up completion
+
+This plan records the truthful capability-disable slice delivered by PR
+`#2691`. It is superseded for executable Swift L1 behavior by
+`docs/plans/2026-08-03-issue-2601-real-paged-kv-reuse.md`.
+
+The follow-up implementation enables `supportsPagedCache` only for the Swift
+MLX backend that owns the real block-tensor pool. Unsupported cache layouts and
+metadata-only L2 records continue to fail closed, preserving the central
+truthfulness decision from this plan.
