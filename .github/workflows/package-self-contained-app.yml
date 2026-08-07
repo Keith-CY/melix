@@ -457,14 +457,11 @@ jobs:
           PACKAGE_VENV_PYTHON="$GITHUB_WORKSPACE/.venv-package/bin/python"
           PYTHON_RUNTIME_ROOT="$("$PACKAGE_PYTHON" -c 'import sys; print(sys.base_prefix)')"
           PYTHON_SITE_PACKAGES="$("$PACKAGE_VENV_PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-          candidate_arguments=()
+          bundle_id="io.melix.menubar.preview"
+          packaging_target_id="macos_app_bundle_preview"
           if [ "$IS_RELEASE_CANDIDATE" = "true" ]; then
-            candidate_arguments+=(
-              --bundle-id
-              "io.melix.menubar.release-candidate"
-              --packaging-target-id
-              "macos_app_bundle_github_release_candidate"
-            )
+            bundle_id="io.melix.menubar.release-candidate"
+            packaging_target_id="macos_app_bundle_github_release_candidate"
           fi
           bash scripts/ci_progress.sh "Package app bundle assembly" \
             env PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
@@ -476,8 +473,98 @@ jobs:
             --python-site-packages-path "$PYTHON_SITE_PACKAGES" \
             --swift-mlx-metallib-path "$SWIFT_MLX_METALLIB_PATH" \
             --version "${{ steps.compute-build-metadata.outputs.version }}" \
-            "${candidate_arguments[@]}" \
+            --bundle-id "$bundle_id" \
+            --packaging-target-id "$packaging_target_id" \
             --json
+
+      - name: Verify packaged Melix.app launch
+        env:
+          MELIX_HOME: ${{ runner.temp }}/melix-package-smoke-home
+          MELIX_RUNTIME_DIR: ${{ runner.temp }}/melix-package-smoke-runtime
+          MELIX_HTTP_PORT: "12437"
+          MELIX_SERVICE_INSTANCE_NAME: package-smoke
+          MELIX_MENU_BAR_PRESENTATION_MODE: dock-and-tray
+        run: |
+          set -euo pipefail
+          app_pid=""
+          stdout_log="$RUNNER_TEMP/melix-package-smoke.stdout.log"
+          stderr_log="$RUNNER_TEMP/melix-package-smoke.stderr.log"
+          cleanup() {
+            if [ -n "$app_pid" ] && kill -0 "$app_pid" 2>/dev/null; then
+              kill -TERM "$app_pid" 2>/dev/null || true
+              wait "$app_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          "$RUNNER_TEMP/Melix.app/Contents/MacOS/Melix" >"$stdout_log" 2>"$stderr_log" &
+          app_pid="$!"
+          health_url="http://127.0.0.1:$MELIX_HTTP_PORT/health"
+          healthy="false"
+          for _ in {1..300}; do
+            if curl --fail --silent --show-error "$health_url" >/dev/null 2>&1; then
+              healthy="true"
+              break
+            fi
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          if [ "$healthy" != "true" ]; then
+            printf 'Packaged Melix.app did not reach %s\n' "$health_url" >&2
+            cat "$stdout_log" >&2
+            cat "$stderr_log" >&2
+            exit 1
+          fi
+          for _ in {1..50}; do
+            if [ -s "$MELIX_RUNTIME_DIR/active-runtime.json" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          test -s "$MELIX_RUNTIME_DIR/active-runtime.json"
+          runtime_descriptor_receipt="$RUNNER_TEMP/melix-package-smoke-active-runtime.json"
+          cp "$MELIX_RUNTIME_DIR/active-runtime.json" "$runtime_descriptor_receipt"
+
+          if kill -0 "$app_pid" 2>/dev/null; then
+            kill -TERM "$app_pid"
+          fi
+          wait "$app_pid" 2>/dev/null || true
+          app_pid=""
+          RUNTIME_DESCRIPTOR="$runtime_descriptor_receipt" python3 - <<'PY'
+          import json
+          import os
+          import time
+          from pathlib import Path
+
+          descriptor = Path(os.environ["RUNTIME_DESCRIPTOR"])
+          payload = json.loads(descriptor.read_text(encoding="utf-8"))
+          process_id_fields = (
+              "app_process_id",
+              "control_plane_process_id",
+              "python_worker_process_id",
+              "swift_text_worker_process_id",
+          )
+          deadline = time.monotonic() + 5.0
+          while True:
+              alive = []
+              for field in process_id_fields:
+                  process_id = int(payload[field])
+                  try:
+                      os.kill(process_id, 0)
+                  except ProcessLookupError:
+                      continue
+                  alive.append(f"{field}={process_id}")
+              if not alive:
+                  break
+              if time.monotonic() >= deadline:
+                  raise SystemExit(
+                      "Packaged Melix.app left processes running: " + ", ".join(alive)
+                  )
+              time.sleep(0.1)
+          descriptor.unlink()
+          PY
 
       - name: Create release candidate receipt
         if: github.event_name == 'push' && github.ref_type == 'tag'

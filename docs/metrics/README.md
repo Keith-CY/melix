@@ -4,6 +4,11 @@ Generated metrics JSON artifacts are benchmark evidence, not runtime inputs.
 Do not keep large generated JSON files in this directory unless a release
 process explicitly requires a checked-in snapshot.
 
+`issue-2601-paired-contiguous-paged-memory.json` is a small, intentional
+exception required as versioned pull-request evidence. It records the
+same-load contiguous-versus-paged memory acceptance probe described in
+`docs/plans/2026-08-03-issue-2601-real-paged-kv-reuse.md`.
+
 TurboQuant Phase 2 raw metrics evidence that previously lived under this
 directory is archived in GitHub issue
 [#46](https://github.com/Keith-CY/melix/issues/46). Each issue comment contains

@@ -42,7 +42,7 @@ struct TextPrefillEngine: Sendable {
             let prefillChunkBoundaries = makeBoundarySafePrefillChunkBoundaries(
                 messages: request.messages,
                 chunkTokenTarget: request.prefillStepSize,
-                restoredTokenCount: result.restorePlan?.restoredTokenCount ?? 0
+                restoredTokenCount: UInt32(clamping: result.recoveredPrefixTokens)
             )
             metrics.set("swift_text.prefill_chunk_count", value: prefillChunkBoundaries.count)
             metrics.set(
@@ -114,6 +114,48 @@ struct TextPrefillEngine: Sendable {
                 "swift_text.cache_reconstruction_failure_count",
                 value: Int(clamping: result.cacheHitTaxonomy.reconstructionFailureCount)
             )
+            metrics.set("swift_text.paged_cache_recovered_prefix_tokens", value: result.recoveredPrefixTokens)
+            metrics.set("swift_text.paged_cache_lookup_micros", value: result.cacheLookupMicros)
+            metrics.set("swift_text.paged_cache_restore_micros", value: result.cacheRestoreMicros)
+            metrics.set(
+                "swift_text.paged_cache_stream_owner_match",
+                value: result.cacheStreamOwnerMatch ? 1 : 0
+            )
+            metrics.set(
+                "swift_text.paged_cache_copy_on_write_block_count",
+                value: result.cacheCopyOnWriteBlockCount
+            )
+            metrics.set(
+                "swift_text.paged_cache_computed_prefix_tokens",
+                value: result.cacheComputedPrefixTokens
+            )
+            metrics.set(
+                "swift_text.paged_cache_model_prefill_micros",
+                value: result.cacheModelPrefillMicros
+            )
+            metrics.set(
+                "swift_text.paged_cache_model_prefill_chunk_tokens",
+                value: result.cacheModelPrefillChunkTokens
+            )
+            metrics.set(
+                "swift_text.paged_cache_model_prefill_call_count",
+                value: result.cacheModelPrefillCallCount
+            )
+            metrics.set(
+                "swift_text.paged_cache_model_prefill_min_call_tokens",
+                value: result.cacheModelPrefillMinCallTokens
+            )
+            metrics.set(
+                "swift_text.paged_cache_model_prefill_max_call_tokens",
+                value: result.cacheModelPrefillMaxCallTokens
+            )
+            metrics.set(
+                "swift_text.paged_cache_block_table_bytes",
+                value: Int(clamping: result.cacheBlockTableBytes)
+            )
+            if !result.cacheFallbackReason.isEmpty {
+                metrics.increment("swift_text.paged_cache_fallback_count")
+            }
             if !result.restoredSnapshotID.isEmpty {
                 metrics.recordMilliseconds(
                     "swift_text.cache_snapshot_restore_ms",
@@ -154,6 +196,9 @@ struct TextPrefillEngine: Sendable {
             response.lifecyclePhase = .executionPrefilling
             response.admissionState = .admissionAdmitted
             response.appliedAcceleration = result.appliedAcceleration
+            response.recoveredPrefixTokens = UInt32(clamping: result.recoveredPrefixTokens)
+            response.cacheHitMode = result.cacheHitMode
+            response.fallbackReason = result.cacheFallbackReason
             if let restorePlan = result.restorePlan {
                 response.restorePlan = restorePlan
             }
