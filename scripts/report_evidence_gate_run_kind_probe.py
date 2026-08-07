@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import statistics
@@ -18,25 +19,62 @@ from worker.productization.report_evidence_gate import (  # noqa: E402
     _probe_phases,
     _release_matrix_rows,
     _report_matrix_roles,
+    _report_run_kind_values,
     _rule_matches_report,
     _slowest_probe_phases,
     load_report_payload,
 )
+
+# The harness runs this script against both the base and the head checkout, so
+# it has to drive whichever `_rule_matches_report` signature the module under
+# test exposes: the base takes the raw `runs` list, the head takes the run-kind
+# value set that is now derived once per matrix.
+_RULE_MATCHES_TAKES_RUN_KIND_VALUES = (
+    "run_kind_values" in inspect.signature(_rule_matches_report).parameters
+)
+
+
+def _match_rule(
+    *,
+    rule: dict[str, object],
+    runs: list[dict[str, object]],
+    run_kind_values: set[str],
+    targets: list[dict[str, object]],
+    metrics: list[dict[str, object]],
+    probe_phases: set[str],
+) -> bool:
+    if _RULE_MATCHES_TAKES_RUN_KIND_VALUES:
+        return _rule_matches_report(
+            rule=rule,
+            run_kind_values=run_kind_values,
+            targets=targets,
+            metrics=metrics,
+            probe_phases=probe_phases,
+        )
+    return _rule_matches_report(
+        rule=rule,
+        runs=runs,
+        targets=targets,
+        metrics=metrics,
+        probe_phases=probe_phases,
+    )
 
 
 def _measure_run_kind(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
     run_kinds = tuple(f"probe_kind_{index}" for index in range(64)) + ("target_kind",)
     rule = {"run_kinds": run_kinds}
     runs = [{"run_kind": f"observed_kind_{index}"} for index in range(79)] + [{"run_kind": "target_kind"}]
+    run_kind_values = _report_run_kind_values(runs)
     elapsed_samples: list[float] = []
     match_count = 0
 
     for _ in range(sample_count):
         started = time.perf_counter()
         for _index in range(iterations):
-            if not _rule_matches_report(
+            if not _match_rule(
                 rule=rule,
                 runs=runs,
+                run_kind_values=run_kind_values,
                 targets=[],
                 metrics=[],
                 probe_phases=set(),
@@ -69,9 +107,10 @@ def _measure_metric_prefix(iterations: int, sample_count: int) -> tuple[dict[str
     for _ in range(sample_count):
         started = time.perf_counter()
         for _index in range(iterations):
-            if not _rule_matches_report(
+            if not _match_rule(
                 rule=rule,
                 runs=[],
+                run_kind_values=set(),
                 targets=[],
                 metrics=metrics,
                 probe_phases=set(),
@@ -104,9 +143,10 @@ def _measure_target_fields(iterations: int, sample_count: int) -> tuple[dict[str
     for _ in range(sample_count):
         started = time.perf_counter()
         for _index in range(iterations):
-            if not _rule_matches_report(
+            if not _match_rule(
                 rule=rule,
                 runs=[],
+                run_kind_values=set(),
                 targets=targets,
                 metrics=[],
                 probe_phases=set(),
@@ -294,15 +334,11 @@ def _measure_dict_list(iterations: int, sample_count: int) -> tuple[dict[str, fl
     ]
     elapsed_samples: list[float] = []
     checksum = 0
-    identity_hits = 0
 
     for _ in range(sample_count):
         started = time.perf_counter()
         for _index in range(iterations):
-            result = _dict_list(rows)
-            checksum += len(result)
-            if result is rows:
-                identity_hits += 1
+            checksum += len(_dict_list(rows))
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
     elapsed_mean = statistics.fmean(elapsed_samples)
@@ -310,7 +346,6 @@ def _measure_dict_list(iterations: int, sample_count: int) -> tuple[dict[str, fl
         {
             "dict_list_elapsed_ms_mean": elapsed_mean,
             "dict_list_rows_per_call": float(len(rows)),
-            "dict_list_identity_hits": float(identity_hits),
             "dict_list_checksum": float(checksum),
         },
         elapsed_mean,

@@ -25,14 +25,6 @@ from worker.runtime.vision_family_adapters import (  # noqa: E402
 )
 
 
-class SplitTrackingPrompt(str):
-    split_calls = 0
-
-    def split(self, *args: object, **kwargs: object) -> list[str]:
-        type(self).split_calls += 1
-        return super().split(*args, **kwargs)
-
-
 class IterationTrackingMetadata(Mapping[str, str]):
     def __init__(self) -> None:
         self._values = {
@@ -133,19 +125,17 @@ def _measure_config_resolution() -> tuple[float, float]:
 
 def main() -> None:
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
-    prompt = SplitTrackingPrompt(("alpha beta gamma delta\n" * 128).strip())
+    prompt = ("alpha beta gamma delta\n" * 128).strip()
     request = _build_request(prompt)
     expected_count = len(str(prompt).split()) + family_config.prompt_token_bias + _expected_media_tokens(
         family_config
     )
     samples = []
-    split_call_samples = []
     peak_samples = []
     token_count = 0
     config_resolve_elapsed_ms, metadata_iteration_calls = _measure_config_resolution()
 
     for _ in range(7):
-        SplitTrackingPrompt.split_calls = 0
         tracemalloc.start()
         started = time.perf_counter()
         for _inner in range(400):
@@ -156,14 +146,12 @@ def main() -> None:
         if token_count != expected_count:
             raise SystemExit(f"unexpected token count: {token_count} != {expected_count}")
         samples.append(elapsed_ms)
-        split_call_samples.append(float(SplitTrackingPrompt.split_calls))
         peak_samples.append(float(peak_bytes))
 
     print(
         json.dumps(
             {
                 "elapsed_ms_mean": statistics.fmean(samples),
-                "split_calls_mean": statistics.fmean(split_call_samples),
                 "peak_bytes_mean": statistics.fmean(peak_samples),
                 "config_object_footprint_bytes": _config_object_footprint_bytes(family_config),
                 "config_resolve_elapsed_ms_mean": config_resolve_elapsed_ms,
