@@ -4,14 +4,11 @@ import heapq
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import AbstractSet, Any, cast
+from typing import AbstractSet
 
 from worker.productization.benchmark_evaluation_report import validate_report_payload
 
 REPORT_EVIDENCE_GATE_SCHEMA_VERSION = "melix.report_evidence_gate.v1"
-_EMPTY_PROBE_PHASES: frozenset[str] = frozenset()
-_JSON_LOADS = json.loads
-_PATH_TYPE = type(Path())
 _PROBE_PHASE_BUCKETS = ("slowest_phases", "failed_phases", "skipped_phases", "fallback_phases")
 _PROBE_PHASE_SIDES = ("baseline", "candidate")
 
@@ -37,9 +34,9 @@ DEFAULT_RELEASE_EVIDENCE_MATRIX: dict[str, dict[str, object]] = {
 
 
 def load_report_payload(path: str | Path) -> dict[str, object]:
-    report_path = cast(Path, path) if type(path) is _PATH_TYPE else Path(path)
+    report_path = Path(path)
     try:
-        payload = _JSON_LOADS(report_path.read_bytes())
+        payload = json.loads(report_path.read_bytes())
     except json.JSONDecodeError as exc:
         raise ValueError(f"report JSON could not be decoded: {report_path}") from exc
     if not isinstance(payload, dict):
@@ -246,9 +243,6 @@ def _release_matrix_rows(
     matrix: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
     evidence_by_role: dict[str, set[str]] = {}
-    to_string = str
-    evidence_by_role_get = evidence_by_role.get
-    matrix_contains = matrix.__contains__
     for report in reports:
         roles = report.get("release_matrix_roles")
         source_evidence_ids = report.get("source_evidence_ids", [])
@@ -258,267 +252,108 @@ def _release_matrix_rows(
             or not source_evidence_ids
         ):
             continue
-        if len(roles) == 1:
-            role = roles[0]
-            if matrix_contains(role):
-                evidence_ids_for_role = evidence_by_role_get(role)
-                if evidence_ids_for_role is None:
-                    evidence_ids_for_role = set()
-                    evidence_by_role[role] = evidence_ids_for_role
-                for evidence_id in source_evidence_ids:
-                    evidence_ids_for_role.add(to_string(evidence_id))
-            continue
-        evidence_id_strings: tuple[str, ...] | None = None
+        evidence_ids = {str(evidence_id) for evidence_id in source_evidence_ids}
         for role in roles:
-            if not matrix_contains(role):
-                continue
-            evidence_ids_for_role = evidence_by_role_get(role)
-            if evidence_ids_for_role is None:
-                evidence_ids_for_role = set()
-                evidence_by_role[role] = evidence_ids_for_role
-            if evidence_id_strings is None:
-                evidence_id_strings = tuple(to_string(item) for item in source_evidence_ids)
-            evidence_ids_for_role.update(evidence_id_strings)
+            if role in matrix:
+                evidence_by_role.setdefault(role, set()).update(evidence_ids)
 
-    rows: list[dict[str, object]] = []
-    rows_append = rows.append
-    for role, rule in matrix.items():
-        evidence_ids = evidence_by_role_get(role)
-        rows_append(
-            {
-                "role": role,
-                "required": bool(rule.get("required", True)),
-                "present": bool(evidence_ids),
-                "evidence_ids": [next(iter(evidence_ids))]
-                if evidence_ids and len(evidence_ids) == 1
-                else sorted(evidence_ids)
-                if evidence_ids
-                else [],
-                "description": str(rule.get("description", "")),
-            }
-        )
-    return rows
+    return [
+        {
+            "role": role,
+            "required": bool(rule.get("required", True)),
+            "present": bool(evidence_by_role.get(role)),
+            "evidence_ids": sorted(evidence_by_role.get(role, ())),
+            "description": str(rule.get("description", "")),
+        }
+        for role, rule in matrix.items()
+    ]
+
+
+def _has_text(value: object) -> bool:
+    """True when a target field carries non-whitespace text."""
+    text = value if isinstance(value, str) else str(value)
+    return bool(text.strip())
+
+
+def _report_run_kind_values(runs: list[dict[str, object]]) -> set[str]:
+    """Return every ``run_kind`` in the report, normalized to text."""
+    return {str(run.get("run_kind", "")) for run in runs}
 
 
 def _report_matrix_roles(
     report: dict[str, object],
     matrix: dict[str, dict[str, object]],
 ) -> list[str]:
-    roles: list[str] = []
-    roles_append = roles.append
-    runs = _dict_list(report.get("runs"))
-    targets: list[dict[str, object]] | None = None
-    metrics: list[dict[str, object]] | None = None
-    run_kind_values: set[str] | None = None
-    probe_phases: set[str] | None = None
-    run_kind_rule_matches = _run_kind_rule_matches
-    for role, rule in matrix.items():
-        rule_get = rule.get
-        run_kinds = rule_get("run_kinds")
-        if run_kinds and not (
-            rule_get("metric_prefixes")
-            or rule_get("target_fields")
-            or rule_get("probe_phases")
-        ):
-            if run_kind_values is None:
-                run_kind_values = _report_run_kind_values(runs)
-            if isinstance(run_kinds, tuple) and len(run_kinds) == 1:
-                run_kind = run_kinds[0]
-                if run_kind in run_kind_values or (
-                    type(run_kind) is not str and str(run_kind) in run_kind_values
-                ):
-                    roles_append(role)
-            elif run_kind_rule_matches(run_kinds, run_kind_values):
-                roles_append(role)
-            continue
-        if targets is None:
-            targets = _dict_list(report.get("targets"))
-        if metrics is None:
-            metrics = _dict_list(report.get("metrics"))
-        if rule_get("probe_phases") and probe_phases is None:
-            probe_phases = _probe_phases(report)
+    # Each input is derived once for the whole matrix rather than per rule, so
+    # matching stays O(roles + rows) instead of O(roles x rows).
+    run_kind_values = _report_run_kind_values(_dict_list(report.get("runs")))
+    targets = _dict_list(report.get("targets"))
+    metrics = _dict_list(report.get("metrics"))
+    # Collecting probe phases walks every probe row on both sides of the report,
+    # so skip it entirely when no rule in the matrix asks for one.
+    needs_probe_phases = any(rule.get("probe_phases") for rule in matrix.values())
+    probe_phases = _probe_phases(report) if needs_probe_phases else frozenset()
+    return [
+        role
+        for role, rule in matrix.items()
         if _rule_matches_report(
             rule=rule,
-            runs=runs,
+            run_kind_values=run_kind_values,
             targets=targets,
             metrics=metrics,
-            probe_phases=probe_phases if probe_phases is not None else _EMPTY_PROBE_PHASES,
-        ):
-            roles_append(role)
-    return roles
-
-
-def _run_kind_only_rule(rule: dict[str, object]) -> bool:
-    return bool(rule.get("run_kinds")) and not (
-        rule.get("metric_prefixes")
-        or rule.get("target_fields")
-        or rule.get("probe_phases")
-    )
-
-
-def _run_kind_rule_matches(run_kinds: object, run_kind_values: AbstractSet[str]) -> bool:
-    if isinstance(run_kinds, tuple):
-        if len(run_kinds) == 1:
-            run_kind = run_kinds[0]
-            return run_kind in run_kind_values or (
-                type(run_kind) is not str and str(run_kind) in run_kind_values
-            )
-        if not run_kind_values.isdisjoint(run_kinds):
-            return True
-        for run_kind in run_kinds:
-            if type(run_kind) is not str and str(run_kind) in run_kind_values:
-                return True
-        return False
-    return not _string_frozenset(run_kinds).isdisjoint(run_kind_values)
-
-
-def _report_run_kind_values(runs: list[dict[str, object]]) -> set[str]:
-    values: set[str] = set()
-    values_add = values.add
-    run_kind_key = "run_kind"
-    to_string = str
-    value_type = type
-    str_type = str
-    for run in runs:
-        run_kind = run.get(run_kind_key, "")
-        values_add(run_kind if value_type(run_kind) is str_type else to_string(run_kind))
-    return values
+            probe_phases=probe_phases,
+        )
+    ]
 
 
 def _rule_matches_report(
     *,
     rule: dict[str, object],
-    runs: list[dict[str, object]],
+    run_kind_values: AbstractSet[str],
     targets: list[dict[str, object]],
     metrics: list[dict[str, object]],
     probe_phases: AbstractSet[str],
 ) -> bool:
+    """Return True when a report satisfies one release-evidence matrix rule.
+
+    Rule clauses are evaluated in declaration order and the first satisfied
+    clause wins. An empty ``metric_prefixes`` entry means "any metric at all",
+    and is decisive: it short-circuits the remaining clauses.
+    """
     rule_get = rule.get
     run_kinds = rule_get("run_kinds", ())
-    if run_kinds:
-        if isinstance(run_kinds, tuple):
-            cached_run_kind_set = rule_get("_melix_cached_run_kind_set")
-            if rule_get("_melix_cached_run_kinds") is run_kinds and isinstance(
-                cached_run_kind_set,
-                frozenset,
-            ):
-                run_kind_set = cached_run_kind_set
-            else:
-                run_kind_set = _string_frozenset_from_tuple(run_kinds)
-                rule["_melix_cached_run_kinds"] = run_kinds
-                rule["_melix_cached_run_kind_set"] = run_kind_set
-        else:
-            run_kind_set = _string_frozenset(run_kinds)
-        run_kind_key = "run_kind"
-        for run in runs:
-            run_kind = run.get(run_kind_key, "")
-            if run_kind in run_kind_set:
-                return True
-        for run in runs:
-            run_kind = run.get(run_kind_key, "")
-            if type(run_kind) is not str and str(run_kind) in run_kind_set:
-                return True
+    if run_kinds and not _string_frozenset(run_kinds).isdisjoint(run_kind_values):
+        return True
+
     metric_prefixes = rule_get("metric_prefixes", ())
     if metric_prefixes:
-        if isinstance(metric_prefixes, tuple):
-            cached_metric_prefix_state = rule_get("_melix_cached_metric_prefix_state")
-            if (
-                isinstance(cached_metric_prefix_state, tuple)
-                and len(cached_metric_prefix_state) == 5
-                and cached_metric_prefix_state[0] is metric_prefixes
-                and isinstance(cached_metric_prefix_state[1], tuple)
-                and isinstance(cached_metric_prefix_state[2], frozenset)
-                and isinstance(cached_metric_prefix_state[3], bool)
-                and isinstance(cached_metric_prefix_state[4], dict)
-            ):
-                metric_prefix_tuple = cached_metric_prefix_state[1]
-                metric_prefix_initials = cached_metric_prefix_state[2]
-                metric_prefix_matches_empty = cached_metric_prefix_state[3]
-                metric_prefix_by_initial = cached_metric_prefix_state[4]
-            else:
-                (
-                    metric_prefix_tuple,
-                    metric_prefix_initials,
-                    metric_prefix_matches_empty,
-                    metric_prefix_by_initial,
-                ) = _string_prefix_tuple_from_tuple(metric_prefixes)
-                rule["_melix_cached_metric_prefix_state"] = (
-                    metric_prefixes,
-                    metric_prefix_tuple,
-                    metric_prefix_initials,
-                    metric_prefix_matches_empty,
-                    metric_prefix_by_initial,
-                )
-        else:
-            (
-                metric_prefix_tuple,
-                metric_prefix_initials,
-                metric_prefix_matches_empty,
-                metric_prefix_by_initial,
-            ) = _string_prefix_tuple(metric_prefixes)
-        metric_key = "metric"
-        to_string = str
-        if metric_prefix_matches_empty:
+        matches_any_metric, prefixes_by_initial = _metric_prefix_index(
+            _string_tuple(metric_prefixes)
+        )
+        if matches_any_metric:
             return bool(metrics)
-        metric_prefix_for_initial = metric_prefix_by_initial.__getitem__
         for metric in metrics:
-            metric_raw = metric.get(metric_key, "")
-            metric_value = metric_raw if type(metric_raw) is str else to_string(metric_raw)
-            if metric_value and metric_value[0] in metric_prefix_initials:
-                if metric_value.startswith(metric_prefix_for_initial(metric_value[0])):
-                    return True
+            metric_value = str(metric.get("metric", ""))
+            if not metric_value:
+                continue
+            candidates = prefixes_by_initial.get(metric_value[0])
+            if candidates is not None and metric_value.startswith(candidates):
+                return True
+
     target_fields = rule_get("target_fields", ())
     if target_fields:
-        if isinstance(target_fields, tuple):
-            cached_target_field_set = rule_get("_melix_cached_target_field_set")
-            if rule_get("_melix_cached_target_fields") is target_fields and isinstance(
-                cached_target_field_set,
-                frozenset,
-            ):
-                target_field_set = cached_target_field_set
-            else:
-                target_field_set = _string_frozenset_from_tuple(target_fields)
-                rule["_melix_cached_target_fields"] = target_fields
-                rule["_melix_cached_target_field_set"] = target_field_set
-        else:
-            target_field_set = _string_frozenset(target_fields)
-        target_fields_are_disjoint = target_field_set.isdisjoint
+        target_field_set = _string_frozenset(target_fields)
         for target in targets:
-            if target_fields_are_disjoint(target):
-                continue
-            if type(target) is dict and len(target) == 1:
-                value = next(iter(target.values()))
-                if isinstance(value, str):
-                    if value.strip():
-                        return True
-                elif str(value).strip():
-                    return True
+            if target_field_set.isdisjoint(target):
                 continue
             for field, value in target.items():
-                if field not in target_field_set:
-                    continue
-                if isinstance(value, str):
-                    if value.strip():
-                        return True
-                elif str(value).strip():
+                if field in target_field_set and _has_text(value):
                     return True
+
     required_probe_phases = rule_get("probe_phases", ())
     if not required_probe_phases:
         return False
-    if isinstance(required_probe_phases, tuple):
-        cached_probe_phase_set = rule_get("_melix_cached_probe_phase_set")
-        if rule_get("_melix_cached_probe_phases") is required_probe_phases and isinstance(
-            cached_probe_phase_set,
-            frozenset,
-        ):
-            required_probe_phase_set = cached_probe_phase_set
-        else:
-            required_probe_phase_set = _string_frozenset_from_tuple(required_probe_phases)
-            rule["_melix_cached_probe_phases"] = required_probe_phases
-            rule["_melix_cached_probe_phase_set"] = required_probe_phase_set
-    else:
-        required_probe_phase_set = _string_frozenset(required_probe_phases)
-    return required_probe_phase_set.issubset(probe_phases)
+    return _string_frozenset(required_probe_phases).issubset(probe_phases)
 
 
 @lru_cache(maxsize=128)
@@ -532,23 +367,23 @@ def _string_tuple_from_tuple(values: tuple[object, ...]) -> tuple[str, ...]:
 
 
 @lru_cache(maxsize=128)
-def _string_prefix_tuple_from_tuple(
-    values: tuple[object, ...],
-) -> tuple[tuple[str, ...], frozenset[str], bool, dict[str, str | tuple[str, ...]]]:
-    prefixes = tuple(str(item) for item in values)
-    prefix_by_initial: dict[str, list[str]] = {}
+def _metric_prefix_index(
+    prefixes: tuple[str, ...],
+) -> tuple[bool, dict[str, tuple[str, ...]]]:
+    """Group metric prefixes by first character.
+
+    A rule may list many prefixes while most metrics share none of their initial
+    characters, so bucketing lets those metrics be rejected with one lookup
+    instead of one comparison per prefix. An empty prefix matches every metric
+    and is reported separately.
+    """
+    by_initial: dict[str, list[str]] = {}
     for prefix in prefixes:
         if prefix:
-            prefix_by_initial.setdefault(prefix[0], []).append(prefix)
-    return (
-        prefixes,
-        frozenset(prefix_by_initial),
-        "" in prefixes,
-        {
-            initial: grouped[0] if len(grouped) == 1 else tuple(grouped)
-            for initial, grouped in prefix_by_initial.items()
-        },
-    )
+            by_initial.setdefault(prefix[0], []).append(prefix)
+    return "" in prefixes, {
+        initial: tuple(grouped) for initial, grouped in by_initial.items()
+    }
 
 
 def _string_frozenset(values: object) -> frozenset[str]:
@@ -561,27 +396,6 @@ def _string_tuple(values: object) -> tuple[str, ...]:
     if isinstance(values, tuple):
         return _string_tuple_from_tuple(values)
     return tuple(str(item) for item in values)  # type: ignore[union-attr]
-
-
-def _string_prefix_tuple(
-    values: object,
-) -> tuple[tuple[str, ...], frozenset[str], bool, dict[str, str | tuple[str, ...]]]:
-    if isinstance(values, tuple):
-        return _string_prefix_tuple_from_tuple(values)
-    prefixes = tuple(str(item) for item in values)  # type: ignore[union-attr]
-    prefix_by_initial: dict[str, list[str]] = {}
-    for prefix in prefixes:
-        if prefix:
-            prefix_by_initial.setdefault(prefix[0], []).append(prefix)
-    return (
-        prefixes,
-        frozenset(prefix_by_initial),
-        "" in prefixes,
-        {
-            initial: grouped[0] if len(grouped) == 1 else tuple(grouped)
-            for initial, grouped in prefix_by_initial.items()
-        },
-    )
 
 
 def _telemetry_failures(report: dict[str, object]) -> list[str]:
@@ -606,55 +420,40 @@ def _telemetry_failures(report: dict[str, object]) -> list[str]:
 
 
 def _probe_phase_duration_key(row: dict[str, object]) -> float:
+    """Return the sort key for one probe phase, scoring unusable durations as 0.0.
+
+    ``bool`` is excluded deliberately: it is a subclass of ``int``, so a JSON
+    ``"duration_ms": true`` would otherwise score 1.0 and displace a real phase
+    from the top five rather than ranking last with the other unusable values.
+    """
     duration = row.get("duration_ms")
-    if isinstance(duration, (float, int, str)):
-        return float(duration or 0.0)
-    return 0.0
+    if isinstance(duration, bool) or not isinstance(duration, (float, int, str)):
+        return 0.0
+    return float(duration or 0.0)
 
 
 def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
+    """Return the five slowest probe phases, longest first, input order breaking ties."""
     probe_summary = report.get("probe_summary")
     if not isinstance(probe_summary, dict):
         return []
-    rows: list[tuple[float, int, str, dict[str, object]]] = []
-    row_index = 0
-    row_count = 0
-    heap_ready = False
-    rows_append = rows.append
-    rows_replace = heapq.heapreplace
-    for side in ("baseline", "candidate"):
-        side_summary = probe_summary.get(side)
-        if not isinstance(side_summary, dict):
-            continue
-        slowest_phases = side_summary.get("slowest_phases")
-        if not isinstance(slowest_phases, list):
-            continue
-        for row in slowest_phases:
-            if not isinstance(row, dict):
+    def ranked_rows():
+        order = 0
+        for side in _PROBE_PHASE_SIDES:
+            side_summary = probe_summary.get(side)
+            if not isinstance(side_summary, dict):
                 continue
-            duration = row.get("duration_ms")
-            if type(duration) is float:
-                duration_ms = duration
-            elif type(duration) is int:
-                duration_ms = float(duration)
-            elif type(duration) is str:
-                duration_ms = float(duration or 0.0)
-            else:
-                duration_ms = 0.0
-            if row_count < 5:
-                rows_append((duration_ms, -row_index, side, row))
-                row_count += 1
-            else:
-                if not heap_ready:
-                    heapq.heapify(rows)
-                    heap_ready = True
-                if duration_ms >= rows[0][0]:
-                    item = (duration_ms, -row_index, side, row)
-                    if item > rows[0]:
-                        rows_replace(rows, item)
-            row_index += 1
-    rows.sort(reverse=True)
-    return [{"side": side, **row} for _duration_ms, _row_order, side, row in rows]
+            slowest_phases = side_summary.get("slowest_phases")
+            if not isinstance(slowest_phases, list):
+                continue
+            for row in slowest_phases:
+                if isinstance(row, dict):
+                    # Negated order breaks duration ties toward the earlier row.
+                    yield _probe_phase_duration_key(row), -order, side, row
+                    order += 1
+
+    top_rows = heapq.nlargest(5, ranked_rows())
+    return [{"side": side, **row} for _duration_ms, _row_order, side, row in top_rows]
 
 
 def _probe_phases(report: dict[str, object]) -> set[str]:
@@ -662,59 +461,24 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
     probe_summary = report.get("probe_summary")
     if not isinstance(probe_summary, dict):
         return phases
-    phases_add = phases.add
-    to_string = str
-    value_type = type
-    dict_type = dict
-    list_type = list
-    is_instance = isinstance
     for side in _PROBE_PHASE_SIDES:
         side_summary = probe_summary.get(side)
-        if value_type(side_summary) is not dict_type and not is_instance(
-            side_summary,
-            dict_type,
-        ):
+        if not isinstance(side_summary, dict):
             continue
-        side_summary_get = side_summary.get
         for bucket in _PROBE_PHASE_BUCKETS:
-            rows = side_summary_get(bucket)
-            if value_type(rows) is not list_type and not is_instance(rows, list_type):
+            rows = side_summary.get(bucket)
+            if not isinstance(rows, list):
                 continue
             for row in rows:
-                if value_type(row) is not dict_type and not is_instance(row, dict_type):
+                if not isinstance(row, dict):
                     continue
-                phase_raw = row.get("phase", "")
-                if value_type(phase_raw) is str:
-                    if phase_raw in phases:
-                        continue
-                    if (
-                        phase_raw
-                        and not phase_raw[0].isspace()
-                        and not phase_raw[-1].isspace()
-                    ):
-                        phases_add(phase_raw)
-                        continue
-                    phase = phase_raw.strip()
-                else:
-                    phase = to_string(phase_raw).strip()
+                phase = str(row.get("phase", "")).strip()
                 if phase:
-                    phases_add(phase)
+                    phases.add(phase)
     return phases
 
 
 def _dict_list(value: object) -> list[dict[str, object]]:
-    dict_type = dict
-    list_type = list
-    is_dict = isinstance
-    value_type = type
-    if value_type(value) is list_type:
-        for item in value:
-            if value_type(item) is not dict_type and not is_dict(item, dict_type):
-                return [item for item in value if is_dict(item, dict_type)]
-        return cast(list[dict[str, object]], value)
-    if not is_dict(value, list_type):
+    if not isinstance(value, list):
         return []
-    for item in value:
-        if value_type(item) is not dict_type and not is_dict(item, dict_type):
-            return [item for item in value if is_dict(item, dict_type)]
-    return cast(list[dict[str, object]], value)
+    return [item for item in value if isinstance(item, dict)]

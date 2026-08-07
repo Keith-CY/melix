@@ -32,9 +32,6 @@ def run_probe(
     sparse_elapsed_samples: list[float] = []
     dense_elapsed_samples: list[float] = []
     allowlist_elapsed_samples: list[float] = []
-    read_samples: list[float] = []
-    sparse_read_samples: list[float] = []
-    dense_read_samples: list[float] = []
     allowlist_value = json.dumps("pkg/module_0.py")
 
     with tempfile.TemporaryDirectory(prefix="melix-changed-scope-measured-probe-") as tmp:
@@ -65,76 +62,59 @@ def run_probe(
         expected_sparse_missed = list(range(2, sparse_target_count + 1, 2))
         dense_changed_lines = set(range(1, measured_lines_per_path + 1))
 
-        original_read_text = module.Path.read_text
-        try:
-            for _ in range(samples):
-                read_calls = 0
+        for _ in range(samples):
+            start = time.perf_counter()
+            for rel_path in rel_paths:
+                measurable, covered, missed = module._measurable_changed_lines(
+                    root,
+                    coverage_payload,
+                    rel_path,
+                    changed_lines,
+                )
+                if measurable or covered or missed:
+                    raise RuntimeError("empty changed sets must not produce measurable lines")
+            elapsed_samples.append((time.perf_counter() - start) * 1000.0)
 
-                def counted_read_text(self: Path, *args: object, **kwargs: object) -> str:
-                    nonlocal read_calls
-                    read_calls += 1
-                    return original_read_text(self, *args, **kwargs)
+            start = time.perf_counter()
+            for rel_path in rel_paths:
+                measurable, covered, missed = module._measurable_changed_lines(
+                    root,
+                    coverage_payload,
+                    rel_path,
+                    sparse_changed_lines,
+                )
+                if (
+                    measurable != expected_sparse_measurable
+                    or covered != expected_sparse_covered
+                    or missed != expected_sparse_missed
+                ):
+                    raise RuntimeError("sparse changed set should stream and partition target lines")
+            sparse_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
 
-                module.Path.read_text = counted_read_text
-                start = time.perf_counter()
-                for rel_path in rel_paths:
-                    measurable, covered, missed = module._measurable_changed_lines(
-                        root,
-                        coverage_payload,
-                        rel_path,
-                        changed_lines,
-                    )
-                    if measurable or covered or missed:
-                        raise RuntimeError("empty changed sets must not produce measurable lines")
-                elapsed_samples.append((time.perf_counter() - start) * 1000.0)
-                read_samples.append(float(read_calls))
+            start = time.perf_counter()
+            for rel_path in rel_paths:
+                measurable, covered, missed = module._measurable_changed_lines(
+                    root,
+                    coverage_payload,
+                    rel_path,
+                    dense_changed_lines,
+                )
+                if not (measurable or covered or missed):
+                    continue
+                if len(measurable) != measured_lines_per_path:
+                    raise RuntimeError("dense changed set should measure all fixture lines")
+                if len(covered) + len(missed) != measured_lines_per_path:
+                    raise RuntimeError("dense changed set should partition all fixture lines")
+            dense_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
 
-                read_calls = 0
-                start = time.perf_counter()
-                for rel_path in rel_paths:
-                    measurable, covered, missed = module._measurable_changed_lines(
-                        root,
-                        coverage_payload,
-                        rel_path,
-                        sparse_changed_lines,
-                    )
-                    if (
-                        measurable != expected_sparse_measurable
-                        or covered != expected_sparse_covered
-                        or missed != expected_sparse_missed
-                    ):
-                        raise RuntimeError("sparse changed set should stream and partition target lines")
-                sparse_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
-                sparse_read_samples.append(float(read_calls))
-
-                read_calls = 0
-                start = time.perf_counter()
-                for rel_path in rel_paths:
-                    measurable, covered, missed = module._measurable_changed_lines(
-                        root,
-                        coverage_payload,
-                        rel_path,
-                        dense_changed_lines,
-                    )
-                    if not (measurable or covered or missed):
-                        continue
-                    if len(measurable) != measured_lines_per_path:
-                        raise RuntimeError("dense changed set should measure all fixture lines")
-                    if len(covered) + len(missed) != measured_lines_per_path:
-                        raise RuntimeError("dense changed set should partition all fixture lines")
-                dense_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
-                dense_read_samples.append(float(read_calls))
-
-                start = time.perf_counter()
-                for _ in range(allowlist_parse_count):
-                    allowlist = module._coverage_path_allowlist(
-                        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": allowlist_value}
-                    )
-                    if allowlist != frozenset({"pkg/module_0.py"}):
-                        raise RuntimeError("single-string allowlist parse returned unexpected paths")
-                allowlist_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
-        finally:
-            module.Path.read_text = original_read_text
+            start = time.perf_counter()
+            for _ in range(allowlist_parse_count):
+                allowlist = module._coverage_path_allowlist(
+                    {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": allowlist_value}
+                )
+                if allowlist != frozenset({"pkg/module_0.py"}):
+                    raise RuntimeError("single-string allowlist parse returned unexpected paths")
+            allowlist_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
@@ -142,9 +122,6 @@ def run_probe(
         "dense_elapsed_ms_mean": statistics.fmean(dense_elapsed_samples),
         "allowlist_parse_elapsed_ms_mean": statistics.fmean(allowlist_elapsed_samples),
         "allowlist_parse_count": float(allowlist_parse_count),
-        "source_read_calls_mean": statistics.fmean(read_samples),
-        "sparse_source_read_calls_mean": statistics.fmean(sparse_read_samples),
-        "dense_source_read_calls_mean": statistics.fmean(dense_read_samples),
         "path_count": float(path_count),
         "measured_lines_per_path": float(measured_lines_per_path),
         "sample_count": float(samples),

@@ -12,23 +12,7 @@ from worker.runtime import tool_call_rescue
 logger = logging.getLogger(__name__)
 _UTF8_INCREMENTAL_DECODER = codecs.getincrementaldecoder("utf-8")
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
-_ASCII_TOKEN_COUNT_FAST_PATH_MIN_CHARS = 256
-
-
 def _whitespace_token_count(text: str) -> int:
-    if (
-        len(text) >= _ASCII_TOKEN_COUNT_FAST_PATH_MIN_CHARS
-        and text.isascii()
-        and text[0] != " "
-        and text[-1] != " "
-        and "  " not in text
-        and "\t" not in text
-        and "\n" not in text
-        and "\r" not in text
-        and "\v" not in text
-        and "\f" not in text
-    ):
-        return text.count(" ") + 1
     return len(text.split())
 
 

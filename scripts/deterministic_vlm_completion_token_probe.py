@@ -18,14 +18,6 @@ from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime  # 
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest  # noqa: E402
 
 
-class SplitTrackingText(str):
-    split_calls = 0
-
-    def split(self, *args: object, **kwargs: object) -> list[str]:
-        type(self).split_calls += 1
-        return super().split(*args, **kwargs)
-
-
 def _prepared_request(index: int = 0) -> PreparedVisionRequest:
     return PreparedVisionRequest(
         prompt_text="Describe the synthetic image.",
@@ -45,7 +37,7 @@ def _response_payload(word_count: int) -> str:
     return ("alpha beta\tgamma\n" * max(1, word_count // 3)).strip()
 
 
-def _run_once(*, iterations: int, word_count: int) -> tuple[float, int, float, int, int, int]:
+def _run_once(*, iterations: int, word_count: int) -> tuple[float, float, int, int, int]:
     payload = _response_payload(word_count)
     expected_completion_tokens = len(payload.split())
     runtime = DeterministicVLMRuntime()
@@ -67,10 +59,9 @@ def _run_once(*, iterations: int, word_count: int) -> tuple[float, int, float, i
         return original_prompt_token_count(*args, **kwargs)
 
     try:
-        DeterministicVLMRuntime._response_text = staticmethod(lambda prepared_request: SplitTrackingText(payload))  # type: ignore[method-assign]
+        DeterministicVLMRuntime._response_text = staticmethod(lambda prepared_request: payload)  # type: ignore[method-assign]
         deterministic_vlm_runtime_module._whitespace_token_count = counting_token_count
         runtime.prompt_token_count = counting_prompt_token_count  # type: ignore[method-assign]
-        SplitTrackingText.split_calls = 0
         tracemalloc.start()
         start = time.perf_counter()
         completion_total = 0
@@ -90,7 +81,6 @@ def _run_once(*, iterations: int, word_count: int) -> tuple[float, int, float, i
         raise SystemExit(f"unexpected completion token total: {completion_total} != {expected_total}")
     return (
         elapsed_ms,
-        SplitTrackingText.split_calls,
         float(peak_bytes),
         expected_completion_tokens,
         token_count_calls,
@@ -103,7 +93,6 @@ def main() -> int:
     samples = int(os.environ.get("MELIX_DETERMINISTIC_VLM_COMPLETION_PROBE_SAMPLES", "5"))
     word_count = int(os.environ.get("MELIX_DETERMINISTIC_VLM_COMPLETION_PROBE_WORDS", "6000"))
     elapsed: list[float] = []
-    split_calls: list[int] = []
     peaks: list[float] = []
     token_counts: list[int] = []
     token_count_calls: list[int] = []
@@ -111,7 +100,6 @@ def main() -> int:
     for _ in range(samples):
         (
             elapsed_ms,
-            split_call_count,
             peak_bytes,
             token_count,
             token_count_call_count,
@@ -121,7 +109,6 @@ def main() -> int:
             word_count=word_count,
         )
         elapsed.append(elapsed_ms)
-        split_calls.append(split_call_count)
         peaks.append(peak_bytes)
         token_counts.append(token_count)
         token_count_calls.append(token_count_call_count)
@@ -130,7 +117,6 @@ def main() -> int:
         json.dumps(
             {
                 "elapsed_ms_mean": statistics.fmean(elapsed),
-                "split_calls_mean": statistics.fmean(split_calls),
                 "peak_bytes_mean": statistics.fmean(peaks),
                 "completion_tokens": token_counts[-1],
                 "token_count_calls_mean": statistics.fmean(token_count_calls),
