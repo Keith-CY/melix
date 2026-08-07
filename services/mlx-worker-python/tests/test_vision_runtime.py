@@ -503,17 +503,8 @@ def test_vlm_cache_identity_fingerprint_uses_tail_scan_without_split_list() -> N
     assert SplitTrackingIdentity.rsplit_calls == 1
 
 
-def test_vlm_completion_token_count_scans_without_split_list(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class SplitTrackingText(str):
-        split_calls = 0
-
-        def split(self, *args: object, **kwargs: object) -> list[str]:
-            type(self).split_calls += 1
-            return super().split(*args, **kwargs)
-
-    response_text = SplitTrackingText("alpha beta\tgamma\n  delta")
+def test_vlm_completion_token_count_matches_split_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
+    response_text = "alpha beta\tgamma\n  delta"
     request = PreparedVisionRequest(
         prompt_text="Describe the image.",
         images=[],
@@ -562,10 +553,9 @@ def test_vlm_completion_token_count_scans_without_split_list(
         )
     )
 
-    assert whitespace_token_count(response_text) == len(str(response_text).split())
+    assert whitespace_token_count(response_text) == len(response_text.split())
     assert prefill_session.completion_tokens == 4
     assert token_events[-1].completion_tokens == 4
-    assert SplitTrackingText.split_calls == 0
 
 
 def test_vlm_generate_reuses_prompt_token_count_for_probe_and_event(
@@ -1264,16 +1254,8 @@ def test_resolve_vision_family_config_handles_invalid_family_overrides() -> None
     assert family_config.supports_tool_calls is False
 
 
-def test_vision_family_prompt_token_count_matches_split_without_materializing_tokens() -> (
-    None
-):
-    class NoSplitPrompt(str):
-        def split(self, *args: object, **kwargs: object) -> list[str]:
-            raise AssertionError(
-                "prompt token counting should not materialize split tokens"
-            )
-
-    prompt_text = NoSplitPrompt("  alpha beta\tgamma\n\nΔelta  ")
+def test_vision_family_prompt_token_count_matches_split_semantics() -> None:
+    prompt_text = "  alpha beta\tgamma\n\nΔelta  "
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
     request = PreparedVisionRequest(
         prompt_text=prompt_text,

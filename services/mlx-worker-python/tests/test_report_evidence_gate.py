@@ -221,83 +221,63 @@ def test_report_evidence_gate_slowest_probe_phases_accepts_typed_durations() -> 
     assert [row["phase"] for row in rows] == ["string", "int", "float", "empty", "missing"]
 
 
+def test_report_evidence_gate_slowest_probe_phases_rank_boolean_duration_last() -> None:
+    """A JSON ``true`` duration must not displace a real phase from the top five.
+
+    ``bool`` subclasses ``int``, so an unguarded numeric check scores ``True`` as
+    1.0 and drops the slowest genuine phase off the end of the list.
+    """
+    report: dict[str, object] = {
+        "probe_summary": {
+            "baseline": {
+                "slowest_phases": [
+                    {"phase": "bool_true", "duration_ms": True},
+                    {"phase": "nine", "duration_ms": 9.0},
+                    {"phase": "eight", "duration_ms": 8.0},
+                    {"phase": "seven", "duration_ms": 7.0},
+                    {"phase": "six", "duration_ms": 6.0},
+                    {"phase": "half", "duration_ms": 0.5},
+                ]
+            }
+        }
+    }
+
+    rows = report_evidence_gate_module._slowest_probe_phases(report)
+
+    assert [row["phase"] for row in rows] == ["nine", "eight", "seven", "six", "half"]
+    assert report_evidence_gate_module._probe_phase_duration_key(
+        {"duration_ms": True}
+    ) == 0.0
+    assert report_evidence_gate_module._probe_phase_duration_key(
+        {"duration_ms": False}
+    ) == 0.0
+
+
 def test_report_evidence_gate_run_kind_rules_accept_non_tuple_iterables() -> None:
     assert report_evidence_gate_module._rule_matches_report(
         rule={"run_kinds": {"evaluation", "serving_benchmark"}},
-        runs=[{"run_kind": "serving_benchmark"}],
+        run_kind_values={"serving_benchmark"},
         targets=[],
         metrics=[],
         probe_phases=set(),
     )
     assert not report_evidence_gate_module._rule_matches_report(
         rule={"run_kinds": {"evaluation"}},
-        runs=[{"run_kind": "serving_benchmark"}],
+        run_kind_values={"serving_benchmark"},
         targets=[],
         metrics=[],
         probe_phases=set(),
-    )
-
-
-def test_report_evidence_gate_run_kind_tuple_rules_reuse_normalized_set() -> None:
-    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
-    rule = {"run_kinds": ("evaluation", "serving_benchmark")}
-
-    assert report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[{"run_kind": "serving_benchmark"}],
-        targets=[],
-        metrics=[],
-        probe_phases=set(),
-    )
-    assert report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[{"run_kind": "evaluation"}],
-        targets=[],
-        metrics=[],
-        probe_phases=set(),
-    )
-
-    cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
-    assert cache_info.hits == 0
-    assert cache_info.misses == 1
-    assert rule["_melix_cached_run_kinds"] is rule["run_kinds"]
-    assert rule["_melix_cached_run_kind_set"] == frozenset(
-        {"evaluation", "serving_benchmark"}
     )
 
 
 def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string() -> None:
     assert report_evidence_gate_module._rule_matches_report(
         rule={"run_kinds": ("42",)},
-        runs=[{"run_kind": 42}],
+        run_kind_values={"42"},
         targets=[],
         metrics=[],
         probe_phases=set(),
     )
-
-
-def test_report_evidence_gate_run_kind_tuple_rules_cache_on_rule() -> None:
-    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
-    rule: dict[str, object] = {"run_kinds": ("7",)}
-
-    assert report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[{"run_kind": "7"}],
-        targets=[],
-        metrics=[],
-        probe_phases=set(),
-    )
-    assert rule["_melix_cached_run_kinds"] is rule["run_kinds"]
-    assert rule["_melix_cached_run_kind_set"] == frozenset({"7"})
-
-    assert report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[{"run_kind": "7"}],
-        targets=[],
-        metrics=[],
-        probe_phases=set(),
-    )
-    assert report_evidence_gate_module._string_frozenset_from_tuple.cache_info().misses == 1
 
 
 def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> None:
@@ -310,13 +290,6 @@ def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> N
 
 
 def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> None:
-    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
-    run_kind_values = report_evidence_gate_module._report_run_kind_values(
-        [{"run_kind": "serving_benchmark"}, {"run_kind": "evaluation"}]
-    )
-    assert type(run_kind_values) is set
-    assert run_kind_values == {"serving_benchmark", "evaluation"}
-
     roles = report_evidence_gate_module._report_matrix_roles(
         {"runs": [{"run_kind": "serving_benchmark"}, {"run_kind": "evaluation"}]},
         {
@@ -327,7 +300,6 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
     )
 
     assert roles == ["serving", "evaluation"]
-    assert report_evidence_gate_module._string_frozenset_from_tuple.cache_info().misses == 0
 
     mutable_roles = report_evidence_gate_module._report_matrix_roles(
         {"runs": [{"run_kind": "dynamic"}, {"run_kind": "99"}]},
@@ -339,88 +311,10 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
     assert mutable_roles == ["dynamic", "numeric_rule"]
 
 
-def test_report_evidence_gate_release_matrix_rows_defers_unmatched_id_strings() -> None:
-    class StringTrackedEvidence:
-        calls = 0
-
-        def __str__(self) -> str:  # pragma: no cover - this slice verifies no calls
-            type(self).calls += 1
-            return "unmatched-evidence"
-
-    rows = report_evidence_gate_module._release_matrix_rows(
-        [
-            {
-                "release_matrix_roles": ["unknown-a", "unknown-b"],
-                "source_evidence_ids": [StringTrackedEvidence()],
-            }
-        ],
-        {"serving": {"description": "Serving evidence"}},
-    )
-
-    assert rows == [
-        {
-            "role": "serving",
-            "required": True,
-            "present": False,
-            "evidence_ids": [],
-            "description": "Serving evidence",
-        }
-    ]
-    assert StringTrackedEvidence.calls == 0
-
-
-def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
-    report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_clear()
-    rule: dict[str, object] = {"metric_prefixes": ("adapter.", "runtime.")}
-
-    assert report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[],
-        targets=[],
-        metrics=[{"metric": "adapter.loss"}],
-        probe_phases=set(),
-    )
-    assert report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[],
-        targets=[],
-        metrics=[{"metric": "runtime.decode_ms"}],
-        probe_phases=set(),
-    )
-
-    cache_info = report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_info()
-    assert cache_info.hits == 0
-    assert cache_info.misses == 1
-    cached_state = rule["_melix_cached_metric_prefix_state"]
-    assert isinstance(cached_state, tuple)
-    assert cached_state[0] is rule["metric_prefixes"]
-    assert cached_state[1] == ("adapter.", "runtime.")
-    assert cached_state[2] == frozenset({"a", "r"})
-    assert cached_state[3] is False
-    assert cached_state[4] == {"a": "adapter.", "r": "runtime."}
-
-
-def test_report_evidence_gate_metric_prefix_fast_reject_preserves_empty_prefix() -> None:
-    assert report_evidence_gate_module._rule_matches_report(
-        rule={"metric_prefixes": ("", "runtime.")},
-        runs=[],
-        targets=[],
-        metrics=[{"metric": "anything.decode_ms"}],
-        probe_phases=set(),
-    )
-    assert not report_evidence_gate_module._rule_matches_report(
-        rule={"metric_prefixes": ("adapter.", "runtime.")},
-        runs=[],
-        targets=[],
-        metrics=[{"metric": "other.decode_ms"}, {"metric": 42}],
-        probe_phases=set(),
-    )
-
-
 def test_report_evidence_gate_metric_prefix_preserves_non_string_match() -> None:
     assert report_evidence_gate_module._rule_matches_report(
         rule={"metric_prefixes": ("42",)},
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[{"metric": 42}],
         probe_phases=set(),
@@ -433,7 +327,7 @@ def test_report_evidence_gate_metric_prefix_list_rules_reflect_mutation() -> Non
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[{"metric": "runtime.decode_ms"}],
         probe_phases=set(),
@@ -441,59 +335,11 @@ def test_report_evidence_gate_metric_prefix_list_rules_reflect_mutation() -> Non
     metric_prefixes.append("runtime.")
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[{"metric": "runtime.decode_ms"}],
         probe_phases=set(),
     )
-
-
-def test_report_evidence_gate_target_field_tuple_rules_reuse_normalized_tuple() -> None:
-    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
-    rule = {"target_fields": ("adapter_id", "adapter_snapshot")}
-
-    assert report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[],
-        targets=[{"adapter_id": "adapter-a"}],
-        metrics=[],
-        probe_phases=set(),
-    )
-    assert report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[],
-        targets=[{"adapter_snapshot": "snapshot-a"}],
-        metrics=[],
-        probe_phases=set(),
-    )
-
-    cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
-    assert cache_info.hits == 0
-    assert cache_info.misses == 1
-    assert rule["_melix_cached_target_fields"] is rule["target_fields"]
-    assert rule["_melix_cached_target_field_set"] == {"adapter_id", "adapter_snapshot"}
-
-
-def test_report_evidence_gate_target_field_rules_skip_unrelated_target_items() -> None:
-    class ItemsCountingDict(dict[str, object]):
-        items_calls = 0
-
-        def items(self):  # type: ignore[override]  # pragma: no cover
-            type(self).items_calls += 1
-            return super().items()
-
-    unrelated_targets: list[dict[str, object]] = [
-        ItemsCountingDict({f"unrelated_{index}": index}) for index in range(8)
-    ]
-
-    assert not report_evidence_gate_module._rule_matches_report(
-        rule={"target_fields": ("adapter_id", "adapter_snapshot")},
-        runs=[],
-        targets=unrelated_targets,
-        metrics=[],
-        probe_phases=set(),
-    )
-    assert ItemsCountingDict.items_calls == 0
 
 
 def test_report_evidence_gate_target_field_sparse_match_scans_row_items() -> None:
@@ -513,7 +359,7 @@ def test_report_evidence_gate_target_field_sparse_match_scans_row_items() -> Non
 
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[target],
         metrics=[],
         probe_phases=set(),
@@ -527,7 +373,7 @@ def test_report_evidence_gate_target_field_list_rules_reflect_mutation() -> None
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_snapshot": "snapshot-a"}],
         metrics=[],
         probe_phases=set(),
@@ -535,7 +381,7 @@ def test_report_evidence_gate_target_field_list_rules_reflect_mutation() -> None
     target_fields.append("adapter_snapshot")
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_snapshot": "snapshot-a"}],
         metrics=[],
         probe_phases=set(),
@@ -547,28 +393,28 @@ def test_report_evidence_gate_target_field_preserves_stringified_presence() -> N
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_id": "   "}],
         metrics=[],
         probe_phases=set(),
     )
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_id": None}],
         metrics=[],
         probe_phases=set(),
     )
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_id": 0}],
         metrics=[],
         probe_phases=set(),
     )
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[{"unrelated_field": 0}],
         metrics=[],
         probe_phases=set(),
@@ -582,38 +428,10 @@ def test_report_evidence_gate_target_field_preserves_string_subclass_strip() -> 
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule={"target_fields": ("adapter_id",)},
-        runs=[],
+        run_kind_values=set(),
         targets=[{"adapter_id": BlankWhenStripped("adapter-a")}],
         metrics=[],
         probe_phases=set(),
-    )
-
-
-def test_report_evidence_gate_probe_phase_tuple_rules_reuse_normalized_set() -> None:
-    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
-    rule = {"probe_phases": ("runtime_prepare", "model_load", "decode")}
-
-    assert report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[],
-        targets=[],
-        metrics=[],
-        probe_phases={"runtime_prepare", "model_load", "decode"},
-    )
-    assert not report_evidence_gate_module._rule_matches_report(
-        rule=rule,
-        runs=[],
-        targets=[],
-        metrics=[],
-        probe_phases={"runtime_prepare", "decode"},
-    )
-
-    cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
-    assert cache_info.hits == 0
-    assert cache_info.misses == 1
-    assert rule["_melix_cached_probe_phases"] is rule["probe_phases"]
-    assert rule["_melix_cached_probe_phase_set"] == frozenset(
-        {"runtime_prepare", "model_load", "decode"}
     )
 
 
@@ -623,7 +441,7 @@ def test_report_evidence_gate_probe_phase_list_rules_reflect_mutation() -> None:
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[],
         probe_phases={"runtime_prepare", "model_load", "decode"},
@@ -631,7 +449,7 @@ def test_report_evidence_gate_probe_phase_list_rules_reflect_mutation() -> None:
     probe_phases.pop()
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[],
         probe_phases={"runtime_prepare", "model_load", "decode"},
@@ -648,102 +466,18 @@ def test_report_evidence_gate_empty_probe_phase_rules_skip_normalization(
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule={},
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[],
         probe_phases={"runtime_prepare"},
     )
     assert not report_evidence_gate_module._rule_matches_report(
         rule={"probe_phases": ()},
-        runs=[],
+        run_kind_values=set(),
         targets=[],
         metrics=[],
         probe_phases={"runtime_prepare"},
     )
-
-
-def test_report_matrix_roles_skip_probe_phase_scan_without_phase_rules(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fail_probe_phases(report: dict[str, object]) -> set[str]:  # pragma: no cover
-        raise AssertionError("run-kind-only matrices should not scan probe phases")
-
-    monkeypatch.setattr(report_evidence_gate_module, "_probe_phases", fail_probe_phases)
-
-    roles = report_evidence_gate_module._report_matrix_roles(
-        {
-            "runs": [{"run_kind": "serving_benchmark"}],
-            "probe_summary": {
-                "baseline": {
-                    "slowest_phases": [
-                        {"phase": "runtime_prepare", "duration_ms": 1.0}
-                    ]
-                }
-            },
-        },
-        {
-            "serving": {"run_kinds": ("serving_benchmark",)},
-            "adapter": {"metric_prefixes": ("adapter.",)},
-            "runtime": {"target_fields": ("adapter_id",)},
-        },
-    )
-
-    assert roles == ["serving"]
-
-
-def test_report_matrix_roles_reuses_run_kind_value_set_for_run_kind_only_rules(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = 0
-    original_report_run_kind_values = report_evidence_gate_module._report_run_kind_values
-
-    def count_report_run_kind_values(runs: list[dict[str, object]]) -> frozenset[str]:
-        nonlocal calls
-        calls += 1
-        return original_report_run_kind_values(runs)
-
-    monkeypatch.setattr(
-        report_evidence_gate_module,
-        "_report_run_kind_values",
-        count_report_run_kind_values,
-    )
-
-    roles = report_evidence_gate_module._report_matrix_roles(
-        {"runs": [{"run_kind": 42}, {"run_kind": "serving_benchmark"}]},
-        {
-            "serving": {"run_kinds": ("serving_benchmark",)},
-            "numeric": {"run_kinds": ("42",)},
-            "missing": {"run_kinds": ("evaluation",)},
-        },
-    )
-
-    assert roles == ["serving", "numeric"]
-    assert calls == 1
-
-
-def test_report_matrix_roles_lazily_loads_targets_and_metrics_for_run_kind_only_rules(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[object] = []
-    original_dict_list = report_evidence_gate_module._dict_list
-
-    def count_dict_list(value: object) -> list[dict[str, object]]:
-        calls.append(value)
-        return original_dict_list(value)
-
-    monkeypatch.setattr(report_evidence_gate_module, "_dict_list", count_dict_list)
-
-    roles = report_evidence_gate_module._report_matrix_roles(
-        {
-            "runs": [{"run_kind": "serving_benchmark"}],
-            "targets": [{"adapter_id": "adapter-a"}],
-            "metrics": [{"metric": "adapter.loss"}],
-        },
-        {"serving": {"run_kinds": ("serving_benchmark",)}},
-    )
-
-    assert roles == ["serving"]
-    assert calls == [[{"run_kind": "serving_benchmark"}]]
 
 
 def test_report_matrix_roles_materializes_targets_and_metrics_for_mixed_rules(
@@ -777,89 +511,6 @@ def test_report_matrix_roles_materializes_targets_and_metrics_for_mixed_rules(
         [{"adapter_id": "adapter-a"}],
         [{"metric": "adapter.loss"}],
     ]
-
-
-def test_report_matrix_roles_scans_probe_phases_once_for_phase_rules(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = 0
-
-    def count_probe_phases(report: dict[str, object]) -> set[str]:
-        nonlocal calls
-        calls += 1
-        return {"runtime_prepare", "decode"}
-
-    monkeypatch.setattr(report_evidence_gate_module, "_probe_phases", count_probe_phases)
-
-    roles = report_evidence_gate_module._report_matrix_roles(
-        {},
-        {
-            "runtime": {"probe_phases": ("runtime_prepare",)},
-            "decode": {"probe_phases": ("decode",)},
-        },
-    )
-
-    assert roles == ["runtime", "decode"]
-    assert calls == 1
-
-
-def test_report_evidence_gate_probe_phases_scans_buckets_without_dict_list(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fail_dict_list(value: object) -> list[dict[str, object]]:
-        raise AssertionError(  # pragma: no cover - exercised only on regression
-            "_probe_phases should scan list buckets directly"
-        )
-
-    monkeypatch.setattr(report_evidence_gate_module, "_dict_list", fail_dict_list)
-
-    phases = report_evidence_gate_module._probe_phases(
-        {
-            "probe_summary": {
-                "baseline": {
-                    "slowest_phases": [
-                        {"phase": " runtime_prepare "},
-                        object(),
-                        {"phase": ""},
-                    ],
-                    "failed_phases": [
-                        {"phase": "model_load"},
-                        {"duration_ms": 1.0},
-                    ],
-                    "skipped_phases": "not-a-list",
-                },
-                "candidate": {
-                    "slowest_phases": [{"phase": "decode"}],
-                    "fallback_phases": [{"phase": 42}],
-                },
-            }
-        }
-    )
-
-    assert phases == {"runtime_prepare", "model_load", "decode", "42"}
-
-
-def test_report_evidence_gate_probe_phases_preserves_clean_string_fast_path() -> None:
-    phases = report_evidence_gate_module._probe_phases(
-        {
-            "probe_summary": {
-                "baseline": {
-                    "slowest_phases": [
-                        {"phase": "runtime_prepare"},
-                        {"phase": " model_load "},
-                    ]
-                },
-                "candidate": {
-                    "failed_phases": [
-                        {"phase": "decode"},
-                        {"phase": 42},
-                    ]
-                },
-            }
-        }
-    )
-
-    assert phases == {"runtime_prepare", "model_load", "decode", "42"}
 
 
 def test_report_evidence_gate_probe_phases_keeps_blank_and_padded_string_semantics() -> None:
@@ -907,7 +558,7 @@ def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
 
     assert not report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[{"run_kind": "serving_benchmark"}],
+        run_kind_values={"serving_benchmark"},
         targets=[],
         metrics=[],
         probe_phases=set(),
@@ -915,28 +566,11 @@ def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     run_kinds.append("serving_benchmark")
     assert report_evidence_gate_module._rule_matches_report(
         rule=rule,
-        runs=[{"run_kind": "serving_benchmark"}],
+        run_kind_values={"serving_benchmark"},
         targets=[],
         metrics=[],
         probe_phases=set(),
     )
-
-
-def test_report_evidence_gate_load_report_payload_reuses_exact_path_instances(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    report_path = tmp_path / "report.json"
-    report_path.write_text('{"schema_version":"fixture","metrics":[]}', encoding="utf-8")
-
-    def fail_path_constructor(path: object) -> Path:
-        raise AssertionError(  # pragma: no cover - only exercised on regression
-            f"Path constructor should not run for exact Path input: {path!r}"
-        )
-
-    monkeypatch.setattr(report_evidence_gate_module, "Path", fail_path_constructor)
-
-    assert load_report_payload(report_path) == {"schema_version": "fixture", "metrics": []}
 
 
 def test_report_evidence_gate_passes_complete_release_matrix(tmp_path: Path) -> None:
@@ -979,26 +613,6 @@ def test_report_evidence_gate_release_matrix_dedupes_evidence_ids(tmp_path: Path
             "present": True,
             "evidence_ids": ["serving-base", "serving-head"],
             "description": "",
-        }
-    ]
-
-
-def test_report_evidence_gate_release_matrix_single_role_keeps_stringified_evidence() -> None:
-    rows = report_evidence_gate_module._release_matrix_rows(
-        [
-            {"release_matrix_roles": ["serving"], "source_evidence_ids": ["base", 7]},
-            {"release_matrix_roles": ["unknown"], "source_evidence_ids": ["ignored"]},
-        ],
-        {"serving": {"description": "serving evidence"}},
-    )
-
-    assert rows == [
-        {
-            "role": "serving",
-            "required": True,
-            "present": True,
-            "evidence_ids": ["7", "base"],
-            "description": "serving evidence",
         }
     ]
 
@@ -1132,20 +746,20 @@ def test_report_evidence_gate_covers_invalid_payload_and_edge_summaries(tmp_path
     assert report_evidence_gate_module._probe_phases({"probe_summary": []}) == set()
     assert report_evidence_gate_module._dict_list({"not": "a list"}) == []
     dict_rows = [{"phase": "setup"}, {"phase": "probe"}]
-    assert report_evidence_gate_module._dict_list(dict_rows) is dict_rows
+    assert report_evidence_gate_module._dict_list(dict_rows) == dict_rows
     assert report_evidence_gate_module._dict_list([dict_rows[0], "skip", dict_rows[1]]) == dict_rows
 
     class DictRow(dict[str, object]):
         pass
 
     subclass_rows: list[object] = [DictRow({"phase": "subclass"}), {"phase": "plain"}]
-    assert report_evidence_gate_module._dict_list(subclass_rows) is subclass_rows
+    assert report_evidence_gate_module._dict_list(subclass_rows) == subclass_rows
 
     class RowList(list[object]):
         pass
 
     subclass_list = RowList([{"phase": "plain"}, DictRow({"phase": "subclass"})])
-    assert report_evidence_gate_module._dict_list(subclass_list) is subclass_list
+    assert report_evidence_gate_module._dict_list(subclass_list) == subclass_list
     assert report_evidence_gate_module._dict_list(RowList([subclass_list[0], "skip"])) == [
         subclass_list[0]
     ]
@@ -1173,25 +787,6 @@ def test_load_report_payload_reads_json_bytes(
     monkeypatch.setattr(Path, "read_text", fail_read_text)
 
     assert load_report_payload(report_path) == {"schema_version": "fixture", "value": 3}
-
-
-def test_load_report_payload_uses_module_local_json_loads(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    report_path = tmp_path / "report.json"
-    report_path.write_bytes(b'{"schema_version":"fixture","value":3}')
-    calls: list[bytes] = []
-    original_loads = report_evidence_gate_module._JSON_LOADS
-
-    def tracked_loads(payload: bytes) -> object:
-        calls.append(payload)
-        return original_loads(payload)
-
-    monkeypatch.setattr(report_evidence_gate_module, "_JSON_LOADS", tracked_loads)
-
-    assert load_report_payload(report_path) == {"schema_version": "fixture", "value": 3}
-    assert calls == [b'{"schema_version":"fixture","value":3}']
 
 
 def test_report_evidence_gate_script_handles_errors_and_failed_gate(

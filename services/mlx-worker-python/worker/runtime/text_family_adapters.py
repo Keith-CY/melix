@@ -430,43 +430,34 @@ def _resolved_expert_count(
     return 0, "none"
 
 
+_EXPERT_COUNT_CONFIG_KEYS = (
+    "num_local_experts",
+    "num_experts",
+    "moe_num_experts",
+    "n_routed_experts",
+)
+
+
+def _expert_count_value(value: Any) -> int | None:
+    """Coerce a config expert count, or ``None`` when the value is unusable."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    if isinstance(value, str):
+        try:
+            return max(0, int(value))
+        except ValueError:
+            return None
+    return None
+
+
 def _expert_count_from_config(config_payload: Mapping[str, Any] | None) -> int | None:
     config_payload = _config_mapping(config_payload)
-    value = config_payload.get("num_local_experts")
-    if type(value) is str:
-        try:
-            return max(0, int(value))
-        except ValueError:
-            pass
-    elif type(value) is int:
-        return max(0, value)
-    elif isinstance(value, bool):
-        pass
-    elif isinstance(value, float):
-        return max(0, int(value))
-    elif isinstance(value, str):
-        try:
-            return max(0, int(value))
-        except ValueError:
-            pass
-    for key in ("num_experts", "moe_num_experts", "n_routed_experts"):
-        value = config_payload.get(key)
-        if type(value) is str:
-            try:
-                return max(0, int(value))
-            except ValueError:
-                continue
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, int):
-            return max(0, value)
-        if isinstance(value, float):
-            return max(0, int(value))
-        if isinstance(value, str):
-            try:
-                return max(0, int(value))
-            except ValueError:
-                continue
+    for key in _EXPERT_COUNT_CONFIG_KEYS:
+        count = _expert_count_value(config_payload.get(key))
+        if count is not None:
+            return count
     return None
 
 
@@ -492,10 +483,7 @@ def _string_value(metadata: Mapping[str, str], key: str, default: str) -> str:
     value = metadata.get(key)
     if not value:
         return default
-    if not value[0].isspace() and not value[-1].isspace():
-        return value
-    value = value.strip()
-    return value or default
+    return value.strip() or default
 
 
 def _split_csv(raw_value: str) -> list[str]:
