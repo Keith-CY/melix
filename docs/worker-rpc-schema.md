@@ -87,6 +87,86 @@ Core shared messages should include:
 - human-readable `message`
 - retriable flag
 - optional detail map
+- optional typed `BackendIdentityMismatchReceipt` for backend identity failures
+
+### BackendModelIdentity
+
+`BackendModelIdentity` binds one control-plane route generation to backend-owned
+loaded state. It contains the admitted public `requested_model_id`, the active
+`requested_adapter_id` (empty when no adapter is active), and a positive
+`route_generation`, plus the exact `worker_instance_id` published by the selected
+backend's health handshake. `worker_instance_id` is generated once per worker
+process boot and is distinct from the stable configured worker name. Restarting
+the same executable on the same socket therefore produces a new instance
+identity even when handles and route generations later collide.
+
+`LoadModelRequest` carries the control-plane binding identity. At load time the
+worker first verifies that a non-empty claimed `worker_instance_id` exactly
+matches its current boot instance. A mismatch returns the retriable
+`worker_instance_mismatch` error before model resolution or runtime loading, so
+a health-to-load race across a worker restart cannot publish a stale binding.
+The worker then derives the loaded model and adapter identifiers from the
+resolved `ModelSpec` and combines them with the binding's route generation and
+its verified boot instance identity. It does not trust a claimed load-time
+model or adapter identifier over the model and running backend it resolved.
+Every production inference request carries the requested identity:
+
+- `Generate`, `Prefill`, and `Decode` use `ExecutionMetadata.backend_identity`;
+- `Embed`, `Rerank`, `Transcribe`, `Speak`, `SpeakStream`, `ImageGenerate`, and
+  `ImageEdit` carry `backend_identity` directly.
+
+The worker compares all four identity fields with its immutable loaded record
+before runtime lease acquisition, media preprocessing, tokenization, or model
+execution. A missing identity or zero generation fails closed with
+`model_identity_missing`. A different model, adapter, route generation, or worker
+instance fails closed with `model_identity_mismatch`. Neither failure may emit
+output.
+
+Phase-aware execution additionally binds every returned decode handle to the
+prefill request ID, model handle, and backend identity that created it. `Decode`
+must compare its execution metadata with that stored binding before consuming the
+prefill context, acquiring the decode lease, or emitting a decode event. A valid
+identity for another loaded residency does not authorize use of the stored
+context; cross-request, cross-handle, and cross-identity combinations fail closed
+with `model_identity_mismatch` and leave the original context available for its
+owner. `Prefill` and `Decode` are phases of one execution request and therefore
+carry the same `ExecutionMetadata.id.request_id`; `parent_request_id` describes
+lineage between separate execution requests and does not authorize a different
+request to consume a decode handle.
+
+`RestoreBoundarySnapshotRequest.request_id` declares the owner of the new decode
+handle created by an explicit restore. The restored execution metadata and
+handle use that request ID, so a resumed request can differ from the request that
+created the snapshot without leaving the restored handle unbound. An empty value
+falls back to the snapshot request ID for protocol compatibility. After the
+snapshot residency has been validated, restore also rebinds the execution's
+backend identity to the currently loaded residency. Persisted worker boot-epoch
+identity must not leak into the restored decode handle.
+
+`UnloadModelRequest.expected_backend_identity` provides an optional
+compare-and-unload guard. When present, the worker compares it with the loaded
+record inside the same registry critical section or actor operation that removes
+the residency. A mismatch returns `model_identity_mismatch` and leaves the
+current residency loaded. Callers must use this guard when retiring a stale
+residency after route recovery.
+
+Inference leases and pending unloads are tracked per model handle. A busy target
+returns the typed in-use result and records the compare-and-unload request for
+automatic retry after that handle's final lease ends. Requests using another
+handle do not block retirement of the target residency. The deferred retry
+retains the original `expected_backend_identity`, so handle reuse cannot remove
+a replacement residency. Identity-bound recovery retirement sets `force` so a
+failed residency marked shared is also removed after its final lease; ordinary
+operator unloads retain shared-residency protection unless they explicitly set
+the same flag. Pending requests merge monotonically: a later non-forced request
+cannot downgrade an already accepted forced retirement, and an identity guard
+cannot be discarded while the target remains busy.
+
+`BackendIdentityMismatchReceipt` records requested and loaded identifiers,
+requested and loaded generations and worker instances, observation time, and a
+bounded mismatch reason. Worker diagnostics preserve public catalog identifiers
+but redact absolute, relative local, UNC, and case-insensitive local file URI
+paths.
 
 ### ModelSpec
 
@@ -165,6 +245,18 @@ message CacheKey {
 ```
 
 `prefix_hash` should identify the concrete reusable prefix. `fingerprint_hash` should identify the deterministic request fingerprint used for cache matching. `scope_id` should be the normalized identifier derived from `CacheScope`.
+
+When the worker derives these hashes, it must use an unambiguous versioned
+encoding. The prefix identity includes the complete resolved `CacheScope`; the
+message identity preserves role, name, message count and boundaries, part count
+and boundaries, part kind and exact value, media metadata, and original text
+whitespace. Every variable-length value is length-prefixed, and map fields are
+sorted before encoding. Caller-supplied hash fields remain authoritative.
+
+`CacheScopeSummary.scope_id` is an external label, not a unique aggregation
+key. Operator summaries group by the complete resolved `CacheScope`, so two
+rows may intentionally carry the same `scope_id` when any other scope field
+differs.
 
 This is required for cross-session reuse and cache dedup without overloading `CacheScope` itself.
 
@@ -503,6 +595,40 @@ V1 should support dedicated RPCs for:
 
 These should not be forced through the text-generation path.
 
+`Embed` preserves its existing request and response messages. Artifact-backed
+BERT and XLM-R execution is selected by the loaded model's explicit backend ID,
+not by changing `EmbedResponse`. The Python worker loads only local tokenizer,
+configuration, and safetensors files through a private read-only snapshot.
+Tokenizer construction and weight loading consume only snapshot paths, and the
+snapshot hashes become the load receipt identity. An active Sentence
+Transformers contract must be the ordered `Transformer -> Pooling -> optional
+Normalize` pipeline. The worker must tokenize the complete request batch,
+validate integral rectangular and shape-equal `input_ids`, `attention_mask`,
+and optional `token_type_ids`, reject fully padded rows before the encoder,
+execute one forward, apply `cls`, `mean`, or `last_token` pooling with the
+active-token mask, normalize in float32 when requested, and validate finite
+single-dense output before constructing the response.
+
+Artifact load evidence is projected into `LoadedModelSummary.model.ext` under
+the versioned `melix.embedding.load.*` namespace. It records requested and
+effective backend, pooling, normalization, dimensions, and maximum length plus
+model hash, tokenizer hash, vector kind, dtype, estimated resident bytes, and
+measured resident bytes. Unrequested numeric fields remain zero rather than
+copying effective values; an explicitly supplied invalid dimension is refused
+rather than represented as unrequested. Artifact-declared pooling and normalization are
+recorded separately from requested overrides and effective execution values.
+Request-local batch size, token count, forward count,
+shape, dtype, and finite-output evidence is retained in a bounded,
+request-ID-keyed worker store. `ListLoadedModels` projects the latest entry into
+`LoadedModelSummary.model.ext` under `melix.embedding.request.*`. Typed artifact
+refusal codes pass through both `LoadModelResponse.error` and
+`EmbedResponse.error`; no partial vectors may accompany a refusal.
+
+Artifact embedding MLX work uses the same single-owner executor as the worker's
+other MLX runtimes. Load-time measured residency is captured inside that owner
+transaction so concurrent gRPC handlers cannot interleave another MLX load with
+the before/after memory sample.
+
 ## Cache Service
 
 Workers need a dedicated cache service so the control plane can inspect and mutate cache state without directly touching worker storage.
@@ -687,6 +813,8 @@ Recommended intent:
 - `MODEL_KIND_UNSUPPORTED`
 - `MEMORY_BUDGET_EXCEEDED`
 - `WORKER_DRAINING`
+- `model_identity_missing`
+- `model_identity_mismatch`
 
 ### Generation and Cache
 
@@ -719,6 +847,15 @@ Recommended intent:
 - tool-call deltas fit naturally
 - SSE bridging is straightforward
 - cancellation maps cleanly to a single request
+
+Creating a stream object is not response output. The first backend event is the
+replay cutoff, including an admission or envelope event before a token, audio
+chunk, tool call, usage payload, or completion. A transport or identity failure
+before that cutoff may receive one fresh control-plane dispatch. A failure after
+the cutoff is terminal and must not replay completed tool work or any other
+output. Image generation and editing are stricter: only a typed identity
+mismatch before an artifact exists may trigger recovery, because an ambiguous
+transport failure could occur after the backend already committed side effects.
 
 ### Heartbeats
 

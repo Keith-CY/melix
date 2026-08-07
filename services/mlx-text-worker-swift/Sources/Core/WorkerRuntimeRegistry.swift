@@ -7,12 +7,80 @@ struct LoadedModelRecord: @unchecked Sendable {
     let runtimeModel: LoadedTextModel
     let estimatedResidentBytes: UInt64
     let residency: Melix_Worker_V1_ResidencyInfo
+    let backendIdentity: Melix_Worker_V1_BackendModelIdentity
+}
+
+private struct WorkerModelResidencyKey: Hashable, Sendable {
+    let modelID: String
+    let modelPath: String
+    let modelKind: String
+    let revision: String
+    let tokenizerHash: String
+    let quantProfileID: String
+    let parserMode: String
+    let reasoningMode: String
+    let maxContext: UInt32
+    let adapterSetHash: String
+    let capabilityClass: Int
+    let runtimeMode: Int
+    let routeClass: Int
+    let requestedModelID: String
+    let requestedAdapterID: String
+    let routeGeneration: UInt64
+    let workerInstanceID: String
+
+    init(
+        _ spec: Melix_Worker_V1_ModelSpec,
+        backendIdentity: Melix_Worker_V1_BackendModelIdentity
+    ) {
+        self.modelID = spec.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.modelPath = spec.modelPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.modelKind = spec.modelKind.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.revision = spec.revision.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.tokenizerHash = spec.tokenizerHash.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.quantProfileID = spec.quantProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.parserMode = spec.parserMode.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.reasoningMode = spec.reasoningMode.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.maxContext = spec.maxContext
+        self.adapterSetHash = cacheAdapterSetHash(from: spec)
+        self.capabilityClass = spec.capabilityClass.rawValue
+        self.runtimeMode = spec.runtimeMode.rawValue
+        self.routeClass = spec.routeClass.rawValue
+        self.requestedModelID = backendIdentity.requestedModelID
+        self.requestedAdapterID = backendIdentity.requestedAdapterID
+        self.routeGeneration = backendIdentity.routeGeneration
+        self.workerInstanceID = backendIdentity.workerInstanceID
+    }
+}
+
+private struct WorkerModelLoadAttempt: Sendable {
+    let id: UInt64
+    let task: Task<LoadedModelRecord, Error>
+}
+
+private struct WorkerModelUnloadAttempt: Sendable {
+    let id: UInt64
+    let task: Task<Void, Never>
+}
+
+private struct PendingModelUnload: Sendable {
+    let force: Bool
+    let expectedBackendIdentity: Melix_Worker_V1_BackendModelIdentity?
+}
+
+enum WorkerModelUnloadResult: Equatable {
+    case unloaded
+    case notFound
+    case identityMismatch
+    case activeRequests
+    case sharedResidency
 }
 
 struct StoredPrefillContext: @unchecked Sendable {
     let decodeHandle: String
     let modelHandle: String
     let requestID: String
+    let execution: Melix_Worker_V1_ExecutionMetadata
     let promptTokens: Int
     let messages: [Melix_Worker_V1_ChatMessage]
     let resumeHint: String
@@ -40,11 +108,29 @@ struct WorkerPrefillResult: Sendable {
     let hotPrefixCount: Int
     let restorePlan: Melix_Worker_V1_CacheRestorePlan?
     let cacheHitTaxonomy: HotCacheHitTaxonomy
+    let recoveredPrefixTokens: Int
+    let cacheHitMode: String
+    let cacheFallbackReason: String
+    let cacheLookupMicros: Int
+    let cacheRestoreMicros: Int
+    let cacheStreamOwnerMatch: Bool
+    let cacheCopyOnWriteBlockCount: Int
+    let cacheComputedPrefixTokens: Int
+    let cacheModelPrefillMicros: Int
+    let cacheModelPrefillChunkTokens: Int
+    let cacheModelPrefillCallCount: Int
+    let cacheModelPrefillMinCallTokens: Int
+    let cacheModelPrefillMaxCallTokens: Int
+    let cacheBlockTableBytes: UInt64
 }
 
 struct WorkerDecodeSession: @unchecked Sendable {
     let loadedModel: LoadedModelRecord
     let prefill: StoredPrefillContext
+}
+
+struct WorkerBackendIdentityValidationError: Error {
+    let status: Melix_Worker_V1_ErrorStatus
 }
 
 struct WorkerDecodeBatchItem: @unchecked Sendable {
@@ -100,13 +186,13 @@ actor WorkerRuntimeRegistry {
     private typealias BoundarySnapshotRecord = (
         snapshot: Melix_Worker_V1_SnapshotRef,
         model: Melix_Worker_V1_ModelSpec,
+        execution: Melix_Worker_V1_ExecutionMetadata?,
         messages: [Melix_Worker_V1_ChatMessage],
         resumeHint: String,
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         promptTokens: Int,
         blockTableID: String,
-        blockTable: Melix_Worker_V1_BlockTable,
-        decodeHandle: String
+        blockTable: Melix_Worker_V1_BlockTable
     )
 
     private let configuration: WorkerConfiguration
@@ -115,13 +201,26 @@ actor WorkerRuntimeRegistry {
     private let cacheStore: HotCacheStore
 
     private var loadedModels: [String: LoadedModelRecord]
+    private var loadedModelHandlesByResidencyKey: [WorkerModelResidencyKey: String]
+    private var residencyKeysByLoadedModelHandle: [String: WorkerModelResidencyKey]
+    private var modelLoadsInFlight: [WorkerModelResidencyKey: WorkerModelLoadAttempt]
+    private var modelUnloadsInFlight: [WorkerModelResidencyKey: WorkerModelUnloadAttempt]
+    // LoadModel does not carry a caller lease, and short-lived control planes cannot reliably
+    // release one on exit. Once more than one caller observes a residency, keep that protection
+    // sticky and require the protocol's explicit force bit for destructive unload.
+    private var sharedModelHandles: Set<String>
     private var activeRequests: UInt64
+    private var activeRequestCountsByModelHandle: [String: UInt64]
+    private var pendingModelUnloads: [String: PendingModelUnload]
     private var activePrefills: UInt64
     private var activeDecodes: UInt64
     private var draining: Bool
     private var nextModelHandle: UInt64
+    private var nextModelLifecycleAttempt: UInt64
     private var nextDecodeHandle: UInt64
     private var prefillContexts: [String: StoredPrefillContext]
+    private var modelIdentityMismatchCount: UInt64
+    private var lastModelIdentityMismatch: Melix_Worker_V1_BackendIdentityMismatchReceipt
 
     init(
         configuration: WorkerConfiguration,
@@ -142,13 +241,23 @@ actor WorkerRuntimeRegistry {
             initialCacheBlocks: configuration.initialCacheBlocks
         )
         self.loadedModels = [:]
+        self.loadedModelHandlesByResidencyKey = [:]
+        self.residencyKeysByLoadedModelHandle = [:]
+        self.modelLoadsInFlight = [:]
+        self.modelUnloadsInFlight = [:]
+        self.sharedModelHandles = []
         self.activeRequests = 0
+        self.activeRequestCountsByModelHandle = [:]
+        self.pendingModelUnloads = [:]
         self.activePrefills = 0
         self.activeDecodes = 0
         self.draining = false
         self.nextModelHandle = 1
+        self.nextModelLifecycleAttempt = 1
         self.nextDecodeHandle = 1
         self.prefillContexts = [:]
+        self.modelIdentityMismatchCount = 0
+        self.lastModelIdentityMismatch = Melix_Worker_V1_BackendIdentityMismatchReceipt()
     }
 
     func capabilities() -> Melix_Worker_V1_RuntimeCapabilities {
@@ -156,7 +265,7 @@ actor WorkerRuntimeRegistry {
 
         var cache = Melix_Worker_V1_CacheCapabilities()
         cache.supportsPrefixCache = true
-        cache.supportsPagedCache = true
+        cache.supportsPagedCache = runtime.supportsPagedKVCache
         cache.supportsDiskCache = false
         cache.kvQuantProfiles = ActiveKVQuantizationProfiles.supportedProfiles
         cache.supportsBoundarySnapshots = false
@@ -197,8 +306,14 @@ actor WorkerRuntimeRegistry {
         _ requested: Melix_Worker_V1_ModelSpec,
         memoryBudgetBytes: UInt64 = 0,
         pinOnLoad: Bool = false,
-        diskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified
+        diskStreamingMode: Melix_Worker_V1_DiskStreamingMode = .unspecified,
+        backendIdentity: Melix_Worker_V1_BackendModelIdentity? = nil
     ) async throws -> LoadedModelRecord {
+        if let backendIdentity,
+           !backendIdentity.workerInstanceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           backendIdentity.workerInstanceID != configuration.workerInstanceID {
+            throw WorkerRuntimeRegistryError.workerInstanceMismatch
+        }
         let resolved = modelCatalog.get(requested.modelID).map { catalogModel in
             mergeModelSpec(requested, fallback: catalogModel)
         } ?? requested
@@ -215,7 +330,88 @@ actor WorkerRuntimeRegistry {
             )
         }
 
-        let loaded = try await runtime.loadModel(spec: resolved)
+        let resolvedBackendIdentity = resolvedBackendModelIdentity(
+            for: resolved,
+            requested: backendIdentity,
+            workerInstanceID: configuration.workerInstanceID
+        )
+        let residencyKey = WorkerModelResidencyKey(
+            resolved,
+            backendIdentity: resolvedBackendIdentity
+        )
+        if let unloadAttempt = modelUnloadsInFlight[residencyKey] {
+            await unloadAttempt.task.value
+            clearModelUnloadAttempt(residencyKey, attemptID: unloadAttempt.id)
+            return try await loadModel(
+                requested,
+                memoryBudgetBytes: memoryBudgetBytes,
+                pinOnLoad: pinOnLoad,
+                diskStreamingMode: diskStreamingMode,
+                backendIdentity: backendIdentity
+            )
+        }
+        if let handle = loadedModelHandlesByResidencyKey[residencyKey],
+           let existing = loadedModels[handle] {
+            sharedModelHandles.insert(handle)
+            return try reuseLoadedModel(
+                existing,
+                memoryBudgetBytes: memoryBudgetBytes,
+                pinOnLoad: pinOnLoad || resolved.settings.pinOnLoad
+            )
+        }
+        if let loadAttempt = modelLoadsInFlight[residencyKey] {
+            let loaded = try await loadAttempt.task.value
+            guard let current = loadedModels[loaded.handle] else {
+                return try await loadModel(
+                    requested,
+                    memoryBudgetBytes: memoryBudgetBytes,
+                    pinOnLoad: pinOnLoad,
+                    diskStreamingMode: diskStreamingMode,
+                    backendIdentity: backendIdentity
+                )
+            }
+            sharedModelHandles.insert(current.handle)
+            return try reuseLoadedModel(
+                current,
+                memoryBudgetBytes: memoryBudgetBytes,
+                pinOnLoad: pinOnLoad || resolved.settings.pinOnLoad
+            )
+        }
+
+        let attemptID = nextModelLifecycleAttempt
+        nextModelLifecycleAttempt += 1
+        let loadTask = Task {
+            try await self.performModelLoad(
+                resolved,
+                residencyKey: residencyKey,
+                attemptID: attemptID,
+                memoryBudgetBytes: memoryBudgetBytes,
+                pinOnLoad: pinOnLoad,
+                requestedDiskStreamingMode: requestedDiskStreamingMode,
+                backendIdentity: resolvedBackendIdentity
+            )
+        }
+        modelLoadsInFlight[residencyKey] = WorkerModelLoadAttempt(id: attemptID, task: loadTask)
+        return try await loadTask.value
+    }
+
+    private func performModelLoad(
+        _ resolved: Melix_Worker_V1_ModelSpec,
+        residencyKey: WorkerModelResidencyKey,
+        attemptID: UInt64,
+        memoryBudgetBytes: UInt64,
+        pinOnLoad: Bool,
+        requestedDiskStreamingMode: Melix_Worker_V1_DiskStreamingMode,
+        backendIdentity: Melix_Worker_V1_BackendModelIdentity
+    ) async throws -> LoadedModelRecord {
+        let loaded: RuntimeLoadResult
+        do {
+            loaded = try await runtime.loadModel(spec: resolved)
+        } catch {
+            clearModelLoadAttempt(residencyKey, attemptID: attemptID)
+            throw error
+        }
+
         let existingResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
         let projectedResidentBytes = existingResidentBytes &+ loaded.estimatedResidentBytes
         let requiredProcessBytes = projectedResidentBytes &+ configuration.modelLoadHeadroomBytes
@@ -223,6 +419,7 @@ actor WorkerRuntimeRegistry {
            configuration.processMemoryBudgetBytes > 0,
            requiredProcessBytes > configuration.processMemoryBudgetBytes {
             await runtime.unloadModel(loaded.model)
+            clearModelLoadAttempt(residencyKey, attemptID: attemptID)
             throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
                 budgetBytes: configuration.processMemoryBudgetBytes,
                 headroomBytes: configuration.modelLoadHeadroomBytes,
@@ -236,6 +433,7 @@ actor WorkerRuntimeRegistry {
            memoryBudgetBytes > 0,
            requiredRequestBytes > memoryBudgetBytes {
             await runtime.unloadModel(loaded.model)
+            clearModelLoadAttempt(residencyKey, attemptID: attemptID)
             throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
                 budgetBytes: memoryBudgetBytes,
                 headroomBytes: configuration.modelLoadHeadroomBytes,
@@ -255,38 +453,232 @@ actor WorkerRuntimeRegistry {
                 for: resolved,
                 pinOnLoad: pinOnLoad,
                 effectiveDiskStreamingMode: requestedDiskStreamingMode
-            )
+            ),
+            backendIdentity: backendIdentity
         )
         loadedModels[handle] = record
+        loadedModelHandlesByResidencyKey[residencyKey] = handle
+        residencyKeysByLoadedModelHandle[handle] = residencyKey
+        clearModelLoadAttempt(residencyKey, attemptID: attemptID)
         return record
     }
 
     func unloadModel(_ handle: String) async -> Bool {
-        guard let removed = loadedModels.removeValue(forKey: handle) else {
-            return false
+        await unloadModel(handle, force: false) == .unloaded
+    }
+
+    func unloadModel(
+        _ handle: String,
+        force: Bool,
+        expectedBackendIdentity: Melix_Worker_V1_BackendModelIdentity? = nil
+    ) async -> WorkerModelUnloadResult {
+        guard let removed = loadedModels[handle] else {
+            return .notFound
         }
+        if let expectedBackendIdentity,
+           expectedBackendIdentity != removed.backendIdentity {
+            return .identityMismatch
+        }
+        if activeRequestCountsByModelHandle[handle, default: 0] > 0 {
+            let existing = pendingModelUnloads[handle]
+            pendingModelUnloads[handle] = PendingModelUnload(
+                force: force || existing?.force == true,
+                expectedBackendIdentity: existing?.expectedBackendIdentity
+                    ?? expectedBackendIdentity
+            )
+            return .activeRequests
+        }
+        if !force, sharedModelHandles.contains(handle) {
+            return .sharedResidency
+        }
+        loadedModels.removeValue(forKey: handle)
+        pendingModelUnloads.removeValue(forKey: handle)
+        let residencyKey = residencyKeysByLoadedModelHandle.removeValue(forKey: handle)
+            ?? WorkerModelResidencyKey(removed.spec, backendIdentity: removed.backendIdentity)
+        loadedModelHandlesByResidencyKey.removeValue(forKey: residencyKey)
+        sharedModelHandles.remove(handle)
         prefillContexts = prefillContexts.filter { $0.value.modelHandle != handle }
-        await cacheStore.purgeScope(resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: removed.spec))
-        await runtime.unloadModel(removed.runtimeModel)
-        return true
+        let attemptID = nextModelLifecycleAttempt
+        nextModelLifecycleAttempt += 1
+        let cacheStore = self.cacheStore
+        let runtime = self.runtime
+        let unloadTask = Task {
+            await cacheStore.purgeScope(
+                resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: removed.spec)
+            )
+            await runtime.unloadModel(removed.runtimeModel)
+        }
+        modelUnloadsInFlight[residencyKey] = WorkerModelUnloadAttempt(id: attemptID, task: unloadTask)
+        await unloadTask.value
+        clearModelUnloadAttempt(residencyKey, attemptID: attemptID)
+        return .unloaded
+    }
+
+    private func reuseLoadedModel(
+        _ loaded: LoadedModelRecord,
+        memoryBudgetBytes: UInt64,
+        pinOnLoad: Bool
+    ) throws -> LoadedModelRecord {
+        let requiredBytes = loaded.estimatedResidentBytes &+ configuration.modelLoadHeadroomBytes
+        if configuration.memoryEnforcementEnabled,
+           memoryBudgetBytes > 0,
+           requiredBytes > memoryBudgetBytes {
+            throw WorkerRuntimeRegistryError.memoryBudgetExceeded(
+                budgetBytes: memoryBudgetBytes,
+                headroomBytes: configuration.modelLoadHeadroomBytes,
+                projectedResidentBytes: loaded.estimatedResidentBytes,
+                requiredBytes: requiredBytes
+            )
+        }
+        guard pinOnLoad, !loaded.residency.pinned else {
+            return loaded
+        }
+        var residency = loaded.residency
+        residency.state = .pinned
+        residency.policy = .memoryResidencyPinned
+        residency.pinRequested = true
+        residency.pinned = true
+        residency.transitionReason = "load_model_reused_and_pinned"
+        let promoted = LoadedModelRecord(
+            handle: loaded.handle,
+            spec: loaded.spec,
+            runtimeModel: loaded.runtimeModel,
+            estimatedResidentBytes: loaded.estimatedResidentBytes,
+            residency: residency,
+            backendIdentity: loaded.backendIdentity
+        )
+        loadedModels[loaded.handle] = promoted
+        return promoted
+    }
+
+    private func clearModelLoadAttempt(
+        _ residencyKey: WorkerModelResidencyKey,
+        attemptID: UInt64
+    ) {
+        guard modelLoadsInFlight[residencyKey]?.id == attemptID else {
+            return
+        }
+        modelLoadsInFlight.removeValue(forKey: residencyKey)
+    }
+
+    private func clearModelUnloadAttempt(
+        _ residencyKey: WorkerModelResidencyKey,
+        attemptID: UInt64
+    ) {
+        guard modelUnloadsInFlight[residencyKey]?.id == attemptID else {
+            return
+        }
+        modelUnloadsInFlight.removeValue(forKey: residencyKey)
     }
 
     func getLoadedModel(_ handle: String) -> LoadedModelRecord? {
         loadedModels[handle]
     }
 
-    func startRequest() {
+    func startRequest(modelHandle: String) {
         activeRequests += 1
+        activeRequestCountsByModelHandle[modelHandle, default: 0] += 1
     }
 
-    func finishRequest() {
+    func finishRequest(modelHandle: String) {
         if activeRequests > 0 {
             activeRequests -= 1
+        }
+        let activeCount = activeRequestCountsByModelHandle[modelHandle, default: 0]
+        if activeCount > 1 {
+            activeRequestCountsByModelHandle[modelHandle] = activeCount - 1
+            return
+        }
+        activeRequestCountsByModelHandle.removeValue(forKey: modelHandle)
+        guard let pending = pendingModelUnloads.removeValue(forKey: modelHandle) else {
+            return
+        }
+        Task {
+            _ = await self.unloadModel(
+                modelHandle,
+                force: pending.force,
+                expectedBackendIdentity: pending.expectedBackendIdentity
+            )
         }
     }
 
     func listLoadedModels() -> [String] {
         loadedModels.keys.sorted()
+    }
+
+    func listLoadedModelSummaries() -> [Melix_Worker_V1_LoadedModelSummary] {
+        loadedModels.values.sorted { $0.handle < $1.handle }.map { loaded in
+            var summary = Melix_Worker_V1_LoadedModelSummary()
+            summary.modelHandle = loaded.handle
+            summary.model = loaded.spec
+            summary.residency = loaded.residency
+            summary.estimatedResidentBytes = loaded.estimatedResidentBytes
+            summary.backendIdentity = loaded.backendIdentity
+            return summary
+        }
+    }
+
+    func validateBackendIdentity(
+        modelHandle: String,
+        requested: Melix_Worker_V1_BackendModelIdentity?
+    ) -> Melix_Worker_V1_ErrorStatus? {
+        backendIdentityError(modelHandle: modelHandle, requested: requested)
+    }
+
+    private func backendIdentityError(
+        modelHandle: String,
+        requested: Melix_Worker_V1_BackendModelIdentity?,
+        forcedMismatchReason: String? = nil,
+        requestedModelHandle: String? = nil,
+        boundIdentity: Melix_Worker_V1_BackendModelIdentity? = nil
+    ) -> Melix_Worker_V1_ErrorStatus? {
+        let requestMissing = requested == nil
+            || requested?.requestedModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
+            || requested?.routeGeneration == 0
+            || requested?.workerInstanceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
+        let loaded = loadedModels[modelHandle]
+        let bound = boundIdentity
+            ?? loaded?.backendIdentity
+            ?? Melix_Worker_V1_BackendModelIdentity()
+        let observed = requested ?? Melix_Worker_V1_BackendModelIdentity()
+        if forcedMismatchReason == nil, !requestMissing, loaded != nil, observed == bound {
+            return nil
+        }
+
+        modelIdentityMismatchCount += 1
+        var receipt = Melix_Worker_V1_BackendIdentityMismatchReceipt()
+        receipt.requestedModelID = diagnosticBackendIdentity(observed.requestedModelID)
+        receipt.loadedModelID = diagnosticBackendIdentity(bound.requestedModelID)
+        receipt.requestedAdapterID = diagnosticBackendIdentity(observed.requestedAdapterID)
+        receipt.loadedAdapterID = diagnosticBackendIdentity(bound.requestedAdapterID)
+        receipt.requestedRouteGeneration = observed.routeGeneration
+        receipt.loadedRouteGeneration = bound.routeGeneration
+        receipt.observedAtUnixMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        receipt.requestedWorkerInstanceID = diagnosticBackendIdentity(observed.workerInstanceID)
+        receipt.loadedWorkerInstanceID = diagnosticBackendIdentity(bound.workerInstanceID)
+        receipt.mismatchReason = forcedMismatchReason ?? (loaded == nil
+            ? "model_handle_missing"
+            : backendIdentityMismatchReason(
+                requested: observed,
+                loaded: bound,
+                requestMissing: requestMissing
+            ))
+        lastModelIdentityMismatch = receipt
+
+        var status = Melix_Worker_V1_ErrorStatus()
+        status.code = requestMissing ? "model_identity_missing" : "model_identity_mismatch"
+        status.message = "Backend model identity did not match the loaded residency."
+        status.retriable = !requestMissing
+        status.details = [
+            "requested_route_generation": String(observed.routeGeneration),
+            "loaded_route_generation": String(bound.routeGeneration),
+        ]
+        if let requestedModelHandle {
+            status.details["requested_model_handle"] = requestedModelHandle
+            status.details["loaded_model_handle"] = modelHandle
+        }
+        status.backendIdentityMismatch = receipt
+        return status
     }
 
     private func loadedResidency(
@@ -345,12 +737,29 @@ actor WorkerRuntimeRegistry {
         sampling: Melix_Worker_V1_SamplingConfig,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
-        guard let loaded = loadedModels[modelHandle] else {
+        var execution = Melix_Worker_V1_ExecutionMetadata()
+        execution.modelHandle = modelHandle
+        return try await generateEvents(
+            execution: execution,
+            messages: messages,
+            sampling: sampling,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func generateEvents(
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        guard let loaded = loadedModels[execution.modelHandle] else {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
 
         return try await runtime.generateEvents(
             model: loaded.runtimeModel,
+            execution: execution,
             messages: messages,
             sampling: sampling,
             shouldAbort: shouldAbort
@@ -371,6 +780,15 @@ actor WorkerRuntimeRegistry {
         guard let loaded = loadedModels[modelHandle] else {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
+        startRequest(modelHandle: modelHandle)
+        activePrefills += 1
+        defer {
+            finishRequest(modelHandle: modelHandle)
+            if activePrefills > 0 {
+                activePrefills -= 1
+            }
+        }
+
         var effectiveExecution = execution
         if effectiveExecution.cacheHints.cacheMode == .unspecified,
            loaded.spec.settings.cacheMode != .unspecified {
@@ -380,6 +798,32 @@ actor WorkerRuntimeRegistry {
            loaded.spec.settings.cacheBlockSizeTokens > 0 {
             effectiveExecution.cacheHints.preferredBlockSize = loaded.spec.settings.cacheBlockSizeTokens
         }
+        let configuredCacheBudgets: [UInt64] = [
+            effectiveExecution.cacheHints.cacheMemoryBudgetBytes,
+            loaded.spec.settings.cacheMemoryBudgetBytes,
+        ]
+        let requestedCacheBudget: UInt64 = configuredCacheBudgets.filter { $0 > 0 }.min() ?? 0
+        let modelResidentBytes = loadedModels.values.reduce(UInt64(0)) {
+            $0 + $1.estimatedResidentBytes
+        }
+        if configuration.memoryEnforcementEnabled,
+           configuration.processMemoryBudgetBytes > 0 {
+            let processCacheBudget = effectiveCacheBudgetBytes(modelResidentBytes: modelResidentBytes)
+            effectiveExecution.cacheHints.cacheMemoryBudgetBytes = requestedCacheBudget > 0
+                ? min(requestedCacheBudget, processCacheBudget)
+                : processCacheBudget
+        } else {
+            effectiveExecution.cacheHints.cacheMemoryBudgetBytes = requestedCacheBudget > 0
+                ? requestedCacheBudget
+                : PagedKVBlockPool.defaultBudgetBytes
+        }
+        let logicalIdentity = try resolveHotCacheLogicalIdentity(
+            execution: effectiveExecution,
+            model: loaded.spec,
+            messages: messages
+        )
+        effectiveExecution.scope = logicalIdentity.scope
+        effectiveExecution.cacheKey = logicalIdentity.cacheKey
         let cacheMode = CacheModePolicy.resolve(from: effectiveExecution.cacheHints)
         await cacheStore.setActiveMode(cacheMode)
 
@@ -391,21 +835,10 @@ actor WorkerRuntimeRegistry {
         )
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
-        activeRequests += 1
-        activePrefills += 1
-        defer {
-            if activeRequests > 0 {
-                activeRequests -= 1
-            }
-            if activePrefills > 0 {
-                activePrefills -= 1
-            }
-        }
-
         if !effectiveExecution.cacheHints.restoreSnapshotID.isEmpty {
             let restored: BoundarySnapshotRecord
             do {
-                restored = try await restoreBoundarySnapshotRecord(
+                restored = try await loadBoundarySnapshotRecord(
                     snapshotID: effectiveExecution.cacheHints.restoreSnapshotID,
                     shouldAbort: shouldAbort
                 )
@@ -414,6 +847,24 @@ actor WorkerRuntimeRegistry {
                 // the observability blind spot and rethrow the original error.
                 await cacheStore.recordReconstructionFailure()
                 throw error
+            }
+            let restoredIdentity = restored.execution?.hasBackendIdentity == true
+                ? restored.execution?.backendIdentity
+                : nil
+            let expectedSnapshotIdentity = resolvedBackendModelIdentity(
+                for: restored.model,
+                requested: restoredIdentity,
+                workerInstanceID: configuration.workerInstanceID
+            )
+            guard WorkerModelResidencyKey(
+                loaded.spec,
+                backendIdentity: loaded.backendIdentity
+            ) == WorkerModelResidencyKey(
+                restored.model,
+                backendIdentity: expectedSnapshotIdentity
+            ) else {
+                await cacheStore.recordReconstructionFailure()
+                throw WorkerRuntimeRegistryError.snapshotScopeMismatch
             }
             let requestMessages = messages.isEmpty ? restored.messages : messages
             let walkedBackPlan = makeWalkedBackCacheRestorePlan(
@@ -426,11 +877,14 @@ actor WorkerRuntimeRegistry {
                 cacheMode: cacheMode
             )
             if let restorePlan = walkedBackPlan {
-                if restorePlan.partial {
-                    await cacheStore.recordPartialHit()
-                } else {
-                    await cacheStore.recordExactHit()
-                }
+                var restoreExecution = effectiveExecution
+                let restoreIdentity = try resolveHotCacheLogicalIdentity(
+                    execution: restoreExecution,
+                    model: loaded.spec,
+                    messages: requestMessages
+                )
+                restoreExecution.scope = restoreIdentity.scope
+                restoreExecution.cacheKey = restoreIdentity.cacheKey
                 let restoreResumeHint = restoreResumeHint(
                     snapshotID: restored.snapshot.snapshotID,
                     restorePlan: restorePlan,
@@ -438,6 +892,8 @@ actor WorkerRuntimeRegistry {
                 )
                 let runtimePrefill = try await runtime.prefill(
                     model: loaded.runtimeModel,
+                    execution: restoreExecution,
+                    logicalCacheIdentity: restoreIdentity,
                     messages: requestMessages,
                     prefillStepSize: prefillStepSize,
                     resumeHint: restoreResumeHint,
@@ -448,31 +904,60 @@ actor WorkerRuntimeRegistry {
 
                 let decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
                 nextDecodeHandle += 1
-                let restoredPrefix = await cacheStore.lookupPrefix(for: restorePlan.blockTable.cacheKey)
+                let registration = try await cacheStore.registerPrefill(
+                    execution: restoreExecution,
+                    model: loaded.spec,
+                    messages: requestMessages,
+                    promptTokens: runtimePrefill.promptTokens,
+                    decodeHandle: decodeHandle,
+                    activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
+                    pagedCacheEvidence: runtimePrefill.pagedCacheEvidence,
+                    shouldAbort: shouldAbort
+                )
+                var executedRestorePlan = restorePlan
+                let recoveredPrefixTokens = runtimePrefill.pagedCacheEvidence?.recoveredPrefixTokens ?? 0
+                executedRestorePlan.blockTableID = registration.blockTableID
+                executedRestorePlan.blockTable = registration.blockTable
+                executedRestorePlan.pages = registration.blockTable.pages
+                executedRestorePlan.restoredTokenCount = UInt32(clamping: recoveredPrefixTokens)
+                executedRestorePlan.partial = recoveredPrefixTokens > 0
+                    && recoveredPrefixTokens < runtimePrefill.promptTokens
+                executedRestorePlan.tier = recoveredPrefixTokens > 0 ? "l1" : "metadata-only-l2"
                 try throwIfTextRuntimeCancellationRequested(shouldAbort)
                 prefillContexts[decodeHandle] = StoredPrefillContext(
                     decodeHandle: decodeHandle,
                     modelHandle: loaded.handle,
                     requestID: requestID,
+                    execution: restoreExecution,
                     promptTokens: runtimePrefill.promptTokens,
                     messages: requestMessages,
                     resumeHint: restoreResumeHint,
                     acceleration: runtimePrefill.appliedAcceleration,
                     activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
-                    blockTableID: restorePlan.blockTableID,
-                    blockTable: restorePlan.blockTable,
+                    blockTableID: registration.blockTableID,
+                    blockTable: registration.blockTable,
                     restoredSnapshotID: restored.snapshot.snapshotID,
-                    prefix: restoredPrefix,
+                    prefix: registration.prefix,
                     context: runtimePrefill.context
                 )
 
-                let cacheSnapshot = await cacheStore.snapshot()
-                let cacheStats = cacheStatsWithRuntimeContext(cacheSnapshot.stats)
+                let baseCacheSnapshot = await cacheStore.snapshot()
+                let pagedKVSnapshot = await runtime.pagedKVPoolSnapshot()
+                let cacheStats = cacheStatsWithRuntimeContext(
+                    baseCacheSnapshot.stats,
+                    pagedKVStats: pagedKVSnapshot.stats,
+                    effectiveCacheBudgetOverride: restoreExecution.cacheHints.cacheMemoryBudgetBytes
+                )
+                let cacheSnapshot = cacheSnapshotWithRuntimeContext(
+                    baseCacheSnapshot,
+                    stats: cacheStats,
+                    projection: pagedKVSnapshot.projection
+                )
                 let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
                 return WorkerPrefillResult(
                     decodeHandle: decodeHandle,
-                    blockTableID: restorePlan.blockTableID,
-                    blockTable: restorePlan.blockTable,
+                    blockTableID: registration.blockTableID,
+                    blockTable: registration.blockTable,
                     promptTokens: runtimePrefill.promptTokens,
                     restoredSnapshotID: restored.snapshot.snapshotID,
                     appliedAcceleration: runtimePrefill.appliedAcceleration,
@@ -482,8 +967,23 @@ actor WorkerRuntimeRegistry {
                     activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
                     cacheStats: cacheStats,
                     hotPrefixCount: cacheSnapshot.hotPrefixes.count,
-                    restorePlan: restorePlan,
-                    cacheHitTaxonomy: cacheHitTaxonomy
+                    restorePlan: executedRestorePlan,
+                    cacheHitTaxonomy: cacheHitTaxonomy,
+                    recoveredPrefixTokens: recoveredPrefixTokens,
+                    cacheHitMode: runtimePrefill.pagedCacheEvidence?.cacheHitMode ?? "none",
+                    cacheFallbackReason: runtimePrefill.pagedCacheEvidence?.fallbackReason
+                        ?? "runtime_paged_cache_unavailable",
+                    cacheLookupMicros: runtimePrefill.pagedCacheEvidence?.lookupMicros ?? 0,
+                    cacheRestoreMicros: runtimePrefill.pagedCacheEvidence?.restoreMicros ?? 0,
+                    cacheStreamOwnerMatch: runtimePrefill.pagedCacheEvidence?.streamOwnerMatch ?? false,
+                    cacheCopyOnWriteBlockCount: runtimePrefill.pagedCacheEvidence?.copyOnWriteBlockCount ?? 0,
+                    cacheComputedPrefixTokens: runtimePrefill.pagedCacheEvidence?.computedPrefixTokens ?? 0,
+                    cacheModelPrefillMicros: runtimePrefill.pagedCacheEvidence?.modelPrefillMicros ?? 0,
+                    cacheModelPrefillChunkTokens: runtimePrefill.pagedCacheEvidence?.modelPrefillChunkTokens ?? 0,
+                    cacheModelPrefillCallCount: runtimePrefill.pagedCacheEvidence?.modelPrefillCallTokenCounts.count ?? 0,
+                    cacheModelPrefillMinCallTokens: runtimePrefill.pagedCacheEvidence?.modelPrefillCallTokenCounts.min() ?? 0,
+                    cacheModelPrefillMaxCallTokens: runtimePrefill.pagedCacheEvidence?.modelPrefillCallTokenCounts.max() ?? 0,
+                    cacheBlockTableBytes: runtimePrefill.pagedCacheEvidence?.blockTableBytes ?? 0
                 )
             }
             await cacheStore.recordReconstructionFailure()
@@ -491,6 +991,8 @@ actor WorkerRuntimeRegistry {
 
         let result = try await runtime.prefill(
             model: loaded.runtimeModel,
+            execution: effectiveExecution,
+            logicalCacheIdentity: logicalIdentity,
             messages: messages,
             prefillStepSize: prefillStepSize,
             resumeHint: resumeHint,
@@ -512,6 +1014,7 @@ actor WorkerRuntimeRegistry {
                 promptTokens: result.promptTokens,
                 decodeHandle: decodeHandle,
                 activeKVQuantizationRatio: result.activeKVQuantizationRatio,
+                pagedCacheEvidence: result.pagedCacheEvidence,
                 shouldAbort: shouldAbort
             )
             try throwIfTextRuntimeCancellationRequested(shouldAbort)
@@ -521,6 +1024,7 @@ actor WorkerRuntimeRegistry {
                 decodeHandle: decodeHandle,
                 modelHandle: modelHandle,
                 requestID: requestID,
+                execution: effectiveExecution,
                 promptTokens: result.promptTokens,
                 messages: messages,
                 resumeHint: resumeHint,
@@ -534,8 +1038,18 @@ actor WorkerRuntimeRegistry {
             )
         }
 
-        let cacheSnapshot = await cacheStore.snapshot()
-        let cacheStats = cacheStatsWithRuntimeContext(cacheSnapshot.stats)
+        let baseCacheSnapshot = await cacheStore.snapshot()
+        let pagedKVSnapshot = await runtime.pagedKVPoolSnapshot()
+        let cacheStats = cacheStatsWithRuntimeContext(
+            baseCacheSnapshot.stats,
+            pagedKVStats: pagedKVSnapshot.stats,
+            effectiveCacheBudgetOverride: effectiveExecution.cacheHints.cacheMemoryBudgetBytes
+        )
+        let cacheSnapshot = cacheSnapshotWithRuntimeContext(
+            baseCacheSnapshot,
+            stats: cacheStats,
+            projection: pagedKVSnapshot.projection
+        )
         let cacheHitTaxonomy = await cacheStore.hitTaxonomy()
 
         return WorkerPrefillResult(
@@ -552,7 +1066,22 @@ actor WorkerRuntimeRegistry {
             cacheStats: cacheStats,
             hotPrefixCount: cacheSnapshot.hotPrefixes.count,
             restorePlan: nil,
-            cacheHitTaxonomy: cacheHitTaxonomy
+            cacheHitTaxonomy: cacheHitTaxonomy,
+            recoveredPrefixTokens: result.pagedCacheEvidence?.recoveredPrefixTokens ?? 0,
+            cacheHitMode: result.pagedCacheEvidence?.cacheHitMode ?? "none",
+            cacheFallbackReason: result.pagedCacheEvidence?.fallbackReason
+                ?? "runtime_paged_cache_unavailable",
+            cacheLookupMicros: result.pagedCacheEvidence?.lookupMicros ?? 0,
+            cacheRestoreMicros: result.pagedCacheEvidence?.restoreMicros ?? 0,
+            cacheStreamOwnerMatch: result.pagedCacheEvidence?.streamOwnerMatch ?? false,
+            cacheCopyOnWriteBlockCount: result.pagedCacheEvidence?.copyOnWriteBlockCount ?? 0,
+            cacheComputedPrefixTokens: result.pagedCacheEvidence?.computedPrefixTokens ?? 0,
+            cacheModelPrefillMicros: result.pagedCacheEvidence?.modelPrefillMicros ?? 0,
+            cacheModelPrefillChunkTokens: result.pagedCacheEvidence?.modelPrefillChunkTokens ?? 0,
+            cacheModelPrefillCallCount: result.pagedCacheEvidence?.modelPrefillCallTokenCounts.count ?? 0,
+            cacheModelPrefillMinCallTokens: result.pagedCacheEvidence?.modelPrefillCallTokenCounts.min() ?? 0,
+            cacheModelPrefillMaxCallTokens: result.pagedCacheEvidence?.modelPrefillCallTokenCounts.max() ?? 0,
+            cacheBlockTableBytes: result.pagedCacheEvidence?.blockTableBytes ?? 0
         )
     }
 
@@ -597,16 +1126,48 @@ actor WorkerRuntimeRegistry {
         prefillContexts.count
     }
 
-    func beginDecode(decodeHandle: String) throws -> WorkerDecodeSession {
+    func beginDecode(
+        decodeHandle: String,
+        requestID: String,
+        modelHandle: String,
+        requestedBackendIdentity: Melix_Worker_V1_BackendModelIdentity?
+    ) throws -> WorkerDecodeSession {
+        if let status = backendIdentityError(
+            modelHandle: modelHandle,
+            requested: requestedBackendIdentity,
+            requestedModelHandle: modelHandle
+        ) {
+            throw WorkerBackendIdentityValidationError(status: status)
+        }
         guard let stored = prefillContexts[decodeHandle] else {
             throw WorkerRuntimeRegistryError.unknownDecodeHandle
         }
         guard let loaded = loadedModels[stored.modelHandle] else {
             throw WorkerRuntimeRegistryError.unknownModelHandle
         }
+        let forcedMismatchReason: String?
+        if stored.requestID != requestID {
+            forcedMismatchReason = "decode_request_id_mismatch"
+        } else if stored.modelHandle != modelHandle {
+            forcedMismatchReason = "decode_model_handle_mismatch"
+        } else {
+            forcedMismatchReason = nil
+        }
+        let storedBackendIdentity = stored.execution.hasBackendIdentity
+            ? stored.execution.backendIdentity
+            : loaded.backendIdentity
+        if let status = backendIdentityError(
+            modelHandle: stored.modelHandle,
+            requested: requestedBackendIdentity,
+            forcedMismatchReason: forcedMismatchReason,
+            requestedModelHandle: modelHandle,
+            boundIdentity: storedBackendIdentity
+        ) {
+            throw WorkerBackendIdentityValidationError(status: status)
+        }
 
         prefillContexts.removeValue(forKey: decodeHandle)
-        activeRequests += 1
+        startRequest(modelHandle: stored.modelHandle)
         activeDecodes += 1
 
         return WorkerDecodeSession(
@@ -615,10 +1176,8 @@ actor WorkerRuntimeRegistry {
         )
     }
 
-    func finishDecode() {
-        if activeRequests > 0 {
-            activeRequests -= 1
-        }
+    func finishDecode(modelHandle: String) {
+        finishRequest(modelHandle: modelHandle)
         if activeDecodes > 0 {
             activeDecodes -= 1
         }
@@ -759,12 +1318,14 @@ actor WorkerRuntimeRegistry {
 
     func runtimeStats() async -> Melix_Worker_V1_RuntimeStats {
         let modelResidentBytes = loadedModels.values.reduce(0) { $0 + $1.estimatedResidentBytes }
+        let pagedKVStats = await runtime.pagedKVPoolStats()
         let cacheStats = cacheStatsWithRuntimeContext(
             await cacheStore.stats(),
-            modelResidentBytes: modelResidentBytes
+            modelResidentBytes: modelResidentBytes,
+            pagedKVStats: pagedKVStats
         )
         let cacheResidentBytes = cacheStats.l1Bytes
-        let kvCacheBytes: UInt64 = 0
+        let kvCacheBytes = pagedKVStats.residentBytes
         var stats = Melix_Worker_V1_RuntimeStats()
         if draining {
             stats.workerState = "draining"
@@ -778,7 +1339,7 @@ actor WorkerRuntimeRegistry {
         stats.kvCacheBytes = kvCacheBytes
         stats.peakAllocationBytes = 0
         stats.memoryHeadroomBytes = configuration.memoryEnforcementEnabled ? configuration.modelLoadHeadroomBytes : 0
-        stats.residentBytes = modelResidentBytes &+ cacheResidentBytes &+ kvCacheBytes
+        stats.residentBytes = modelResidentBytes &+ cacheResidentBytes
         stats.activeRequests = activeRequests
         stats.activePrefills = activePrefills
         stats.activeDecodes = activeDecodes
@@ -786,6 +1347,8 @@ actor WorkerRuntimeRegistry {
         stats.l2CacheBytes = cacheStats.l2Bytes
         stats.l1HitRate = cacheStats.l1HitRate
         stats.l2HitRate = cacheStats.l2HitRate
+        stats.modelIdentityMismatchCount = modelIdentityMismatchCount
+        stats.lastModelIdentityMismatch = lastModelIdentityMismatch
         if let overlay = await runtime.runtimeStatsOverlay() {
             applyRuntimeStatsOverlay(overlay, to: &stats)
         }
@@ -798,9 +1361,17 @@ actor WorkerRuntimeRegistry {
 
     func cacheStatsResponse() async -> Melix_Worker_V1_GetCacheStatsResponse {
         var response = Melix_Worker_V1_GetCacheStatsResponse()
-        var snapshot = await cacheStore.snapshot()
-        let stats = cacheStatsWithRuntimeContext(snapshot.stats)
-        snapshot.stats = stats
+        let baseSnapshot = await cacheStore.snapshot()
+        let pagedKVSnapshot = await runtime.pagedKVPoolSnapshot()
+        let stats = cacheStatsWithRuntimeContext(
+            baseSnapshot.stats,
+            pagedKVStats: pagedKVSnapshot.stats
+        )
+        let snapshot = cacheSnapshotWithRuntimeContext(
+            baseSnapshot,
+            stats: stats,
+            projection: pagedKVSnapshot.projection
+        )
         response.stats = stats
         response.snapshot = snapshot
         return response
@@ -811,11 +1382,25 @@ actor WorkerRuntimeRegistry {
     }
 
     func pinPrefix(_ prefix: Melix_Worker_V1_PrefixRef) async -> Bool {
-        await cacheStore.pinPrefix(prefix)
+        guard runtime.supportsPagedKVCache else {
+            return await cacheStore.pinPrefix(prefix)
+        }
+        guard await runtime.setPagedKVPrefixPinned(prefix, pinned: true) else {
+            return false
+        }
+        _ = await cacheStore.pinPrefix(prefix)
+        return true
     }
 
     func unpinPrefix(_ prefix: Melix_Worker_V1_PrefixRef) async -> Bool {
-        await cacheStore.unpinPrefix(prefix)
+        guard runtime.supportsPagedKVCache else {
+            return await cacheStore.unpinPrefix(prefix)
+        }
+        guard await runtime.setPagedKVPrefixPinned(prefix, pinned: false) else {
+            return false
+        }
+        _ = await cacheStore.unpinPrefix(prefix)
+        return true
     }
 
     func purgeCache(
@@ -823,7 +1408,20 @@ actor WorkerRuntimeRegistry {
         cacheKey: Melix_Worker_V1_CacheKey,
         includePinned: Bool
     ) async -> UInt64 {
-        await cacheStore.purgeCache(scope: scope, cacheKey: cacheKey, includePinned: includePinned)
+        let runtimePurgedBlocks = await runtime.purgePagedKVCache(
+            scope: scope,
+            cacheKey: cacheKey,
+            includePinned: includePinned
+        )
+        let metadataResult = await cacheStore.purgeCacheDetailed(
+            scope: scope,
+            cacheKey: cacheKey,
+            includePinned: includePinned
+        )
+        if runtime.supportsPagedKVCache {
+            return runtimePurgedBlocks + metadataResult.diskBlockCount
+        }
+        return metadataResult.totalBlockCount
     }
 
     func saveBoundarySnapshot(
@@ -884,13 +1482,58 @@ actor WorkerRuntimeRegistry {
     }
 
     func restoreBoundarySnapshot(
-        snapshotID: String
+        snapshotID: String,
+        requestID: String
     ) async throws -> Melix_Worker_V1_RestoreBoundarySnapshotResponse {
-        let restored = try await restoreBoundarySnapshotRecord(snapshotID: snapshotID)
+        let restored = try await loadBoundarySnapshotRecord(snapshotID: snapshotID)
+        let loaded = try loadedModelForBoundarySnapshot(restored)
+        var execution = restored.execution ?? Melix_Worker_V1_ExecutionMetadata()
+        execution.modelHandle = loaded.handle
+        execution.backendIdentity = loaded.backendIdentity
+        let effectiveRequestID = requestID.isEmpty ? restored.snapshot.requestID : requestID
+        execution.id.requestID = effectiveRequestID
+        let logicalIdentity = try resolveHotCacheLogicalIdentity(
+            execution: execution,
+            model: loaded.spec,
+            messages: restored.messages
+        )
+        execution.scope = logicalIdentity.scope
+        execution.cacheKey = logicalIdentity.cacheKey
+
+        let runtimePrefill = try await runtime.prefill(
+            model: loaded.runtimeModel,
+            execution: execution,
+            logicalCacheIdentity: logicalIdentity,
+            messages: restored.messages,
+            prefillStepSize: 0,
+            resumeHint: restored.resumeHint,
+            acceleration: restored.acceleration,
+            shouldAbort: { false }
+        )
+
+        let decodeHandle = "\(loaded.handle)::decode::\(nextDecodeHandle)"
+        nextDecodeHandle += 1
+        let restoredPrefix = await cacheStore.lookupPrefix(for: logicalIdentity)
+        prefillContexts[decodeHandle] = StoredPrefillContext(
+            decodeHandle: decodeHandle,
+            modelHandle: loaded.handle,
+            requestID: effectiveRequestID,
+            execution: execution,
+            promptTokens: runtimePrefill.promptTokens,
+            messages: restored.messages,
+            resumeHint: restored.resumeHint,
+            acceleration: runtimePrefill.appliedAcceleration,
+            activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
+            blockTableID: restored.blockTableID,
+            blockTable: restored.blockTable,
+            restoredSnapshotID: restored.snapshot.snapshotID,
+            prefix: restoredPrefix,
+            context: runtimePrefill.context
+        )
 
         var response = Melix_Worker_V1_RestoreBoundarySnapshotResponse()
         response.ok = true
-        response.decodeHandle = restored.decodeHandle
+        response.decodeHandle = decodeHandle
         response.blockTableID = restored.blockTableID
         response.blockTable = normalizedBlockTable(restored.blockTable)
         response.snapshot = restored.snapshot
@@ -908,7 +1551,7 @@ actor WorkerRuntimeRegistry {
         return response
     }
 
-    private func restoreBoundarySnapshotRecord(
+    private func loadBoundarySnapshotRecord(
         snapshotID: String,
         shouldAbort: @escaping @Sendable () -> Bool = { false }
     ) async throws -> BoundarySnapshotRecord {
@@ -918,70 +1561,46 @@ actor WorkerRuntimeRegistry {
         }
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
-        let restoredScopeID = if !restored.blockTable.scopeID.isEmpty {
-            restored.blockTable.scopeID
-        } else if !restored.blockTable.cacheKey.scopeID.isEmpty {
-            restored.blockTable.cacheKey.scopeID
-        } else {
-            resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: restored.model).scopeID
-        }
-
-        if loadedModels.values.contains(where: { $0.spec.modelID == restored.model.modelID }),
-           !loadedModels.values.contains(where: {
-               $0.spec.modelID == restored.model.modelID &&
-                   resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: $0.spec).scopeID == restoredScopeID
-           }) {
-            throw WorkerRuntimeRegistryError.snapshotScopeMismatch
-        }
-
-        guard let loaded = loadedModels.values.first(where: {
-            $0.spec.modelID == restored.model.modelID &&
-                resolveCacheScope(Melix_Worker_V1_CacheScope(), fallback: $0.spec).scopeID == restoredScopeID
-        }) else {
-            throw WorkerRuntimeRegistryError.snapshotModelNotLoaded
-        }
-
-        let runtimePrefill = try await runtime.prefill(
-            model: loaded.runtimeModel,
-            messages: restored.messages,
-            prefillStepSize: 0,
-            resumeHint: restored.resumeHint,
-            acceleration: restored.acceleration,
-            shouldAbort: shouldAbort
-        )
-        try throwIfTextRuntimeCancellationRequested(shouldAbort)
-
-        let decodeHandle = "\(loaded.handle)::decode::\(nextDecodeHandle)"
-        nextDecodeHandle += 1
-        let restoredPrefix = await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey)
-        try throwIfTextRuntimeCancellationRequested(shouldAbort)
-        prefillContexts[decodeHandle] = StoredPrefillContext(
-            decodeHandle: decodeHandle,
-            modelHandle: loaded.handle,
-            requestID: restored.snapshot.requestID,
-            promptTokens: restored.promptTokens,
-            messages: restored.messages,
-            resumeHint: restored.resumeHint,
-            acceleration: restored.acceleration,
-            activeKVQuantizationRatio: activeKVQuantizationRatio(from: restored.acceleration),
-            blockTableID: restored.blockTableID,
-            blockTable: restored.blockTable,
-            restoredSnapshotID: restored.snapshot.snapshotID,
-            prefix: restoredPrefix,
-            context: runtimePrefill.context
-        )
-
         return (
             snapshot: restored.snapshot,
             model: restored.model,
+            execution: restored.execution,
             messages: restored.messages,
             resumeHint: restored.resumeHint,
             acceleration: restored.acceleration,
             promptTokens: restored.promptTokens,
             blockTableID: restored.blockTableID,
-            blockTable: restored.blockTable,
-            decodeHandle: decodeHandle
+            blockTable: restored.blockTable
         )
+    }
+
+    private func loadedModelForBoundarySnapshot(
+        _ restored: BoundarySnapshotRecord
+    ) throws -> LoadedModelRecord {
+        let restoredIdentity = restored.execution?.hasBackendIdentity == true
+            ? restored.execution?.backendIdentity
+            : nil
+        let backendIdentity = resolvedBackendModelIdentity(
+            for: restored.model,
+            requested: restoredIdentity,
+            workerInstanceID: configuration.workerInstanceID
+        )
+        let residencyKey = WorkerModelResidencyKey(
+            restored.model,
+            backendIdentity: backendIdentity
+        )
+        if let loaded = loadedModels.values.first(where: {
+            WorkerModelResidencyKey(
+                $0.spec,
+                backendIdentity: $0.backendIdentity
+            ) == residencyKey
+        }) {
+            return loaded
+        }
+        if loadedModels.values.contains(where: { $0.spec.modelID == restored.model.modelID }) {
+            throw WorkerRuntimeRegistryError.snapshotScopeMismatch
+        }
+        throw WorkerRuntimeRegistryError.snapshotModelNotLoaded
     }
 
     private func enforcePrefillGuards(
@@ -1027,19 +1646,93 @@ actor WorkerRuntimeRegistry {
 
     private func cacheStatsWithRuntimeContext(
         _ cacheStats: Melix_Worker_V1_CacheStats,
-        modelResidentBytes: UInt64? = nil
+        modelResidentBytes: UInt64? = nil,
+        pagedKVStats: RuntimePagedKVPoolStats = .empty,
+        effectiveCacheBudgetOverride: UInt64? = nil
     ) -> Melix_Worker_V1_CacheStats {
         var stats = cacheStats
+        stats.supportsPagedCache = runtime.supportsPagedKVCache
+        if runtime.supportsPagedKVCache {
+            stats.l1Bytes = pagedKVStats.residentBytes
+            stats.blockCount = UInt64(pagedKVStats.blockCount)
+            stats.pinnedPrefixCount = UInt64(pagedKVStats.pinnedPrefixCount)
+            stats.l1HitRate = pagedKVStats.lookupCount > 0
+                ? Double(pagedKVStats.hitCount) / Double(pagedKVStats.lookupCount)
+                : 0
+            stats.dedupRatio = pagedKVStats.residentBytes > 0
+                ? Double(pagedKVStats.logicalBytes) / Double(pagedKVStats.residentBytes)
+                : 0
+        }
         let resolvedModelResidentBytes = modelResidentBytes
             ?? loadedModels.values.reduce(UInt64(0)) { $0 + $1.estimatedResidentBytes }
         let activeMemoryBytes = resolvedModelResidentBytes &+ stats.l1Bytes
         stats.runtimeCacheFingerprint = configuration.runtimeCacheFingerprint
         stats.activeMemoryBytes = activeMemoryBytes
         stats.maxWorkingSetBytes = configuration.processMemoryBudgetBytes
-        stats.effectiveCacheBudgetBytes = effectiveCacheBudgetBytes(
-            modelResidentBytes: resolvedModelResidentBytes
-        )
+        stats.effectiveCacheBudgetBytes = effectiveCacheBudgetOverride
+            ?? effectiveCacheBudgetBytes(modelResidentBytes: resolvedModelResidentBytes)
         return stats
+    }
+
+    private func cacheSnapshotWithRuntimeContext(
+        _ cacheSnapshot: Melix_Worker_V1_CacheSnapshot,
+        stats: Melix_Worker_V1_CacheStats,
+        projection: RuntimePagedKVPoolProjection
+    ) -> Melix_Worker_V1_CacheSnapshot {
+        var snapshot = cacheSnapshot
+        snapshot.stats = stats
+        guard runtime.supportsPagedKVCache else { return snapshot }
+
+        snapshot.hotPrefixes = projection.entries.map(\.prefix)
+        snapshot.pinnedPrefixes = projection.entries
+            .map(\.prefix)
+            .filter(\.pinned)
+
+        let projectedByScope = Dictionary(grouping: projection.entries) {
+            CacheScopeIdentity($0.prefix.scope)
+        }
+        let existingByScope = Dictionary(grouping: snapshot.scopes) {
+            CacheScopeIdentity($0.scope)
+        }
+        let scopeIdentities = Set(existingByScope.keys).union(projectedByScope.keys).sorted {
+            $0.components.lexicographicallyPrecedes($1.components)
+        }
+        snapshot.scopes = scopeIdentities.compactMap { scopeIdentity in
+            let entries = projectedByScope[scopeIdentity] ?? []
+            let existing = existingByScope[scopeIdentity] ?? []
+            guard var summary = existing.first
+                    ?? entries.first.map({ entry in
+                        var value = Melix_Worker_V1_CacheScopeSummary()
+                        value.scopeID = entry.prefix.scope.scopeID
+                        value.scope = entry.prefix.scope
+                        return value
+                    }) else {
+                return nil
+            }
+            summary.l2Bytes = existing.reduce(UInt64(0)) { $0 + $1.l2Bytes }
+            summary.snapshotCount = existing.reduce(UInt64(0)) { $0 + $1.snapshotCount }
+            if let first = entries.first {
+                summary.scopeID = first.prefix.scope.scopeID
+                summary.scope = first.prefix.scope
+            }
+            let uniqueBlocks = Dictionary(
+                entries.flatMap(\.blocks).map { ($0.blockID, $0) },
+                uniquingKeysWith: { first, _ in first }
+            ).values.sorted { $0.blockID < $1.blockID }
+            summary.l1Bytes = uniqueBlocks.reduce(UInt64(0)) { $0 + $1.bytes }
+            summary.blockCount = UInt64(uniqueBlocks.count)
+            summary.prefixCount = UInt64(entries.count)
+            summary.hotBlocks = uniqueBlocks.map { descriptor in
+                var block = Melix_Worker_V1_BlockRef()
+                block.blockID = descriptor.blockID
+                block.tokenStart = Int32(clamping: descriptor.tokenStart)
+                block.tokenEnd = Int32(clamping: descriptor.tokenEnd)
+                block.bytes = descriptor.bytes
+                return block
+            }
+            return summary
+        }
+        return snapshot
     }
 
     private func effectiveCacheBudgetBytes(modelResidentBytes: UInt64) -> UInt64 {
@@ -1101,6 +1794,69 @@ actor WorkerRuntimeRegistry {
     }
 }
 
+private func resolvedBackendModelIdentity(
+    for model: Melix_Worker_V1_ModelSpec,
+    requested: Melix_Worker_V1_BackendModelIdentity?,
+    workerInstanceID: String
+) -> Melix_Worker_V1_BackendModelIdentity {
+    var identity = Melix_Worker_V1_BackendModelIdentity()
+    identity.requestedModelID = model.modelID
+    identity.requestedAdapterID = cacheAdapterSetHash(from: model)
+    identity.routeGeneration = requested?.routeGeneration ?? 0
+    identity.workerInstanceID = workerInstanceID
+    return identity
+}
+
+private func diagnosticBackendIdentity(_ value: String) -> String {
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalized.isEmpty else {
+        return ""
+    }
+    let isWindowsPath = normalized.count >= 3
+        && normalized[normalized.index(after: normalized.startIndex)] == ":"
+        && ["\\", "/"].contains(normalized[normalized.index(normalized.startIndex, offsetBy: 2)])
+    let lowercased = normalized.lowercased()
+    if normalized.hasPrefix("/")
+        || normalized.hasPrefix("~/")
+        || normalized.hasPrefix("./")
+        || normalized.hasPrefix("../")
+        || normalized.hasPrefix("\\\\")
+        || normalized.hasPrefix(".\\")
+        || normalized.hasPrefix("..\\")
+        || lowercased.hasPrefix("file:")
+        || isWindowsPath {
+        return "[local-path-redacted]"
+    }
+    if normalized.count > 128 {
+        return String(normalized.prefix(125)) + "..."
+    }
+    return normalized
+}
+
+private func backendIdentityMismatchReason(
+    requested: Melix_Worker_V1_BackendModelIdentity,
+    loaded: Melix_Worker_V1_BackendModelIdentity,
+    requestMissing: Bool
+) -> String {
+    if requestMissing {
+        return "identity_missing"
+    }
+    var mismatches: [String] = []
+    if requested.requestedModelID != loaded.requestedModelID {
+        mismatches.append("model_id")
+    }
+    if requested.requestedAdapterID != loaded.requestedAdapterID {
+        mismatches.append("adapter_id")
+    }
+    if requested.routeGeneration != loaded.routeGeneration {
+        mismatches.append("route_generation")
+    }
+    if requested.workerInstanceID != loaded.workerInstanceID {
+        mismatches.append("worker_instance_id")
+    }
+    return mismatches.isEmpty ? "identity_mismatch" : mismatches.joined(separator: ",")
+}
+
 enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
     case unknownModelHandle
     case unknownDecodeHandle
@@ -1136,6 +1892,7 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
         workerFamily: Melix_Worker_V1_WorkerFamily,
         reason: String
     )
+    case workerInstanceMismatch
 
     var errorDescription: String? {
         switch self {
@@ -1161,6 +1918,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return "Prefill request exceeds the configured quadratic fallback threshold."
         case .requestRouteUnsupported:
             return "Worker defensive validation rejected the request route declaration."
+        case .workerInstanceMismatch:
+            return "The load reservation belongs to a different worker process."
         }
     }
 
@@ -1222,6 +1981,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return "not_found"
         case .requestRouteUnsupported:
             return "request_route_unsupported"
+        case .workerInstanceMismatch:
+            return "failed_precondition"
         case .snapshotModelNotLoaded, .snapshotScopeMismatch:
             return "failed_precondition"
         case .diskStreamingUnsupported:
@@ -1239,7 +2000,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
              (.unknownDecodeHandle, .unknownDecodeHandle),
              (.unknownSnapshotID, .unknownSnapshotID),
              (.snapshotModelNotLoaded, .snapshotModelNotLoaded),
-             (.snapshotScopeMismatch, .snapshotScopeMismatch):
+             (.snapshotScopeMismatch, .snapshotScopeMismatch),
+             (.workerInstanceMismatch, .workerInstanceMismatch):
             return true
         case let (
             .diskStreamingUnsupported(requestedMode: lhsMode, modelID: lhsModelID),
@@ -1539,19 +2301,6 @@ private func resolveCacheScope(
         scope.scopeID = makeCacheScopeID(scope)
     }
     return scope
-}
-
-private func makeCacheScopeID(_ scope: Melix_Worker_V1_CacheScope) -> String {
-    [
-        scope.modelID,
-        scope.revision,
-        scope.tokenizerHash,
-        scope.quantProfileID,
-        scope.promptTemplateHash,
-        scope.parserMode,
-        scope.reasoningMode,
-        scope.multimodalAdapterHash,
-    ].joined(separator: "::")
 }
 
 private func cacheAdapterSetHash(from model: Melix_Worker_V1_ModelSpec) -> String {

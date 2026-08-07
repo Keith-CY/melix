@@ -14,6 +14,7 @@ from worker.productization.benchmark_evaluation_report import (
     _agentic_adapter_report_rows,
     _benchmark_probe_label,
     _build_metric_row,
+    _classify_comparison_delta_rows,
     _collect_benchmark_probe_metrics,
     _collect_evaluation_sample_probe_metrics,
     _collect_runtime_metadata,
@@ -283,6 +284,39 @@ def test_status_counts_reads_each_row_status_once() -> None:
     assert [row.status_reads for row in rows] == [1, 1, 1, 1]
     with pytest.raises(AssertionError, match="status was read more than once"):
         rows[0].get("status")
+
+
+def test_comparison_delta_classification_reads_each_row_once() -> None:
+    class _TrackedDelta(dict[str, object]):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            self.result_reads = 0
+            self.delta_reads = 0
+
+        def get(self, key: str, default: object = None) -> object:
+            if key == "result":
+                self.result_reads += 1
+                if self.result_reads > 1:
+                    raise AssertionError("result was read more than once")
+            elif key == "delta":
+                self.delta_reads += 1
+                if self.delta_reads > 1:
+                    raise AssertionError("delta was read more than once")
+            return super().get(key, default)
+
+    rows = [
+        _TrackedDelta(result="fail", delta=1.0, direction="lower_is_better"),
+        _TrackedDelta(result="pass", delta=-1.0, direction="lower_is_better"),
+        _TrackedDelta(result="pass", delta=0.0, direction="neutral"),
+    ]
+
+    regressions, improvements, unchanged = _classify_comparison_delta_rows(rows)
+
+    assert regressions == [rows[0]]
+    assert improvements == [rows[1]]
+    assert unchanged == [rows[2]]
+    assert [row.result_reads for row in rows] == [1, 1, 1]
+    assert [row.delta_reads for row in rows] == [1, 1, 1]
 
 
 def test_report_marks_overlapping_repeat_group_ci_as_informational() -> None:
@@ -1187,6 +1221,12 @@ def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
                 "speculative_target_verify_ms": 12.0,
                 "dflash_enabled": True,
                 "dflash_rollback_count": 1,
+                "feature_guardrail_requested_num_draft_tokens": 6,
+                "feature_guardrail_effective_num_draft_tokens": 1,
+                "feature_guardrail_resource_fanout_estimate": 2.0,
+                "feature_guardrail_requested_cache_budget_bytes": 8192,
+                "feature_guardrail_effective_cache_budget_bytes": 4096,
+                "feature_guardrail_reason": "disk_streaming_speculative_fanout_cap",
             }
         ],
     }
@@ -1214,6 +1254,12 @@ def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
                 "speculative_target_verify_ms": 11.0,
                 "dflash_enabled": True,
                 "dflash_rollback_count": 2,
+                "feature_guardrail_requested_num_draft_tokens": 6,
+                "feature_guardrail_effective_num_draft_tokens": 1,
+                "feature_guardrail_resource_fanout_estimate": 2.0,
+                "feature_guardrail_requested_cache_budget_bytes": 8192,
+                "feature_guardrail_effective_cache_budget_bytes": 4096,
+                "feature_guardrail_reason": "disk_streaming_speculative_fanout_cap",
             }
         ],
     }
@@ -1235,6 +1281,13 @@ def test_report_builder_includes_runtime_metadata_and_decode_probes() -> None:
     )
     assert rows_by_metric[f"{label}.dflash_rollback_count_sum"]["status"] == "warning"
     assert rows_by_metric[f"{label}.dflash_enabled_rate"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_requested_num_draft_tokens_mean"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_requested_num_draft_tokens_mean"]["direction"] == "neutral"
+    assert rows_by_metric[f"{label}.feature_guardrail_effective_num_draft_tokens_mean"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_resource_fanout_estimate_mean"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_requested_cache_budget_bytes_mean"]["status"] == "ok"
+    assert rows_by_metric[f"{label}.feature_guardrail_requested_cache_budget_bytes_mean"]["direction"] == "neutral"
+    assert rows_by_metric[f"{label}.feature_guardrail_effective_cache_budget_bytes_mean"]["status"] == "ok"
     assert report["summary"]["warning_count"] == 4
 
 

@@ -45,7 +45,7 @@ def _payload() -> dict[str, Any]:
             "architectures": ["Qwen3MoeForCausalLM"],
             "rope_scaling": {"type": "yarn", "interleaved": True},
             "rope_interleaved": True,
-            "num_local_experts": 128,
+            "num_local_experts": "128",
             "moe_gate_dequant": True,
         }
     )
@@ -84,12 +84,12 @@ def _run_sample(*, iterations: int) -> tuple[float, int, int, int]:
 
 
 def main() -> None:
-    iterations = 10_000
+    iterations = 50_000
     elapsed: list[float] = []
     peak: list[int] = []
     copy_calls: list[int] = []
     key_accesses: list[int] = []
-    for _ in range(5):
+    for _ in range(7):
         elapsed_ms, peak_bytes, copies, access_count = _run_sample(iterations=iterations)
         elapsed.append(elapsed_ms)
         peak.append(peak_bytes)

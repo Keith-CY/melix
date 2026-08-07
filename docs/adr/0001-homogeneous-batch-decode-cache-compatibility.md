@@ -8,8 +8,8 @@ pass.
 
 Issue #1642 tracks the remaining release Gemma E4B serving gap against OMLX and
 SwiftLM. The high-impact path is concurrent text decode where multiple requests
-share the same loaded Swift MLX model, sampling policy, prompt length, and
-output limits.
+share the same loaded Swift MLX model, prompt length, and cache-compatible
+forward-pass state.
 
 Batch decode requires combining per-request KV caches into a batched cache.
 That is only correct when every request has the same cache layout and the same
@@ -26,19 +26,34 @@ The backend batch path accepts only requests that share:
 
 - the same loaded `ModelContainer`
 - baseline decode mode
-- identical sampling configuration, output limits, decode step size, and
-  prefill token
+- identical decode step size and prefill token
 - text-only prepared state with matching prompt length
 - compatible KV cache signatures across every layer
 
-Compatible cache signatures include `KVCacheSimple` and `RotatingKVCache`
-layers when the type, offset, max size, state shape, and metadata match. The
-backend wraps the batched cache with a batch-position-aware adapter so per-row
-position offsets advance independently during decode.
+Sampling configuration, stop policy, seed, and output limits are sequence-local.
+They do not participate in the forward-pass eligibility key. The backend creates
+per-request decode parameters, logit processors, samplers, and max-token checks
+for every row in the batch.
+
+Compatible cache signatures include `KVCacheSimple`, `RotatingKVCache`, and the
+worker-owned dense `PagedKVCache`. Simple and rotating layers require matching
+type, offset, max size, state shape, and metadata. Paged layers require matching
+block size, layer index, offset, per-block tensor shape and dtype, and metadata;
+block IDs may differ because physical ownership is row-local.
+
+The backend wraps simple and rotating batched caches with a
+batch-position-aware adapter so per-row position offsets advance independently.
+For paged layers it retains the original row cache objects and their leases,
+splits each incoming K/V update by batch row, and concatenates the updated row
+state for the attention call. Splitting or shrinking the cohort returns those
+same row caches, preserving block ownership and copy-on-write history.
 
 Unsupported cohorts fall back inside the batch event surface to the existing
 single-request decode path. The worker must not emit synthetic batch-size-two
-model evidence for unsupported cache layouts.
+model evidence for unsupported cache layouts. Fallback summaries include a
+typed `not_batchable` reason, such as
+`not_batchable:cache_signature_unsupported`, so cache admission failures are
+observable without treating them as request-loop aborts.
 
 ## Consequences
 

@@ -16,6 +16,12 @@ Inline the `CallableKwargSignature` membership checks used by
 lookup remains unchanged; the hot path avoids an additional bound method call on
 every keyword acceptance check.
 
+This follow-up slice keeps the same registered probe and narrows the cached
+plain-function path further by passing the `skip_first_parameter` flag
+positionally instead of as a keyword-only argument. It also binds
+`inspect.Parameter` kind constants locally while constructing uncached signatures
+so cold cache fills do not repeat module-attribute lookups.
+
 ## Verification Plan
 
 - Run the registered focused runtime-utils tests through the probe registry

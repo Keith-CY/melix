@@ -21,7 +21,12 @@ from worker.runtime.mlx_text_runtime import (
 from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
 from worker.runtime.multimodal_attention_policy import MultimodalPrefillAttentionBudgetExceeded
 from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_accepts_kwarg
-from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
+from worker.runtime.stream_assembler import AssemblyDelta, RequestStreamAssembler, StreamFragment
+from worker.runtime.structured_output_constraints import (
+    StructuredOutputConstraintError,
+    sampler_constraint_preflight_error,
+    sampler_constraint_requested,
+)
 from worker.runtime.token_route_receipt import (
     TokenRouteReceipt,
     inactive_token_route_receipt_json,
@@ -122,24 +127,27 @@ def _apply_prompt_context_receipt_metrics(parser_metrics: dict[str, str], execut
             parser_metrics[metric_key] = value
 
 
-def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str, str]:
+def _runtime_token_event_has_native_parser_metrics(event: RuntimeTokenEvent | None) -> bool:
     if event is None:
-        return {}
-
-    t = event.native_mtp_timings
-    has_timing = t is not None
-    has_speculative = (
-        event.speculative_accepted_tokens is not None
+        return False
+    return (
+        event.native_mtp_timings is not None
+        or event.speculative_accepted_tokens is not None
         or event.speculative_rejected_tokens is not None
         or event.speculative_target_verify_ms is not None
-    )
-    has_cache = (
-        event.cache_hit_mode is not None
+        or event.cache_hit_mode is not None
         or event.recovered_prefix_tokens is not None
         or event.cache_fallback_reason is not None
+        or event.cache_hit_tier is not None
     )
-    if not has_timing and not has_speculative and not has_cache:
+
+
+def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str, str]:
+    if not _runtime_token_event_has_native_parser_metrics(event):
         return {}
+
+    assert event is not None
+    t = event.native_mtp_timings
 
     metric_fields: dict[str, object] = {
         "text_batch_generator_speculative_cycle_count_total": t.cycle_count if t else None,
@@ -159,11 +167,14 @@ def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str
         "cache_hit_mode": event.cache_hit_mode,
         "recovered_prefix_tokens": event.recovered_prefix_tokens,
         "cache_fallback_reason": event.cache_fallback_reason,
+        "cache_hit_tier": event.cache_hit_tier,
     }
     return {key: str(value) for key, value in metric_fields.items() if value is not None}
 
 
 def _non_negative_int(value: object) -> int:
+    if type(value) is int:
+        return value if value > 0 else 0
     try:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
@@ -183,9 +194,9 @@ def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> in
     return _non_negative_int(value)
 
 
-def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int]:
+def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int] | None:
     if probe is None:
-        return _EMPTY_MEDIA_FEATURE_USAGE
+        return None
     usage = {
         "media_feature_cache_hits": 0,
         "media_feature_cache_misses": 0,
@@ -199,7 +210,9 @@ def _media_feature_usage_from_probe(probe: object | None) -> dict[str, int]:
             key,
             key.replace("media_feature_", "image_feature_"),
         )
-    return usage
+    if any(usage.values()):
+        return usage
+    return None
 
 
 def _last_media_feature_probe(runtime: object, runtime_kind: str) -> object | None:
@@ -295,6 +308,8 @@ class EngineCore:
     def generate(self, request: inference_pb2.GenerateRequest) -> Iterator[inference_pb2.ExecuteEvent]:
         execution = request.execution
         execution_ext = execution.ext
+        if execution.tool_config.tools:
+            self._prepare_native_template_tools(execution)
         acceleration_mode = str(execution.acceleration.mode)
         cache_mode = str(execution.cache_hints.cache_mode)
         if execution_ext:
@@ -316,6 +331,25 @@ class EngineCore:
         # is 0, which the runtime must treat as "use the default", not block_size=1.
         if execution.cache_hints.preferred_block_size > 0:
             _routing_ext["_melix.block_size"] = str(execution.cache_hints.preferred_block_size)
+        if execution.cache_hints.cache_memory_budget_bytes > 0:
+            _routing_ext["_melix.cache_memory_budget_bytes"] = str(
+                execution.cache_hints.cache_memory_budget_bytes
+            )
+        active_kv_quant_profile = str(execution.acceleration.active_kv_quant_profile or "").strip()
+        if active_kv_quant_profile:
+            _routing_ext["_melix.active_kv_quant_profile"] = active_kv_quant_profile
+        # Acceleration-policy ext carries opt-in knobs (prompt lookup today) that
+        # the runtime reads directly. Request ext already present wins, so a
+        # per-request override is not clobbered by the session-level policy.
+        # `_melix.` is this method's own routing namespace, and several of those
+        # keys are set only conditionally (block size, cache budget, kv-quant
+        # profile), so `setdefault` alone would let policy ext populate the ones
+        # left unset and steer prefix-cache routing through a knob channel.
+        for _accel_key, _accel_value in execution.acceleration.ext.items():
+            _accel_key = str(_accel_key)
+            if _accel_key.startswith("_melix."):
+                continue
+            _routing_ext.setdefault(_accel_key, str(_accel_value))
         sampling = request.sampling
         reasoning = execution.reasoning
         request_id = execution.id.request_id
@@ -342,6 +376,18 @@ class EngineCore:
                 )
                 return
 
+        if sampler_constraint_requested(execution_ext) and (
+            schema_error := sampler_constraint_preflight_error(execution_ext)
+        ):
+            yield self._error_event(
+                request_id,
+                1,
+                schema_error.code,
+                str(schema_error),
+                details=schema_error.details,
+            )
+            return
+
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         generate_tokens = runtime.generate_tokens
         lease = self._registry.acquire_stream_lifetime_lease(
@@ -367,11 +413,12 @@ class EngineCore:
         effective_sampling = self._sampling_with_resolved_stop(sampling, stop_contract.sequences)
         prompt_tokens_default: int | None = None
         track_usage = bool(request.return_usage)
+        prompt_token_counter = getattr(runtime, "prompt_token_count", None) if track_usage else None
         completion_token_count = 0
-        finalized_prompt_tokens = 0
-        finalized_completion_tokens = 0
-        finalized_cached_prompt_tokens = 0
-        finalized_media_usage = _media_feature_usage_from_probe(None)
+        finalized_prompt_tokens: int = 0
+        finalized_completion_tokens: int = 0
+        finalized_cached_prompt_tokens: int = 0
+        finalized_media_usage: dict[str, int] | None = None
         usage_trailer_emitted = False
         last_token_event: RuntimeTokenEvent | None = None
         last_finish_reason = ""
@@ -404,10 +451,79 @@ class EngineCore:
                     tool_choice_policy=tool_choice_policy,
                 )
 
+        def assembly_events(
+            deltas: list[AssemblyDelta],
+        ) -> Iterator[inference_pb2.ExecuteEvent]:
+            nonlocal completion_token_count
+            nonlocal generated_reasoning_delta_count
+            nonlocal generated_tool_call_delta_count
+            for delta in deltas:
+                if delta.reasoning_text:
+                    generated_reasoning_delta_count += 1
+                    if token_route_receipt is not None:
+                        token_route_receipt.activate()
+                        token_route_receipt.record_span(
+                            channel="hidden_reasoning",
+                            channel_source="reasoning_tag",
+                            token_count=delta.token_count,
+                        )
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=allocate_seq(),
+                        reasoning_delta=inference_pb2.ReasoningDelta(
+                            text=delta.reasoning_text,
+                            raw_text=delta.raw_text,
+                            mode_source=reasoning.mode_source,
+                        ),
+                    )
+                if delta.tool_call is not None:
+                    generated_tool_call_delta_count += 1
+                    if token_route_receipt is not None:
+                        token_route_receipt.activate()
+                        token_route_receipt.record_span(
+                            channel="tool_call",
+                            channel_source="tool_call_tag",
+                            token_count=delta.token_count,
+                        )
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=allocate_seq(),
+                        tool_call_delta=inference_pb2.ToolCallDelta(
+                            call_id=delta.tool_call.call_id,
+                            tool_name=delta.tool_call.tool_name,
+                            arguments_json_fragment=delta.tool_call.arguments_json_fragment,
+                            fragment_index=delta.tool_call.fragment_index,
+                            parser_mode=delta.tool_call.parser_mode,
+                            complete=delta.tool_call.complete,
+                        ),
+                    )
+                if delta.content_text:
+                    if token_route_receipt is not None:
+                        token_route_receipt.record_span(
+                            channel="visible_text",
+                            channel_source="raw_text",
+                            token_count=delta.token_count,
+                            consume_all_available=True,
+                        )
+                    if track_usage:
+                        completion_token_count += 1
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=allocate_seq(),
+                        token_delta=inference_pb2.TokenDelta(
+                            text=delta.content_text,
+                            raw_text=delta.raw_text,
+                            parser_observation=delta.parser_observation,
+                            token_ids=delta.token_ids,
+                            token_logprobs=delta.token_logprobs,
+                        ),
+                    )
+
         try:
             template_kwargs = self._chat_template_kwargs(request) if execution_ext else None
-            if execution.tool_config.tools:
-                self._prepare_native_template_tools(execution)
             prompt = runtime.render_prompt(
                 request.messages,
                 loaded_model=loaded_model.runtime_model,
@@ -525,70 +641,10 @@ class EngineCore:
                     stream_fragment = StreamFragment(runtime_event.text, runtime_event.raw_text)
                 if token_route_receipt is not None and runtime_event.token_ids:
                     token_route_receipt.append_token_ids(runtime_event.token_ids)
-                for delta in accept_stream_fragment(stream_fragment):
-                    if delta.reasoning_text:
-                        generated_reasoning_delta_count += 1
-                        if token_route_receipt is not None:
-                            token_route_receipt.activate()
-                            token_route_receipt.record_span(
-                                channel="hidden_reasoning",
-                                channel_source="reasoning_tag",
-                                token_count=delta.token_count,
-                            )
-                        yield inference_pb2.ExecuteEvent(
-                            request_id=request_id,
-                            execution_kind="generate",
-                            seq=allocate_seq(),
-                            reasoning_delta=inference_pb2.ReasoningDelta(
-                                text=delta.reasoning_text,
-                                raw_text=delta.raw_text,
-                                mode_source=reasoning.mode_source,
-                            ),
-                        )
-                    if delta.tool_call is not None:
-                        generated_tool_call_delta_count += 1
-                        if token_route_receipt is not None:
-                            token_route_receipt.activate()
-                            token_route_receipt.record_span(
-                                channel="tool_call",
-                                channel_source="tool_call_tag",
-                                token_count=delta.token_count,
-                            )
-                        yield inference_pb2.ExecuteEvent(
-                            request_id=request_id,
-                            execution_kind="generate",
-                            seq=allocate_seq(),
-                            tool_call_delta=inference_pb2.ToolCallDelta(
-                                call_id=delta.tool_call.call_id,
-                                tool_name=delta.tool_call.tool_name,
-                                arguments_json_fragment=delta.tool_call.arguments_json_fragment,
-                                fragment_index=delta.tool_call.fragment_index,
-                                parser_mode=delta.tool_call.parser_mode,
-                                complete=delta.tool_call.complete,
-                            ),
-                        )
-                    if delta.content_text:
-                        if token_route_receipt is not None:
-                            token_route_receipt.record_span(
-                                channel="visible_text",
-                                channel_source="raw_text",
-                                token_count=delta.token_count,
-                                consume_all_available=True,
-                            )
-                        if track_usage:
-                            completion_token_count += 1
-                        yield inference_pb2.ExecuteEvent(
-                            request_id=request_id,
-                            execution_kind="generate",
-                            seq=allocate_seq(),
-                            token_delta=inference_pb2.TokenDelta(
-                                text=delta.content_text,
-                                raw_text=delta.raw_text,
-                                parser_observation=delta.parser_observation,
-                                token_ids=delta.token_ids,
-                                token_logprobs=delta.token_logprobs,
-                            ),
-                        )
+                yield from assembly_events(accept_stream_fragment(stream_fragment))
+
+            terminal_deltas, assembled = assembler.finalize()
+            yield from assembly_events(terminal_deltas)
 
             if track_usage and not cancel_event.is_set():
                 completion_tokens = completion_token_count
@@ -596,9 +652,9 @@ class EngineCore:
                     prompt_tokens = int(last_token_event.prompt_tokens)
                 else:
                     if prompt_tokens_default is None:
-                        prompt_tokens_default = (
-                            runtime.prompt_token_count(prompt)
-                            if hasattr(runtime, "prompt_token_count")
+                        prompt_tokens_default = int(
+                            prompt_token_counter(prompt)
+                            if prompt_token_counter is not None
                             else _whitespace_token_count(prompt)
                         )
                     prompt_tokens = prompt_tokens_default
@@ -629,13 +685,21 @@ class EngineCore:
             elif last_finish_reason:
                 finish_reason = last_finish_reason
 
-            assembled = assembler.completed()
             if assembled.metrics:
                 parser_metrics = {key: _parser_metric_text(value) for key, value in assembled.metrics.items()}
             else:
                 parser_metrics = {}
-            if last_token_event is not None:
+            if _runtime_token_event_has_native_parser_metrics(last_token_event):
                 parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
+            for receipt_key in (
+                "constraint_kind",
+                "mask_vocab_words",
+                "fast_path_used",
+                "fallback_reason",
+            ):
+                value = _routing_ext.get(f"melix.constraint.{receipt_key}", "")
+                if value:
+                    parser_metrics[receipt_key] = value
             resolved_stop_token_count = str(stop_contract.resolved_stop_token_count)
             if plain_text_fast_path:
                 if execution_ext:
@@ -659,20 +723,21 @@ class EngineCore:
                     compat_policy_receipt_json = ""
                     compat_effective_config_hash = ""
                     allowed_tools_receipt_json = _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
-                generated_tool_call_delta_count_text = str(generated_tool_call_delta_count)
+                parser_metric_text = _parser_metric_text
+                generated_tool_call_delta_count_text = parser_metric_text(generated_tool_call_delta_count)
                 if token_route_receipt is not None:
                     token_route_receipt_json = token_route_receipt.to_json()
                 parser_metrics["resolved_stop_token_count"] = resolved_stop_token_count
                 parser_metrics["response_history_normalized_count"] = response_history_normalized_count
-                parser_metrics["native_tool_exemplar_injected_count"] = "0"
+                parser_metrics["native_tool_exemplar_injected_count"] = _METRIC_ZERO_TEXT
                 parser_metrics["reasoning_flag_source"] = reasoning.mode_source or "unspecified"
                 parser_metrics["compat_policy_receipt_json"] = compat_policy_receipt_json
                 parser_metrics["compat_effective_config_hash"] = compat_effective_config_hash
                 parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
-                parser_metrics["generated_reasoning_delta_count"] = "0"
+                parser_metrics["generated_reasoning_delta_count"] = _METRIC_ZERO_TEXT
                 parser_metrics["generated_tool_call_delta_count"] = generated_tool_call_delta_count_text
-                parser_metrics["annotation_delta_count"] = str(annotation_delta_count)
-                parser_metrics["tool_result_delta_count"] = str(tool_result_delta_count)
+                parser_metrics["annotation_delta_count"] = parser_metric_text(annotation_delta_count)
+                parser_metrics["tool_result_delta_count"] = parser_metric_text(tool_result_delta_count)
                 parser_metrics["token_route_receipt_json"] = token_route_receipt_json
                 parser_metrics["allowed_tools_receipt_json"] = allowed_tools_receipt_json
             else:
@@ -705,17 +770,26 @@ class EngineCore:
                 parser_metrics["token_route_receipt_json"] = token_route_receipt_json
                 parser_metrics["allowed_tools_receipt_json"] = allowed_tools_receipt_json
             _apply_prompt_context_receipt_metrics(parser_metrics, execution_ext)
+            if finalized_media_usage:
+                finalization_usage = TextFinalizationUsage(
+                    prompt_tokens=finalized_prompt_tokens,
+                    completion_tokens=finalized_completion_tokens,
+                    cached_prompt_tokens=finalized_cached_prompt_tokens,
+                    **finalized_media_usage,
+                )
+            else:
+                finalization_usage = TextFinalizationUsage(
+                    prompt_tokens=finalized_prompt_tokens,
+                    completion_tokens=finalized_completion_tokens,
+                    cached_prompt_tokens=finalized_cached_prompt_tokens,
+                )
+
             finalization_receipt = finalize_text_response(
                 response_id=request_id,
                 created=created,
                 stream_mode=bool(request.stream),
                 finish_reason=finish_reason,
-                usage=TextFinalizationUsage(
-                    prompt_tokens=finalized_prompt_tokens,
-                    completion_tokens=finalized_completion_tokens,
-                    cached_prompt_tokens=finalized_cached_prompt_tokens,
-                    **finalized_media_usage,
-                ),
+                usage=finalization_usage,
                 usage_trailer_emitted=usage_trailer_emitted,
                 reasoning_text=assembled.reasoning_text,
                 tool_call_count=assembled.tool_call_count,
@@ -741,6 +815,14 @@ class EngineCore:
                 ),
             )
         except MultimodalPrefillAttentionBudgetExceeded as exc:
+            yield self._error_event(
+                request_id,
+                allocate_seq(),
+                exc.code,
+                str(exc),
+                details=exc.details,
+            )
+        except StructuredOutputConstraintError as exc:
             yield self._error_event(
                 request_id,
                 allocate_seq(),
@@ -791,6 +873,11 @@ class EngineCore:
             if _runtime_prefill_accepts_step_size(runtime, runtime.prefill):
                 prefill_kwargs["prefill_step_size"] = request.prefill_step_size
             session = runtime.prefill(**prefill_kwargs)
+            self._registry.bind_decode_session(
+                request_id=request_id,
+                decode_handle=session.decode_handle,
+                loaded_model=loaded_model,
+            )
             response = inference_pb2.PrefillResponse(
                 ok=True,
                 decode_handle=session.decode_handle if request.return_decode_handle else "",
@@ -1106,7 +1193,7 @@ class EngineCore:
         tool_choice_resolved = ext_get("melix.compat.tool_choice_resolved", "").strip()
         tool_config_source = ext_get("melix.tool_config.source", "").strip()
         raw_tool_count = ext_get("melix.tool_config.tool_count", "").strip()
-        raw_source_ids = ext_get("melix.mcp.source_ids", "")
+        source_ids_text = ext_get("melix.mcp.source_ids", "").strip()
         suppressed_reason = ext_get("melix.tool_parser.suppressed_reason", "").strip()
         if (
             not execution.tool_config.tools
@@ -1114,7 +1201,7 @@ class EngineCore:
             and not tool_choice_resolved
             and not tool_config_source
             and not raw_tool_count
-            and not raw_source_ids.strip()
+            and not source_ids_text
             and not suppressed_reason
         ):
             return _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
@@ -1151,10 +1238,11 @@ class EngineCore:
             or "auto"
         )
         source_ids: list[str] = []
-        for item in raw_source_ids.split(","):
-            source_id = item.strip()
-            if source_id:
-                source_ids.append(source_id)
+        if source_ids_text:
+            for item in source_ids_text.split(","):
+                source_id = item.strip()
+                if source_id:
+                    source_ids.append(source_id)
         payload = {
             "allowed_tool_names": allowed_names,
             "allowed_tool_count": len(allowed_names),
@@ -1371,6 +1459,10 @@ class EngineCore:
 
     @staticmethod
     def _prepare_native_template_tools(execution: inference_pb2.ExecutionMetadata) -> None:
+        if execution.tool_config.tool_choice and not execution.ext.get(
+            "melix.tool_config.tool_choice"
+        ):
+            execution.ext["melix.tool_config.tool_choice"] = execution.tool_config.tool_choice
         if execution.ext.get("melix.tool_config.tools_json") or not execution.tool_config.tools:
             return
         tools: list[dict[str, object]] = []

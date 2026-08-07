@@ -32,7 +32,7 @@ def test_main_emits_expected_packaging_target_metrics(
     assert module.main() == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["packaging_target_profile_count"] == 3
+    assert payload["packaging_target_profile_count"] == 5
     assert payload["packaging_target_shared_identity_ok"] == 1
     assert payload["packaging_target_distinct_packaging_kind_count"] == 3
     assert payload["packaging_target_launch_agents_profile_ok"] == 1

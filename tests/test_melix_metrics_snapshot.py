@@ -268,7 +268,17 @@ def test_resolve_source_paths_skips_runtime_scan_when_all_sources_are_configured
     def fail_scandir(path: object):  # pragma: no cover - regression guard
         raise AssertionError(f"runtime scan should be skipped when all sources are configured: {path!r}")
 
+    def fail_runtime_discovery(
+        runtime_dir: Path | None,
+        source_names: tuple[str, ...],
+    ):  # pragma: no cover - regression guard
+        raise AssertionError(
+            "runtime discovery should be skipped when all sources are configured: "
+            f"{runtime_dir!r} {source_names!r}"
+        )
+
     monkeypatch.setattr(snapshot_cli.os, "scandir", fail_scandir)
+    monkeypatch.setattr(snapshot_cli, "discover_latest_metrics_paths", fail_runtime_discovery)
 
     resolved = snapshot_cli.resolve_source_paths(
         swift_text_worker_metrics=swift_worker_arg_path,

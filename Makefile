@@ -14,7 +14,7 @@ TEXT_WORKER_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/mlx-text-worker-swif
 CONTROL_PLANE_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/control-plane-swift
 MENUBAR_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/macos-menubar
 
-CONTROL_PLANE_TEST_FILTER_CONTROL := SnapshotStoreTests|BenchmarkExportBundleTests|ImageDefaultsStoreTests|SchedulerReadModelTests|ToolParserRegistryTests|GatewayConfigStoreTests|ChatTemplatePolicyTests|ImageJobReadModelTests|GatewayServingDefaultsStoreTests|MCPToolCatalogTests|ModelCatalogTests|MultimodalContractTests|PrivacyPolicyReceiptsTests|ImageJobAdmissionControllerTests|StructuredOutputValidationTests|AudioAssetManagerTests|EventSubscriptionHubTests|CoreUtilityTests|ControlPlaneServiceTests|ControlPlaneChatExecutionTests|ControlPlaneServiceFastPathTests|TextEndpointContractTests
+CONTROL_PLANE_TEST_FILTER_CONTROL := SnapshotStoreTests|BackendModelIdentityTests|BenchmarkExportBundleTests|ImageDefaultsStoreTests|SchedulerReadModelTests|ToolParserRegistryTests|GatewayConfigStoreTests|ChatTemplatePolicyTests|ImageJobReadModelTests|GatewayServingDefaultsStoreTests|MCPToolCatalogTests|ModelCatalogTests|TextExecutionModelResolverTests|MultimodalContractTests|PrivacyPolicyReceiptsTests|ImageJobAdmissionControllerTests|StructuredOutputValidationTests|AudioAssetManagerTests|EventSubscriptionHubTests|CoreUtilityTests|ControlPlaneServiceTests|ControlPlaneChatExecutionTests|ControlPlaneServiceFastPathTests|TextEndpointContractTests
 CONTROL_PLANE_TEST_FILTER_WORKER := PythonBridgeWorkerClientTests|SwiftTextWorkerClientTests|WorkerClientTests|WorkerRegistryTests|OnDemandModelLoaderTests
 CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_A := \
 	"HTTPGatewayTests.RequestCoordinatorTests/admittedRequestCancellationBeforeGenerateReturnsYieldsACancelledExecution()" \
@@ -29,12 +29,20 @@ CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_A := \
 	"HTTPGatewayTests.RequestCoordinatorTests/disconnectGraceKeepsRequestResumeEligibleUntilANewConsumerAttaches()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/duplicateRequestIdentifiersAreRejectedWhileTracked()"
 CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_B := \
+	"HTTPGatewayTests.RequestCoordinatorTests/backendPreResponseRetryExhaustionReturnsAStableTypedFailure()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/backendStreamCreationWithoutSemanticOutputRemainsReplaySafe()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/backendTransportFailureAfterCompletedToolOutputIsTypedAndNeverReplayed()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/backendTransportFailureAfterTokenOutputIsTypedAndNeverReplayed()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/concurrentIdentityMismatchDispatchesCoalesceOneFreshBinding()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/backendIdentityRecoveryProbeEmitsMeasuredControlPlaneEvidence()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/emptyModelIdentifiersAreRejectedBeforeDispatch()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/externalWorkerPreResponseFailureMatrix" \
 	"HTTPGatewayTests.RequestCoordinatorTests/gatewayBatchingDefaultsCanDisableContinuousBatchAdmissions()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/gatewayBatchingDefaultsCanExpandContinuousBatchCapacity()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/gatewaySpeculativeDefaultsDowngradeUnsupportedModelPolicies()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/gatewaySpeculativeDefaultsPopulateWorkerAccelerationWhenModelDefaultsAreUnspecified()" \
-	"HTTPGatewayTests.RequestCoordinatorTests/generateFailuresPropagateWhenTheWorkerThrowsAGenericError()"
+	"HTTPGatewayTests.RequestCoordinatorTests/generateFailuresPropagateWhenTheWorkerThrowsAGenericError()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/reusedBackendEndpointRequiresReplacementIdentity()"
 CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_C := \
 	"HTTPGatewayTests.RequestCoordinatorTests/generateUnavailabilityIsSurfacedWithoutFallback()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/modelAccelerationDefaultsOverrideGatewaySpeculativeExecutionDefaults()" \
@@ -225,8 +233,11 @@ package-smoke:
 		services/mlx-worker-python/tests/test_build_metadata.py \
 		services/mlx-worker-python/tests/test_packaging_dependencies.py \
 		services/mlx-worker-python/tests/test_packaging_targets.py \
+		services/mlx-worker-python/tests/test_active_runtime.py \
 		services/mlx-worker-python/tests/test_macos_app_bundle.py \
+		services/mlx-worker-python/tests/test_packaged_python_import_isolation.py \
 		services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py \
+		services/mlx-worker-python/tests/test_capture_macos_app_screenshots_script.py \
 		services/mlx-worker-python/tests/test_m8_packaging_target_smoke.py \
 		-q
 	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/m8_packaging_target_smoke.py --json

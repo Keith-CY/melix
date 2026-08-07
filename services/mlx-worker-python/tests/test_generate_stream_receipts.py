@@ -6,7 +6,11 @@ from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtim
 
 from worker.engine import engine_core as engine_core_module
 from worker.engine.text_finalizer import TextFinalizationUsage
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
@@ -25,7 +29,7 @@ class StructuredStreamingBackend:
         yield RuntimeTokenEvent(
             text="",
             raw_text=(
-                '<think>trace</think>'
+                "<think>trace</think>"
                 '<tool_call>{"name":"search","arguments":{"q":"one"}}</tool_call>'
                 "visible"
             ),
@@ -55,7 +59,7 @@ class TokenRoutedStructuredBackend:
         yield RuntimeTokenEvent(
             text="",
             raw_text=(
-                '<think>trace</think>'
+                "<think>trace</think>"
                 '<tool_call>{"name":"search","arguments":{"q":"one"}}</tool_call>'
                 "visible"
             ),
@@ -64,6 +68,7 @@ class TokenRoutedStructuredBackend:
             completion_tokens=3,
             finish_reason="stop",
         )
+
 
 class TokenRoutedMultispanBackend:
     runtime_name = "fake-mlx"
@@ -119,8 +124,11 @@ class TokenRoutedVisibleBackend:
 
 class FinalizerParityBackend:
     runtime_name = "fake-mlx"
+    supports_sampler_constraints = True
 
-    def __init__(self, *, raw_text: str, prompt_tokens: int = 11, completion_tokens: int = 3) -> None:
+    def __init__(
+        self, *, raw_text: str, prompt_tokens: int = 11, completion_tokens: int = 3
+    ) -> None:
         self.raw_text = raw_text
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
@@ -173,7 +181,11 @@ def test_generate_completed_event_preserves_compatibility_policy_receipt() -> No
         stream=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
     completed = next(event.completed for event in events if event.HasField("completed"))
 
     assert completed.parser_metrics["compat_policy_receipt_json"] == receipt
@@ -182,7 +194,9 @@ def test_generate_completed_event_preserves_compatibility_policy_receipt() -> No
 
 
 def test_plain_compatibility_receipt_keeps_metadata_without_route_tracking() -> None:
-    inference_service, model_handle = _build_services(FinalizerParityBackend(raw_text="plain answer"))
+    inference_service, model_handle = _build_services(
+        FinalizerParityBackend(raw_text="plain answer")
+    )
     receipt = json.dumps(
         {
             "compat_surface": "openai.chat.completions",
@@ -213,10 +227,15 @@ def test_plain_compatibility_receipt_keeps_metadata_without_route_tracking() -> 
     )
 
     completed = next(
-        event.completed for event in inference_service.Generate(request, context=None)
+        event.completed
+        for event in inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
         if event.HasField("completed")
     )
-    token_route_receipt = json.loads(completed.parser_metrics["token_route_receipt_json"])
+    token_route_receipt = json.loads(
+        completed.parser_metrics["token_route_receipt_json"]
+    )
 
     assert completed.parser_metrics["compat_policy_receipt_json"] == receipt
     assert completed.parser_metrics["compat_effective_config_hash"] == "plain123"
@@ -224,7 +243,9 @@ def test_plain_compatibility_receipt_keeps_metadata_without_route_tracking() -> 
     assert token_route_receipt["route_tracking_enabled"] is False
 
 
-def test_plain_fast_path_finalizes_through_shared_text_receipt_state(monkeypatch) -> None:
+def test_plain_fast_path_finalizes_through_shared_text_receipt_state(
+    monkeypatch,
+) -> None:
     receipts: list[object] = []
     original_apply = engine_core_module.apply_text_response_metrics
 
@@ -234,7 +255,9 @@ def test_plain_fast_path_finalizes_through_shared_text_receipt_state(monkeypatch
 
     monkeypatch.setattr(engine_core_module, "apply_text_response_metrics", record_apply)
     inference_service, model_handle = _build_services(
-        FinalizerParityBackend(raw_text="plain answer", prompt_tokens=7, completion_tokens=2)
+        FinalizerParityBackend(
+            raw_text="plain answer", prompt_tokens=7, completion_tokens=2
+        )
     )
 
     for stream in (True, False):
@@ -257,7 +280,10 @@ def test_plain_fast_path_finalizes_through_shared_text_receipt_state(monkeypatch
             return_usage=True,
         )
         completed = next(
-            event.completed for event in inference_service.Generate(request, context=None)
+            event.completed
+            for event in inference_service.Generate(
+                bind_backend_identity(inference_service, request), context=None
+            )
             if event.HasField("completed")
         )
         assert completed.parser_metrics["finalizer_path"] == (
@@ -270,7 +296,9 @@ def test_plain_fast_path_finalizes_through_shared_text_receipt_state(monkeypatch
     assert all(receipt.usage.completion_tokens == 2 for receipt in receipts)
 
 
-def test_text_finalization_usage_parser_metrics_include_cache_work_saved_fields() -> None:
+def test_text_finalization_usage_parser_metrics_include_cache_work_saved_fields() -> (
+    None
+):
     usage = TextFinalizationUsage(
         prompt_tokens=10,
         completion_tokens=2,
@@ -303,7 +331,9 @@ def test_text_finalization_usage_parser_metrics_include_cache_work_saved_fields(
     assert metrics["usage_image_feature_work_saved_bytes"] == "1234"
 
 
-def test_structured_tool_calls_finalize_through_shared_text_receipt_state(monkeypatch) -> None:
+def test_structured_tool_calls_finalize_through_shared_text_receipt_state(
+    monkeypatch,
+) -> None:
     receipts: list[object] = []
     original_apply = engine_core_module.apply_text_response_metrics
 
@@ -315,7 +345,9 @@ def test_structured_tool_calls_finalize_through_shared_text_receipt_state(monkey
     inference_service, model_handle = _build_services(StructuredStreamingBackend())
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="req-structured-finalizer-tool-call"),
+            id=common_pb2.RequestIdentity(
+                request_id="req-structured-finalizer-tool-call"
+            ),
             model_handle=model_handle,
             ext={
                 "melix.reasoning.mode": "enabled",
@@ -333,7 +365,7 @@ def test_structured_tool_calls_finalize_through_shared_text_receipt_state(monkey
                         json_schema='{"type":"object"}',
                     )
                 ],
-                tool_choice="required",
+                tool_choice="",
             ),
         ),
         messages=[
@@ -348,7 +380,10 @@ def test_structured_tool_calls_finalize_through_shared_text_receipt_state(monkey
     )
 
     completed = next(
-        event.completed for event in inference_service.Generate(request, context=None)
+        event.completed
+        for event in inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
         if event.HasField("completed")
     )
 
@@ -357,19 +392,26 @@ def test_structured_tool_calls_finalize_through_shared_text_receipt_state(monkey
     assert completed.parser_metrics["reasoning_finalized"] == "true"
 
 
-def test_generate_token_route_receipt_uses_compat_policy_context_and_matches_stream_modes() -> None:
+def test_generate_token_route_receipt_uses_compat_policy_context_and_matches_stream_modes() -> (
+    None
+):
     inference_service, model_handle = _build_services(StructuredStreamingBackend())
     compat_receipt = (
         '{"compat_surface":"openai.chat.completions",'
         '"reasoning_mode":"enabled",'
-        '"tool_choice_resolved":"required",'
+        '"tool_choice_resolved":"auto",'
         '"stream_mode":"stream"}'
     )
 
     stream_completed = next(
         event.completed
         for event in inference_service.Generate(
-            _token_route_request(model_handle, compat_receipt=compat_receipt, stream=True),
+            bind_backend_identity(
+                inference_service,
+                _token_route_request(
+                    model_handle, compat_receipt=compat_receipt, stream=True
+                ),
+            ),
             context=None,
         )
         if event.HasField("completed")
@@ -377,34 +419,64 @@ def test_generate_token_route_receipt_uses_compat_policy_context_and_matches_str
     non_stream_completed = next(
         event.completed
         for event in inference_service.Generate(
-            _token_route_request(model_handle, compat_receipt=compat_receipt, stream=False),
+            bind_backend_identity(
+                inference_service,
+                _token_route_request(
+                    model_handle, compat_receipt=compat_receipt, stream=False
+                ),
+            ),
             context=None,
         )
         if event.HasField("completed")
     )
-    stream_receipt = json.loads(stream_completed.parser_metrics["token_route_receipt_json"])
-    non_stream_receipt = json.loads(non_stream_completed.parser_metrics["token_route_receipt_json"])
+    stream_receipt = json.loads(
+        stream_completed.parser_metrics["token_route_receipt_json"]
+    )
+    non_stream_receipt = json.loads(
+        non_stream_completed.parser_metrics["token_route_receipt_json"]
+    )
 
-    assert stream_completed.assistant_text == non_stream_completed.assistant_text == "visible"
-    assert stream_completed.reasoning_text == non_stream_completed.reasoning_text == "trace"
-    assert stream_receipt["tool_choice_policy"] == "required"
+    assert (
+        stream_completed.assistant_text
+        == non_stream_completed.assistant_text
+        == "visible"
+    )
+    assert (
+        stream_completed.reasoning_text
+        == non_stream_completed.reasoning_text
+        == "trace"
+    )
+    assert stream_receipt["tool_choice_policy"] == "auto"
     assert stream_receipt["reasoning_mode"] == "enabled"
-    assert stream_receipt["visible_text_tokens"] == non_stream_receipt["visible_text_tokens"] == 1
-    assert stream_receipt["hidden_reasoning_tokens"] == non_stream_receipt["hidden_reasoning_tokens"] == 1
+    assert (
+        stream_receipt["visible_text_tokens"]
+        == non_stream_receipt["visible_text_tokens"]
+        == 1
+    )
+    assert (
+        stream_receipt["hidden_reasoning_tokens"]
+        == non_stream_receipt["hidden_reasoning_tokens"]
+        == 1
+    )
     assert stream_receipt["routes"] == non_stream_receipt["routes"]
 
 
-def test_generate_token_route_receipt_records_actual_token_ids_by_channel_span() -> None:
+def test_generate_token_route_receipt_records_actual_token_ids_by_channel_span() -> (
+    None
+):
     inference_service, model_handle = _build_services(
         TokenRoutedStructuredBackend(token_ids=(101, 102, 103))
     )
     completed = next(
         event.completed
         for event in inference_service.Generate(
-            _token_route_request(
-                model_handle,
-                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"required"}',
-                stream=True,
+            bind_backend_identity(
+                inference_service,
+                _token_route_request(
+                    model_handle,
+                    compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"auto"}',
+                    stream=True,
+                ),
             ),
             context=None,
         )
@@ -426,15 +498,19 @@ def test_generate_token_route_receipt_records_actual_token_ids_by_channel_span()
         (103, "visible_text", "raw_text"),
     ]
 
+
 def test_generate_token_route_receipt_keeps_multitoken_hidden_and_tool_spans() -> None:
     inference_service, model_handle = _build_services(TokenRoutedMultispanBackend())
     completed = next(
         event.completed
         for event in inference_service.Generate(
-            _token_route_request(
-                model_handle,
-                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"required"}',
-                stream=True,
+            bind_backend_identity(
+                inference_service,
+                _token_route_request(
+                    model_handle,
+                    compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"auto"}',
+                    stream=True,
+                ),
             ),
             context=None,
         )
@@ -461,17 +537,22 @@ def test_generate_token_route_receipt_keeps_multitoken_hidden_and_tool_spans() -
     ]
 
 
-def test_generate_token_route_receipt_marks_raw_text_fallback_without_token_ids() -> None:
+def test_generate_token_route_receipt_marks_raw_text_fallback_without_token_ids() -> (
+    None
+):
     inference_service, model_handle = _build_services(
         TokenRoutedStructuredBackend(token_ids=())
     )
     completed = next(
         event.completed
         for event in inference_service.Generate(
-            _token_route_request(
-                model_handle,
-                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"required"}',
-                stream=True,
+            bind_backend_identity(
+                inference_service,
+                _token_route_request(
+                    model_handle,
+                    compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"auto"}',
+                    stream=True,
+                ),
             ),
             context=None,
         )
@@ -495,11 +576,14 @@ def test_generate_token_route_receipt_counts_all_tokens_in_visible_span() -> Non
     completed = next(
         event.completed
         for event in inference_service.Generate(
-            _token_route_request(
-                model_handle,
-                compat_receipt='{"reasoning_mode":"disabled","tool_choice_resolved":"none"}',
-                stream=True,
-                reasoning_enabled=False,
+            bind_backend_identity(
+                inference_service,
+                _token_route_request(
+                    model_handle,
+                    compat_receipt='{"reasoning_mode":"disabled","tool_choice_resolved":"none"}',
+                    stream=True,
+                    reasoning_enabled=False,
+                ),
             ),
             context=None,
         )
@@ -563,7 +647,9 @@ def test_generate_records_request_local_allowed_tools_receipt() -> None:
 
     completed = next(
         event.completed
-        for event in inference_service.Generate(request, context=None)
+        for event in inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
         if event.HasField("completed")
     )
     receipt = json.loads(completed.parser_metrics["allowed_tools_receipt_json"])
@@ -622,7 +708,9 @@ def test_generate_completed_event_preserves_prompt_context_boundary_receipts() -
 
     completed = next(
         event.completed
-        for event in inference_service.Generate(request, context=None)
+        for event in inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
         if event.HasField("completed")
     )
 
@@ -632,8 +720,13 @@ def test_generate_completed_event_preserves_prompt_context_boundary_receipts() -
     )
     assert completed.parser_metrics["prompt_context_receipt_count"] == "1"
     assert completed.parser_metrics["prompt_context_receipts_json"] == receipts_json
-    assert json.loads(completed.parser_metrics["prompt_context_receipts_json"]) == receipts
-    assert "private prompt text" not in completed.parser_metrics["prompt_context_receipts_json"]
+    assert (
+        json.loads(completed.parser_metrics["prompt_context_receipts_json"]) == receipts
+    )
+    assert (
+        "private prompt text"
+        not in completed.parser_metrics["prompt_context_receipts_json"]
+    )
 
 
 def test_generate_treats_equivalent_duplicate_tool_schemas_as_same() -> None:
@@ -655,7 +748,7 @@ def test_generate_treats_equivalent_duplicate_tool_schemas_as_same() -> None:
                     common_pb2.ToolDefinition(
                         name="search",
                         json_schema=(
-                            '{\n'
+                            "{\n"
                             '  "properties": {"q": {"type": "string"}},\n'
                             '  "type": "object"\n'
                             "}"
@@ -677,7 +770,9 @@ def test_generate_treats_equivalent_duplicate_tool_schemas_as_same() -> None:
 
     completed = next(
         event.completed
-        for event in inference_service.Generate(request, context=None)
+        for event in inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
         if event.HasField("completed")
     )
     receipt = json.loads(completed.parser_metrics["allowed_tools_receipt_json"])
@@ -701,7 +796,9 @@ def test_generate_keeps_invalid_duplicate_tool_schema_comparison_observable() ->
                 tools=[
                     common_pb2.ToolDefinition(name="empty", json_schema=""),
                     common_pb2.ToolDefinition(name="search", json_schema='{"type":'),
-                    common_pb2.ToolDefinition(name="search", json_schema='{"type":"object"}'),
+                    common_pb2.ToolDefinition(
+                        name="search", json_schema='{"type":"object"}'
+                    ),
                 ],
                 tool_choice="auto",
             ),
@@ -718,7 +815,9 @@ def test_generate_keeps_invalid_duplicate_tool_schema_comparison_observable() ->
 
     completed = next(
         event.completed
-        for event in inference_service.Generate(request, context=None)
+        for event in inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
         if event.HasField("completed")
     )
     receipt = json.loads(completed.parser_metrics["allowed_tools_receipt_json"])
@@ -767,15 +866,22 @@ def test_generate_distinguishes_omitted_and_explicit_empty_allowed_tools() -> No
 
     omitted_completed = next(
         event.completed
-        for event in inference_service.Generate(omitted_request, context=None)
+        for event in inference_service.Generate(
+            bind_backend_identity(inference_service, omitted_request), context=None
+        )
         if event.HasField("completed")
     )
     explicit_empty_completed = next(
         event.completed
-        for event in inference_service.Generate(explicit_empty_request, context=None)
+        for event in inference_service.Generate(
+            bind_backend_identity(inference_service, explicit_empty_request),
+            context=None,
+        )
         if event.HasField("completed")
     )
-    omitted_receipt = json.loads(omitted_completed.parser_metrics["allowed_tools_receipt_json"])
+    omitted_receipt = json.loads(
+        omitted_completed.parser_metrics["allowed_tools_receipt_json"]
+    )
     explicit_empty_receipt = json.loads(
         explicit_empty_completed.parser_metrics["allowed_tools_receipt_json"]
     )
@@ -806,7 +912,9 @@ def test_allowed_tools_receipt_reuses_static_omitted_receipt() -> None:
 
     receipt_json = engine_core_module.EngineCore._allowed_tools_receipt_json(request)
 
-    assert receipt_json is engine_core_module._DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
+    assert (
+        receipt_json is engine_core_module._DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
+    )
     assert json.loads(receipt_json) == {
         "allowed_tool_count": 0,
         "allowed_tool_names": [],
@@ -877,8 +985,8 @@ def test_allowed_tools_receipt_reuses_static_omitted_receipt() -> None:
             "<think>unfinished hidden reasoning",
             {
                 "assistant_text": "",
-                "reasoning_text": "",
-                "reasoning_finalized": "false",
+                "reasoning_text": "unfinished hidden reasoning",
+                "reasoning_finalized": "true",
                 "tool_calls_finalized": "false",
                 "malformed_channel_recovered": "true",
                 "malformed_reasoning_count": "1",
@@ -971,18 +1079,24 @@ def test_generate_finalizer_receipt_matches_for_stream_and_non_stream_modes(
     assert non_stream_receipt["finalizer_path"] == "non_stream"
     assert stream_receipt["usage_trailer_emitted"] == "true"
     assert non_stream_receipt["usage_trailer_emitted"] == "false"
-    assert _normalized_finalizer_receipt(stream_receipt) == _normalized_finalizer_receipt(
-        non_stream_receipt
-    )
+    assert _normalized_finalizer_receipt(
+        stream_receipt
+    ) == _normalized_finalizer_receipt(non_stream_receipt)
     assert stream_completed.assistant_text == non_stream_completed.assistant_text
     assert stream_completed.reasoning_text == non_stream_completed.reasoning_text
-    assert stream_completed.raw_assistant_text == non_stream_completed.raw_assistant_text
+    assert (
+        stream_completed.raw_assistant_text == non_stream_completed.raw_assistant_text
+    )
     assert stream_completed.assistant_text == expected["assistant_text"]
     assert stream_completed.reasoning_text == expected["reasoning_text"]
     stream_route_receipt = json.loads(stream_receipt["token_route_receipt_json"])
-    non_stream_route_receipt = json.loads(non_stream_receipt["token_route_receipt_json"])
+    non_stream_route_receipt = json.loads(
+        non_stream_receipt["token_route_receipt_json"]
+    )
     assert stream_route_receipt["tool_choice_policy"] == expected["tool_choice_policy"]
-    assert non_stream_route_receipt["tool_choice_policy"] == expected["tool_choice_policy"]
+    assert (
+        non_stream_route_receipt["tool_choice_policy"] == expected["tool_choice_policy"]
+    )
     assert stream_receipt["finish_reason"] == "length"
     assert stream_receipt["usage_prompt_tokens"] == "11"
     assert stream_receipt["usage_completion_tokens"] == "3"
@@ -993,13 +1107,41 @@ def test_generate_finalizer_receipt_matches_for_stream_and_non_stream_modes(
         assert stream_receipt[key] == value
 
 
+def test_generate_flushes_eos_recovered_answer_before_usage_and_completed() -> None:
+    events = _generate_finalizer_events(
+        raw_text="<think>hidden trace\nAnswer: 42",
+        stream=True,
+        request_id="req-finalizer-stream-eos-recovery-sequence",
+    )
+
+    payloads = [event.WhichOneof("payload") for event in events]
+    reasoning = [
+        event.reasoning_delta.text
+        for event in events
+        if event.HasField("reasoning_delta")
+    ]
+    content = [
+        event.token_delta.text for event in events if event.HasField("token_delta")
+    ]
+    completed = _finalizer_completed(events)
+
+    assert reasoning == ["hidden trace"]
+    assert content == ["Answer: 42"]
+    assert "".join(content) == completed.assistant_text
+    assert payloads.index("reasoning_delta") < payloads.index("token_delta")
+    assert payloads.index("token_delta") < payloads.index("usage_delta")
+    assert payloads.index("usage_delta") < payloads.index("completed")
+
+
 def _token_route_request(
     model_handle: str,
     *,
     compat_receipt: str,
     stream: bool,
     reasoning_enabled: bool = True,
+    tool_choice: str = "auto",
 ) -> inference_pb2.GenerateRequest:
+    resolved_reasoning_mode = "enabled" if reasoning_enabled else "disabled"
     return inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(
@@ -1008,9 +1150,9 @@ def _token_route_request(
             model_handle=model_handle,
             ext={
                 "melix.compat.policy_receipt_json": compat_receipt,
-                "melix.compat.reasoning_mode": "enabled",
-                "melix.compat.tool_choice_resolved": "required",
-                "melix.reasoning.mode": "enabled",
+                "melix.compat.reasoning_mode": resolved_reasoning_mode,
+                "melix.compat.tool_choice_resolved": tool_choice,
+                "melix.reasoning.mode": resolved_reasoning_mode,
                 "melix.tool_parser.mode": "qwen",
             },
             reasoning=common_pb2.ReasoningConfig(
@@ -1024,7 +1166,7 @@ def _token_route_request(
                         json_schema='{"type":"object"}',
                     )
                 ],
-                tool_choice="required",
+                tool_choice="" if tool_choice == "auto" else tool_choice,
             ),
         ),
         messages=[
@@ -1046,18 +1188,22 @@ def _generate_finalizer_events(
     tool_choice: str = "auto",
     return_usage: bool = True,
 ):
-    inference_service, model_handle = _build_services(FinalizerParityBackend(raw_text=raw_text))
+    inference_service, model_handle = _build_services(
+        FinalizerParityBackend(raw_text=raw_text)
+    )
+    reasoning_enabled = tool_choice not in {"required"}
+    reasoning_mode = "enabled" if reasoning_enabled else "disabled"
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id=request_id),
             model_handle=model_handle,
             ext={
-                "melix.reasoning.mode": "enabled",
+                "melix.reasoning.mode": reasoning_mode,
                 "melix.tool_parser.mode": "qwen",
                 "melix.response.created": "1716500000",
             },
             reasoning=common_pb2.ReasoningConfig(
-                enabled=True,
+                enabled=reasoning_enabled,
                 mode_source="request_enable_thinking",
                 effort="medium",
             ),
@@ -1083,7 +1229,11 @@ def _generate_finalizer_events(
         stream=stream,
         return_usage=return_usage,
     )
-    return list(inference_service.Generate(request, context=None))
+    return list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
 
 def _build_services(backend):

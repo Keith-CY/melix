@@ -350,7 +350,7 @@ struct BenchmarkExportBundleTests {
         #expect(bundle.benchmarkMatrixHistoryEntries() == [])
         #expect(bundle.benchmarkMatrixSummaryCSV().contains("cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count"))
         #expect(bundle.benchmarkMatrixRequestsCSV().contains("dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate"))
-        #expect(bundle.benchmarkMatrixRequestsCSV().contains("dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,feature_guardrail_requested_num_draft_tokens,feature_guardrail_effective_num_draft_tokens,feature_guardrail_resource_fanout_estimate,feature_guardrail_requested_cache_budget_bytes,feature_guardrail_effective_cache_budget_bytes,feature_guardrail_reason,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count"))
     }
 
     @Test("decodes additive probe fields in benchmark matrix and evaluation exports")
@@ -399,11 +399,25 @@ struct BenchmarkExportBundleTests {
         #expect(request.dflashBlockSize == 16)
         #expect(request.dflashRollbackCount == 2)
         #expect(request.dflashTargetHiddenLayers == 12)
+        #expect(request.featureGuardrailRequestedNumDraftTokens == 6)
+        #expect(request.featureGuardrailEffectiveNumDraftTokens == 1)
+        #expect(request.featureGuardrailResourceFanoutEstimate == 2.0)
+        #expect(request.featureGuardrailRequestedCacheBudgetBytes == 8192)
+        #expect(request.featureGuardrailEffectiveCacheBudgetBytes == 4096)
+        #expect(request.featureGuardrailReason == "disk_streaming_speculative_fanout_cap")
         #expect(request.toolCallCount == 1)
         #expect(request.toolLatencyMS == 6.25)
         #expect(request.observationBytes == 48)
         #expect(request.fatalRate == 1.0)
         #expect(request.turnCount == 2)
+        #expect(request.effectivePolicySchema == "melix.text_effective_policy_receipt.v1")
+        #expect(request.effectiveConfigHash == "matrix-policy-hash")
+        #expect(request.samplingTemperature == 0.7)
+        #expect(request.samplingPolicyLookupStatus == "known")
+        #expect(request.samplingPolicySourceURL == "https://example.invalid/matrix-card")
+        #expect(request.recommendedSamplingRequired)
+        #expect(request.chatTemplateEffectiveKwargsHash == "matrix-template-hash")
+        #expect(request.policyReasoningMode == "enabled")
         #expect(sample.sampleRenderMS == 10.1)
         #expect(sample.inferenceMS == 20.2)
         #expect(sample.extractionMS == 30.3)
@@ -412,11 +426,21 @@ struct BenchmarkExportBundleTests {
         #expect(sample.rawResponseChars == 11)
         #expect(sample.extractedResultChars == 3)
         #expect(sample.failureStage == "scoring")
+        #expect(sample.effectivePolicySchema == "melix.text_effective_policy_receipt.v1")
+        #expect(sample.effectiveConfigHash == "eval-probe-policy-hash")
+        #expect(sample.samplingTopP == 0.85)
+        #expect(sample.samplingPolicyCanonicalModel == "melix-eval-policy")
+        #expect(sample.recommendedSamplingRequired)
+        #expect(sample.chatTemplateSource == "model+request")
+        #expect(sample.policyReasoningSource == "request")
         #expect(bundle.benchmarkMatrixSummaryCSV().contains("456.7,3,1,21.0,29.0,80.0,91.0,2,12.5,96,0.5,4"))
-        #expect(bundle.benchmarkMatrixRequestsCSV().contains("1.1,2.2,3.3,4.4,5.5,128,32,7,true,swift-text,decode,0.8,0.2,24,6,1,4,true,8.8,9.9,true,16,2,12,1,6.25,48,1.0,2"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("1.1,2.2,3.3,4.4,5.5,128,32,7,true,swift-text,decode,0.8,0.2,24,6,1,4,true,8.8,9.9,true,16,2,12,6,1,2.0,8192,4096,disk_streaming_speculative_fanout_cap,1,6.25,48,1.0,2"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("matrix-policy-hash,0.7,catalog,0.9,catalog,128,request,known"))
         #expect(bundle.evaluationSamplesCSV().contains("10.1,20.2,30.3,40.4,50.5,11,3,scoring"))
+        #expect(bundle.evaluationSamplesCSV().contains("eval-probe-policy-hash,0.3,catalog,0.85,catalog,64,request,known"))
         let sampleJSONL = try bundle.evaluationSamplesJSONL()
         #expect(sampleJSONL.contains(#""failure_stage":"scoring""#))
+        #expect(sampleJSONL.contains(#""effective_config_hash":"eval-probe-policy-hash""#))
     }
 }
 
@@ -1768,11 +1792,39 @@ private let benchmarkEvaluationProbeBundleJSON = """
       "dflash_block_size": 16,
       "dflash_rollback_count": 2,
       "dflash_target_hidden_layers": 12,
+      "feature_guardrail_requested_num_draft_tokens": 6,
+      "feature_guardrail_effective_num_draft_tokens": 1,
+      "feature_guardrail_resource_fanout_estimate": 2.0,
+      "feature_guardrail_requested_cache_budget_bytes": 8192,
+      "feature_guardrail_effective_cache_budget_bytes": 4096,
+      "feature_guardrail_reason": "disk_streaming_speculative_fanout_cap",
       "tool_call_count": 1,
       "tool_latency_ms": 6.25,
       "observation_bytes": 48,
       "fatal_rate": 1.0,
       "turn_count": 2,
+      "effective_policy_schema": "melix.text_effective_policy_receipt.v1",
+      "effective_config_hash": "matrix-policy-hash",
+      "sampling_temperature": 0.7,
+      "sampling_temperature_source": "catalog",
+      "sampling_top_p": 0.9,
+      "sampling_top_p_source": "catalog",
+      "sampling_max_tokens": 128,
+      "sampling_max_tokens_source": "request",
+      "sampling_policy_lookup_status": "known",
+      "sampling_policy_canonical_model": "melix-dev-policy",
+      "sampling_policy_matched_alias": "melix-dev-policy-q4",
+      "sampling_policy_source_url": "https://example.invalid/matrix-card",
+      "sampling_request_override_applied": true,
+      "recommended_sampling_required": true,
+      "sampling_seed": 99,
+      "sampling_seed_source": "request",
+      "chat_template_source": "model",
+      "chat_template_effective_kwargs_hash": "matrix-template-hash",
+      "chat_template_request_override_applied": false,
+      "chat_template_forced_override_applied": true,
+      "policy_reasoning_mode": "enabled",
+      "policy_reasoning_source": "template",
       "created_at_unix_ms": 1712600000000
     }
   ],
@@ -1799,7 +1851,29 @@ private let benchmarkEvaluationProbeBundleJSON = """
       "scoring_ms": 50.5,
       "raw_response_chars": 11,
       "extracted_result_chars": 3,
-      "failure_stage": "scoring"
+      "failure_stage": "scoring",
+      "effective_policy_schema": "melix.text_effective_policy_receipt.v1",
+      "effective_config_hash": "eval-probe-policy-hash",
+      "sampling_temperature": 0.3,
+      "sampling_temperature_source": "catalog",
+      "sampling_top_p": 0.85,
+      "sampling_top_p_source": "catalog",
+      "sampling_max_tokens": 64,
+      "sampling_max_tokens_source": "request",
+      "sampling_policy_lookup_status": "known",
+      "sampling_policy_canonical_model": "melix-eval-policy",
+      "sampling_policy_matched_alias": "melix-eval-policy-q4",
+      "sampling_policy_source_url": "https://example.invalid/eval-probe-card",
+      "sampling_request_override_applied": false,
+      "recommended_sampling_required": true,
+      "sampling_seed": 7,
+      "sampling_seed_source": "request",
+      "chat_template_source": "model+request",
+      "chat_template_effective_kwargs_hash": "eval-probe-template-hash",
+      "chat_template_request_override_applied": true,
+      "chat_template_forced_override_applied": false,
+      "policy_reasoning_mode": "disabled",
+      "policy_reasoning_source": "request"
     }
   ]
 }

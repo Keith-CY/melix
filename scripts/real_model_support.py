@@ -5,6 +5,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+import stat
 from typing import Mapping
 
 
@@ -292,6 +293,15 @@ def _huggingface_cache_model_path(
     snapshots_root = repo_cache / "snapshots"
     if not snapshots_root.is_dir():
         return None
+    with os.scandir(snapshots_root) as entries:
+        latest_entry_name = max((entry.name for entry in entries), default=None)
+    if latest_entry_name is None:
+        return None
+
+    fallback = snapshots_root / latest_entry_name
+    if _is_hf_cache_snapshot_dir(fallback):
+        return _hf_cache_snapshot_fallback(model_id, fallback)
+
     latest_snapshot_name: str | None = None
     with os.scandir(snapshots_root) as entries:
         for entry in entries:
@@ -303,7 +313,20 @@ def _huggingface_cache_model_path(
             latest_snapshot_name = entry_name
     if latest_snapshot_name is None:
         return None
-    fallback = snapshots_root / latest_snapshot_name
+    return _hf_cache_snapshot_fallback(model_id, snapshots_root / latest_snapshot_name)
+
+
+def _is_hf_cache_snapshot_dir(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(os.stat(path, follow_symlinks=False).st_mode)
+    except OSError:
+        return False
+
+
+def _hf_cache_snapshot_fallback(
+    model_id: str,
+    fallback: Path,
+) -> _HuggingFaceCacheModelPath:
     return _HuggingFaceCacheModelPath(
         path=fallback,
         warnings=(
@@ -330,24 +353,23 @@ def _is_deterministic_development_model(model_id: str) -> bool:
 
 
 def _has_recognized_model_weight_files(path: Path) -> bool:
-    if not path.is_dir():
-        return False
     path_string = os.fspath(path)
     for filename in _REAL_MODEL_COMMON_WEIGHT_FILENAMES:
         if os.path.isfile(os.path.join(path_string, filename)):
             return True
+    if not os.path.isdir(path_string):
+        return False
     with os.scandir(path) as entries:
         for entry in entries:
-            try:
-                if not entry.is_file():
+            name = entry.name
+            if name not in _REAL_MODEL_WEIGHT_FILENAMES and not name.endswith(
+                _REAL_MODEL_WEIGHT_SUFFIXES
+            ):
+                if name.islower() or not name.lower().endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
                     continue
+            try:
+                if entry.is_file():
+                    return True
             except OSError:
                 continue
-            name = entry.name
-            if name in _REAL_MODEL_WEIGHT_FILENAMES:
-                return True
-            if name.endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
-                return True
-            if not name.islower() and name.lower().endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
-                return True
     return False

@@ -27,6 +27,11 @@ public protocol SwiftTextWorkerRPCRunning: Sendable {
         request: Melix_Worker_V1_GetRuntimeStatsRequest
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse
 
+    func listLoadedModels(
+        socketPath: String,
+        request: Melix_Worker_V1_ListLoadedModelsRequest
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse
+
     func cacheStats(
         socketPath: String,
         request: Melix_Worker_V1_GetCacheStatsRequest
@@ -58,6 +63,8 @@ public struct SwiftTextWorkerClient:
     PhaseAwareWorkerClientProtocol,
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol,
+    LoadedModelsIntrospectingWorkerClientProtocol,
+    BackendHealthIdentifyingWorkerClientProtocol,
     Sendable
 {
     private let socketPath: String
@@ -73,17 +80,16 @@ public struct SwiftTextWorkerClient:
     }
 
     public func canDispatchRequests() async -> Bool {
+        (try? await backendHealthIdentity()) != nil
+    }
+
+    public func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
         var request = Melix_Worker_V1_HandshakeRequest()
         request.protocolVersion = "melix.worker.v1"
         request.workerID = "control-plane"
         request.controlplaneInstanceID = "melix-control-plane"
 
-        do {
-            _ = try await runner.handshake(socketPath: socketPath, request: request)
-            return true
-        } catch {
-            return false
-        }
+        return try await runner.handshake(socketPath: socketPath, request: request)
     }
 
     public func loadModel(
@@ -102,6 +108,13 @@ public struct SwiftTextWorkerClient:
         try await runner.runtimeStats(
             socketPath: socketPath,
             request: Melix_Worker_V1_GetRuntimeStatsRequest()
+        )
+    }
+
+    public func listLoadedModels() async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        try await runner.listLoadedModels(
+            socketPath: socketPath,
+            request: Melix_Worker_V1_ListLoadedModelsRequest()
         )
     }
 
@@ -188,6 +201,15 @@ public struct GRPCSwiftTextWorkerRunner: SwiftTextWorkerRPCRunning, Sendable {
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
         try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _ in
             try await runtimeClient.getRuntimeStats(request)
+        }
+    }
+
+    public func listLoadedModels(
+        socketPath: String,
+        request: Melix_Worker_V1_ListLoadedModelsRequest
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _ in
+            try await runtimeClient.listLoadedModels(request)
         }
     }
 

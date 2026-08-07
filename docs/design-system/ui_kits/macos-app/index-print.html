@@ -77,6 +77,21 @@
     letter-spacing: 0.06em; margin-bottom: 7px;
   }
   .bubble { border-radius: 11px; padding: 8px 10px; margin-bottom: 6px; }
+  .composer-shell {
+    overflow: hidden; background: rgba(255,255,255,0.96);
+    border: 1px solid rgba(0,0,0,0.10); border-radius: 16px;
+  }
+  .composer-editor { min-height: 42px; padding: 10px 12px 3px; color: #9A9A9A; font-size: 10px; }
+  .composer-toolbar {
+    min-height: 35px; display: grid; grid-template-columns: auto minmax(0,1fr) auto;
+    align-items: center; gap: 7px; padding: 3px 7px 6px;
+  }
+  .composer-thinking { padding: 4px 6px; color: #0F766E; font-size: 9px; font-weight: 600; }
+  .composer-status { overflow: hidden; color: #6B6B6B; font-size: 8px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+  .composer-send {
+    width: 28px; height: 26px; display: grid; place-items: center;
+    border-radius: 9px; color: #9A9A9A; background: #E8E8E8; font-size: 14px;
+  }
   .btn-primary {
     background: #0A0A0A; color: #FDFDFD; border: none; border-radius: 7px;
     padding: 4px 11px; font-size: 10px; font-weight: 600;
@@ -115,7 +130,7 @@
 /* ── Page 1: Chat Tab ─────────────────────────────────────────── */
 function ChatPage() {
   const sessions = [
-    { title: 'Llama 3.2 3B eval', branch: 'main', summary: 'Compare base vs LoRA adapter outputs', time: '2m ago', sel: true },
+    { title: 'Chat 1', branch: 'gemma-4', summary: 'Review Thinking and Composer behavior', time: '2m ago', sel: true },
     { title: 'LoRA training run', branch: 'lora-v2', summary: 'Train on custom dataset, 512 steps', time: '18m ago', sel: false },
     { title: 'Benchmark matrix', branch: 'main', summary: 'p50/p95 across 4 model configs', time: '1h ago', sel: false },
   ];
@@ -152,11 +167,11 @@ function ChatPage() {
         </div>
         {/* Workspace */}
         <div className="workspace" style={{ display:'flex', flexDirection:'column' }}>
-          <div style={{ marginBottom:10, flexShrink:0 }}>
-            <div className="t-title">Llama 3.2 3B eval</div>
-            <div style={{ marginTop:3, display:'flex', gap:5 }}>
-              <span className="pill">main</span>
-              <span className="pill">session-1 · running</span>
+          <div style={{ marginBottom:10, flexShrink:0, display:'flex', alignItems:'center', gap:6 }}>
+            <div className="t-title">Chat 1</div>
+            <div style={{ marginLeft:'auto', display:'flex', gap:5, minWidth:0 }}>
+              <span className="pill">Primary⌄</span>
+              <span className="pill" title="mlx-community/gemma-4-31b-it-4bit" style={{ minWidth:0, maxWidth:128, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>◇ Gemma 4 31B IT <b style={{ color:'#0F766E', fontSize:7 }}>4-bit</b></span>
             </div>
           </div>
           <div style={{ flex:1, overflow:'hidden', display:'flex', flexDirection:'column', gap:5 }}>
@@ -169,40 +184,31 @@ function ChatPage() {
           </div>
           {/* Composer */}
           <div style={{ marginTop:8, flexShrink:0 }}>
-            <div style={{ background:'rgba(0,0,0,0.03)', borderRadius:9, padding:'6px 9px', border:'1px solid rgba(0,0,0,0.07)', height:40, marginBottom:5 }}>
-              <span className="t-mono" style={{ color:'#9A9A9A' }}>Enter a prompt…</span>
-            </div>
-            <div style={{ display:'flex', justifyContent:'flex-end', gap:6 }}>
-              <button className="btn-bordered">Clear</button>
-              <button className="btn-primary">Send ⌘↵</button>
+            <div className="composer-shell">
+              <div className="composer-editor">Message Melix…</div>
+              <div className="composer-toolbar">
+                <span className="composer-thinking">Thinking</span>
+                <span className="composer-status">↵ Send · ⌘↵ New line</span>
+                <span className="composer-send" aria-label="Send unavailable, empty message">↑</span>
+              </div>
             </div>
           </div>
         </div>
         {/* Inspector */}
-        <div className="inspector">
-          <div className="card" style={{ marginBottom:8 }}>
-            <div className="section-label">Session</div>
-            <div className="t-head" style={{ marginBottom:3 }}>running</div>
-            <div className="t-mono">http://localhost:12436</div>
+        <div className="inspector" style={{ padding:10 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'8px minmax(0,1fr) auto', gap:6, alignItems:'start', paddingBottom:9, borderBottom:'1px solid rgba(0,0,0,.08)' }}>
+            <span style={{ width:6, height:6, marginTop:3, borderRadius:'50%', background:'#14A05A' }} />
+            <div style={{ minWidth:0 }}><div className="t-head" style={{ fontSize:9 }}>Primary Provider</div><div className="t-cap" style={{ fontSize:7, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>Gemma 4 31B IT · 4-bit</div></div>
+            <div style={{ display:'flex', gap:3 }}><span className="pill" title="Text ready">▤</span><span className="pill" title="Vision unavailable">◉̸</span></div>
           </div>
-          <div className="card">
-            <div className="section-label">Analysis Routes</div>
+          <div style={{ paddingTop:5 }}>
             {[
-              { l:'Chat Completion', r:true },
-              { l:'LoRA Training', r:true },
-              { l:'Bench Matrix', r:true },
-              { l:'Vision', r:false },
-            ].map(c => (
-              <div key={c.l} style={{ display:'flex', gap:6, marginBottom:5, alignItems:'flex-start' }}>
-                <span style={{ color: c.r ? '#14A05A' : '#9A9A9A', fontSize:10, marginTop:1 }}>{c.r ? '●' : '○'}</span>
-                <span className="t-body" style={{ fontSize:10 }}>{c.l}</span>
-              </div>
+              ['⌁','Running','Active'], ['⌘','127.0.0.1:12436','/v1'], ['#','12 in · 24 out','tokens'], ['◇','Local only','trust'], ['◷','Idle','timer'],
+            ].map(([icon,value,tail]) => (
+              <div key={tail} style={{ minHeight:25, display:'grid', gridTemplateColumns:'20px minmax(0,1fr) auto', alignItems:'center' }}><span style={{ color:'#0F766E' }}>{icon}</span><b style={{ fontSize:8 }}>{value}</b><small>{tail}</small></div>
             ))}
           </div>
-          <div className="card">
-            <div className="section-label">Runtime</div>
-            <div className="t-mono">req_8f2a9c · 1024 tokens · 42ms p50</div>
-          </div>
+          <div style={{ display:'flex', gap:4, paddingTop:7, borderTop:'1px solid rgba(0,0,0,.08)' }}><span className="pill" title="Command Center">⌘</span><span className="pill" title="Providers">▥</span><span className="pill" title="Diagnostics">⌁</span></div>
         </div>
       </div>
       <div className="page-label">Chat Tab · 1 / 3</div>

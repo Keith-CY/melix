@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, cast
@@ -23,6 +24,10 @@ def _copy_tool_config(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:
     return config
 
 
+def _copy_tool_config_bytes(config_bytes: bytes) -> common_pb2.ToolConfig:
+    return _TOOL_CONFIG_FROM_BYTES(config_bytes)
+
+
 _OpenAIToolTemplate = tuple[
     str,
     str,
@@ -37,6 +42,14 @@ _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SELECTION_CACHE_MAX_SIZE = 32
 _KEYWORD_LITERAL_HINT_CHARACTERS = ":/_"
 _KEYWORD_TOKEN_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
+_SAFE_TOOL_AFFORDANCE_SOURCE_FAST_PATHS = frozenset(
+    (
+        "retrieved_context",
+        "tool_affordance",
+        "viewed_procedure",
+        "workflow_selected",
+    )
+)
 _KEYWORD_BOUNDARY_TRANSLATION = str.maketrans(
     {
         chr(codepoint): " "
@@ -48,6 +61,9 @@ _KeywordHintRule = tuple[str, bool]
 _KeywordHintRuleSet = tuple[str, tuple[str, ...], tuple[str, ...]]
 
 TOOL_REGISTRY_SCHEMA_VERSION = "melix.agentic_tool_registry.v1"
+TOOL_SCHEMA_CONSISTENCY_RECEIPT_SCHEMA_VERSION = (
+    "melix.agentic_tool_schema_consistency.v1"
+)
 BUILTIN_TOOLSET_VERSION = "melix.agentic_tools.builtin.v1"
 DEFAULT_TOOL_PARSER = "qwen"
 DEFAULT_TOOL_PARSER_CONTRACT_VERSION = "melix.tool_parser.qwen.v1"
@@ -72,6 +88,12 @@ SELECTABLE_AGENTIC_TOOL_NAMES = (
 )
 _BUILTIN_AGENTIC_TOOL_NAME_SET = frozenset(SELECTABLE_AGENTIC_TOOL_NAMES)
 ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES = ("local_compute",)
+_EMPTY_AGENTIC_TOOL_NAME_SET: frozenset[str] = frozenset()
+NETWORK_CAPABLE_AGENTIC_TOOL_NAMES = ("visit",)
+_NETWORK_CAPABLE_AGENTIC_TOOL_NAME_SET = frozenset(NETWORK_CAPABLE_AGENTIC_TOOL_NAMES)
+_NETWORK_CAPABLE_AGENTIC_TOOL_NAME_LIST = list(NETWORK_CAPABLE_AGENTIC_TOOL_NAMES)
+_WEB_POLICY_EXPLICIT_ALLOW_LIST = ["web"]
+_WEB_POLICY_EXPLICIT_DENY_LIST = ["web"]
 _KEYWORD_MATCHABLE_TOOL_NAMES = tuple(
     tool_name
     for tool_name in SELECTABLE_AGENTIC_TOOL_NAMES
@@ -218,12 +240,22 @@ class ToolSelectionInput:
     vector_selected_tool_ids: tuple[str, ...] = ()
     vector_available: bool = False
     max_selected_tools: int = len(SELECTABLE_AGENTIC_TOOL_NAMES)
+    allow_web: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ToolSelectionResult:
     registry: ToolRegistry
     receipt: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSchemaConsistencyDecision:
+    consistent: bool
+    receipt: dict[str, Any]
+    referenced_tools: tuple[str, ...]
+    callable_tools: tuple[str, ...]
+    missing_tools: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +283,7 @@ class ToolIndexMetadata:
 
 class ToolRegistry:
     __slots__ = (
+        "_empty_selection",
         "_metrics",
         "_openai_tool_templates",
         "_parser",
@@ -258,12 +291,12 @@ class ToolRegistry:
         "_schema_version",
         "_selection_cache",
         "_tool_by_name",
+        "_tool_name_set",
         "_tool_names",
         "_tool_names_list",
         "_tools",
         "_toolset_version",
         "_worker_tool_config_bytes",
-        "_worker_tool_config_template",
     )
 
     def __init__(
@@ -283,6 +316,7 @@ class ToolRegistry:
         self._validate()
         self._tool_names = tuple(tool.name for tool in self._tools)
         self._tool_names_list = list(self._tool_names)
+        self._tool_name_set = frozenset(self._tool_names)
         self._tool_by_name = {tool.name: tool for tool in self._tools}
         self._openai_tool_templates: tuple[_OpenAIToolTemplate, ...] = tuple(
             (
@@ -296,8 +330,8 @@ class ToolRegistry:
             for tool in self._tools
         )
         self._selection_cache: dict[tuple[str, ...], ToolRegistry] = {}
+        self._empty_selection: ToolRegistry | None = None
         self._worker_tool_config_bytes: bytes = b""
-        self._worker_tool_config_template: common_pb2.ToolConfig | None = None
         self._metrics = ToolRegistryMetrics(
             tool_count=len(self._tools),
             schema_bytes=sum(tool.schema_byte_count() for tool in self._tools),
@@ -316,7 +350,7 @@ class ToolRegistry:
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
         if not names:
-            cached_selection = self._selection_cache.get(())
+            cached_selection = self._empty_selection
             if cached_selection is not None:
                 return cached_selection
             selection = ToolRegistry(
@@ -326,6 +360,7 @@ class ToolRegistry:
                 parser=self._parser,
                 parser_contract_version=self._parser_contract_version,
             )
+            self._empty_selection = selection
             self._selection_cache[()] = selection
             return selection
         if isinstance(names, tuple):
@@ -400,8 +435,15 @@ class ToolRegistry:
         tool_by_name = self._tool_by_name
         missing_tool_sentinel = _MISSING_TOOL_SENTINEL
         for name in names:
-            normalized_name = name.strip()
-            if not normalized_name or normalized_name in seen_names:
+            if not name:
+                continue
+            if name[0].isspace() or name[-1].isspace():
+                normalized_name = name.strip()
+                if not normalized_name:
+                    continue
+            else:
+                normalized_name = name
+            if normalized_name in seen_names:
                 continue
             seen_names.add(normalized_name)
             requested_names_list.append(normalized_name)
@@ -435,6 +477,9 @@ class ToolRegistry:
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
+        openai_tool_templates = self._openai_tool_templates
+        if not openai_tool_templates:
+            return []
         copy_dict = _COPY_DICT
         copy_list = _COPY_LIST
         return [
@@ -463,13 +508,13 @@ class ToolRegistry:
                 observation_kind,
                 schema_properties,
                 required_arguments,
-            ) in self._openai_tool_templates
+            ) in openai_tool_templates
         ]
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
-        cached_template = self._worker_tool_config_template
-        if cached_template is not None:
-            return _copy_tool_config(cached_template)
+        cached_config_bytes = self._worker_tool_config_bytes
+        if cached_config_bytes:
+            return _copy_tool_config_bytes(cached_config_bytes)
         config = common_pb2.ToolConfig(
             tools=[tool.as_worker_tool_definition() for tool in self._tools],
             schema_format="openai-function",
@@ -479,8 +524,7 @@ class ToolRegistry:
             parser_contract_version=self._parser_contract_version,
         )
         self._worker_tool_config_bytes = config.SerializeToString()
-        self._worker_tool_config_template = config
-        return _copy_tool_config(config)
+        return _copy_tool_config_bytes(self._worker_tool_config_bytes)
 
     def _validate(self) -> None:
         if not self._schema_version:
@@ -510,11 +554,159 @@ def agentic_tool_index_metadata() -> dict[str, ToolIndexMetadata]:
     return dict(_BUILTIN_TOOL_INDEX_METADATA)
 
 
+def preflight_agentic_tool_schema_consistency(
+    affordances: Sequence[Any],
+    *,
+    registry: ToolRegistry,
+    catalog: ToolRegistry | None = None,
+    source: str = "tool_affordance",
+) -> ToolSchemaConsistencyDecision:
+    if catalog is None:
+        catalog = agentic_tool_catalog_registry()
+    callable_tools = registry.names()
+    callable_tool_set = registry._tool_name_set
+    catalog_tools = catalog.names()
+    catalog_tool_set = catalog._tool_name_set
+    if _BUILTIN_AGENTIC_TOOL_NAME_SET.issubset(
+        catalog_tool_set
+    ) and callable_tool_set.issubset(catalog_tool_set):
+        known_tool_names = catalog_tool_set
+    else:
+        known_tool_names = callable_tool_set | catalog_tool_set | _BUILTIN_AGENTIC_TOOL_NAME_SET
+    referenced_tools, invalid_affordance_count = _referenced_tool_affordance_names(
+        affordances,
+        known_tool_names,
+        catalog_tools,
+        callable_tools,
+        include_builtin_order_source=catalog_tools != SELECTABLE_AGENTIC_TOOL_NAMES,
+        include_registry_order_source=not callable_tool_set.issubset(catalog_tool_set),
+    )
+    missing_tools = tuple(
+        tool_name for tool_name in referenced_tools if tool_name not in callable_tool_set
+    )
+    consistent = not missing_tools
+    receipt = {
+        "schema_version": TOOL_SCHEMA_CONSISTENCY_RECEIPT_SCHEMA_VERSION,
+        "toolset_version": BUILTIN_TOOLSET_VERSION,
+        "outcome": "consistent" if consistent else "mismatch",
+        "source": _safe_tool_affordance_source(source),
+        "referenced_tools": list(referenced_tools),
+        "callable_tools": list(callable_tools),
+        "missing_tools": list(missing_tools),
+        "invalid_affordance_count": invalid_affordance_count,
+        "checked_affordance_count": len(affordances),
+        "allowed_next_step": "assemble_prompt" if consistent else "strip_missing_affordances",
+        "corrective_action": "" if consistent else "remove_unavailable_tool_affordances",
+    }
+    return ToolSchemaConsistencyDecision(
+        consistent=consistent,
+        receipt=receipt,
+        referenced_tools=referenced_tools,
+        callable_tools=callable_tools,
+        missing_tools=missing_tools,
+    )
+
+
+def _referenced_tool_affordance_names(
+    affordances: Sequence[Any],
+    known_tool_names: set[str] | frozenset[str],
+    catalog_names: tuple[str, ...],
+    registry_names: tuple[str, ...],
+    *,
+    include_builtin_order_source: bool = True,
+    include_registry_order_source: bool = True,
+) -> tuple[tuple[str, ...], int]:
+    seen_tool_names: set[str] = set()
+    invalid_affordance_count = 0
+    for affordance in affordances:
+        tool_name = _tool_affordance_name(affordance)
+        if tool_name is None or tool_name not in known_tool_names:
+            invalid_affordance_count += 1
+            continue
+        seen_tool_names.add(tool_name)
+    if not seen_tool_names:
+        return (), invalid_affordance_count
+    ordered_names: list[str] = []
+    if include_builtin_order_source:
+        ordered_name_set: set[str] = set()
+        for ordered_source_names in (catalog_names, SELECTABLE_AGENTIC_TOOL_NAMES):
+            for tool_name in ordered_source_names:
+                if tool_name in seen_tool_names and tool_name not in ordered_name_set:
+                    ordered_names.append(tool_name)
+                    ordered_name_set.add(tool_name)
+    else:
+        for tool_name in catalog_names:
+            if tool_name in seen_tool_names:
+                ordered_names.append(tool_name)
+        if not include_registry_order_source:
+            return tuple(ordered_names), invalid_affordance_count
+        ordered_name_set = set(ordered_names)
+    if include_registry_order_source:
+        for tool_name in registry_names:
+            if tool_name in seen_tool_names and tool_name not in ordered_name_set:
+                ordered_names.append(tool_name)
+                ordered_name_set.add(tool_name)
+    return tuple(ordered_names), invalid_affordance_count
+
+
+def _tool_affordance_name(affordance: Any) -> str | None:
+    if isinstance(affordance, str):
+        return _normalized_tool_affordance_name(affordance)
+    if type(affordance) is dict:
+        if "tool_id" in affordance:
+            raw_value = affordance["tool_id"]
+            if isinstance(raw_value, str):
+                return _normalized_tool_affordance_name(raw_value)
+            if raw_value is not None:
+                return None
+        if "tool_name" in affordance:
+            raw_value = affordance["tool_name"]
+            if isinstance(raw_value, str):
+                return _normalized_tool_affordance_name(raw_value)
+            if raw_value is not None:
+                return None
+        if "name" in affordance:
+            raw_value = affordance["name"]
+            if isinstance(raw_value, str):
+                return _normalized_tool_affordance_name(raw_value)
+            if raw_value is not None:
+                return None
+        return None
+    if isinstance(affordance, Mapping):
+        for key in ("tool_id", "tool_name", "name"):
+            raw_value = affordance.get(key)
+            if isinstance(raw_value, str):
+                return _normalized_tool_affordance_name(raw_value)
+            if raw_value is not None:
+                return None
+    return None
+
+
+def _normalized_tool_affordance_name(raw_name: str) -> str | None:
+    normalized_name = raw_name.strip()
+    if not normalized_name:
+        return None
+    if not _TOOL_NAME_RE.fullmatch(normalized_name):
+        return None
+    return normalized_name
+
+
+def _safe_tool_affordance_source(source: str) -> str:
+    if source in _SAFE_TOOL_AFFORDANCE_SOURCE_FAST_PATHS:
+        return source
+    normalized_source = source.strip()
+    if _TOOL_NAME_RE.fullmatch(normalized_source):
+        return normalized_source
+    return "unspecified"
+
+
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     copy_tool_config = _copy_tool_config
-    if names is None or names is BUILTIN_AGENTIC_TOOL_NAMES or names == BUILTIN_AGENTIC_TOOL_NAMES:
+    if names is None or names is BUILTIN_AGENTIC_TOOL_NAMES:
         return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
     if isinstance(names, tuple):
+        if names == BUILTIN_AGENTIC_TOOL_NAMES:
+            return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
         cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(names)
         if cached_config is not None:
             return copy_tool_config(cached_config)
@@ -538,7 +730,7 @@ def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> co
 
 def _append_selected_tool(
     selected_names: list[str],
-    selected_sources: dict[str, str],
+    selected_sources: set[str],
     selected_tools: list[dict[str, str]],
     tool_name: str,
     source: str,
@@ -556,40 +748,83 @@ def _append_selected_tool(
         return False
     if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
         return False
-    selected_sources[normalized_name] = source
+    selected_sources.add(normalized_name)
+    selected_names.append(normalized_name)
+    selected_tools.append({"tool_id": normalized_name, "source": source})
+    return True
+
+
+def _append_policy_selected_tool(
+    selected_names: list[str],
+    selected_sources: set[str],
+    selected_tools: list[dict[str, str]],
+    tool_name: str,
+    source: str,
+    max_selected_tools: int,
+    disabled_tool_names: frozenset[str] | None,
+    denied_tool_names: list[str] | None,
+) -> bool:
+    if len(selected_names) >= max_selected_tools or not tool_name:
+        return False
+    if tool_name[0].isspace() or tool_name[-1].isspace():
+        normalized_name = tool_name.strip()
+        if not normalized_name:
+            return False
+    else:
+        normalized_name = tool_name
+    if normalized_name in selected_sources:
+        return False
+    if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
+        return False
+    if disabled_tool_names is not None and normalized_name in disabled_tool_names:
+        if denied_tool_names is not None and normalized_name not in denied_tool_names:
+            denied_tool_names.append(normalized_name)
+        return False
+    selected_sources.add(normalized_name)
     selected_names.append(normalized_name)
     selected_tools.append({"tool_id": normalized_name, "source": source})
     return True
 
 
 def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSelectionResult:
-    registry = agentic_tool_catalog_registry()
-    max_selected_tools = max(1, selection_input.max_selected_tools)
-    if max_selected_tools == 1:
-        return _build_always_only_tool_selection_result(registry, selection_input)
+    vector_selected_tool_ids = selection_input.vector_selected_tool_ids
+    recent_user_turns = selection_input.recent_user_turns
+    vector_available = selection_input.vector_available
     current_user_turn = selection_input.current_user_turn
+    if selection_input.allow_web is not None:
+        return _select_agentic_tools_for_turn_with_policy(selection_input)
+    registry = agentic_tool_catalog_registry()
+    max_selected_tools = selection_input.max_selected_tools
+    if max_selected_tools <= 1:
+        return _build_always_only_tool_selection_result(registry, selection_input)
     if (
-        not selection_input.vector_selected_tool_ids
-        and not selection_input.recent_user_turns
+        not vector_selected_tool_ids
+        and not recent_user_turns
         and (not current_user_turn or current_user_turn.isspace())
     ):
         return _build_always_only_tool_selection_result(registry, selection_input)
-    selected_sources: dict[str, str] = {}
-    selected_names: list[str] = []
-    selected_tools: list[dict[str, str]] = []
+    current_matches: tuple[str, ...] | None = None
+    context_matches: tuple[str, ...] | None = None
+    if not vector_selected_tool_ids:
+        current_matches = _keyword_tool_matches(current_user_turn)
+        if not current_matches:
+            if recent_user_turns:
+                context_matches = _keyword_tool_matches(
+                    _recent_user_turns_keyword_context(recent_user_turns)
+                )
+                if not context_matches:
+                    return _build_always_only_tool_selection_result(
+                        registry, selection_input
+                    )
+            else:
+                return _build_always_only_tool_selection_result(registry, selection_input)
+    selected_name = "local_compute"
+    selected_sources: set[str] = {selected_name}
+    selected_names: list[str] = [selected_name]
+    selected_tools: list[dict[str, str]] = [{"tool_id": selected_name, "source": "always"}]
     append_selected_tool = _append_selected_tool
     has_vector_selection = False
     has_keyword_selection = False
-
-    for tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
-        append_selected_tool(
-            selected_names,
-            selected_sources,
-            selected_tools,
-            tool_name,
-            "always",
-            max_selected_tools,
-        )
 
     selection_mode = "fallback"
     fallback_reason = "no_keyword_match"
@@ -603,8 +838,8 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
             fallback_reason,
         )
 
-    if selection_input.vector_available and selection_input.vector_selected_tool_ids:
-        for tool_name in selection_input.vector_selected_tool_ids:
+    if vector_available and vector_selected_tool_ids:
+        for tool_name in vector_selected_tool_ids:
             if append_selected_tool(
                 selected_names,
                 selected_sources,
@@ -624,35 +859,39 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
                 "",
             )
 
-    if selection_mode != "vector":
-        current_matches = _keyword_tool_matches(selection_input.current_user_turn)
-        for tool_name in current_matches:
+    if current_matches is None:
+        current_matches = _keyword_tool_matches(current_user_turn)
+    for tool_name in current_matches:
+        if append_selected_tool(
+            selected_names,
+            selected_sources,
+            selected_tools,
+            tool_name,
+            "keyword",
+            max_selected_tools,
+        ):
+            has_keyword_selection = True
+    if recent_user_turns and len(selected_names) < max_selected_tools:
+        if context_matches is None:
+            context_matches = _keyword_tool_matches(
+                _recent_user_turns_keyword_context(recent_user_turns)
+            )
+        for tool_name in context_matches:
             if append_selected_tool(
                 selected_names,
                 selected_sources,
                 selected_tools,
                 tool_name,
-                "keyword",
+                "keyword_context",
                 max_selected_tools,
             ):
                 has_keyword_selection = True
-        if selection_input.recent_user_turns and len(selected_names) < max_selected_tools:
-            context_matches = _keyword_tool_matches(
-                _recent_user_turns_keyword_context(selection_input.recent_user_turns)
-            )
-            for tool_name in context_matches:
-                if append_selected_tool(
-                    selected_names,
-                    selected_sources,
-                    selected_tools,
-                    tool_name,
-                    "keyword_context",
-                    max_selected_tools,
-                ):
-                    has_keyword_selection = True
-        if has_keyword_selection:
-            selection_mode = "keyword"
-            fallback_reason = "vector_unavailable" if not selection_input.vector_available else "vector_no_match"
+    if has_keyword_selection:
+        selection_mode = "keyword"
+        fallback_reason = "vector_unavailable" if not vector_available else "vector_no_match"
+
+    if not has_vector_selection and not has_keyword_selection:
+        return _build_always_only_tool_selection_result(registry, selection_input)
 
     return _build_tool_selection_result(
         registry,
@@ -664,34 +903,222 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     )
 
 
+def _select_agentic_tools_for_turn_with_policy(selection_input: ToolSelectionInput) -> ToolSelectionResult:
+    registry = agentic_tool_catalog_registry()
+    max_selected_tools = selection_input.max_selected_tools
+    allow_web = selection_input.allow_web
+    vector_selected_tool_ids = selection_input.vector_selected_tool_ids
+    recent_user_turns = selection_input.recent_user_turns
+    vector_available = selection_input.vector_available
+    current_user_turn = selection_input.current_user_turn
+    disabled_tool_names = _disabled_agentic_tool_names(selection_input) if allow_web is False else None
+    denied_tool_names: list[str] | None = [] if allow_web is False else None
+    allowed_policy_receipt = (
+        _agentic_tool_policy_receipt(selection_input, _EMPTY_AGENTIC_TOOL_NAME_SET, None)
+        if allow_web is True
+        else None
+    )
+    if max_selected_tools <= 1:
+        return _build_always_only_tool_selection_result(
+            registry,
+            selection_input,
+            tool_policy_receipt=(
+                _agentic_tool_policy_receipt(selection_input, disabled_tool_names, denied_tool_names)
+                if allow_web is False
+                else allowed_policy_receipt
+            ),
+        )
+    if (
+        not vector_selected_tool_ids
+        and not recent_user_turns
+        and (not current_user_turn or current_user_turn.isspace())
+    ):
+        return _build_always_only_tool_selection_result(
+            registry,
+            selection_input,
+            tool_policy_receipt=(
+                _agentic_tool_policy_receipt(selection_input, disabled_tool_names, denied_tool_names)
+                if allow_web is False
+                else allowed_policy_receipt
+            ),
+        )
+    current_matches: tuple[str, ...] | None = None
+    context_matches: tuple[str, ...] | None = None
+    if not vector_selected_tool_ids:
+        current_matches = _keyword_tool_matches(current_user_turn)
+        if not current_matches:
+            if recent_user_turns:
+                context_matches = _keyword_tool_matches(
+                    _recent_user_turns_keyword_context(recent_user_turns)
+                )
+                if not context_matches:
+                    return _build_always_only_tool_selection_result(
+                        registry,
+                        selection_input,
+                        tool_policy_receipt=(
+                            _agentic_tool_policy_receipt(
+                                selection_input, disabled_tool_names, denied_tool_names
+                            )
+                            if allow_web is False
+                            else allowed_policy_receipt
+                        ),
+                    )
+            else:
+                return _build_always_only_tool_selection_result(
+                    registry,
+                    selection_input,
+                    tool_policy_receipt=(
+                        _agentic_tool_policy_receipt(
+                            selection_input, disabled_tool_names, denied_tool_names
+                        )
+                        if allow_web is False
+                        else allowed_policy_receipt
+                    ),
+                )
+    selected_name = "local_compute"
+    selected_sources: set[str] = {selected_name}
+    selected_names: list[str] = [selected_name]
+    selected_tools: list[dict[str, str]] = [{"tool_id": selected_name, "source": "always"}]
+    append_selected_tool = _append_policy_selected_tool
+    has_vector_selection = False
+    has_keyword_selection = False
+
+    selection_mode = "fallback"
+    fallback_reason = "no_keyword_match"
+
+    if vector_available and vector_selected_tool_ids:
+        for tool_name in vector_selected_tool_ids:
+            if append_selected_tool(
+                selected_names,
+                selected_sources,
+                selected_tools,
+                tool_name,
+                "vector",
+                max_selected_tools,
+                disabled_tool_names,
+                denied_tool_names,
+            ):
+                has_vector_selection = True
+        if has_vector_selection:
+            return _build_tool_selection_result(
+                registry,
+                selected_names,
+                selected_tools,
+                selection_input,
+                "vector",
+                "",
+                tool_policy_receipt=(
+                    _agentic_tool_policy_receipt(
+                        selection_input, disabled_tool_names, denied_tool_names
+                    )
+                    if allow_web is False
+                    else allowed_policy_receipt
+                ),
+            )
+
+    if selection_mode != "vector":
+        if current_matches is None:
+            current_matches = _keyword_tool_matches(current_user_turn)
+        for tool_name in current_matches:
+            if append_selected_tool(
+                selected_names,
+                selected_sources,
+                selected_tools,
+                tool_name,
+                "keyword",
+                max_selected_tools,
+                disabled_tool_names,
+                denied_tool_names,
+            ):
+                has_keyword_selection = True
+        if recent_user_turns and len(selected_names) < max_selected_tools:
+            if context_matches is None:
+                context_matches = _keyword_tool_matches(
+                    _recent_user_turns_keyword_context(recent_user_turns)
+                )
+            for tool_name in context_matches:
+                if append_selected_tool(
+                    selected_names,
+                    selected_sources,
+                    selected_tools,
+                    tool_name,
+                    "keyword_context",
+                    max_selected_tools,
+                    disabled_tool_names,
+                    denied_tool_names,
+                ):
+                    has_keyword_selection = True
+        if has_keyword_selection:
+            selection_mode = "keyword"
+            fallback_reason = "vector_unavailable" if not vector_available else "vector_no_match"
+
+    if not has_vector_selection and not has_keyword_selection:
+        return _build_always_only_tool_selection_result(
+            registry,
+            selection_input,
+            fallback_reason=_policy_fallback_reason(denied_tool_names),
+            tool_policy_receipt=(
+                _agentic_tool_policy_receipt(selection_input, disabled_tool_names, denied_tool_names)
+                if allow_web is False
+                else allowed_policy_receipt
+            ),
+        )
+
+    return _build_tool_selection_result(
+        registry,
+        selected_names,
+        selected_tools,
+        selection_input,
+        selection_mode,
+        fallback_reason,
+        tool_policy_receipt=(
+            _agentic_tool_policy_receipt(selection_input, disabled_tool_names, denied_tool_names)
+            if allow_web is False
+            else allowed_policy_receipt
+        ),
+    )
+
+
 def _build_always_only_tool_selection_result(
     registry: ToolRegistry,
     selection_input: ToolSelectionInput,
+    *,
+    fallback_reason: str = "no_keyword_match",
+    tool_policy_receipt: dict[str, Any] | None = None,
 ) -> ToolSelectionResult:
     selected_name = "local_compute"
     if registry is _AGENTIC_TOOL_CATALOG_REGISTRY:
         selected_registry = _ALWAYS_ONLY_TOOL_REGISTRY
+        registry_metrics = _AGENTIC_TOOL_CATALOG_METRICS
         selected_metrics = _ALWAYS_ONLY_TOOL_METRICS
+        dropped_tool_count = _ALWAYS_ONLY_DROPPED_TOOL_COUNT
+        if (
+            tool_policy_receipt is None
+            and fallback_reason == "no_keyword_match"
+            and not selection_input.vector_available
+        ):
+            receipt = _ALWAYS_ONLY_RECEIPT_BASE.copy()
+            receipt["selected_tools"] = [_ALWAYS_ONLY_SELECTED_TOOL_RECEIPT.copy()]
+            return ToolSelectionResult(registry=selected_registry, receipt=receipt)
     else:
         selected_registry = registry.select((selected_name,))
+        registry_metrics = registry.metrics()
         selected_metrics = selected_registry.metrics()
-    registry_metrics = registry.metrics()
-    return ToolSelectionResult(
-        registry=selected_registry,
-        receipt={
-            "schema_version": "melix.agentic_tool_selection.v1",
-            "toolset_version": BUILTIN_TOOLSET_VERSION,
-            "selection_mode": "fallback",
-            "vector_available": selection_input.vector_available,
-            "fallback_reason": "no_keyword_match",
-            "selected_tools": [{"tool_id": selected_name, "source": "always"}],
-            "dropped_tool_count": max(
-                0, registry_metrics.tool_count - selected_metrics.tool_count
-            ),
-            "full_schema_bytes": registry_metrics.schema_bytes,
-            "selected_schema_bytes": selected_metrics.schema_bytes,
-        },
-    )
+        dropped_tool_count = max(0, registry_metrics.tool_count - selected_metrics.tool_count)
+    receipt = {
+        "schema_version": "melix.agentic_tool_selection.v1",
+        "toolset_version": BUILTIN_TOOLSET_VERSION,
+        "selection_mode": "fallback",
+        "vector_available": selection_input.vector_available,
+        "fallback_reason": fallback_reason,
+        "selected_tools": [{"tool_id": selected_name, "source": "always"}],
+        "dropped_tool_count": dropped_tool_count,
+        "full_schema_bytes": registry_metrics.schema_bytes,
+        "selected_schema_bytes": selected_metrics.schema_bytes,
+    }
+    if tool_policy_receipt is not None:
+        receipt["tool_policy_receipt"] = tool_policy_receipt
+    return ToolSelectionResult(registry=selected_registry, receipt=receipt)
 
 
 def _build_tool_selection_result(
@@ -701,6 +1128,8 @@ def _build_tool_selection_result(
     selection_input: ToolSelectionInput,
     selection_mode: str,
     fallback_reason: str,
+    *,
+    tool_policy_receipt: dict[str, Any] | None = None,
 ) -> ToolSelectionResult:
     if len(selected_names) == 1:
         selected_name = selected_names[0]
@@ -721,7 +1150,49 @@ def _build_tool_selection_result(
         "full_schema_bytes": registry_metrics.schema_bytes,
         "selected_schema_bytes": selected_metrics.schema_bytes,
     }
+    if tool_policy_receipt is not None:
+        receipt["tool_policy_receipt"] = tool_policy_receipt
     return ToolSelectionResult(registry=selected_registry, receipt=receipt)
+
+
+def _disabled_agentic_tool_names(selection_input: ToolSelectionInput) -> frozenset[str]:
+    if selection_input.allow_web is False:
+        return _NETWORK_CAPABLE_AGENTIC_TOOL_NAME_SET
+    return _EMPTY_AGENTIC_TOOL_NAME_SET
+
+
+def _policy_fallback_reason(denied_tool_names: list[str] | None) -> str:
+    return "policy_disabled" if denied_tool_names else "no_keyword_match"
+
+
+def _agentic_tool_policy_receipt(
+    selection_input: ToolSelectionInput,
+    disabled_tool_names: frozenset[str] | None,
+    denied_tool_names: list[str] | None,
+) -> dict[str, Any] | None:
+    if selection_input.allow_web is None and not disabled_tool_names and not denied_tool_names:
+        return None
+    disabled_tool_names = disabled_tool_names or _EMPTY_AGENTIC_TOOL_NAME_SET
+    copy_list = _COPY_LIST
+    if disabled_tool_names is _NETWORK_CAPABLE_AGENTIC_TOOL_NAME_SET:
+        disabled = copy_list(_NETWORK_CAPABLE_AGENTIC_TOOL_NAME_LIST)
+    else:
+        disabled = [
+            tool_name for tool_name in SELECTABLE_AGENTIC_TOOL_NAMES if tool_name in disabled_tool_names
+        ]
+    requested = copy_list(denied_tool_names) if denied_tool_names else []
+    return {
+        "schema_version": "melix.agentic_tool_policy.v1",
+        "allow_web": selection_input.allow_web,
+        "explicit_allows": copy_list(_WEB_POLICY_EXPLICIT_ALLOW_LIST)
+        if selection_input.allow_web is True
+        else [],
+        "explicit_denies": copy_list(_WEB_POLICY_EXPLICIT_DENY_LIST)
+        if selection_input.allow_web is False
+        else [],
+        "resolved_disabled_tools": disabled,
+        "requested_tools": requested,
+    }
 
 
 def _recent_user_turns_keyword_context(recent_user_turns: tuple[str, ...]) -> str:
@@ -1055,8 +1526,25 @@ _BUILTIN_AGENTIC_TOOLS = tuple(
     tool for tool in _AGENTIC_TOOL_CATALOG_TOOLS if tool.name in _BUILTIN_TOOL_NAME_SET
 )
 _AGENTIC_TOOL_CATALOG_REGISTRY = ToolRegistry(_AGENTIC_TOOL_CATALOG_TOOLS)
+_AGENTIC_TOOL_CATALOG_METRICS = _AGENTIC_TOOL_CATALOG_REGISTRY.metrics()
 _ALWAYS_ONLY_TOOL_REGISTRY = _AGENTIC_TOOL_CATALOG_REGISTRY.select(("local_compute",))
 _ALWAYS_ONLY_TOOL_METRICS = _ALWAYS_ONLY_TOOL_REGISTRY.metrics()
+_ALWAYS_ONLY_DROPPED_TOOL_COUNT = max(
+    0,
+    _AGENTIC_TOOL_CATALOG_METRICS.tool_count - _ALWAYS_ONLY_TOOL_METRICS.tool_count,
+)
+_ALWAYS_ONLY_SELECTED_TOOL_RECEIPT = {"tool_id": "local_compute", "source": "always"}
+_ALWAYS_ONLY_RECEIPT_BASE: dict[str, Any] = {
+    "schema_version": "melix.agentic_tool_selection.v1",
+    "toolset_version": BUILTIN_TOOLSET_VERSION,
+    "selection_mode": "fallback",
+    "vector_available": False,
+    "fallback_reason": "no_keyword_match",
+    "selected_tools": [],
+    "dropped_tool_count": _ALWAYS_ONLY_DROPPED_TOOL_COUNT,
+    "full_schema_bytes": _AGENTIC_TOOL_CATALOG_METRICS.schema_bytes,
+    "selected_schema_bytes": _ALWAYS_ONLY_TOOL_METRICS.schema_bytes,
+}
 _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
 _BUILTIN_TOOL_CONFIG_NAMES_LIST = list(BUILTIN_AGENTIC_TOOL_NAMES)
 _BUILTIN_TOOL_CONFIG_BYTES = (
@@ -1074,19 +1562,23 @@ __all__ = [
     "BUILTIN_TOOLSET_VERSION",
     "DEFAULT_TOOL_PARSER",
     "DEFAULT_TOOL_PARSER_CONTRACT_VERSION",
+    "NETWORK_CAPABLE_AGENTIC_TOOL_NAMES",
     "SELECTABLE_AGENTIC_TOOL_NAMES",
     "TOOL_REGISTRY_SCHEMA_VERSION",
+    "TOOL_SCHEMA_CONSISTENCY_RECEIPT_SCHEMA_VERSION",
     "ToolArgumentDescriptor",
     "ToolDescriptor",
     "ToolRegistry",
     "ToolRegistryError",
     "ToolIndexMetadata",
     "ToolRegistryMetrics",
+    "ToolSchemaConsistencyDecision",
     "ToolSelectionInput",
     "ToolSelectionResult",
     "agentic_tool_index_metadata",
     "agentic_tool_catalog_registry",
     "built_in_tool_config",
     "built_in_tool_registry",
+    "preflight_agentic_tool_schema_consistency",
     "select_agentic_tools_for_turn",
 ]

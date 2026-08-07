@@ -48,6 +48,18 @@ _PRECOMPUTED_SEMANTIC_VALUE_GROUPS_BY_COUNT = (
 )
 SEMANTIC_JUDGE_PROMPT_VERSION = "semantic-judge.v4"
 _GROUP_ACTOR_ALIASES = {"我们", "双方", "咱们", "咱俩", "咱两", "我俩", "两人", "二人"}
+_COMMON_SPACED_GROUP_ACTOR_ALIASES = frozenset(
+    {
+        "我 们",
+        "双 方",
+        "咱 们",
+        "咱 俩",
+        "咱 两",
+        "我 俩",
+        "两 人",
+        "二 人",
+    }
+)
 _GROUP_ACTOR_ALIAS_CHARS = frozenset("".join(_GROUP_ACTOR_ALIASES))
 _SIMILARITY_IGNORED_CHARS = set(
     " \t\r\n"
@@ -86,6 +98,7 @@ Rules:
 """
 SEMANTIC_JUDGE_PROMPT_HASH = f"sha256:{sha256(SEMANTIC_JUDGE_SYSTEM_PROMPT.encode('utf-8')).hexdigest()}"
 _JSON_DECODER = json.JSONDecoder()
+_JSON_LOADS = json.loads
 _JSON_RAW_DECODE = _JSON_DECODER.raw_decode
 _JSON_FENCE_PREFIX = "```json\n"
 _JSON_FENCE_PREFIX_LENGTH = len(_JSON_FENCE_PREFIX)
@@ -2229,7 +2242,7 @@ _NORMALIZED_GROUP_ACTOR_ALIASES = frozenset(
 
 @lru_cache(maxsize=512)
 def _is_group_actor_alias(value: str) -> bool:
-    if value in _GROUP_ACTOR_ALIASES:
+    if value in _GROUP_ACTOR_ALIASES or value in _COMMON_SPACED_GROUP_ACTOR_ALIASES:
         return True
     for char in value:
         if char not in _SIMILARITY_IGNORED_CHARS and char not in _GROUP_ACTOR_ALIAS_CHARS:
@@ -2887,57 +2900,89 @@ def _coerce_string_list(value: object) -> list[str]:
 
 def _parse_response_json(response_text: str) -> dict[str, object]:
     response_length = len(response_text)
+    raw_decode = _JSON_RAW_DECODE
+    has_only_trailing_whitespace = _has_only_trailing_whitespace
+    has_only_optional_closing_fence = _has_only_optional_closing_fence
     if response_length and response_text[0] == "{":
-        parsed, end_index = _JSON_RAW_DECODE(response_text, 0)
-        if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+        parsed, end_index = raw_decode(response_text, 0)
+        if not has_only_trailing_whitespace(response_text, end_index, response_length):
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         return parsed
 
-    if response_length and response_text[0] == "`" and response_text.startswith(_JSON_FENCE_PREFIX):
-        parsed, end_index = _JSON_RAW_DECODE(
+    json_fence_prefix = _JSON_FENCE_PREFIX
+    json_fence_prefix_length = _JSON_FENCE_PREFIX_LENGTH
+    if (
+        response_length >= json_fence_prefix_length
+        and response_text[0] == "`"
+        and response_text[1] == "`"
+        and response_text[2] == "`"
+        and response_text[3] == "j"
+        and response_text[4] == "s"
+        and response_text[5] == "o"
+        and response_text[6] == "n"
+        and response_text[7] == "\n"
+    ):
+        parsed, end_index = raw_decode(
             response_text,
-            _JSON_FENCE_PREFIX_LENGTH,
+            json_fence_prefix_length,
         )
-        if not _has_only_optional_closing_fence(response_text, end_index, response_length):
+        if not has_only_optional_closing_fence(response_text, end_index, response_length):
             raise json.JSONDecodeError("Extra data", response_text, end_index)
         if not isinstance(parsed, dict):
             raise ValueError("LLM response must be a JSON object")
         return parsed
 
-    response_start = 0
-    while response_start < response_length and response_text[response_start].isspace():
-        response_start += 1
-
-    if response_start < response_length and response_text[response_start] == "{":
-        parsed, end_index = _JSON_RAW_DECODE(response_text, response_start)
-        if not _has_only_trailing_whitespace(response_text, end_index, response_length):
-            raise json.JSONDecodeError("Extra data", response_text, end_index)
-        if not isinstance(parsed, dict):
-            raise ValueError("LLM response must be a JSON object")
-        return parsed
-
-    if response_text.startswith(_JSON_FENCE_PREFIX, response_start):
-        parsed, end_index = _JSON_RAW_DECODE(
-            response_text,
-            response_start + _JSON_FENCE_PREFIX_LENGTH,
-        )
-        if not _has_only_optional_closing_fence(response_text, end_index, response_length):
-            raise json.JSONDecodeError("Extra data", response_text, end_index)
-        if not isinstance(parsed, dict):
-            raise ValueError("LLM response must be a JSON object")
-        return parsed
-
-    if response_text.startswith("```", response_start):
-        newline_index = response_text.find("\n", response_start)
+    if (
+        response_length >= 3
+        and response_text[0] == "`"
+        and response_text[1] == "`"
+        and response_text[2] == "`"
+    ):
+        newline_index = response_text.find("\n", 0)
         if newline_index >= 0:
-            parsed, end_index = _JSON_RAW_DECODE(response_text, newline_index + 1)
-            if not _has_only_optional_closing_fence(response_text, end_index, response_length):
+            parsed, end_index = raw_decode(response_text, newline_index + 1)
+            if not has_only_optional_closing_fence(response_text, end_index, response_length):
                 raise json.JSONDecodeError("Extra data", response_text, end_index)
             if not isinstance(parsed, dict):
                 raise ValueError("LLM response must be a JSON object")
             return parsed
-    parsed, end_index = _JSON_RAW_DECODE(response_text, response_start)
-    if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+
+    response_start = _skip_json_whitespace(response_text, 0, response_length)
+
+    if response_start < response_length and response_text[response_start] == "{":
+        parsed, end_index = raw_decode(response_text, response_start)
+        if not has_only_trailing_whitespace(response_text, end_index, response_length):
+            raise json.JSONDecodeError("Extra data", response_text, end_index)
+        return parsed
+
+    response_startswith = response_text.startswith
+    if response_startswith(json_fence_prefix, response_start):
+        parsed, end_index = raw_decode(
+            response_text,
+            response_start + json_fence_prefix_length,
+        )
+        if not has_only_optional_closing_fence(response_text, end_index, response_length):
+            raise json.JSONDecodeError("Extra data", response_text, end_index)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM response must be a JSON object")
+        return parsed
+
+    if (
+        response_start + 3 <= response_length
+        and response_text[response_start] == "`"
+        and response_text[response_start + 1] == "`"
+        and response_text[response_start + 2] == "`"
+    ):
+        newline_index = response_text.find("\n", response_start)
+        if newline_index >= 0:
+            parsed, end_index = raw_decode(response_text, newline_index + 1)
+            if not has_only_optional_closing_fence(response_text, end_index, response_length):
+                raise json.JSONDecodeError("Extra data", response_text, end_index)
+            if not isinstance(parsed, dict):
+                raise ValueError("LLM response must be a JSON object")
+            return parsed
+    parsed, end_index = raw_decode(response_text, response_start)
+    if not has_only_trailing_whitespace(response_text, end_index, response_length):
         raise json.JSONDecodeError("Extra data", response_text, end_index)
     if not isinstance(parsed, dict):
         raise ValueError("LLM response must be a JSON object")
@@ -2945,27 +2990,81 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
 
 
 def _has_only_optional_closing_fence(response_text: str, start: int, response_length: int) -> bool:
-    if response_text.startswith(_CLOSING_FENCE_WITH_LEADING_NEWLINE, start):
-        start += _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH
-        while start < response_length and response_text[start].isspace():
-            start += 1
-        return start == response_length
-    while start < response_length and response_text[start].isspace():
-        start += 1
     if start == response_length:
         return True
-    if not response_text.startswith("```", start):
+    if (
+        start + 7 == response_length
+        and response_text[start] == "\n"
+        and response_text[start + 1] == "`"
+        and response_text[start + 2] == "`"
+        and response_text[start + 3] == "`"
+        and response_text[start + 4] == " "
+        and response_text[start + 5] == " "
+        and response_text[start + 6] == " "
+    ):
+        return True
+    if (
+        start + 6 == response_length
+        and response_text[start] == "`"
+        and response_text[start + 1] == "`"
+        and response_text[start + 2] == "`"
+        and response_text[start + 3] == " "
+        and response_text[start + 4] == " "
+        and response_text[start + 5] == " "
+    ):
+        return True
+    skip_json_whitespace = _skip_json_whitespace
+    if (
+        start + _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH <= response_length
+        and response_text[start] == "\n"
+        and response_text[start + 1] == "`"
+        and response_text[start + 2] == "`"
+        and response_text[start + 3] == "`"
+    ):
+        start += _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH
+        return start == response_length or skip_json_whitespace(
+            response_text, start, response_length
+        ) == response_length
+    start = skip_json_whitespace(response_text, start, response_length)
+    if start == response_length:
+        return True
+    if (
+        start + 3 > response_length
+        or response_text[start] != "`"
+        or response_text[start + 1] != "`"
+        or response_text[start + 2] != "`"
+    ):
         return False
     start += 3
-    while start < response_length and response_text[start].isspace():
-        start += 1
-    return start == response_length
+    return skip_json_whitespace(response_text, start, response_length) == response_length
 
 
 def _has_only_trailing_whitespace(response_text: str, start: int, response_length: int) -> bool:
-    while start < response_length and response_text[start].isspace():
-        start += 1
-    return start == response_length
+    if start == response_length:
+        return True
+    if (
+        start + 3 == response_length
+        and response_text[start] == "\n"
+        and response_text[start + 1] == " "
+        and response_text[start + 2] == " "
+    ):
+        return True
+    return _skip_json_whitespace(response_text, start, response_length) == response_length
+
+
+def _skip_json_whitespace(response_text: str, start: int, response_length: int) -> int:
+    while start < response_length:
+        char = response_text[start]
+        if char <= " ":
+            if char == " " or "\t" <= char <= "\r" or "\x1c" <= char <= "\x1f":
+                start += 1
+                continue
+            break
+        if char > "\x7f" and char.isspace():
+            start += 1
+            continue
+        break
+    return start
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:

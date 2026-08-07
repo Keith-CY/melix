@@ -46,18 +46,20 @@ def main() -> int:
         finish_reason="stop",
     )
     for sample_index in range(max(sample_count, 1)):
+        events = [
+            ServingDiagnosticsEvent(
+                request_id=f"req-{sample_index}",
+                phase="decode",
+                event_index=event_index,
+                status="completed",
+                duration_ms=0.001,
+            )
+            for event_index in range(max(event_count, 1))
+        ]
         queue = BoundedServingDiagnosticsEventQueue(max_events=capacity)
         started = time.perf_counter()
-        for event_index in range(max(event_count, 1)):
-            queue.append(
-                ServingDiagnosticsEvent(
-                    request_id=f"req-{sample_index}",
-                    phase="decode",
-                    event_index=event_index,
-                    status="completed",
-                    duration_ms=0.001,
-                )
-            )
+        for event in events:
+            queue.append(event)
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         snapshot = queue.snapshot()
         dropped = snapshot.dropped_count

@@ -21,6 +21,8 @@ def test_list_packaging_target_profiles_share_one_logical_identity() -> None:
         "launch_agents_checkout",
         "homebrew_service",
         "macos_app_bundle_preview",
+        "macos_app_bundle_github_release_candidate",
+        "macos_app_bundle_github_release",
     ]
     assert {profile.logical_product_identity for profile in profiles} == {"io.melix"}
     assert {profile.hardware_family for profile in profiles} == {"apple_silicon"}
@@ -42,6 +44,20 @@ def test_build_packaging_target_metadata_projects_explicit_target_fields(tmp_pat
     assert metadata["update_channel_path"] == str((tmp_path / "stable.json").resolve())
     assert metadata["bundle_id"] == "io.melix.preview"
     assert metadata["python_import_isolation"] == packaged_python_import_isolation_manifest()
+
+
+def test_release_app_target_uses_stable_github_update_contract(tmp_path: Path) -> None:
+    metadata = build_packaging_target_metadata(
+        "macos_app_bundle_github_release",
+        product_version="1.0.0",
+        update_channel_path=tmp_path / "stable.json",
+        bundle_id="io.melix.menubar",
+    )
+
+    assert metadata["distribution_channel"] == "github_release"
+    assert metadata["artifact_format"] == "stable_self_signed_macos_app_bundle"
+    assert metadata["update_strategy"] == "stable_self_signed_sparkle_eddsa_appcast"
+    assert metadata["bundle_id"] == "io.melix.menubar"
 
 
 def test_get_packaging_target_profile_rejects_unknown_target() -> None:

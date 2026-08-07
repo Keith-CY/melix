@@ -78,6 +78,10 @@ public struct GenerateParameters: Sendable {
     /// top p sampling
     public var topP: Float
 
+    /// maximum number of highest-probability tokens considered for sampling.
+    /// A value of zero disables top-k filtering.
+    public var topK: Int
+
     /// penalty factor for repeating tokens
     public var repetitionPenalty: Float?
 
@@ -92,6 +96,7 @@ public struct GenerateParameters: Sendable {
         quantizedKVStart: Int = 0,
         temperature: Float = 0.6,
         topP: Float = 1.0,
+        topK: Int = 0,
         repetitionPenalty: Float? = nil,
         repetitionContextSize: Int = 20,
         prefillStepSize: Int = 512
@@ -103,6 +108,7 @@ public struct GenerateParameters: Sendable {
         self.quantizedKVStart = quantizedKVStart
         self.temperature = temperature
         self.topP = topP
+        self.topK = topK
         self.repetitionPenalty = repetitionPenalty
         self.repetitionContextSize = repetitionContextSize
         self.prefillStepSize = prefillStepSize
@@ -111,6 +117,8 @@ public struct GenerateParameters: Sendable {
     public func sampler() -> LogitSampler {
         if temperature == 0 {
             return ArgMaxSampler()
+        } else if topK > 0 {
+            return TopKSampler(temperature: temperature, topP: topP, topK: topK)
         } else if topP > 0 && topP < 1 {
             return TopPSampler(temperature: temperature, topP: topP)
         } else {
@@ -124,6 +132,55 @@ public struct GenerateParameters: Sendable {
                 repetitionPenalty: repetitionPenalty, repetitionContextSize: repetitionContextSize)
         } else {
             return nil
+        }
+    }
+}
+
+/// Sampler that limits candidates to the `topK` logits before applying optional
+/// nucleus (`topP`) sampling and temperature.
+public struct TopKSampler: LogitSampler {
+    let temp: MLXArray
+    let topP: MLXArray
+    let topPValue: Float
+    let topK: Int
+    let randomState: MLXRandom.RandomState
+
+    public init(temperature: Float, topP: Float, topK: Int) {
+        precondition(topK > 0)
+        self.temp = MLXArray(temperature)
+        self.topP = MLXArray(topP)
+        self.topPValue = topP
+        self.topK = topK
+        self.randomState = MLXRandom.RandomState()
+    }
+
+    public func sample(logits: MLXArray) -> MLXArray {
+        var logits = logits
+        if logits.dtype == .bfloat16 {
+            logits = logits.asType(.float32)
+        }
+
+        return withRandomState(randomState) {
+            let candidateCount = min(topK, logits.dim(-1))
+            let sortedIndices = argSort(logits, axis: -1)
+            let topIndices = sortedIndices[.ellipsis, (-candidateCount)...]
+            let candidateLogits = take(logits, topIndices, axis: -1).squeezed(axis: 0)
+
+            let sampledCandidate: MLXArray
+            if topPValue > 0 && topPValue < 1 {
+                let probabilities = softmax(candidateLogits / temp, axis: -1)
+                let cumulativeProbabilities = cumsum(probabilities, axis: -1)
+                let nucleusProbabilities = MLX.where(
+                    cumulativeProbabilities .> (1 - topP),
+                    probabilities,
+                    zeros(like: probabilities)
+                )
+                sampledCandidate = categorical(log(nucleusProbabilities))
+            } else {
+                sampledCandidate = categorical(candidateLogits / temp)
+            }
+
+            return topIndices.squeezed(axis: 0)[sampledCandidate]
         }
     }
 }
@@ -713,6 +770,7 @@ public func generate(
             })
 
     var tokenCount = 0
+    var finishReason = GenerateFinishReason.length
 
     for token in iterator {
         // Compute the timing for the prompt
@@ -726,6 +784,7 @@ public func generate(
         if token == context.tokenizer.unknownTokenId || token == context.tokenizer.eosTokenId
             || additionalEOSTokenIds.contains(token)
         {
+            finishReason = .stop
             break
         }
 
@@ -733,6 +792,7 @@ public func generate(
 
         // Invoke the callback with the current token
         if didGenerate(token) == .stop {
+            finishReason = .stop
             break
         }
     }
@@ -747,7 +807,8 @@ public func generate(
         promptTokenCount: input.text.tokens.size,
         generationTokenCount: tokenCount,
         promptTime: promptTime + iterator.promptPrefillTime,
-        generationTime: generateTime
+        generationTime: generateTime,
+        finishReason: finishReason
     )
 }
 
@@ -831,13 +892,17 @@ public func generate(
                 })
 
         var tokenCount = 0
+        var finishReason = GenerateFinishReason.length
         var detokenizer = NaiveStreamingDetokenizer(tokenizer: tokenizer)
         let toolCallProcessor = ToolCallProcessor()
 
         for token in iterator {
 
             // Check for cancellation on every loop iteration.
-            if Task.isCancelled { break }
+            if Task.isCancelled {
+                finishReason = .cancelled
+                break
+            }
 
             if promptTime == 0 {
                 let now = Date.timeIntervalSinceReferenceDate
@@ -849,6 +914,7 @@ public func generate(
                 || token == tokenizer.eosTokenId
                 || additionalEOSTokenIds.contains(token)
             {
+                finishReason = .stop
                 break
             }
 
@@ -870,12 +936,16 @@ public func generate(
 
         let now = Date.timeIntervalSinceReferenceDate
         let generateTime = now - start
+        if Task.isCancelled {
+            finishReason = .cancelled
+        }
 
         let info = GenerateCompletionInfo(
             promptTokenCount: promptTokenCount,
             generationTokenCount: tokenCount,
             promptTime: promptTime + iterator.promptPrefillTime,
-            generationTime: generateTime
+            generationTime: generateTime,
+            finishReason: finishReason
         )
         continuation.yield(.info(info))
 
@@ -894,6 +964,13 @@ public func generate(
     return stream
 }
 
+/// Why token generation ended.
+public enum GenerateFinishReason: String, Sendable {
+    case stop
+    case length
+    case cancelled
+}
+
 /// Represents metadata and statistics related to token generation.
 ///
 /// Provides information about the number of tokens processed during both the prompt and generation phases, as well as the time taken for each phase.
@@ -910,6 +987,9 @@ public struct GenerateCompletionInfo: Sendable {
     /// The time interval (in seconds) taken to generate the output tokens.
     public let generateTime: TimeInterval
 
+    /// The terminal condition observed by the token loop.
+    public let finishReason: GenerateFinishReason
+
     /// The number of tokens processed per second during the prompt phase.
     public var promptTokensPerSecond: Double {
         Double(promptTokenCount) / promptTime
@@ -924,12 +1004,14 @@ public struct GenerateCompletionInfo: Sendable {
         promptTokenCount: Int,
         generationTokenCount: Int,
         promptTime: TimeInterval,
-        generationTime: TimeInterval
+        generationTime: TimeInterval,
+        finishReason: GenerateFinishReason = .stop
     ) {
         self.promptTokenCount = promptTokenCount
         self.generationTokenCount = generationTokenCount
         self.promptTime = promptTime
         self.generateTime = generationTime
+        self.finishReason = finishReason
     }
 
     public func summary() -> String {

@@ -164,6 +164,36 @@ def test_prepare_video_input_reuses_uri_byte_length_for_metadata_and_identity_ha
     assert len(prepared.sha256_hex) == 64
 
 
+def test_prepare_video_input_reuses_last_parsed_uri_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parse_calls = 0
+    original_parse = video_preprocessing._parse_video_reference
+
+    def counting_parse(reference: str):
+        nonlocal parse_calls
+        parse_calls += 1
+        return original_parse(reference)
+
+    monkeypatch.setattr(video_preprocessing, "_parse_video_reference", counting_parse)
+    repeated = common_pb2.MessagePart(
+        video_uri="https://example.com/media/repeated-last-reference-cache.mov",
+        media=common_pb2.MediaMetadata(format="mov"),
+    )
+    distinct = common_pb2.MessagePart(
+        video_uri="https://example.com/media/distinct-last-reference-cache.mov",
+        media=common_pb2.MediaMetadata(format="mov"),
+    )
+
+    first = prepare_video_input(repeated)
+    second = prepare_video_input(repeated)
+    third = prepare_video_input(distinct)
+
+    assert first.filename == second.filename == "repeated-last-reference-cache.mov"
+    assert third.filename == "distinct-last-reference-cache.mov"
+    assert parse_calls == 2
+
+
 def test_uri_identity_hash_caches_repeated_metadata_frames() -> None:
     _uri_identity_hash.cache_clear()
 

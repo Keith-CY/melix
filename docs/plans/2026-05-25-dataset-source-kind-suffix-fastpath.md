@@ -27,3 +27,16 @@ The registry entry includes focused `test_command`, `coverage_command`, and `pro
 ## Verification Notes
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime effect is claimed.
+
+## 2026-07-10 follow-up: path materialization comprehension
+
+The `dataset-source-records-scandir` registered probe also covers the source-file
+path discovery helper `_iter_source_file_paths()`. After the scandir traversal
+collects and sorts file path strings, the helper materializes `Path` objects for
+callers. This follow-up keeps traversal, sorting, symlink, and error-tolerance
+semantics unchanged while using an explicit list comprehension instead of
+`list(map(Path, ...))` for the final materialization step.
+
+Validation remains the registered focused test command, changed-scope coverage
+command, and local Linux `dataset-source-records-scandir` probe, with GitHub
+Actions PR-scoped performance as the merge gate.

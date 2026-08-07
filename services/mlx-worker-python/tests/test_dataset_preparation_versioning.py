@@ -7,10 +7,12 @@ import sys
 import pytest
 
 from dataset_ingest_limit_contract import exercise_dataset_ingest_limit_contract
+from worker.productization import dataset_preparation as dataset_preparation_module
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
     DatasetVersionRequest,
+    _failed_segment_id_set,
     _partition_failed_segments,
     _quality_summary,
     _sample_output_length_stats,
@@ -184,6 +186,23 @@ def test_dataset_version_failed_segment_partition_scans_nonempty_failures_once()
     assert segments.iter_calls == 1
 
 
+def test_dataset_version_failed_segment_partition_caches_failed_id_set() -> None:
+    _failed_segment_id_set.cache_clear()
+    failed_ids = ("b", "d")
+    segments = [
+        {"segment_id": "a", "text": "first"},
+        {"segment_id": "b", "text": "second"},
+        {"segment_id": "c", "text": "third"},
+    ]
+
+    assert _partition_failed_segments(segments, failed_ids)[1] == [segments[1]]
+    assert _failed_segment_id_set.cache_info().misses == 1
+    assert _partition_failed_segments(segments, failed_ids)[1] == [segments[1]]
+    cache_info = _failed_segment_id_set.cache_info()
+    assert cache_info.hits == 1
+    assert cache_info.currsize == 1
+
+
 def test_dataset_quality_output_lengths_preserve_completion_and_message_semantics() -> None:
     train_rows = [
         {"completion": "abc"},
@@ -202,6 +221,18 @@ def test_dataset_quality_output_lengths_preserve_completion_and_message_semantic
     assert _sample_output_length_stats([], []) == (0, 0, 0)
 
 
+def test_dataset_quality_completion_rows_use_get_sentinel_fast_path() -> None:
+    class CompletionRow(dict[str, object]):
+        def __contains__(self, key: object) -> bool:  # pragma: no cover - regression tripwire
+            if key == "completion":  # pragma: no cover - regression tripwire
+                raise AssertionError("completion rows should use a sentinel get() instead of a contains lookup")
+            return super().__contains__(key)  # pragma: no cover - regression tripwire
+
+    row = CompletionRow({"completion": "hello"})
+
+    assert _sample_output_lengths([row], []) == [5]
+
+
 def test_dataset_quality_message_rows_skip_completion_key_lookup() -> None:
     class MessageRow(dict[str, object]):
         def __getitem__(self, key: str) -> object:  # pragma: no cover - regression tripwire
@@ -212,6 +243,56 @@ def test_dataset_quality_message_rows_skip_completion_key_lookup() -> None:
     row = MessageRow({"messages": [{"content": "hello"}, {"content": 678}, "skip-me"]})
 
     assert _sample_output_lengths([], [row]) == [8]
+
+
+def test_dataset_quality_two_message_rows_preserve_content_lengths() -> None:
+    assert _sample_output_lengths(
+        [],
+        [
+            {"messages": [{"content": "hello"}, {"content": "world"}]},
+            {"messages": [{"content": "hello"}, {"content": 678}]},
+        ],
+    ) == [10, 8]
+
+
+def test_dataset_quality_completion_shaped_batches_preserve_mixed_rows() -> None:
+    class MessageItem:
+        def get(self, key: str, default: object = "") -> object:
+            return "tail" if key == "content" else default
+
+    assert _sample_output_lengths(
+        [
+            {"completion": "abc"},
+            {"messages": [{"content": "hello"}, {"content": "world"}]},
+            {"messages": [{"content": "hello"}, {"content": 678}, MessageItem()]},
+            {"messages": "not-a-list"},
+        ],
+        [],
+    ) == [3, 10, 12, 0]
+
+
+def test_dataset_quality_message_shaped_batches_preserve_non_list_rows() -> None:
+    assert _sample_output_lengths(
+        [],
+        [
+            {"messages": "not-a-list"},
+            {"messages": [{"content": "hello"}, {"content": "world"}]},
+        ],
+    ) == [0, 10]
+
+
+def test_dataset_quality_length_stats_accumulates_total_inline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_sum(*args: object, **kwargs: object) -> int:  # pragma: no cover - regression tripwire
+        raise AssertionError("output-length stats should not rescan lengths with sum()")
+
+    monkeypatch.setattr(dataset_preparation_module, "sum", fail_sum, raising=False)
+
+    assert _sample_output_length_stats(
+        [{"completion": "abc"}, {"completion": 12345}],
+        [{"messages": [{"content": "hello"}, {"content": "world"}]}],
+    ) == (3, 18, 10)
 
 
 def test_dataset_quality_summary_reuses_train_validation_counts() -> None:
@@ -423,6 +504,46 @@ def test_dataset_version_listing_handles_missing_versions_root(tmp_path: Path) -
 
     assert listing["versions"] == []
     assert listing["metrics"]["dataset_version_count"] == 0
+
+
+def test_dataset_version_listing_preserves_non_string_sort_key_fallback(tmp_path: Path) -> None:
+    versions_root = tmp_path / "datasets" / "support-chat" / "versions"
+    for version_id, created_at in [
+        ("support-chat-v2", 2),
+        ("support-chat-v10", 10),
+        ("support-chat-v1", "2026-05-24T01:00:00Z"),
+    ]:
+        version_dir = versions_root / version_id
+        version_dir.mkdir(parents=True)
+        payload = {
+            "dataset_id": "support-chat",
+            "version_id": version_id,
+            "created_at": created_at,
+            "status": "ready",
+            "train_count": 0,
+            "validation_count": 0,
+            "failed_count": 0,
+            "quality_summary_path": "",
+        }
+        if version_id == "support-chat-v1":
+            payload.pop("status")
+            payload["created_at"] = 1
+        (version_dir / "dataset-version.json").write_text(
+            json.dumps(payload),
+            encoding="utf-8",
+        )
+
+    listing = list_dataset_versions(
+        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        output_root=tmp_path / "datasets",
+        dataset_id="support-chat",
+    )
+
+    assert [item["version_id"] for item in listing["versions"]] == [
+        "support-chat-v1",
+        "support-chat-v10",
+        "support-chat-v2",
+    ]
 
 
 def test_failed_only_retry_copies_successful_samples_without_rewriting(

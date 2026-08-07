@@ -45,3 +45,172 @@ guards now reuse a module-level `type` binding inside the per-item scan instead
 of resolving the builtin on every iteration. Container isolation and recursive
 copy behavior stay unchanged; the slice only targets the exact-scalar list/tuple
 hot loops measured by the registered probe.
+
+## 2026-07-06 follow-up: normalize value type binding
+
+This follow-up remains limited to `normalize_trajectory_provenance(...)` in the
+same Python-only trajectory provenance path. The normalizer now reuses the
+module-level `_TYPE` binding for each provenance field type check instead of
+resolving the builtin `type` during every field iteration. Copy isolation,
+empty-value filtering, and scalar forwarding semantics stay unchanged. The
+registered `trajectory-provenance-copy-elision` probe remains the local Linux and
+CI validation gate for the affected path.
+
+## 2026-07-08 follow-up: seven-item scalar list fast path
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_json_list`.
+The registered probe's scalar-list fixture uses the common seven-field token
+metrics shape, so the copier now handles exact seven-item scalar lists with an
+unrolled type guard and direct list literal. Lists with mutable members, including
+seven-item lists, immediately fall back to recursive copying after the unrolled
+check to preserve container isolation without a second scalar scan. The
+registered `trajectory-provenance-copy-elision` probe remains the local Linux and
+CI validation gate for this small Python-only slice.
+
+## 2026-07-13 follow-up: flat scalar dict unpack copy
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_json_dict`.
+Flat scalar dictionaries, including the common `agentic_sft_token_metrics`
+payload, now use dict-unpack copying after the existing scalar scan instead of
+calling `dict.copy()`. This preserves copy isolation, exact-key iteration order,
+and nested-container fallback behavior while shaving a small amount of overhead
+from the scalar token-metrics copy path. The registered probe now reports
+`scalar_dict_*` metrics for the focused dict-copy micro path in addition to the
+existing full-provenance and scalar-list guardrails.
+
+## 2026-07-15 follow-up: component dict fast path
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_trajectory_provenance_value`.
+The recursive copier now fast-paths the common exact trajectory quality component
+dictionary shape (`name`, `score`, `passed`, `labels`) when all values are JSON
+scalars and `labels` is a scalar tuple. The fast path returns a fresh plain dict
+with the same key order while safely reusing the immutable labels tuple; mutable
+labels or non-standard component shapes still fall back to the existing recursive
+copy path. The registered `trajectory-provenance-copy-elision` probe remains the
+local Linux and CI validation gate for this small Python-only slice.
+
+## 2026-07-15 follow-up: three-label component tuple fast path
+
+This follow-up remains limited to the component-dict fast path inside
+`worker.trajectory_provenance._copy_trajectory_provenance_value`. The registered
+probe fixture uses the common three-label component tuple shape, so this slice
+unrolls that exact scalar-label guard before falling back to the existing generic
+tuple scan for other scalar label counts. It preserves the same fresh-dict copy
+semantics, immutable-label tuple reuse, and mutable-label fallback behavior while
+reducing per-component iterator overhead in the registered
+`trajectory-provenance-copy-elision` probe.
+
+## 2026-07-16 follow-up: token metrics dict literal fast path
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_json_dict`.
+The common `agentic_sft_token_metrics` dictionary shape now uses an unrolled
+scalar guard and fresh dict literal before falling back to the generic flat-scalar
+dict copy. The fast path emits the canonical token-metrics field order for that
+exact shape; six-key non-token dictionaries and nested mutable values still use
+the existing fallback path so copy isolation stays unchanged outside the token
+metrics fixture. The registered `trajectory-provenance-copy-elision` probe remains
+the local Linux and CI validation gate for this small Python-only slice.
+
+## 2026-07-16 follow-up: adapter token metric alias literal fast path
+
+This follow-up remains limited to `adapter_manifest_trajectory_provenance(...)`
+token metric alias materialization in `worker.trajectory_provenance`. The
+`agentic_sft_token_metrics` alias helper now binds the metrics getter and integer
+coercion once, then emits the common alias payload with direct dict literals
+instead of allocating and iterating over a per-call source-to-alias tuple. Alias
+key order, estimator trimming/omission, and zero defaults stay unchanged. The
+registered `trajectory-provenance-copy-elision` probe now reports
+`adapter_manifest_*` sidecar metrics for this focused alias path while continuing
+to gate the broader provenance copy behavior locally and in CI.
+
+## 2026-07-17 follow-up: component list-label fast path
+
+This follow-up remains limited to the component-dict fast path inside
+`worker.trajectory_provenance._copy_trajectory_provenance_value`. Some trajectory
+quality component payloads carry `labels` as a mutable JSON list rather than the
+previously optimized immutable tuple. The copier now detects exact-list labels
+with scalar members, returns a fresh list copy for isolation, and continues to
+fall back to the recursive path for nested mutable labels. The registered
+`trajectory-provenance-copy-elision` probe fixture now uses list labels so the
+PR-scoped probe validates this list-label component path locally on Linux and in
+CI.
+
+## 2026-07-18 follow-up: quality metrics dict fast path
+
+This follow-up remains limited to
+`worker.trajectory_provenance._copy_trajectory_provenance_value`. The common
+`trajectory_quality_metrics` payload shape (`reward_coverage_count` plus a
+`components` list) now skips the generic dict/list discovery scans and emits a
+fresh canonical dict while copying each component through the existing component
+fast path. Nested mutable component labels remain isolated, and non-standard
+quality metric payloads still fall back through the generic recursive copier. The
+registered `trajectory-provenance-copy-elision` probe remains the local Linux and
+CI validation gate for this small Python-only slice.
+
+## 2026-07-19 follow-up: clean token estimator alias fast path
+
+This follow-up remains limited to `_agentic_sft_token_metric_aliases(...)` inside
+`worker.trajectory_provenance`. The common exact `agentic_sft_token_metrics` dict
+shape now reads the six expected fields directly and, when the estimator is an
+already-clean string, returns the alias payload without calling the generic string
+coercion/strip path; `adapter_manifest_trajectory_provenance(...)` also bypasses
+the generic `Mapping` check for exact dict token metrics. Whitespace trimming,
+blank-estimator omission, integer coercion, fallback behavior for partial/custom
+mappings, and alias key order stay unchanged. The registered
+`trajectory-provenance-copy-elision` probe remains the local Linux and CI
+validation gate for this small Python-only slice.
+
+## 2026-07-20 follow-up: exact-int token alias fast path
+
+This follow-up remains limited to `_agentic_sft_token_metric_aliases(...)` inside
+`worker.trajectory_provenance`. The common exact `agentic_sft_token_metrics` dict
+shape now returns already-clean string estimator aliases with exact `int` token
+counts directly, avoiding repeated integer coercion calls in the registered
+adapter-manifest micro path. Bool and non-int numeric-like values still fall back
+through the existing coercion branch, preserving previous alias semantics and key
+order. The registered `trajectory-provenance-copy-elision` probe remains the
+local Linux and CI validation gate for this small Python-only slice.
+
+## 2026-07-26 follow-up: component type-check local bindings
+
+This follow-up remains limited to the exact-dict branch in
+`worker.trajectory_provenance._copy_trajectory_provenance_value`. The component
+and quality-metrics fast paths now bind the module-level `type` helper and JSON
+immutable-type set once before their unrolled scalar guards. Copy isolation,
+canonical payload shape, token alias semantics, and all fallback paths stay
+unchanged. The registered `trajectory-provenance-copy-elision` probe remains the
+local Linux and CI validation gate for this small Python-only slice.
+
+## 2026-07-30 follow-up: quality component list preallocation
+
+This follow-up remains limited to `_copy_quality_components_list(...)` in
+`worker.trajectory_provenance`. The common trajectory quality-metrics component
+list copier now preallocates the output list to the known component count and
+fills by index instead of growing it with repeated `append()` calls. Component
+shape checks, label-list isolation, fallback behavior for non-standard component
+payloads, and canonical copied dict order stay unchanged. The registered
+`trajectory-provenance-copy-elision` probe remains the local Linux and CI
+validation gate for this small Python-only slice.
+
+## 2026-08-01 follow-up: exact three-item scalar tuple fast path
+
+This follow-up remains limited to `worker.trajectory_provenance._copy_json_tuple`.
+The common component-label tuple shape contains exactly three immutable label
+values, so the copier now unrolls that exact scalar guard and returns the original
+immutable tuple without entering the generic iterator scan. Tuples with mutable
+members, including three-item tuples, still fall back through recursive copying to
+preserve nested container isolation. The registered
+`trajectory-provenance-copy-elision` probe now reports focused `scalar_tuple_*`
+metrics alongside the broader provenance-copy guardrails and remains the local
+Linux plus CI validation gate for this small Python-only slice.
+
+## 2026-08-01 follow-up: token alias type binding
+
+This follow-up remains limited to `_agentic_sft_token_metric_aliases(...)` in
+`worker.trajectory_provenance`. The exact-dict token-alias fast path now reuses
+the module-level `_TYPE` binding for the metrics payload and estimator checks,
+matching the existing token count guards and avoiding builtin `type` resolution in
+the registered adapter-manifest micro path. Alias key order, clean-estimator
+fast-path behavior, fallback coercion, and blank-estimator omission remain
+unchanged. The registered `trajectory-provenance-copy-elision` probe remains the
+local Linux and CI validation gate for this small Python-only slice.

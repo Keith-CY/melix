@@ -445,6 +445,22 @@ def test_tool_call_rescue_helper_branches_cover_defensive_shapes() -> None:
     assert tool_call_rescue.parse_xml_tool_body("plain") is None
     assert tool_call_rescue.parse_xml_tool_body("<broken") is None
     assert tool_call_rescue.parse_xml_tool_body("<unknown></unknown>") is None
+    assert tool_call_rescue.parse_xml_parameter_tool_body(
+        ' <function=search> \n<parameter=q> "x" \n</parameter> </function> '
+    ) == {"name": "search", "arguments": {"q": "x"}}
+    assert tool_call_rescue.parse_xml_parameter_tool_body(
+        "<function=search><bad></function>"
+    ) is None
+    assert tool_call_rescue.parse_xml_parameter_tool_body(
+        '<function=search><parameter=q>"x"</parameter>'
+        '<parameter=q>"y"</parameter></function>'
+    ) is None
+    assert tool_call_rescue.parse_xml_parameter_tool_body(
+        "<function=search><parameter=q>not-json</parameter></function>"
+    ) is None
+    assert tool_call_rescue.parse_xml_parameter_tool_body(
+        '<function=search><parameter=q>"x"</function>'
+    ) is None
     assert tool_call_rescue.parse_function_tool_body("not_a_call") is None
     assert tool_call_rescue.parse_function_tool_body("browse('url')") is None
     assert tool_call_rescue.parse_function_tool_body("browse({}, {})") is None

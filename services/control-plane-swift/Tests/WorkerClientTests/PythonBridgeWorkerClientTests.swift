@@ -65,6 +65,7 @@ struct PythonBridgeWorkerClientTests {
             #expect(await client.canDispatchRequests())
             #expect(try await client.runtimeStats().stats.residentBytes == 12_288)
             #expect(try await client.cacheStats().stats.l1Bytes == 4_096)
+            #expect(try await client.listLoadedModels().modelHandles == ["melix-dev-vlm::python-live"])
 
             var request = Melix_Worker_V1_GenerateRequest()
             request.execution.id.requestID = "req-python-live"
@@ -243,6 +244,23 @@ struct PythonBridgeWorkerClientTests {
         let unloaded = try await client.unloadModel(request: request)
 
         #expect(unloaded.ok)
+    }
+
+    @Test("list loaded models returns the Python bridge runtime inventory")
+    func listLoadedModelsReturnsPythonBridgeRuntimeInventory() async throws {
+        var response = Melix_Worker_V1_ListLoadedModelsResponse()
+        response.modelHandles = ["melix-dev-vlm::bridge"]
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .listLoadedModels,
+            line: bridgeMessageLine(message: try response.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let loadedModels = try await client.listLoadedModels()
+
+        #expect(loadedModels.modelHandles == ["melix-dev-vlm::bridge"])
     }
 
     @Test("generate decodes streamed execute events from the bridge")
@@ -975,6 +993,37 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-rerank") == "melix-dev-rerank::bridge")
     }
 
+    @Test("phase-five preload rejects a route declaration for the wrong worker family")
+    func phaseFivePreloadRejectsWrongStructuredWorkerFamily() async throws {
+        var models = ModelCatalog.phaseFiveSeedModels()
+        let embeddingIndex = try #require(
+            models.firstIndex(where: { $0.modelID == "melix-dev-embed" })
+        )
+        models[embeddingIndex].requestRoutes[0].workerFamily = .text
+
+        var rerankLoadResponse = Melix_Worker_V1_LoadModelResponse()
+        rerankLoadResponse.ok = true
+        rerankLoadResponse.modelHandle = "melix-dev-rerank::bridge"
+        let runner = ScriptedBridgeRunner()
+        await runner.enqueueUnaryResponse(
+            .loadModel,
+            line: bridgeMessageLine(message: try rerankLoadResponse.serializedData())
+        )
+
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let catalog = ModelCatalog(seedModels: models)
+
+        try await BootstrapWorkerPreparation.preloadPhaseFivePythonModels(
+            workerClient: client,
+            modelCatalog: catalog
+        )
+
+        #expect(await catalog.dispatchHandle(for: "melix-dev-embed") == nil)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-rerank") == "melix-dev-rerank::bridge")
+        let loadRequests = try await runner.recordedLoadModelRequests()
+        #expect(loadRequests.map(\.model.modelID) == ["melix-dev-rerank"])
+    }
+
     @Test("phase-six preload writes multimodal handles into the model catalog")
     func phaseSixPreloadWritesMultimodalHandlesIntoTheModelCatalog() async throws {
         let runner = ScriptedBridgeRunner()
@@ -1274,6 +1323,134 @@ struct PythonBridgeWorkerClientTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::bridge")
     }
 
+    @Test("stale bootstrap load cleanup cannot unload a replacement reusing the handle")
+    func staleBootstrapLoadCleanupCannotUnloadReplacementReusingHandle() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let worker = LoaderTestingWorkerClient()
+        await worker.prepareStaleLoadCleanupRace()
+        let staleLoad = Task {
+            try await BootstrapWorkerPreparation.preloadDevTextModel(
+                workerClient: worker,
+                modelCatalog: catalog
+            )
+        }
+
+        let staleRequest = await worker.waitForFirstLoadRequest()
+        let replacementReservation = try #require(await catalog.beginBackendRouteLoad(
+            id: "melix-dev-text",
+            routeKind: .swiftText,
+            workerInstanceID: worker.staleLoadCleanupWorkerInstanceID,
+            reason: "explicit_replacement"
+        ))
+        await worker.installReplacement(identity: replacementReservation.identity)
+        _ = try #require(await catalog.recordLoadSucceeded(
+            id: "melix-dev-text",
+            dispatchHandle: worker.staleLoadCleanupReusedHandle,
+            routeKind: .swiftText,
+            expectedRouteGeneration: replacementReservation.generation,
+            workerInstanceID: replacementReservation.workerInstanceID
+        ))
+
+        await worker.releaseFirstLoad()
+        #expect(try await !staleLoad.value)
+
+        let cleanup = try #require(await worker.unloadRequests.first)
+        let replacement = try #require(await catalog.backendRouteBinding(
+            for: "melix-dev-text",
+            routeKind: .swiftText
+        ))
+        #expect(cleanup.modelHandle == worker.staleLoadCleanupReusedHandle)
+        #expect(!cleanup.force)
+        #expect(cleanup.expectedBackendIdentity == staleRequest.backendIdentity)
+        #expect(cleanup.expectedBackendIdentity != replacement.identity)
+        #expect(await worker.unloadResponseCodes == ["model_identity_mismatch"])
+        #expect(await worker.currentResidentIdentity() == replacement.identity)
+        #expect(replacement.generation == replacementReservation.generation)
+    }
+
+    @Test("bootstrap preload uses structured route declarations over free-form metadata")
+    func bootstrapPreloadUsesStructuredRouteDeclarations() async throws {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::structured"
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .loadModel,
+            line: bridgeMessageLine(message: try response.serializedData())
+        )
+        var model = ModelCatalog.devTextModel()
+        model.routeClass = .workerRoutePythonVlm
+        model.settings.ext["melix.capability.route_kind"] = "python_vlm"
+        let catalog = ModelCatalog(seedModels: [model])
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+
+        let preloaded = try await BootstrapWorkerPreparation.preloadDevTextModel(
+            workerClient: client,
+            modelCatalog: catalog
+        )
+
+        #expect(preloaded)
+        #expect(await catalog.backendRouteBinding(
+            for: model.modelID,
+            routeKind: .swiftText
+        )?.handle == "melix-dev-text::structured")
+        #expect(await catalog.backendRouteBinding(
+            for: model.modelID,
+            routeKind: .pythonVLM
+        ) == nil)
+    }
+
+    @Test("bootstrap preload rejects models without structured route declarations")
+    func bootstrapPreloadRejectsMissingStructuredRoutes() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.requestRoutes = []
+        model.settings.ext["melix.capability.route_kind"] = "swift_text"
+        let catalog = ModelCatalog(seedModels: [model])
+        let runner = ScriptedBridgeRunner()
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+
+        let preloaded = try await BootstrapWorkerPreparation.preloadDevTextModel(
+            workerClient: client,
+            modelCatalog: catalog
+        )
+
+        #expect(!preloaded)
+        #expect(await catalog.dispatchHandle(for: model.modelID) == nil)
+        #expect(try await runner.recordedLoadModelRequests().isEmpty)
+    }
+
+    @Test("bootstrap preload fails closed without a backend health identity")
+    func bootstrapPreloadFailsClosedWithoutBackendHealthIdentity() async throws {
+        let catalog = ModelCatalog()
+
+        let preloaded = try await BootstrapWorkerPreparation.preloadDevTextModel(
+            workerClient: NullWorkerClient(),
+            modelCatalog: catalog
+        )
+
+        #expect(!preloaded)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
+    @Test("bootstrap preload fails closed for an empty backend health identity")
+    func bootstrapPreloadFailsClosedForEmptyBackendHealthIdentity() async throws {
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .handshake,
+            line: bridgeMessageLine(message: try Melix_Worker_V1_HandshakeResponse().serializedData())
+        )
+        let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        let catalog = ModelCatalog()
+
+        let preloaded = try await BootstrapWorkerPreparation.preloadDevTextModel(
+            workerClient: client,
+            modelCatalog: catalog
+        )
+
+        #expect(!preloaded)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+    }
+
     @Test("bootstrap worker preparation carries adapter-set hash into worker model specs")
     func bootstrapWorkerPreparationCarriesAdapterSetHashIntoWorkerModelSpecs() throws {
         var summary = ModelCatalog.devTextModel()
@@ -1356,6 +1533,36 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.derived_from_model_id"] == "melix-dev-text")
     }
 
+    @Test("bootstrap worker preparation builds generic artifact embedding specs")
+    func bootstrapWorkerPreparationBuildsGenericArtifactEmbeddingSpecs() throws {
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "local-artifact-bert"
+        summary.kind = "embedding"
+        summary.maxContext = 512
+        summary.quantProfileID = "f16"
+        summary.routeClass = .workerRoutePythonEmbedding
+        summary.settings.ext["melix.model_path"] = "/tmp/models/local-artifact-bert"
+        summary.settings.ext["melix.model_revision"] = "sha256:model"
+        summary.settings.ext["melix.tokenizer_hash"] = "sha256:tokenizer"
+        summary.settings.ext["embedding_backend_id"] = "mlx-bert-v1"
+        summary.settings.ext["embedding_execution_kind"] = "artifact"
+        summary.settings.ext["embedding_dimensions"] = "768"
+        summary.settings.ext["embedding_vector_kind"] = "single_dense"
+        summary.settings.ext["embedding_input_modalities"] = "text"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "local-artifact-bert")
+        #expect(spec.modelPath == "/tmp/models/local-artifact-bert")
+        #expect(spec.modelKind == "embedding")
+        #expect(spec.maxContext == 512)
+        #expect(spec.routeClass == .workerRoutePythonEmbedding)
+        #expect(spec.ext["embedding_backend_id"] == "mlx-bert-v1")
+        #expect(spec.ext["embedding_execution_kind"] == "artifact")
+        #expect(spec.ext["embedding_vector_kind"] == "single_dense")
+        #expect(spec.ext["embedding_input_modalities"] == "text")
+    }
+
     @Test("bootstrap worker preparation infers generic VLM context from nested text config")
     func bootstrapWorkerPreparationInfersGenericVLMContextFromNestedTextConfig() throws {
         let modelDirectory = try makeModelConfigDirectory(
@@ -1416,7 +1623,8 @@ struct PythonBridgeWorkerClientTests {
 
     @Test("bootstrap worker preparation carries OCR profile metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesOCRProfileMetadataIntoWorkerModelSpecs() throws {
-        let summary = ModelCatalog.devOCRModel()
+        var summary = ModelCatalog.devOCRModel()
+        summary.settings.ext["melix.generation_config.top_k"] = "40"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
@@ -1426,6 +1634,7 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["ocr_auto_prompt"] == "Extract the text from the image exactly as written.")
         #expect(spec.ext["ocr_stop_sequences"] == "<ocr:end>")
         #expect(spec.ext["ocr_sampling_profile_id"] == "ocr-deterministic")
+        #expect(spec.ext["melix.generation_config.top_k"] == "40")
     }
 
     @Test("bootstrap worker preparation builds generic OCR specs and carries generation-config metadata")
@@ -1443,6 +1652,7 @@ struct PythonBridgeWorkerClientTests {
         summary.settings.ext["melix.generation_config.source"] = "/tmp/registry-root/mlx-community/Vision-OCR/8bit/generation_config.json"
         summary.settings.ext["melix.generation_config.temperature"] = "0.15"
         summary.settings.ext["melix.generation_config.top_p"] = "0.92"
+        summary.settings.ext["melix.generation_config.top_k"] = "40"
         summary.settings.ext["melix.generation_config.max_tokens"] = "384"
 
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
@@ -1452,6 +1662,7 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.modelPath == "/tmp/registry-root/mlx-community/Vision-OCR/8bit")
         #expect(spec.ext["melix.generation_config.temperature"] == "0.15")
         #expect(spec.ext["melix.generation_config.top_p"] == "0.92")
+        #expect(spec.ext["melix.generation_config.top_k"] == "40")
         #expect(spec.ext["melix.generation_config.max_tokens"] == "384")
     }
 
@@ -1598,7 +1809,7 @@ struct PythonBridgeWorkerClientTests {
     @Test("bootstrap worker preparation carries embedding family metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesEmbeddingFamilyMetadataIntoWorkerModelSpecs() throws {
         var summary = ModelCatalog.devEmbeddingModel()
-        summary.settings.ext["embedding_backend_id"] = "bert-v1"
+        summary.settings.ext["embedding_backend_id"] = "deterministic-fixture-v1"
         summary.settings.ext["embedding_family_id"] = "mxbai-embed"
         summary.settings.ext["embedding_pooling_mode"] = "mean"
         summary.settings.ext["embedding_normalization"] = "l2"
@@ -1613,7 +1824,7 @@ struct PythonBridgeWorkerClientTests {
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
         #expect(spec.modelID == "melix-dev-embed")
-        #expect(spec.ext["embedding_backend_id"] == "bert-v1")
+        #expect(spec.ext["embedding_backend_id"] == "deterministic-fixture-v1")
         #expect(spec.ext["embedding_family_id"] == "mxbai-embed")
         #expect(spec.ext["embedding_pooling_mode"] == "mean")
         #expect(spec.ext["embedding_normalization"] == "l2")
@@ -2060,6 +2271,11 @@ private actor ScriptedBridgeRunner: WorkerBridgeRunning {
             unary[command.kind] = lines
             return line
         }
+        if command.kind == .handshake {
+            var response = Melix_Worker_V1_HandshakeResponse()
+            response.workerInstanceID = "scripted-python-worker"
+            return bridgeMessageLine(message: try response.serializedData())
+        }
         return bridgeErrorLine(code: "missing_fixture", message: "No unary fixture.")
     }
 
@@ -2137,6 +2353,11 @@ private actor LivePythonWorkerFixture {
         runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse,
         cacheStatsResponse: Melix_Worker_V1_GetCacheStatsResponse,
         generateEvents: [Melix_Worker_V1_ExecuteEvent],
+        loadedModelsResponse: Melix_Worker_V1_ListLoadedModelsResponse = {
+            var response = Melix_Worker_V1_ListLoadedModelsResponse()
+            response.modelHandles = ["melix-dev-vlm::python-live"]
+            return response
+        }(),
         exportResultsStreamEvents: [Melix_Worker_V1_ExportResultsEvent] = []
     ) async throws -> LivePythonWorkerFixture {
         let socketPath = "/tmp/melix-python-\(UUID().uuidString.prefix(8)).sock"
@@ -2152,7 +2373,8 @@ private actor LivePythonWorkerFixture {
             services: [
                 PythonTestRuntimeService(
                     handshakeResponse: handshakeResponse,
-                    runtimeStatsResponse: runtimeStatsResponse
+                    runtimeStatsResponse: runtimeStatsResponse,
+                    loadedModelsResponse: loadedModelsResponse
                 ),
                 PythonTestInferenceService(generateEvents: generateEvents),
                 PythonTestCacheService(cacheStatsResponse: cacheStatsResponse),
@@ -2185,13 +2407,16 @@ private actor LivePythonWorkerFixture {
 private final class PythonTestRuntimeService: Melix_Worker_V1_RuntimeService.SimpleServiceProtocol, @unchecked Sendable {
     private let handshakeResponse: Melix_Worker_V1_HandshakeResponse
     private let runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
+    private let loadedModelsResponse: Melix_Worker_V1_ListLoadedModelsResponse
 
     init(
         handshakeResponse: Melix_Worker_V1_HandshakeResponse,
-        runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
+        runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse,
+        loadedModelsResponse: Melix_Worker_V1_ListLoadedModelsResponse
     ) {
         self.handshakeResponse = handshakeResponse
         self.runtimeStatsResponse = runtimeStatsResponse
+        self.loadedModelsResponse = loadedModelsResponse
     }
 
     func handshake(
@@ -2233,7 +2458,7 @@ private final class PythonTestRuntimeService: Melix_Worker_V1_RuntimeService.Sim
         request: Melix_Worker_V1_ListLoadedModelsRequest,
         context: ServerContext
     ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
-        Melix_Worker_V1_ListLoadedModelsResponse()
+        loadedModelsResponse
     }
 
     func drain(

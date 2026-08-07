@@ -1,6 +1,6 @@
 import MelixControlPlaneProtocol
 
-public enum WorkerRouteKind: String, Sendable, Equatable {
+public enum WorkerRouteKind: String, Sendable, Equatable, Hashable {
     case swiftText = "swift_text"
     case swiftVision = "swift_vision"
     case pythonCompatibility = "python_compatibility"
@@ -12,6 +12,17 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
     case pythonTranscription = "python_transcription"
     case pythonSpeech = "python_speech"
     case pythonImage = "python_image"
+
+    public var isPythonWorkerRoute: Bool {
+        switch self {
+        case .swiftText, .swiftVision:
+            return false
+        case .pythonCompatibility, .pythonEmbedding, .pythonRerank,
+             .pythonModelOperations, .pythonOCR, .pythonVLM,
+             .pythonTranscription, .pythonSpeech, .pythonImage:
+            return true
+        }
+    }
 
     public init?(metadataIdentifier rawValue: String?) {
         guard let rawValue else {

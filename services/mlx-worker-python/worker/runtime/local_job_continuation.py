@@ -244,6 +244,39 @@ class LocalJobContinuationStore:
         saved = self.save_record(result.record, expected_revision=record.revision)
         return LocalJobContinuationReconciliation(record=saved, receipt=result.receipt)
 
+    def _reconcile_scanned_record(
+        self,
+        job_id: str,
+        path_text: str,
+        *,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> LocalJobContinuationReconciliation | None:
+        record = self._load_scanned_record(job_id, path_text)
+        if record is None:
+            return None
+
+        result = reconcile_local_job_continuation(record, live_evidence=live_evidence)
+        if result.record == record:
+            return result
+
+        saved = self.save_record(result.record, expected_revision=record.revision)
+        return LocalJobContinuationReconciliation(record=saved, receipt=result.receipt)
+
+    def _load_scanned_record(
+        self,
+        job_id: str,
+        path_text: str,
+    ) -> LocalJobContinuationRecord | None:
+        safe_job_id = _safe_job_id(job_id)
+        if safe_job_id != job_id or job_id == ".json":
+            return self.load_record(job_id)
+        try:
+            with open(path_text, "rb") as record_file:
+                content = record_file.read()
+        except FileNotFoundError:
+            return None
+        return LocalJobContinuationRecord.from_dict(json.loads(content))
+
     def claim_followup(
         self,
         job_id: str,
@@ -295,7 +328,7 @@ class LocalJobContinuationStore:
         if result.receipt.get("reason") != "followup_claimed":
             saved = self.save_record(result.record, expected_revision=record.revision)
             return LocalJobContinuationFollowupClaim(
-                reconciliation=replace(result, record=saved),
+                reconciliation=_reconciliation_with_record(result, saved),
                 prompt_context=PromptContextAdmission(
                     user_payload={},
                     untrusted_context_receipts=[],
@@ -344,7 +377,7 @@ class LocalJobContinuationStore:
 
         saved = self.save_record(result.record, expected_revision=record.revision)
         return LocalJobContinuationFollowupClaim(
-            reconciliation=replace(result, record=saved),
+            reconciliation=_reconciliation_with_record(result, saved),
             prompt_context=prompt_context,
         )
 
@@ -356,14 +389,12 @@ class LocalJobContinuationStore:
         candidates: list[LocalJobContinuationFollowupCandidate] = []
         receipts: list[dict[str, Any]] = []
         live_evidence_get = (
-            live_evidence_by_job_id.get
-            if live_evidence_by_job_id is not None
-            else _missing_live_evidence
+            live_evidence_by_job_id.get if live_evidence_by_job_id is not None else None
         )
         root_fspath = self._root_fspath
         try:
-            record_job_ids: list[str] = []
-            record_job_ids_append = record_job_ids.append
+            scanned_records: list[tuple[str, str]] = []
+            scanned_records_append = scanned_records.append
             json_suffix = ".json"
             json_suffix_length = len(json_suffix)
             for entry in os.scandir(root_fspath):
@@ -377,22 +408,43 @@ class LocalJobContinuationStore:
                     # The scan has already filtered this to a .json file name.
                     # Slice directly rather than calling Path.stem or a helper for
                     # every record in large follow-up stores.
-                    record_job_ids_append(json_suffix if name == json_suffix else name[:-json_suffix_length])
-            record_job_ids.sort()
+                    job_id = json_suffix if name == json_suffix else name[:-json_suffix_length]
+                    entry_path = getattr(entry, "path", None)
+                    scanned_records_append(
+                        (
+                            job_id,
+                            os.fspath(entry_path)
+                            if entry_path is not None
+                            else os.path.join(root_fspath, name),
+                        )
+                    )
+            scanned_records.sort(key=lambda record: record[0])
         except FileNotFoundError:
             return LocalJobContinuationFollowupScan(candidates=(), receipts=())
-        reconcile_record = self.reconcile_record
+        public_reconcile_record = self.reconcile_record
+        use_public_reconcile = (
+            "reconcile_record" in self.__dict__ or "load_record" in self.__dict__
+        )
+        scanned_reconcile_record = self._reconcile_scanned_record
         receipts_append = receipts.append
         candidates_append = candidates.append
         candidate_type = LocalJobContinuationFollowupCandidate
         candidate_receipt = _followup_candidate_scan_receipt
         unreadable_record_receipt = _unreadable_record_scan_receipt
-        for job_id in record_job_ids:
+        for job_id, path_text in scanned_records:
             try:
-                reconciliation = reconcile_record(
-                    job_id,
-                    live_evidence=live_evidence_get(job_id),
-                )
+                live_evidence = None if live_evidence_get is None else live_evidence_get(job_id)
+                if use_public_reconcile:
+                    reconciliation = public_reconcile_record(
+                        job_id,
+                        live_evidence=live_evidence,
+                    )
+                else:
+                    reconciliation = scanned_reconcile_record(
+                        job_id,
+                        path_text,
+                        live_evidence=live_evidence,
+                    )
             except LocalJobContinuationStoreError as exc:
                 receipts_append(exc.receipt)
                 continue
@@ -401,7 +453,17 @@ class LocalJobContinuationStore:
                 continue
             if reconciliation is None:
                 continue
-            receipt = candidate_receipt(reconciliation.record)
+            completion_evidence_available = reconciliation.receipt.get(
+                "completion_evidence_available"
+            )
+            receipt = candidate_receipt(
+                reconciliation.record,
+                evidence_available=(
+                    completion_evidence_available
+                    if type(completion_evidence_available) is bool
+                    else None
+                ),
+            )
             reason = receipt["reason"]
             # Scan-level follow-up state wins for ready or already-claimed records.
             # Otherwise surface reconciliation changes before the generic scan result.
@@ -846,11 +908,7 @@ def claim_local_job_followup(
             ),
         )
 
-    claimed = replace(
-        record,
-        followup_status="in_progress",
-        followup_session_id=normalized_followup_session_id,
-    )
+    claimed = _record_with_followup_claim(record, normalized_followup_session_id)
     return LocalJobContinuationReconciliation(
         record=claimed,
         receipt=_receipt(
@@ -868,6 +926,38 @@ def claim_local_job_followup(
             followup_session_id=claimed.followup_session_id,
             prompt_context_receipts=_local_job_followup_prompt_context_receipts(claimed),
         ),
+    )
+
+
+def _reconciliation_with_record(
+    reconciliation: LocalJobContinuationReconciliation,
+    record: LocalJobContinuationRecord,
+) -> LocalJobContinuationReconciliation:
+    return LocalJobContinuationReconciliation(
+        record=record,
+        receipt=reconciliation.receipt,
+    )
+
+
+def _record_with_followup_claim(
+    record: LocalJobContinuationRecord,
+    followup_session_id: str,
+) -> LocalJobContinuationRecord:
+    return LocalJobContinuationRecord(
+        job_id=record.job_id,
+        command=record.command,
+        cwd=record.cwd,
+        log_path=record.log_path,
+        session_id=record.session_id,
+        status=record.status,
+        exit_status=record.exit_status,
+        timeout_seconds=record.timeout_seconds,
+        followup_status="in_progress",
+        followup_session_id=followup_session_id,
+        followed_up_at=record.followed_up_at,
+        success_marker_path=record.success_marker_path,
+        artifact_paths=record.artifact_paths,
+        revision=record.revision,
     )
 
 
@@ -980,7 +1070,8 @@ def _copy_untrusted_context_receipts(
 
 
 def _copy_json_like_value(value: Any) -> Any:
-    value_type = type(value)
+    value_type_of = type
+    value_type = value_type_of(value)
     if (
         value_type is str
         or value_type is int
@@ -990,10 +1081,665 @@ def _copy_json_like_value(value: Any) -> Any:
     ):
         return value
     if value_type is dict:
-        return {key: _copy_json_like_value(nested) for key, nested in value.items()}
+        copied: dict[Any, Any] = {}
+        for key, nested in value.items():
+            nested_type = value_type_of(nested)
+            if (
+                nested_type is str
+                or nested_type is int
+                or nested_type is float
+                or nested_type is bool
+                or nested is None
+            ):
+                copied[key] = nested
+            else:
+                copied[key] = _copy_json_like_value(nested)
+        return copied
     if value_type is list:
-        return [_copy_json_like_value(item) for item in value]
+        copied_list: list[Any] = []
+        append = copied_list.append
+        for item in value:
+            item_type = value_type_of(item)
+            if (
+                item_type is str
+                or item_type is int
+                or item_type is float
+                or item_type is bool
+                or item is None
+            ):
+                append(item)
+            elif item_type is dict:
+                copied_item: dict[Any, Any] = {}
+                for key, nested in item.items():
+                    nested_type = value_type_of(nested)
+                    if (
+                        nested_type is str
+                        or nested_type is int
+                        or nested_type is float
+                        or nested_type is bool
+                        or nested is None
+                    ):
+                        copied_item[key] = nested
+                    else:
+                        copied_item[key] = _copy_json_like_value(nested)
+                append(copied_item)
+            else:
+                append(_copy_json_like_value(item))
+        return copied_list
     if value_type is tuple:
+        value_len = len(value)
+        if value_len == 2:
+            first = value[0]
+            second = value[1]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+            ):
+                return (first, second)
+            return (_copy_json_like_value(first), _copy_json_like_value(second))
+        if value_len == 3:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+            ):
+                return (first, second, third)
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+            )
+        if value_len == 4:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            fourth = value[3]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            fourth_type = value_type_of(fourth)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+                and (
+                    fourth_type is str
+                    or fourth_type is int
+                    or fourth_type is float
+                    or fourth_type is bool
+                    or fourth is None
+                )
+            ):
+                return (first, second, third, fourth)
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+                _copy_json_like_value(fourth),
+            )
+        if value_len == 5:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            fourth = value[3]
+            fifth = value[4]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            fourth_type = value_type_of(fourth)
+            fifth_type = value_type_of(fifth)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+                and (
+                    fourth_type is str
+                    or fourth_type is int
+                    or fourth_type is float
+                    or fourth_type is bool
+                    or fourth is None
+                )
+                and (
+                    fifth_type is str
+                    or fifth_type is int
+                    or fifth_type is float
+                    or fifth_type is bool
+                    or fifth is None
+                )
+            ):
+                return (first, second, third, fourth, fifth)
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+                _copy_json_like_value(fourth),
+                _copy_json_like_value(fifth),
+            )
+        if value_len == 6:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            fourth = value[3]
+            fifth = value[4]
+            sixth = value[5]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            fourth_type = value_type_of(fourth)
+            fifth_type = value_type_of(fifth)
+            sixth_type = value_type_of(sixth)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+                and (
+                    fourth_type is str
+                    or fourth_type is int
+                    or fourth_type is float
+                    or fourth_type is bool
+                    or fourth is None
+                )
+                and (
+                    fifth_type is str
+                    or fifth_type is int
+                    or fifth_type is float
+                    or fifth_type is bool
+                    or fifth is None
+                )
+                and (
+                    sixth_type is str
+                    or sixth_type is int
+                    or sixth_type is float
+                    or sixth_type is bool
+                    or sixth is None
+                )
+            ):
+                return (first, second, third, fourth, fifth, sixth)
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+                _copy_json_like_value(fourth),
+                _copy_json_like_value(fifth),
+                _copy_json_like_value(sixth),
+            )
+        if value_len == 7:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            fourth = value[3]
+            fifth = value[4]
+            sixth = value[5]
+            seventh = value[6]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            fourth_type = value_type_of(fourth)
+            fifth_type = value_type_of(fifth)
+            sixth_type = value_type_of(sixth)
+            seventh_type = value_type_of(seventh)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+                and (
+                    fourth_type is str
+                    or fourth_type is int
+                    or fourth_type is float
+                    or fourth_type is bool
+                    or fourth is None
+                )
+                and (
+                    fifth_type is str
+                    or fifth_type is int
+                    or fifth_type is float
+                    or fifth_type is bool
+                    or fifth is None
+                )
+                and (
+                    sixth_type is str
+                    or sixth_type is int
+                    or sixth_type is float
+                    or sixth_type is bool
+                    or sixth is None
+                )
+                and (
+                    seventh_type is str
+                    or seventh_type is int
+                    or seventh_type is float
+                    or seventh_type is bool
+                    or seventh is None
+                )
+            ):
+                return (first, second, third, fourth, fifth, sixth, seventh)
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+                _copy_json_like_value(fourth),
+                _copy_json_like_value(fifth),
+                _copy_json_like_value(sixth),
+                _copy_json_like_value(seventh),
+            )
+        if value_len == 8:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            fourth = value[3]
+            fifth = value[4]
+            sixth = value[5]
+            seventh = value[6]
+            eighth = value[7]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            fourth_type = value_type_of(fourth)
+            fifth_type = value_type_of(fifth)
+            sixth_type = value_type_of(sixth)
+            seventh_type = value_type_of(seventh)
+            eighth_type = value_type_of(eighth)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+                and (
+                    fourth_type is str
+                    or fourth_type is int
+                    or fourth_type is float
+                    or fourth_type is bool
+                    or fourth is None
+                )
+                and (
+                    fifth_type is str
+                    or fifth_type is int
+                    or fifth_type is float
+                    or fifth_type is bool
+                    or fifth is None
+                )
+                and (
+                    sixth_type is str
+                    or sixth_type is int
+                    or sixth_type is float
+                    or sixth_type is bool
+                    or sixth is None
+                )
+                and (
+                    seventh_type is str
+                    or seventh_type is int
+                    or seventh_type is float
+                    or seventh_type is bool
+                    or seventh is None
+                )
+                and (
+                    eighth_type is str
+                    or eighth_type is int
+                    or eighth_type is float
+                    or eighth_type is bool
+                    or eighth is None
+                )
+            ):
+                return (first, second, third, fourth, fifth, sixth, seventh, eighth)
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+                _copy_json_like_value(fourth),
+                _copy_json_like_value(fifth),
+                _copy_json_like_value(sixth),
+                _copy_json_like_value(seventh),
+                _copy_json_like_value(eighth),
+            )
+        if value_len == 9:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            fourth = value[3]
+            fifth = value[4]
+            sixth = value[5]
+            seventh = value[6]
+            eighth = value[7]
+            ninth = value[8]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            fourth_type = value_type_of(fourth)
+            fifth_type = value_type_of(fifth)
+            sixth_type = value_type_of(sixth)
+            seventh_type = value_type_of(seventh)
+            eighth_type = value_type_of(eighth)
+            ninth_type = value_type_of(ninth)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+                and (
+                    fourth_type is str
+                    or fourth_type is int
+                    or fourth_type is float
+                    or fourth_type is bool
+                    or fourth is None
+                )
+                and (
+                    fifth_type is str
+                    or fifth_type is int
+                    or fifth_type is float
+                    or fifth_type is bool
+                    or fifth is None
+                )
+                and (
+                    sixth_type is str
+                    or sixth_type is int
+                    or sixth_type is float
+                    or sixth_type is bool
+                    or sixth is None
+                )
+                and (
+                    seventh_type is str
+                    or seventh_type is int
+                    or seventh_type is float
+                    or seventh_type is bool
+                    or seventh is None
+                )
+                and (
+                    eighth_type is str
+                    or eighth_type is int
+                    or eighth_type is float
+                    or eighth_type is bool
+                    or eighth is None
+                )
+                and (
+                    ninth_type is str
+                    or ninth_type is int
+                    or ninth_type is float
+                    or ninth_type is bool
+                    or ninth is None
+                )
+            ):
+                return (
+                    first,
+                    second,
+                    third,
+                    fourth,
+                    fifth,
+                    sixth,
+                    seventh,
+                    eighth,
+                    ninth,
+                )
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+                _copy_json_like_value(fourth),
+                _copy_json_like_value(fifth),
+                _copy_json_like_value(sixth),
+                _copy_json_like_value(seventh),
+                _copy_json_like_value(eighth),
+                _copy_json_like_value(ninth),
+            )
+        if value_len == 10:
+            first = value[0]
+            second = value[1]
+            third = value[2]
+            fourth = value[3]
+            fifth = value[4]
+            sixth = value[5]
+            seventh = value[6]
+            eighth = value[7]
+            ninth = value[8]
+            tenth = value[9]
+            first_type = value_type_of(first)
+            second_type = value_type_of(second)
+            third_type = value_type_of(third)
+            fourth_type = value_type_of(fourth)
+            fifth_type = value_type_of(fifth)
+            sixth_type = value_type_of(sixth)
+            seventh_type = value_type_of(seventh)
+            eighth_type = value_type_of(eighth)
+            ninth_type = value_type_of(ninth)
+            tenth_type = value_type_of(tenth)
+            if (
+                (
+                    first_type is str
+                    or first_type is int
+                    or first_type is float
+                    or first_type is bool
+                    or first is None
+                )
+                and (
+                    second_type is str
+                    or second_type is int
+                    or second_type is float
+                    or second_type is bool
+                    or second is None
+                )
+                and (
+                    third_type is str
+                    or third_type is int
+                    or third_type is float
+                    or third_type is bool
+                    or third is None
+                )
+                and (
+                    fourth_type is str
+                    or fourth_type is int
+                    or fourth_type is float
+                    or fourth_type is bool
+                    or fourth is None
+                )
+                and (
+                    fifth_type is str
+                    or fifth_type is int
+                    or fifth_type is float
+                    or fifth_type is bool
+                    or fifth is None
+                )
+                and (
+                    sixth_type is str
+                    or sixth_type is int
+                    or sixth_type is float
+                    or sixth_type is bool
+                    or sixth is None
+                )
+                and (
+                    seventh_type is str
+                    or seventh_type is int
+                    or seventh_type is float
+                    or seventh_type is bool
+                    or seventh is None
+                )
+                and (
+                    eighth_type is str
+                    or eighth_type is int
+                    or eighth_type is float
+                    or eighth_type is bool
+                    or eighth is None
+                )
+                and (
+                    ninth_type is str
+                    or ninth_type is int
+                    or ninth_type is float
+                    or ninth_type is bool
+                    or ninth is None
+                )
+                and (
+                    tenth_type is str
+                    or tenth_type is int
+                    or tenth_type is float
+                    or tenth_type is bool
+                    or tenth is None
+                )
+            ):
+                return (
+                    first,
+                    second,
+                    third,
+                    fourth,
+                    fifth,
+                    sixth,
+                    seventh,
+                    eighth,
+                    ninth,
+                    tenth,
+                )
+            return (
+                _copy_json_like_value(first),
+                _copy_json_like_value(second),
+                _copy_json_like_value(third),
+                _copy_json_like_value(fourth),
+                _copy_json_like_value(fifth),
+                _copy_json_like_value(sixth),
+                _copy_json_like_value(seventh),
+                _copy_json_like_value(eighth),
+                _copy_json_like_value(ninth),
+                _copy_json_like_value(tenth),
+            )
         return tuple(_copy_json_like_value(item) for item in value)
     if isinstance(value, dict):
         return {key: _copy_json_like_value(nested) for key, nested in value.items()}
@@ -1058,8 +1804,11 @@ def _receipt(
 
 def _followup_candidate_scan_receipt(
     record: LocalJobContinuationRecord,
+    *,
+    evidence_available: bool | None = None,
 ) -> dict[str, Any]:
-    evidence_available = _has_completion_evidence(record)
+    if evidence_available is None:
+        evidence_available = _has_completion_evidence(record)
     if record.followup_status in {"pending", "in_progress", "completed"}:
         return _receipt(
             job_id=record.job_id,

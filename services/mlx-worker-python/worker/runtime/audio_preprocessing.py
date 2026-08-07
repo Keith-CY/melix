@@ -36,30 +36,33 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
     mime_type = getattr(media, "mime_type", "")
     format_name = request.format or getattr(media, "format", "")
     filename = getattr(media, "filename", "")
+    audio_bytes = request.audio_bytes
+    audio_uri = request.audio_uri
     input_bytes: int | None = None
 
-    if request.audio_bytes:
-        bytes_data = bytes(request.audio_bytes)
+    if audio_bytes:
+        bytes_data = bytes(audio_bytes)
         local_path = ""
         source_kind = "inline"
         reference = "inline:audio"
-    elif request.audio_uri:
-        path = _path_from_uri(request.audio_uri)
+    elif audio_uri:
         try:
             if read_uri_bytes:
+                path = _path_from_uri(audio_uri)
+                local_path = os.fspath(path)
                 bytes_data = path.read_bytes()
             else:
+                local_path = _local_path_from_uri(audio_uri)
                 bytes_data = b""
-                input_bytes = path.stat().st_size
+                input_bytes = os.stat(local_path).st_size
         except OSError as exc:
-            raise AudioPreprocessError(f"Missing local audio input: {request.audio_uri}") from exc
-        local_path = os.fspath(path)
+            raise AudioPreprocessError(f"Missing local audio input: {audio_uri}") from exc
         source_kind = "uri"
-        reference = request.audio_uri
+        reference = audio_uri
         if not format_name:
-            format_name = os.path.splitext(local_path)[1].lstrip(".")
+            format_name = _suffix_format_from_path(local_path)
         if not filename:
-            filename = os.path.basename(local_path)
+            filename = _basename_from_path(local_path)
     else:
         raise AudioPreprocessError("No audio input provided.")
 
@@ -84,7 +87,31 @@ def prepare_audio_input(request, *, read_uri_bytes: bool = True) -> PreparedAudi
     )
 
 
+def _suffix_format_from_path(local_path: str) -> str:
+    dot_index = local_path.rfind(".")
+    if dot_index < 0 or dot_index == len(local_path) - 1:
+        return ""
+    slash_index = local_path.rfind(os.sep)
+    if dot_index <= slash_index + 1:
+        return ""
+    return local_path[dot_index + 1 :]
+
+
+def _basename_from_path(local_path: str) -> str:
+    slash_index = local_path.rfind(os.sep)
+    if slash_index < 0:
+        return local_path
+    return local_path[slash_index + 1 :]
+
+
 def _path_from_uri(uri: str) -> Path:
+    return Path(_local_path_from_uri(uri))
+
+
+def _local_path_from_uri(uri: str) -> str:
+    if uri.startswith("file:///"):
+        path_part = uri[7:]
+        return path_part if "%" not in path_part else unquote(path_part)
     if uri.startswith("file://"):
         path_part = uri[7:]
         if path_part.startswith("localhost/"):
@@ -92,11 +119,11 @@ def _path_from_uri(uri: str) -> Path:
         elif not path_part.startswith("/"):
             parsed = urlparse(uri)
             path_part = parsed.path
-        return Path(path_part if "%" not in path_part else unquote(path_part))
+        return path_part if "%" not in path_part else unquote(path_part)
     if "://" not in uri:
-        return Path(uri)
+        return uri
     parsed = urlparse(uri)
     if parsed.scheme != "file":
         raise AudioPreprocessError(f"Unsupported audio URI scheme: {parsed.scheme}")
     parsed_path = parsed.path
-    return Path(parsed_path if "%" not in parsed_path else unquote(parsed_path))
+    return parsed_path if "%" not in parsed_path else unquote(parsed_path)

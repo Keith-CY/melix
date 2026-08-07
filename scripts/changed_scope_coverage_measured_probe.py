@@ -29,9 +29,11 @@ def run_probe(
 ) -> dict[str, float]:
     module = _load_changed_scope_coverage(repo_root)
     elapsed_samples: list[float] = []
+    sparse_elapsed_samples: list[float] = []
     dense_elapsed_samples: list[float] = []
     allowlist_elapsed_samples: list[float] = []
     read_samples: list[float] = []
+    sparse_read_samples: list[float] = []
     dense_read_samples: list[float] = []
     allowlist_value = json.dumps("pkg/module_0.py")
 
@@ -56,6 +58,11 @@ def run_probe(
             }
         }
         changed_lines = {measured_lines_per_path + 1, measured_lines_per_path + 2}
+        sparse_target_count = min(5, measured_lines_per_path)
+        sparse_changed_lines = set(range(1, sparse_target_count + 1))
+        expected_sparse_measurable = list(range(1, sparse_target_count + 1))
+        expected_sparse_covered = list(range(1, sparse_target_count + 1, 2))
+        expected_sparse_missed = list(range(2, sparse_target_count + 1, 2))
         dense_changed_lines = set(range(1, measured_lines_per_path + 1))
 
         original_read_text = module.Path.read_text
@@ -89,6 +96,24 @@ def run_probe(
                         root,
                         coverage_payload,
                         rel_path,
+                        sparse_changed_lines,
+                    )
+                    if (
+                        measurable != expected_sparse_measurable
+                        or covered != expected_sparse_covered
+                        or missed != expected_sparse_missed
+                    ):
+                        raise RuntimeError("sparse changed set should stream and partition target lines")
+                sparse_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
+                sparse_read_samples.append(float(read_calls))
+
+                read_calls = 0
+                start = time.perf_counter()
+                for rel_path in rel_paths:
+                    measurable, covered, missed = module._measurable_changed_lines(
+                        root,
+                        coverage_payload,
+                        rel_path,
                         dense_changed_lines,
                     )
                     if not (measurable or covered or missed):
@@ -113,10 +138,12 @@ def run_probe(
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "sparse_elapsed_ms_mean": statistics.fmean(sparse_elapsed_samples),
         "dense_elapsed_ms_mean": statistics.fmean(dense_elapsed_samples),
         "allowlist_parse_elapsed_ms_mean": statistics.fmean(allowlist_elapsed_samples),
         "allowlist_parse_count": float(allowlist_parse_count),
         "source_read_calls_mean": statistics.fmean(read_samples),
+        "sparse_source_read_calls_mean": statistics.fmean(sparse_read_samples),
         "dense_source_read_calls_mean": statistics.fmean(dense_read_samples),
         "path_count": float(path_count),
         "measured_lines_per_path": float(measured_lines_per_path),

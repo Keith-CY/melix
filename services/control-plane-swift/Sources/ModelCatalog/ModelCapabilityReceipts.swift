@@ -26,8 +26,57 @@ public struct ServingProfileAdmissionReceipt: Sendable, Equatable {
     }
 }
 
+public struct ResolvedAccelerationConfig: Sendable, Equatable {
+    public static let schemaVersion = "melix.resolved_acceleration_config.v1"
+
+    public let method: String
+    public let requestedMethod: String
+    public let sidecarModel: String
+    public let numSpeculativeTokens: UInt32
+    public let profile: String
+    public let conflictingFlags: [String]
+    public let controllerScope: String
+    public let disabledReason: String
+}
+
+public struct ServingMemoryAdmissionReceipt: Sendable, Equatable {
+    public static let schemaVersion = "melix.serving_memory_admission.v1"
+
+    public let requestedContext: UInt32
+    public let effectiveContext: UInt32
+    public let requestedBatch: UInt32
+    public let effectiveBatch: UInt32
+    public let memoryHeadroomBytes: UInt64
+    public let estimatedActiveBytes: UInt64
+    public let memoryTelemetrySource: String
+    public let admissionReason: String
+    public let fitsMemory: Bool
+}
+
+public struct FeatureCompositionGuardrailReceipt: Sendable, Equatable {
+    public static let schemaVersion = "melix.feature_composition_guardrail.v1"
+
+    public let composition: String
+    public let decision: String
+    public let requestedNumDraftTokens: UInt32
+    public let effectiveNumDraftTokens: UInt32
+    public let resourceFanoutEstimate: Double
+    public let requestedCacheBudgetBytes: UInt64
+    public let effectiveCacheBudgetBytes: UInt64
+    public let guardrailReason: String
+}
+
+public struct FeatureCompositionGuardrailResolution: Sendable, Equatable {
+    public let receipt: FeatureCompositionGuardrailReceipt
+    public let effectiveAcceleration: Melix_Worker_V1_AccelerationPolicy
+}
+
 public enum ModelCapabilityReceipts {
     public static let schemaVersion = "melix.model_capability_receipt.v1"
+    private static let defaultServingContextCap: UInt32 = 8_192
+    private static let minimumServingContext: UInt32 = 2_048
+    private static let defaultServingMemoryHeadroomBytes: UInt64 = 2_147_483_648
+    private static let defaultServingBytesPerToken: UInt64 = 262_144
 
     public static func receipt(
         for model: Melix_Controlplane_V1_ModelSummary
@@ -260,7 +309,8 @@ public enum ModelCapabilityReceipts {
 
     public static func accelerationAuditMetadata(
         _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
-        profileReceipt: ServingProfileAdmissionReceipt? = nil
+        profileReceipt: ServingProfileAdmissionReceipt? = nil,
+        model: Melix_Controlplane_V1_ModelSummary? = nil
     ) -> [String: String] {
         var metadata = [
             "melix.capability.receipt_schema": schemaVersion,
@@ -281,7 +331,41 @@ public enum ModelCapabilityReceipts {
         if let profileReceipt {
             metadata.merge(profileAdmissionAuditMetadata(profileReceipt), uniquingKeysWith: { _, newValue in newValue })
         }
+        if let model {
+            metadata.merge(
+                servingCapabilityAuditMetadata(
+                    receipt,
+                    profileReceipt: profileReceipt,
+                    model: model
+                ),
+                uniquingKeysWith: { _, newValue in newValue }
+            )
+        }
         return metadata
+    }
+
+    public static func servingCapabilityAuditMetadata(
+        _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        profileReceipt: ServingProfileAdmissionReceipt?,
+        model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String: String] {
+        let capabilities = servingCapabilities(for: model)
+        let inputModalities = servingInputModalities(for: model)
+        let outputModalities = servingOutputModalities(for: capabilities)
+        let unsupportedReason = unsupportedReasonIdentifier(receipt.unsupportedReason)
+        return [
+            "melix.serving.capability.schema_version": "melix.serving_capability_receipt.v1",
+            "melix.serving.capability.capabilities": capabilities.joined(separator: ","),
+            "melix.serving.capability.input_modalities": inputModalities.joined(separator: ","),
+            "melix.serving.capability.output_modalities": outputModalities.joined(separator: ","),
+            "melix.serving.capability.acceleration_profile": servingCapabilityAccelerationProfile(profileReceipt),
+            "melix.serving.capability.requested_mode": accelerationModeIdentifier(receipt.requestedAccelerationMode),
+            "melix.serving.capability.resolved_mode": accelerationModeIdentifier(receipt.resolvedAccelerationMode),
+            "melix.serving.capability.optional_dependency_source": "not_required",
+            "melix.serving.capability.unsupported_reason": unsupportedReason,
+            "melix.serving.capability.ignored_flags": servingCapabilityIgnoredFlags(receipt, profileReceipt: profileReceipt).joined(separator: ","),
+            "melix.serving.capability.fallback_policy": servingCapabilityFallbackPolicy(receipt, profileReceipt: profileReceipt),
+        ]
     }
 
     public static func profileAdmissionAuditMetadata(
@@ -297,6 +381,527 @@ public enum ModelCapabilityReceipts {
             "melix.acceleration.profile.fallback_reason": receipt.fallbackReason,
             "melix.acceleration.profile.recovery_hint": receipt.recoveryHint,
         ]
+    }
+
+    public static func resolvedAccelerationConfig(
+        for acceleration: Melix_Worker_V1_AccelerationPolicy,
+        executionMetadata: [String: String],
+        validation: AccelerationReceiptValidation
+    ) -> ResolvedAccelerationConfig {
+        let disabledReason = resolvedAccelerationDisabledReason(
+            validation: validation,
+            executionMetadata: executionMetadata
+        )
+        let conflictingFlags = resolvedAccelerationConflictingFlags(
+            receipt: validation.receipt,
+            profileReceipt: validation.profileReceipt,
+            executionMetadata: executionMetadata
+        )
+        let requestedMethod = resolvedAccelerationRequestedMethod(
+            receipt: validation.receipt,
+            conflictingFlags: conflictingFlags
+        )
+        let disabled = disabledReason != "none"
+        let method = disabled
+            ? "baseline"
+            : accelerationModeIdentifier(validation.receipt.resolvedAccelerationMode)
+        let sidecarModel = method == "speculative_decode"
+            ? acceleration.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        let numSpeculativeTokens = method == "speculative_decode"
+            ? acceleration.numDraftTokens
+            : 0
+        return ResolvedAccelerationConfig(
+            method: method,
+            requestedMethod: requestedMethod,
+            sidecarModel: sidecarModel,
+            numSpeculativeTokens: numSpeculativeTokens,
+            profile: servingCapabilityAccelerationProfile(validation.profileReceipt),
+            conflictingFlags: conflictingFlags,
+            controllerScope: method == "speculative_decode" ? "request" : "none",
+            disabledReason: disabledReason
+        )
+    }
+
+    public static func resolvedAccelerationConfigAuditMetadata(
+        _ config: ResolvedAccelerationConfig
+    ) -> [String: String] {
+        [
+            "melix.serving.acceleration_config.schema_version": ResolvedAccelerationConfig.schemaVersion,
+            "melix.serving.acceleration_config.method": config.method,
+            "melix.serving.acceleration_config.requested_method": config.requestedMethod,
+            "melix.serving.acceleration_config.sidecar_model": config.sidecarModel,
+            "melix.serving.acceleration_config.num_speculative_tokens": String(config.numSpeculativeTokens),
+            "melix.serving.acceleration_config.profile": config.profile,
+            "melix.serving.acceleration_config.conflicting_flags": config.conflictingFlags.joined(separator: ","),
+            "melix.serving.acceleration_config.controller_scope": config.controllerScope,
+            "melix.serving.acceleration_config.disabled_reason": config.disabledReason,
+        ]
+    }
+
+    public static func featureCompositionGuardrailResolution(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        executionMetadata: [String: String],
+        validation: AccelerationReceiptValidation
+    ) -> FeatureCompositionGuardrailResolution {
+        var effectiveAcceleration = acceleration
+        let requestedNumDraftTokens = acceleration.mode == .speculativeDecode
+            ? acceleration.numDraftTokens
+            : 0
+        var effectiveNumDraftTokens = requestedNumDraftTokens
+        let requestedCacheBudgetBytes = model.settings.cacheMemoryBudgetBytes
+        var effectiveCacheBudgetBytes = requestedCacheBudgetBytes
+
+        guard validation.receipt.resolvedAccelerationMode == .speculativeDecode,
+              featureCompositionGuardrailIsActive(model: model, executionMetadata: executionMetadata)
+        else {
+            let receipt = FeatureCompositionGuardrailReceipt(
+                composition: "none",
+                decision: "accept",
+                requestedNumDraftTokens: requestedNumDraftTokens,
+                effectiveNumDraftTokens: effectiveNumDraftTokens,
+                resourceFanoutEstimate: Double(1 + effectiveNumDraftTokens),
+                requestedCacheBudgetBytes: requestedCacheBudgetBytes,
+                effectiveCacheBudgetBytes: effectiveCacheBudgetBytes,
+                guardrailReason: "none"
+            )
+            return FeatureCompositionGuardrailResolution(
+                receipt: receipt,
+                effectiveAcceleration: effectiveAcceleration
+            )
+        }
+
+        var decision = "accept"
+        var guardrailReason = "none"
+        var didCapDraftTokens = false
+        if requestedNumDraftTokens > 1 {
+            effectiveNumDraftTokens = 1
+            effectiveAcceleration.numDraftTokens = 1
+            decision = "auto_cap_draft_tokens"
+            guardrailReason = "disk_streaming_speculative_fanout_cap"
+            didCapDraftTokens = true
+        }
+
+        let draftWeightBytes = parsedFeatureGuardrailUInt64(
+            key: "melix.acceleration.feature_guardrail.draft_weight_bytes",
+            model: model,
+            executionMetadata: executionMetadata
+        ) ?? 0
+        let memoryThresholdBytes = parsedFeatureGuardrailUInt64(
+            key: "melix.acceleration.feature_guardrail.memory_threshold_bytes",
+            model: model,
+            executionMetadata: executionMetadata
+        ) ?? 0
+        let minCacheBudgetBytes = parsedFeatureGuardrailUInt64(
+            key: "melix.acceleration.feature_guardrail.min_cache_budget_bytes",
+            model: model,
+            executionMetadata: executionMetadata
+        ) ?? 0
+        let minSafeCacheBudgetBytes = parsedFeatureGuardrailUInt64(
+            key: "melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes",
+            model: model,
+            executionMetadata: executionMetadata
+        ) ?? 0
+        let estimatedCompositionBytes = saturatedAdd(servingModelResidentBytes(model), draftWeightBytes)
+        if memoryThresholdBytes > 0,
+           requestedCacheBudgetBytes > 0,
+           estimatedCompositionBytes > memoryThresholdBytes {
+            effectiveCacheBudgetBytes = max(requestedCacheBudgetBytes / 2, minCacheBudgetBytes)
+            if didCapDraftTokens {
+                decision = "auto_cap_draft_tokens_and_tighten_cache_budget"
+                guardrailReason = "disk_streaming_speculative_fanout_cap_and_main_draft_footprint_exceeds_threshold"
+            } else {
+                decision = "tighten_cache_budget"
+                guardrailReason = "main_draft_footprint_exceeds_threshold"
+            }
+        }
+
+        if minSafeCacheBudgetBytes > 0,
+           effectiveCacheBudgetBytes < minSafeCacheBudgetBytes {
+            decision = "refuse_unsafe_composition"
+            guardrailReason = "no_safe_effective_cache_budget"
+            effectiveNumDraftTokens = 0
+            effectiveAcceleration.mode = .baseline
+            effectiveAcceleration.draftModelID = ""
+            effectiveAcceleration.numDraftTokens = 0
+        }
+
+        effectiveAcceleration.ext["melix.acceleration.feature_guardrail.effective_cache_budget_bytes"] =
+            String(effectiveCacheBudgetBytes)
+        let receipt = FeatureCompositionGuardrailReceipt(
+            composition: "ssd_expert_streaming_x_speculative_decode",
+            decision: decision,
+            requestedNumDraftTokens: requestedNumDraftTokens,
+            effectiveNumDraftTokens: effectiveNumDraftTokens,
+            resourceFanoutEstimate: Double(1 + effectiveNumDraftTokens),
+            requestedCacheBudgetBytes: requestedCacheBudgetBytes,
+            effectiveCacheBudgetBytes: effectiveCacheBudgetBytes,
+            guardrailReason: guardrailReason
+        )
+        return FeatureCompositionGuardrailResolution(
+            receipt: receipt,
+            effectiveAcceleration: effectiveAcceleration
+        )
+    }
+
+    public static func featureCompositionGuardrailAuditMetadata(
+        _ receipt: FeatureCompositionGuardrailReceipt
+    ) -> [String: String] {
+        [
+            "melix.acceleration.feature_guardrail.schema_version": FeatureCompositionGuardrailReceipt.schemaVersion,
+            "melix.acceleration.feature_guardrail.composition": receipt.composition,
+            "melix.acceleration.feature_guardrail.decision": receipt.decision,
+            "melix.acceleration.feature_guardrail.requested_num_draft_tokens": String(receipt.requestedNumDraftTokens),
+            "melix.acceleration.feature_guardrail.effective_num_draft_tokens": String(receipt.effectiveNumDraftTokens),
+            "melix.acceleration.feature_guardrail.resource_fanout_estimate": formattedGuardrailDouble(
+                receipt.resourceFanoutEstimate
+            ),
+            "melix.acceleration.feature_guardrail.requested_cache_budget_bytes": String(receipt.requestedCacheBudgetBytes),
+            "melix.acceleration.feature_guardrail.effective_cache_budget_bytes": String(receipt.effectiveCacheBudgetBytes),
+            "melix.acceleration.feature_guardrail.guardrail_reason": receipt.guardrailReason,
+        ]
+    }
+
+    public static func servingMemoryAdmissionReceipt(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        requestedContext explicitRequestedContext: UInt32? = nil,
+        requestedBatch: UInt32,
+        detectedMemoryBytes: UInt64? = nil
+    ) -> ServingMemoryAdmissionReceipt {
+        let requestedBatch = max(requestedBatch, 1)
+        let modelContext = model.maxContext > 0 ? model.maxContext : defaultServingContextCap
+        let explicitContext = explicitRequestedContext.flatMap { $0 > 0 ? $0 : nil }
+        let requestedContext = explicitContext ?? modelContext
+        let cappedContext = min(requestedContext, defaultServingContextCap)
+        var effectiveContext = explicitContext ?? cappedContext
+        var effectiveBatch = requestedBatch
+        let memoryTelemetrySource = detectedMemoryBytes == nil ? "unknown" : "detected"
+        let memoryHeadroomBytes = detectedMemoryBytes == nil
+            ? 0
+            : defaultServingMemoryHeadroomBytes
+        let modelResidentBytes = servingModelResidentBytes(model)
+        let bytesPerToken = servingBytesPerToken(model)
+        var estimatedActiveBytes = estimatedServingActiveBytes(
+            modelResidentBytes: modelResidentBytes,
+            context: effectiveContext,
+            batch: effectiveBatch,
+            bytesPerToken: bytesPerToken
+        )
+        var fitsMemory = true
+        var admissionReason: String
+        if explicitContext != nil {
+            admissionReason = "explicit_override_preserved"
+        } else if requestedContext > defaultServingContextCap {
+            admissionReason = "default_context_cap"
+        } else {
+            admissionReason = "unknown_memory_safe_default"
+        }
+
+        if let detectedMemoryBytes {
+            let usableMemoryBytes = detectedMemoryBytes > memoryHeadroomBytes
+                ? detectedMemoryBytes - memoryHeadroomBytes
+                : 0
+            fitsMemory = estimatedActiveBytes <= usableMemoryBytes
+            if fitsMemory, explicitContext == nil, requestedContext <= defaultServingContextCap {
+                admissionReason = "detected_memory_fits"
+            } else if !fitsMemory, explicitContext == nil {
+                var selected: (context: UInt32, batch: UInt32, estimate: UInt64)?
+                for candidate in servingMemoryFitCandidates(
+                    effectiveContext: effectiveContext,
+                    requestedBatch: requestedBatch
+                ) {
+                    let estimate = estimatedServingActiveBytes(
+                        modelResidentBytes: modelResidentBytes,
+                        context: candidate.context,
+                        batch: candidate.batch,
+                        bytesPerToken: bytesPerToken
+                    )
+                    if estimate <= usableMemoryBytes {
+                        selected = (candidate.context, candidate.batch, estimate)
+                        break
+                    }
+                }
+                if let selected {
+                    effectiveContext = selected.context
+                    effectiveBatch = selected.batch
+                    estimatedActiveBytes = selected.estimate
+                    fitsMemory = true
+                    admissionReason = "memory_step_down"
+                } else {
+                    let fallbackContext = min(effectiveContext, minimumServingContext)
+                    effectiveContext = fallbackContext
+                    effectiveBatch = 1
+                    estimatedActiveBytes = estimatedServingActiveBytes(
+                        modelResidentBytes: modelResidentBytes,
+                        context: fallbackContext,
+                        batch: 1,
+                        bytesPerToken: bytesPerToken
+                    )
+                    fitsMemory = false
+                    admissionReason = "insufficient_memory"
+                }
+            } else if !fitsMemory {
+                admissionReason = "explicit_override_memory_warning"
+            }
+        }
+
+        return ServingMemoryAdmissionReceipt(
+            requestedContext: requestedContext,
+            effectiveContext: effectiveContext,
+            requestedBatch: requestedBatch,
+            effectiveBatch: effectiveBatch,
+            memoryHeadroomBytes: memoryHeadroomBytes,
+            estimatedActiveBytes: estimatedActiveBytes,
+            memoryTelemetrySource: memoryTelemetrySource,
+            admissionReason: admissionReason,
+            fitsMemory: fitsMemory
+        )
+    }
+
+    public static func servingMemoryAdmissionAuditMetadata(
+        _ receipt: ServingMemoryAdmissionReceipt
+    ) -> [String: String] {
+        [
+            "melix.serving.memory_admission.schema_version": ServingMemoryAdmissionReceipt.schemaVersion,
+            "melix.serving.memory_admission.requested_context": String(receipt.requestedContext),
+            "melix.serving.memory_admission.effective_context": String(receipt.effectiveContext),
+            "melix.serving.memory_admission.requested_batch": String(receipt.requestedBatch),
+            "melix.serving.memory_admission.effective_batch": String(receipt.effectiveBatch),
+            "melix.serving.memory_admission.memory_headroom_bytes": String(receipt.memoryHeadroomBytes),
+            "melix.serving.memory_admission.estimated_active_bytes": String(receipt.estimatedActiveBytes),
+            "melix.serving.memory_admission.memory_telemetry_source": receipt.memoryTelemetrySource,
+            "melix.serving.memory_admission.admission_reason": receipt.admissionReason,
+            "melix.serving.memory_admission.fits_memory": receipt.fitsMemory ? "true" : "false",
+        ]
+    }
+
+    private static func resolvedAccelerationDisabledReason(
+        validation: AccelerationReceiptValidation,
+        executionMetadata: [String: String]
+    ) -> String {
+        if let disabledReason = executionMetadata["melix.gateway.speculative.disabled_reason"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty,
+            disabledReason != "none" {
+            return disabledReason
+        }
+        guard !validation.ok else {
+            return "none"
+        }
+        if validation.receipt.state != .capabilitySupported {
+            let reason = unsupportedReasonIdentifier(validation.unsupportedReason)
+            return reason == "none" ? "unsupported_mode" : reason
+        }
+        return validation.profileReceipt.fallbackReason.nilIfEmpty
+            ?? validation.profileReceipt.profileAdmissionStatus.nilIfEmpty
+            ?? "experimental_unverified"
+    }
+
+    private static func resolvedAccelerationConflictingFlags(
+        receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        profileReceipt: ServingProfileAdmissionReceipt,
+        executionMetadata: [String: String]
+    ) -> [String] {
+        var flags = servingCapabilityIgnoredFlags(receipt, profileReceipt: profileReceipt)
+        for flag in parsedList(executionMetadata["melix.gateway.suppressed_overrides"]) {
+            appendUnique(flag, to: &flags)
+        }
+        return flags
+    }
+
+    private static func resolvedAccelerationRequestedMethod(
+        receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        conflictingFlags: [String]
+    ) -> String {
+        if conflictingFlags.contains("speculative_decode") {
+            return "speculative_decode"
+        }
+        return accelerationModeIdentifier(receipt.requestedAccelerationMode)
+    }
+
+    private static func featureCompositionGuardrailIsActive(
+        model: Melix_Controlplane_V1_ModelSummary,
+        executionMetadata: [String: String]
+    ) -> Bool {
+        if model.settings.diskStreamingMode == .diskStreamingPreferDisk
+            || model.settings.diskStreamingMode == .diskStreamingRequireDisk {
+            return true
+        }
+        return parsedBool(model.settings.ext["melix.acceleration.expert_streaming.enabled"])
+            || parsedBool(executionMetadata["melix.acceleration.expert_streaming.enabled"])
+    }
+
+    private static func parsedFeatureGuardrailUInt64(
+        key: String,
+        model: Melix_Controlplane_V1_ModelSummary,
+        executionMetadata: [String: String]
+    ) -> UInt64? {
+        parsedPositiveUInt64(executionMetadata[key])
+            ?? parsedPositiveUInt64(model.settings.ext[key])
+    }
+
+    private static func parsedBool(_ rawValue: String?) -> Bool {
+        switch rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func formattedGuardrailDouble(_ value: Double) -> String {
+        if value.rounded(.towardZero) == value {
+            return String(Int64(value))
+        }
+        return String(value)
+    }
+
+    private static func appendUnique(_ value: String, to values: inout [String]) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !values.contains(trimmed) else {
+            return
+        }
+        values.append(trimmed)
+    }
+
+    private static func servingMemoryFitCandidates(
+        effectiveContext: UInt32,
+        requestedBatch: UInt32
+    ) -> [(context: UInt32, batch: UInt32)] {
+        var candidates: [(context: UInt32, batch: UInt32)] = []
+        appendServingMemoryCandidate(
+            context: effectiveContext,
+            batch: 1,
+            maximumContext: effectiveContext,
+            to: &candidates
+        )
+        for context in [defaultServingContextCap / 2, minimumServingContext] {
+            appendServingMemoryCandidate(
+                context: context,
+                batch: 1,
+                maximumContext: effectiveContext,
+                to: &candidates
+            )
+        }
+        if requestedBatch == 1 {
+            return candidates.filter { $0.context < effectiveContext }
+        }
+        return candidates
+    }
+
+    private static func appendServingMemoryCandidate(
+        context: UInt32,
+        batch: UInt32,
+        maximumContext: UInt32,
+        to candidates: inout [(context: UInt32, batch: UInt32)]
+    ) {
+        let context = min(max(context, minimumServingContext), maximumContext)
+        let batch = max(batch, 1)
+        guard !candidates.contains(where: { $0.context == context && $0.batch == batch }) else {
+            return
+        }
+        candidates.append((context, batch))
+    }
+
+    private static func servingModelResidentBytes(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> UInt64 {
+        parsedPositiveUInt64(model.settings.ext["melix.serving.memory.estimated_model_bytes"])
+            ?? model.settings.memoryBudgetBytes
+    }
+
+    private static func servingBytesPerToken(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> UInt64 {
+        parsedPositiveUInt64(model.settings.ext["melix.serving.memory.bytes_per_token"])
+            ?? defaultServingBytesPerToken
+    }
+
+    private static func estimatedServingActiveBytes(
+        modelResidentBytes: UInt64,
+        context: UInt32,
+        batch: UInt32,
+        bytesPerToken: UInt64
+    ) -> UInt64 {
+        saturatedAdd(
+            modelResidentBytes,
+            saturatedMultiply(UInt64(context), UInt64(batch), bytesPerToken)
+        )
+    }
+
+    private static func parsedPositiveUInt64(_ rawValue: String?) -> UInt64? {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty,
+              let value = UInt64(rawValue),
+              value > 0
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private static func saturatedMultiply(_ lhs: UInt64, _ rhs: UInt64, _ extra: UInt64) -> UInt64 {
+        let first = lhs.multipliedReportingOverflow(by: rhs)
+        guard !first.overflow else {
+            return UInt64.max
+        }
+        let second = first.partialValue.multipliedReportingOverflow(by: extra)
+        return second.overflow ? UInt64.max : second.partialValue
+    }
+
+    private static func saturatedAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let result = lhs.addingReportingOverflow(rhs)
+        return result.overflow ? UInt64.max : result.partialValue
+    }
+
+    private static func servingCapabilityAccelerationProfile(
+        _ profileReceipt: ServingProfileAdmissionReceipt?
+    ) -> String {
+        guard let profileReceipt else {
+            return ServingAccelerationProfiles.defaultProfileID
+        }
+        if profileReceipt.isAdmitted {
+            return profileReceipt.effectiveProfile
+        }
+        return profileReceipt.requestedProfile
+    }
+
+    private static func servingCapabilityFallbackPolicy(
+        _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        profileReceipt: ServingProfileAdmissionReceipt?
+    ) -> String {
+        if receipt.state != .capabilitySupported {
+            return "fail_closed"
+        }
+        if let profileReceipt, !profileReceipt.isAdmitted {
+            return "fail_closed"
+        }
+        return "observable_fallback"
+    }
+
+    private static func servingCapabilityIgnoredFlags(
+        _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        profileReceipt: ServingProfileAdmissionReceipt?
+    ) -> [String] {
+        var flags: [String] = []
+        switch receipt.unsupportedReason {
+        case .unsupportedReasonDraftModelNotAllowed, .unsupportedReasonMissingDraftModel:
+            flags.append("draft_model_id")
+        case .unsupportedReasonUnsupportedMode,
+             .unsupportedReasonTargetDisabled,
+             .unsupportedReasonDrafterDisabled,
+             .unsupportedReasonRuntimeUnavailable:
+            flags.append("acceleration_mode")
+        default:
+            break
+        }
+        if receipt.state == .capabilitySupported,
+           let profileReceipt,
+           !profileReceipt.isAdmitted {
+            flags.append("acceleration_profile")
+        }
+        return flags
     }
 
     public static func unsupportedReasonIdentifier(
@@ -477,6 +1082,112 @@ public enum ModelCapabilityReceipts {
         receipt.recoveryHint = supported ? "" : "Choose a model whose capability receipt lists \(capability) as supported."
         receipt.metadata = metadata
         return receipt
+    }
+
+    private static func servingCapabilities(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String] {
+        let supportedTasks = model.supportedTasks.map(normalizedTaskIdentifier).filter { !$0.isEmpty }
+        let capabilityClass = ModelCatalogPresentation.capabilityIdentifier(for: model)
+        var capabilities: [String] = []
+        if supportsTask(supportedTasks, matching: ["generate", "completion", "generate_text"])
+            || capabilityClass == "text"
+            || capabilityClass == "vlm" {
+            capabilities.append("generate_text")
+        }
+        if supportsTask(supportedTasks, matching: ["vlm", "generate_multimodal"])
+            || capabilityClass == "vlm" {
+            capabilities.append("generate_multimodal")
+        }
+        if supportsTask(supportedTasks, matching: ["embed", "embedding", "embed_text"]) {
+            capabilities.append("embed_text")
+        }
+        if supportsTask(supportedTasks, matching: ["rerank", "reranking", "rerank_text"]) {
+            capabilities.append("rerank_text")
+        }
+        if supportsTask(supportedTasks, matching: ["transcribe", "transcription", "transcribe_audio"]) {
+            capabilities.append("transcribe_audio")
+        }
+        if supportsTask(supportedTasks, matching: ["speak", "speech", "speak_text"]) {
+            capabilities.append("speak_text")
+        }
+        if supportsTask(supportedTasks, matching: ["image_generate", "image_generation", "generate_image"]) {
+            capabilities.append("image_generate")
+        }
+        if supportsTask(supportedTasks, matching: ["image_edit", "edit_image"]) {
+            capabilities.append("image_edit")
+        }
+        return capabilities
+    }
+
+    private static func supportsTask(_ taskIdentifiers: [String], matching aliases: [String]) -> Bool {
+        let aliasIdentifiers = aliases.map(normalizedTaskIdentifier)
+        return taskIdentifiers.contains { taskIdentifier in
+            aliasIdentifiers.contains { aliasIdentifier in
+                taskIdentifier == aliasIdentifier
+                    || (allowsQualifiedTaskSuffix(aliasIdentifier) && taskIdentifier.hasSuffix("_\(aliasIdentifier)"))
+            }
+        }
+    }
+
+    private static func allowsQualifiedTaskSuffix(_ aliasIdentifier: String) -> Bool {
+        aliasIdentifier.contains("_")
+            || ["embedding", "reranking", "transcription", "speech"].contains(aliasIdentifier)
+    }
+
+    private static func normalizedTaskIdentifier(_ value: String?) -> String {
+        var result = ""
+        var lastWasSeparator = false
+        for scalar in normalized(value).unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar) {
+                result.append(String(scalar))
+                lastWasSeparator = false
+            } else if !lastWasSeparator {
+                result.append("_")
+                lastWasSeparator = true
+            }
+        }
+        return result.split(separator: "_").joined(separator: "_")
+    }
+
+    private static func servingInputModalities(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String] {
+        canonicalServingList(model.supportedModalities)
+    }
+
+    private static func servingOutputModalities(
+        for capabilities: [String]
+    ) -> [String] {
+        var outputModalities: [String] = []
+        if capabilities.contains("generate_text")
+            || capabilities.contains("generate_multimodal")
+            || capabilities.contains("embed_text")
+            || capabilities.contains("rerank_text")
+            || capabilities.contains("transcribe_audio") {
+            outputModalities.append("text")
+        }
+        if capabilities.contains("speak_text") {
+            outputModalities.append("audio")
+        }
+        if capabilities.contains("image_generate")
+            || capabilities.contains("image_edit") {
+            outputModalities.append("image")
+        }
+        return outputModalities
+    }
+
+    private static func canonicalServingList(_ values: [String]) -> [String] {
+        let valueSet = Set(values.map(normalized).filter { !$0.isEmpty })
+        let preferredOrder = [
+            "text",
+            "image",
+            "video",
+            "audio",
+        ]
+        var result = preferredOrder.filter(valueSet.contains)
+        result.append(contentsOf: valueSet.subtracting(preferredOrder).sorted())
+        return result
     }
 
     private static func supportedAccelerationModes(

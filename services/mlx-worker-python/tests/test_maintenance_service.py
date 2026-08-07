@@ -2351,6 +2351,9 @@ def test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack(
     nested_root = source_root / "nested"
     nested_root.mkdir()
     (nested_root / "config.json").write_text("{}", encoding="utf-8")
+    shard_root = nested_root / "shard"
+    shard_root.mkdir()
+    (shard_root / "part-0001.safetensors").write_text("weights", encoding="utf-8")
 
     def fail_os_walk(*args, **kwargs):
         raise AssertionError("published file collection should avoid os.walk")  # pragma: no cover
@@ -2359,6 +2362,7 @@ def test_upload_receipt_pipeline_collect_published_file_list_uses_scandir_stack(
 
     assert UploadReceiptPipeline._collect_published_file_list(source_root) == [
         "nested/config.json",
+        "nested/shard/part-0001.safetensors",
         "weights.bin",
     ]
 
@@ -4819,7 +4823,7 @@ def test_get_model_info_returns_known_dev_model_metadata(tmp_path: Path) -> None
     assert embed.supported_modalities == ["text"]
     assert embed.supported_tasks == ["embed"]
     assert embed.supported_parsers == ["text"]
-    assert embed.backend_id == "bert-v1"
+    assert embed.backend_id == "deterministic-fixture-v1"
     assert embed.family_id == "bert"
     assert embed.model_path == "models/melix-dev-embed"
     assert embed.model_revision == "dev"
@@ -4889,6 +4893,24 @@ def test_split_capability_values_returns_isolated_cached_lists() -> None:
         "image",
         "qwen",
     ]
+
+    single = maintenance_core_module._split_capability_values(" qwen ")
+    single.append("mutated")
+
+    assert maintenance_core_module._split_capability_values(" qwen ") == ["qwen"]
+
+
+def test_split_capability_values_bounds_single_value_cache() -> None:
+    cache = maintenance_core_module._CAPABILITY_SINGLE_VALUE_CACHE
+    cache.clear()
+    try:
+        for index in range(maintenance_core_module._CAPABILITY_SINGLE_VALUE_CACHE_MAX_SIZE):
+            cache[f"raw-{index}"] = f"raw-{index}"
+
+        assert maintenance_core_module._split_capability_values(" fresh ") == ["fresh"]
+        assert cache == {" fresh ": "fresh"}
+    finally:
+        cache.clear()
 
 
 def test_get_model_info_appends_tool_parser_when_capability_parser_metadata_is_absent(
@@ -6964,6 +6986,18 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     MaintenanceCore._benchmark_prompt_token_count.cache_clear()
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
     assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
+    shaped_single_token_prompt = core._shape_benchmark_prompt(
+        "one two three four",
+        context_length=1,
+    )
+    assert shaped_single_token_prompt == "one"
+    assert getattr(shaped_single_token_prompt, "tokens") == ("one",)
+    assert getattr(shaped_single_token_prompt, "token_count") == 1
+    assert core._shape_benchmark_prompt("one two\tthree", context_length=1) == "one"
+    assert core._shape_benchmark_prompt("one\ttwo three", context_length=1) == "one"
+    assert core._shape_benchmark_prompt("one\u2003two three", context_length=1) == "one"
+    assert core._shape_benchmark_prompt("   ", context_length=1) == "benchmark"
+    assert core._shape_benchmark_prompt("solo", context_length=1) == "solo"
     assert core._shape_benchmark_prompt("one two three", context_length=8) == (
         "one two three one two three one two"
     )
@@ -6992,6 +7026,15 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
         def split(self, *args: object, **kwargs: object) -> list[str]:
             self.split_calls += 1
             return super().split(*args, **kwargs)
+
+    single_context_counted_prompt = SplitCountingPrompt("zero one two three")
+    shaped_counted_single_context = core._shape_benchmark_prompt(
+        single_context_counted_prompt,
+        context_length=1,
+    )
+    assert shaped_counted_single_context == "zero"
+    assert getattr(shaped_counted_single_context, "token_count") == 1
+    assert single_context_counted_prompt.split_calls == 0
 
     normalized_prompt = SplitCountingPrompt("one two three")
     assert core._benchmark_prompt_token_count(normalized_prompt) == 3

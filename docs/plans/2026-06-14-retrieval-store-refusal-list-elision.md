@@ -27,3 +27,18 @@ Run on Linux before opening the PR:
 3. The registered probe command locally with repeated samples.
 
 GitHub Actions PR-scoped performance remains the final registered probe validation and merge gate.
+
+## Follow-up Slice: Record Type Cache
+
+The 2026-07-18 follow-up keeps the same `project_retrieval_store_records`
+boundary and registered `retrieval-context-projection-fastpath` probe. The
+valid dict-record hot path now computes the exact `dict` type check once per
+record and reuses that result for both Mapping validation and the direct
+subscript fast path. Behavior remains unchanged for plain dict records,
+Mapping subclasses, invalid record objects, projection refusals, and duplicate
+field handling; the slice only removes a repeated `type(record)` call from the
+common valid-record loop.
+
+Success is accepted only if focused tests, changed-scope coverage, and the
+local registered Linux probe pass with lower elapsed time, and if the PR-scoped
+CI probe completes successfully before merge.

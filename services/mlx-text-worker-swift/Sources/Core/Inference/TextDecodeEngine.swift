@@ -18,7 +18,14 @@ struct TextDecodeEngine: Sendable {
             : request.execution.scheduling.lane
 
         do {
-            let session = try await registry.beginDecode(decodeHandle: request.decodeHandle)
+            let session = try await registry.beginDecode(
+                decodeHandle: request.decodeHandle,
+                requestID: request.execution.id.requestID,
+                modelHandle: request.execution.modelHandle,
+                requestedBackendIdentity: request.execution.hasBackendIdentity
+                    ? request.execution.backendIdentity
+                    : nil
+            )
             let requestID = effectiveRequestID(request: request, storedRequestID: session.prefill.requestID)
             let abortHandle = requestID.isEmpty ? nil : abortRegistry.register(requestID)
 
@@ -26,7 +33,7 @@ struct TextDecodeEngine: Sendable {
                 if !requestID.isEmpty {
                     abortRegistry.remove(requestID)
                 }
-                Task { await registry.finishDecode() }
+                Task { await registry.finishDecode(modelHandle: session.loadedModel.handle) }
             }
 
             var sampling = request.sampling
@@ -66,6 +73,7 @@ struct TextDecodeEngine: Sendable {
             var completionTokens = 0
             var outputState = FilteredTextOutputState()
             var tokensPerSecond: Double?
+            var finishReason = "stop"
             var decodeBatchSize = 1
             var modelEvalBatchSize = 1
             var decodeLoopIterations = 1
@@ -82,11 +90,16 @@ struct TextDecodeEngine: Sendable {
             var dflashTargetHiddenLayers: Int?
             var activeKVProbe: ActiveKVProbeSummary?
             var decodeBatchProbe: DecodeBatchProbeSummary?
+            var decodeBatchFallbackReason: String?
             var harmonyFilterTotalMicros = 0
             var harmonyFilterCallCount = 0
             var grpcWriteTotalMicros = 0
             var grpcWriteCallCount = 0
-            var outputFilter = HarmonyChannelOutputFilter()
+            var outputFilter = HarmonyChannelOutputFilter(
+                execution: request.execution,
+                fallbackExecution: session.prefill.execution,
+                fallbackParserMode: session.loadedModel.spec.parserMode
+            )
             let outputCadencePolicy = decodeOutputCadencePolicy(
                 model: session.loadedModel.spec,
                 execution: request.execution
@@ -223,6 +236,7 @@ struct TextDecodeEngine: Sendable {
                 case .summary(let summary):
                     completionTokens = max(completionTokens, summary.completionTokens)
                     tokensPerSecond = summary.tokensPerSecond
+                    finishReason = summary.finishReason
                     decodeBatchSize = max(decodeBatchSize, summary.decodeBatchSize ?? 1)
                     modelEvalBatchSize = max(modelEvalBatchSize, summary.modelEvalBatchSize ?? 1)
                     decodeLoopIterations = max(decodeLoopIterations, summary.decodeLoopIterations ?? 1)
@@ -243,6 +257,7 @@ struct TextDecodeEngine: Sendable {
                     dflashTargetHiddenLayers = summary.dflashTargetHiddenLayers
                     activeKVProbe = summary.activeKVProbe
                     decodeBatchProbe = summary.decodeBatchProbe
+                    decodeBatchFallbackReason = summary.decodeBatchFallbackReason
                 }
             }
 
@@ -302,9 +317,12 @@ struct TextDecodeEngine: Sendable {
             }
 
             var completed = Melix_Worker_V1_Completed()
-            completed.finishReason = (abortHandle?.isAborted ?? false) ? "cancelled" : "stop"
+            completed.finishReason = (abortHandle?.isAborted ?? false) ? "cancelled" : finishReason
             completed.assistantText = outputState.assistantText
             completed.reasoningText = outputState.reasoningText
+            if let decodeBatchFallbackReason, !decodeBatchFallbackReason.isEmpty {
+                completed.parserMetrics["decode_batch_fallback_reason"] = decodeBatchFallbackReason
+            }
 
             var completedEvent = Melix_Worker_V1_ExecuteEvent()
             completedEvent.requestID = requestID
@@ -378,6 +396,12 @@ struct TextDecodeEngine: Sendable {
                 rollbackCount: dflashRollbackCount,
                 targetHiddenLayers: dflashTargetHiddenLayers
             )
+        } catch let error as WorkerBackendIdentityValidationError {
+            metrics.increment("swift_text.rpc_error_count")
+            try await response.write(makeDecodeIdentityErrorExecuteEvent(
+                requestID: request.execution.id.requestID,
+                error: error.status
+            ))
         } catch let error as WorkerRuntimeRegistryError where error == .unknownDecodeHandle {
             metrics.increment("swift_text.rpc_error_count")
             try await response.write(makeDecodeErrorExecuteEvent(
@@ -474,9 +498,7 @@ struct TextDecodeEngine: Sendable {
         let key = TextDecodeBatchEligibilityKey(
             modelHandle: session.loadedModel.handle,
             lane: lane,
-            sampling: TextDecodeSamplingKey(sampling),
             acceleration: TextDecodeAccelerationKey(acceleration),
-            maxOutputTokens: request.maxOutputTokens,
             decodeStepSize: request.decodeStepSize,
             prefillToken: request.prefillToken
         )
@@ -930,6 +952,21 @@ private func makeDecodeErrorExecuteEvent(
     status.message = message
     status.retriable = false
     errorEvent.error = status
+    event.error = errorEvent
+    return event
+}
+
+private func makeDecodeIdentityErrorExecuteEvent(
+    requestID: String,
+    error: Melix_Worker_V1_ErrorStatus
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.executionKind = "decode"
+    event.seq = 1
+    event.phase = .executionFailed
+    var errorEvent = Melix_Worker_V1_ErrorEvent()
+    errorEvent.error = error
     event.error = errorEvent
     return event
 }

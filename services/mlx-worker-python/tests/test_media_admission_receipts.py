@@ -2,12 +2,19 @@ from threading import Event
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
-from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
+from worker.runtime.multimodal_preprocessing import (
+    PreparedImageInput,
+    PreparedVisionRequest,
+)
 from worker.runtime.vision_family_adapters import (
     resolve_vision_family_config,
     vision_processor_capability_metadata,
@@ -32,7 +39,9 @@ def build_services():
     return WorkerRuntimeService(registry), WorkerInferenceService(registry)
 
 
-def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
+def load_model(
+    runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec
+) -> str:
     response = runtime_service.LoadModel(
         runtime_pb2.LoadModelRequest(model=model),
         context=None,
@@ -141,7 +150,11 @@ def test_text_only_generate_rejects_image_before_prompt_conversion() -> None:
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     assert len(events) == 1
     assert events[0].HasField("error")
@@ -153,7 +166,9 @@ def test_text_only_generate_rejects_image_before_prompt_conversion() -> None:
     assert events[0].error.error.details["video_count"] == "0"
 
 
-def test_text_only_generate_rejects_audio_video_media_before_prompt_conversion() -> None:
+def test_text_only_generate_rejects_audio_video_media_before_prompt_conversion() -> (
+    None
+):
     runtime_service, inference_service = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
 
@@ -189,7 +204,11 @@ def test_text_only_generate_rejects_audio_video_media_before_prompt_conversion()
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     assert len(events) == 1
     assert events[0].error.error.code == "unsupported_media"
@@ -227,7 +246,11 @@ def test_text_only_generate_rejects_video_only_media_before_prompt_conversion() 
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     assert len(events) == 1
     assert events[0].error.error.code == "unsupported_media"
@@ -241,7 +264,9 @@ def test_media_admission_scan_skips_empty_parts_before_media() -> None:
 
     request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
-            id=common_pb2.RequestIdentity(request_id="text-empty-part-then-image-rejected"),
+            id=common_pb2.RequestIdentity(
+                request_id="text-empty-part-then-image-rejected"
+            ),
             model_handle=model_handle,
         ),
         messages=[
@@ -265,7 +290,11 @@ def test_media_admission_scan_skips_empty_parts_before_media() -> None:
         return_usage=True,
     )
 
-    events = list(inference_service.Generate(request, context=None))
+    events = list(
+        inference_service.Generate(
+            bind_backend_identity(inference_service, request), context=None
+        )
+    )
 
     assert len(events) == 1
     assert events[0].error.error.code == "unsupported_media"

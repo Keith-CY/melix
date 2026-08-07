@@ -31,6 +31,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 import swift_root_package
 
 
+MODEL_STATE_POLL_INTERVAL_SECONDS = 1.0
+
+
 class LiveMelixStack:
     def __init__(
         self,
@@ -175,56 +178,7 @@ class LiveMelixStack:
             ) * 1_000.0
 
         if self.should_start_python_worker:
-            python_started_at = time.perf_counter()
-            worker_env = os.environ.copy()
-            worker_env.update(self.environment_overrides)
-            pythonpath_segments: list[str] = []
-            pythonpath_prefix = worker_env.get("MELIX_PYTHONPATH_PREFIX", "").strip()
-            if pythonpath_prefix:
-                pythonpath_segments.append(pythonpath_prefix)
-            pythonpath_segments.extend(
-                [
-                    os.fspath(self.repo_root),
-                    os.fspath(self.repo_root / "services/mlx-worker-python"),
-                ]
-            )
-            worker_env["PYTHONPATH"] = os.pathsep.join(pythonpath_segments)
-            worker_env["MELIX_PYTHON_WORKER_METRICS_PATH"] = os.fspath(self.python_worker_metrics_path)
-            worker_env["MELIX_PYTHON_WORKER_STARTUP_T0_NS"] = str(time.perf_counter_ns())
-            self.python_worker_stdout = self.python_worker_stdout_path.open("w", encoding="utf-8")
-            self.python_worker_stderr = self.python_worker_stderr_path.open("w", encoding="utf-8")
-
-            self.python_worker = subprocess.Popen(
-                [
-                    "uv",
-                    "run",
-                    "--project",
-                    os.fspath(self.repo_root / "services/mlx-worker-python"),
-                    "python",
-                    "-m",
-                    "worker.bootstrap",
-                    "--socket-path",
-                    os.fspath(self.python_socket_path),
-                    "--backend-mode",
-                    self.python_backend_mode,
-                ],
-                cwd=self.repo_root,
-                stdout=self.python_worker_stdout,
-                stderr=self.python_worker_stderr,
-                text=True,
-                env=worker_env,
-                start_new_session=True,
-            )
-            wait_for_worker_handshake(
-                self.python_socket_path,
-                worker=self.python_worker,
-                stdout_path=self.python_worker_stdout_path,
-                stderr_path=self.python_worker_stderr_path,
-                timeout_seconds=60,
-            )
-            self.startup_timings["python_worker_ready_ms"] = (
-                time.perf_counter() - python_started_at
-            ) * 1_000.0
+            self.start_python_worker()
 
         control_plane_started_at = time.perf_counter()
         control_plane_binary = resolve_swift_product_binary(
@@ -304,6 +258,62 @@ class LiveMelixStack:
         self._close_logs("python_worker")
         self.python_socket_path.unlink(missing_ok=True)
         self.python_worker_metrics_path.unlink(missing_ok=True)
+
+    def start_python_worker(self) -> None:
+        if self.python_worker is not None and self.python_worker.poll() is None:
+            raise RuntimeError("python worker is already running")
+        python_started_at = time.perf_counter()
+        self.python_socket_path.unlink(missing_ok=True)
+        worker_env = os.environ.copy()
+        worker_env.update(self.environment_overrides)
+        pythonpath_segments: list[str] = []
+        pythonpath_prefix = worker_env.get("MELIX_PYTHONPATH_PREFIX", "").strip()
+        if pythonpath_prefix:
+            pythonpath_segments.append(pythonpath_prefix)
+        pythonpath_segments.extend(
+            [
+                os.fspath(self.repo_root),
+                os.fspath(self.repo_root / "services/mlx-worker-python"),
+            ]
+        )
+        worker_env["PYTHONPATH"] = os.pathsep.join(pythonpath_segments)
+        worker_env["MELIX_PYTHON_WORKER_METRICS_PATH"] = os.fspath(
+            self.python_worker_metrics_path
+        )
+        worker_env["MELIX_PYTHON_WORKER_STARTUP_T0_NS"] = str(time.perf_counter_ns())
+        self.python_worker_stdout = self.python_worker_stdout_path.open("w", encoding="utf-8")
+        self.python_worker_stderr = self.python_worker_stderr_path.open("w", encoding="utf-8")
+        self.python_worker = subprocess.Popen(
+            [
+                "uv",
+                "run",
+                "--project",
+                os.fspath(self.repo_root / "services/mlx-worker-python"),
+                "python",
+                "-m",
+                "worker.bootstrap",
+                "--socket-path",
+                os.fspath(self.python_socket_path),
+                "--backend-mode",
+                self.python_backend_mode,
+            ],
+            cwd=self.repo_root,
+            stdout=self.python_worker_stdout,
+            stderr=self.python_worker_stderr,
+            text=True,
+            env=worker_env,
+            start_new_session=True,
+        )
+        wait_for_worker_handshake(
+            self.python_socket_path,
+            worker=self.python_worker,
+            stdout_path=self.python_worker_stdout_path,
+            stderr_path=self.python_worker_stderr_path,
+            timeout_seconds=60,
+        )
+        self.startup_timings["python_worker_ready_ms"] = (
+            time.perf_counter() - python_started_at
+        ) * 1_000.0
 
     def stop_swift_text_worker(self) -> None:
         self._stop_process("swift text worker", self.swift_text_worker)
@@ -553,21 +563,26 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
     flat_depth = 0
     scoped_depth = 1
     build_root_path = os.fspath(build_root)
+    join_path = os.path.join
+    os_stat = os.stat
+    is_regular_file = stat.S_ISREG
+    executable_mask = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    scoped_debug_product_suffix = os.sep + "debug" + os.sep + product_name
 
     def consider(candidate: str, *, depth: int) -> None:
         nonlocal newest_candidate, newest_key
         try:
-            candidate_stat = os.stat(candidate)
+            candidate_stat = os_stat(candidate)
         except OSError:
             return
-        if not (stat.S_ISREG(candidate_stat.st_mode) and (candidate_stat.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))):
+        if not (is_regular_file(candidate_stat.st_mode) and (candidate_stat.st_mode & executable_mask)):
             return
         candidate_key = (candidate_stat.st_mtime, depth)
         if newest_key is None or candidate_key > newest_key:
             newest_candidate = candidate
             newest_key = candidate_key
 
-    consider(os.path.join(build_root_path, "debug", product_name), depth=flat_depth)
+    consider(join_path(build_root_path, "debug", product_name), depth=flat_depth)
     try:
         entries = os.scandir(build_root_path)
     except FileNotFoundError:
@@ -576,7 +591,7 @@ def _newest_executable_swift_product_binary(build_root: Path, product_name: str)
     with entries:
         for entry in entries:
             if entry.name != "debug" and entry.is_dir(follow_symlinks=False):
-                consider(os.path.join(entry.path, "debug", product_name), depth=scoped_depth)
+                consider(entry.path + scoped_debug_product_suffix, depth=scoped_depth)
     return Path(newest_candidate) if newest_candidate is not None else None
 
 
@@ -784,15 +799,34 @@ def wait_for_http_model_states(
                     for model_id, expected in required_states.items()
                 ):
                     return
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            retry_after_seconds = _http_retry_after_seconds(exc) if exc.code == 429 else None
+            exc.close()
+            if retry_after_seconds is not None:
+                remaining_seconds = max(0.0, deadline - time.time())
+                if remaining_seconds <= 0:
+                    break
+                time.sleep(min(retry_after_seconds, remaining_seconds))
+                continue
         except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as exc:
             last_error = exc
-        time.sleep(0.2)
+        time.sleep(MODEL_STATE_POLL_INTERVAL_SECONDS)
 
     raise AssertionError(
         "Control plane never exposed the required model states "
         f"{required_states} through /api/capabilities on port {port} "
         f"within {timeout_seconds:.1f}s: {last_error}"
     )
+
+
+def _http_retry_after_seconds(error: urllib.error.HTTPError) -> float:
+    raw_value = error.headers.get("Retry-After") if error.headers is not None else None
+    try:
+        parsed_value = float(raw_value)
+    except (TypeError, ValueError):
+        return 1.0
+    return max(MODEL_STATE_POLL_INTERVAL_SECONDS, parsed_value)
 
 
 def abort_worker_request(socket_path: Path, request_id: str) -> bool:

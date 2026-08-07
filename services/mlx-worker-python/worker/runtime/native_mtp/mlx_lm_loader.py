@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import open as _OPEN
 import importlib.util
 import json
 import logging
@@ -16,24 +17,25 @@ from worker.runtime.quantized_tensor_metadata import (
 logger = logging.getLogger(__name__)
 
 _PATCHED = False
+_JSON_LOADS = json.loads
 _MTP_WEIGHT_KEY_PREFIXES = ("language_model.mtp.", "mtp.")
 
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
+    loads = _JSON_LOADS
     try:
-        with open(path, "rb") as payload_file:
-            payload = json.loads(payload_file.read())
+        with _OPEN(path, "rb") as payload_file:
+            payload = loads(payload_file.read())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
 
 def _is_mtp_weight_key(key: Any) -> bool:
+    prefixes = _MTP_WEIGHT_KEY_PREFIXES
     if type(key) is str:
-        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
-    if isinstance(key, str):
-        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
-    return str(key).startswith(_MTP_WEIGHT_KEY_PREFIXES)
+        return key.startswith(prefixes)
+    return str(key).startswith(prefixes)
 
 
 def _model_safetensor_files(model_path: Path) -> list[str]:
@@ -41,11 +43,15 @@ def _model_safetensor_files(model_path: Path) -> list[str]:
 
     weight_files: list[str] = []
     append_weight_file = weight_files.append
+    startswith = str.startswith
+    endswith = str.endswith
     try:
         with os.scandir(model_path) as entries:
             for entry in entries:
                 name = entry.name
-                if name.startswith("model") and name.endswith(".safetensors"):
+                if not startswith(name, "model"):
+                    continue
+                if endswith(name, ".safetensors"):
                     append_weight_file(entry.path)
     except FileNotFoundError:
         return []
@@ -101,10 +107,14 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
             continue
         if seen_contains(file_name_text):
             continue
+        if str_startswith(file_name_text, model_prefix):
+            continue
         separator_index = str_rfind(file_name_text, path_sep)
-        file_basename = file_name_text if separator_index < 0 else file_name_text[separator_index + 1 :]
-        if str_startswith(file_basename, model_prefix):
-            seen_add(file_name_text)
+        if separator_index >= 0 and str_startswith(
+            file_name_text,
+            model_prefix,
+            separator_index + 1,
+        ):
             continue
         seen_add(file_name_text)
         path_text = path_join(model_path_text, file_name_text)

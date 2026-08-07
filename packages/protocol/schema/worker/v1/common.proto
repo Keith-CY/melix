@@ -7,6 +7,31 @@ message ErrorStatus {
   string message = 2;
   bool retriable = 3;
   map<string, string> details = 4;
+  BackendIdentityMismatchReceipt backend_identity_mismatch = 5;
+}
+
+// BackendModelIdentity is the untranslated control-plane identity bound to a
+// concrete backend residency. Workers compare this value before runtime work.
+message BackendModelIdentity {
+  string requested_model_id = 1;
+  string requested_adapter_id = 2;
+  uint64 route_generation = 3;
+  string worker_instance_id = 4;
+}
+
+// BackendIdentityMismatchReceipt is safe for operator diagnostics: public
+// catalog identifiers remain readable, while local paths are redacted.
+message BackendIdentityMismatchReceipt {
+  string requested_model_id = 1;
+  string loaded_model_id = 2;
+  string requested_adapter_id = 3;
+  string loaded_adapter_id = 4;
+  uint64 requested_route_generation = 5;
+  uint64 loaded_route_generation = 6;
+  int64 observed_at_unix_ms = 7;
+  string mismatch_reason = 8;
+  string requested_worker_instance_id = 9;
+  string loaded_worker_instance_id = 10;
 }
 
 message ModelSpec {
@@ -385,6 +410,7 @@ message CacheHints {
   uint32 preferred_block_size = 9;
   CacheRestorePlan restore_plan = 10;
   CacheMode cache_mode = 11;
+  uint64 cache_memory_budget_bytes = 12;
 }
 
 message RequestIdentity {

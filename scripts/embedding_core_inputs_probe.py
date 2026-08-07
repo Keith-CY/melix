@@ -48,6 +48,10 @@ class ProbeRegistry:
             runtime_kind="embedding",
             residency=common_pb2.ResidencyInfo(),
             load_trust=common_pb2.ModelLoadTrustPolicy(),
+            backend_identity=common_pb2.BackendModelIdentity(
+                requested_model_id="embedding-probe-model",
+                route_generation=1,
+            ),
         )
 
     def get_loaded_model(self, model_handle: str) -> LoadedModel | None:

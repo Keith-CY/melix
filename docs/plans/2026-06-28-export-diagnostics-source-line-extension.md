@@ -108,3 +108,28 @@ Local 2026-06-29 probe decision for this diagnosis-marker dispatch slice:
 - Post-change `peak_bytes_mean`: `204847.0`, `203285.2`, `203169.0` bytes; mean `203767.06666666665` bytes (`+819.5333333333256` bytes, within the registered 5% warning boundary).
 
 Decision: accepted because the targeted registered diagnosis-matching submetric improved over three local Linux probe runs, path redaction also improved, and the end-to-end elapsed/peak-memory movement stayed within the registered 5% warning boundary. `diagnostic_latency_ms` was noisy (`+0.5255787012477704` ms mean, `+5.96%`) and remains a CI-observed risk for this PR-scoped probe.
+
+## 2026-07-20 follow-up: redaction loop local bindings
+
+This Python-only follow-up stays inside the same
+`runtime-export-diagnostic-parser` registered probe and narrows to
+`_build_redacted_excerpt(...)`. The redaction loop now keeps the redaction helper
+and current `source_path` in local variables before prefix reuse. This preserves
+excerpt text, line-number mapping, truncation, and redaction counters while
+reducing repeated global lookup and slotted attribute access on the registered
+path-redaction submetric.
+
+Validation remains the registered focused pytest selection, changed-scope
+coverage, and the registered local/CI probe for runtime export diagnostic
+parsing.
+
+Local 2026-07-20 probe decision for this redaction-loop binding slice:
+
+- Baseline `elapsed_ms_mean`: `2629.5241069979966`, `2622.8228258434683`, `2585.4673861525953` ms; mean `2612.60477299802` ms.
+- Post-change `elapsed_ms_mean`: `2610.936465440318`, `2559.9187607411295`, `2643.1361829862` ms; mean `2604.6638030558825` ms (`-7.940969942137599` ms, `1.0030x` faster).
+- Baseline `path_redaction_elapsed_ms_mean`: `19.895885000005364`, `20.440040389075875`, `21.177809173241258` ms; mean `20.50457818744083` ms.
+- Post-change `path_redaction_elapsed_ms_mean`: `20.10074481368065`, `20.044437143951654`, `19.781076814979315` ms; mean `19.97541959087054` ms (`-0.5291585965702907` ms, `1.0265x` faster).
+- Baseline `peak_bytes_mean`: `196635.8`, `203640.8`, `202438.6` bytes; mean `200905.06666666665` bytes.
+- Post-change `peak_bytes_mean`: `203278.8`, `203712.0`, `204345.2` bytes; mean `203778.66666666666` bytes (`+2873.600000000006` bytes, within the registered 5% warning boundary).
+
+Decision: accepted because the registered end-to-end elapsed metric and the targeted path-redaction submetric improved over three local Linux probe runs, behavior is covered by 100% changed-scope coverage, and the peak-memory movement remains within the registered warning boundary.

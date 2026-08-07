@@ -7,6 +7,7 @@ package struct WorkerConfiguration: Sendable, Equatable {
     static let defaultDecodeBatchCohortPendingWindowNanos: UInt64 = 2_000_000_000
 
     var workerID: String
+    var workerInstanceID: String
     var workerFamily: Melix_Worker_V1_WorkerFamily
     var socketPath: String
     var backendMode: String
@@ -27,6 +28,7 @@ package struct WorkerConfiguration: Sendable, Equatable {
 
     init(
         workerID: String = "swift-text-worker-001",
+        workerInstanceID: String = UUID().uuidString.lowercased(),
         workerFamily: Melix_Worker_V1_WorkerFamily = .text,
         socketPath: String = "/var/run/melix/swift-text-worker.sock",
         backendMode: String = "swift",
@@ -46,6 +48,7 @@ package struct WorkerConfiguration: Sendable, Equatable {
         visionPayloadReceiptPath: String? = nil
     ) {
         self.workerID = workerID
+        self.workerInstanceID = workerInstanceID
         self.workerFamily = workerFamily
         self.socketPath = socketPath
         self.backendMode = backendMode

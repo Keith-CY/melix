@@ -694,6 +694,28 @@ def _write_bench_matrix_run_fixture(root: Path, *, job_id: str) -> None:
             "observation_bytes": 48,
             "fatal_rate": 0.0,
             "turn_count": 2,
+            "effective_policy_schema": "melix.text_effective_policy_receipt.v1",
+            "effective_config_hash": "matrix-policy-hash",
+            "sampling_temperature": 0.7,
+            "sampling_temperature_source": "catalog",
+            "sampling_top_p": 0.9,
+            "sampling_top_p_source": "catalog",
+            "sampling_max_tokens": 128,
+            "sampling_max_tokens_source": "request",
+            "sampling_policy_lookup_status": "known",
+            "sampling_policy_canonical_model": "melix-dev-policy",
+            "sampling_policy_matched_alias": "melix-dev-policy-q4",
+            "sampling_policy_source_url": "https://example.invalid/matrix-card",
+            "sampling_request_override_applied": True,
+            "recommended_sampling_required": True,
+            "sampling_seed": 99,
+            "sampling_seed_source": "request",
+            "chat_template_source": "model",
+            "chat_template_effective_kwargs_hash": "matrix-template-hash",
+            "chat_template_request_override_applied": False,
+            "chat_template_forced_override_applied": True,
+            "policy_reasoning_mode": "enabled",
+            "policy_reasoning_source": "template",
             "created_at_unix_ms": 111,
         }) + "\n"
     )
@@ -754,6 +776,28 @@ def _write_eval_fixtures(root: Path) -> None:
                 "extraction_status": "extracted",
                 "validation_status": "validated",
                 "failure_reason": "",
+                "effective_policy_schema": "melix.text_effective_policy_receipt.v1",
+                "effective_config_hash": "eval-export-policy-hash",
+                "sampling_temperature": 0.3,
+                "sampling_temperature_source": "catalog",
+                "sampling_top_p": 0.85,
+                "sampling_top_p_source": "catalog",
+                "sampling_max_tokens": 64,
+                "sampling_max_tokens_source": "request",
+                "sampling_policy_lookup_status": "known",
+                "sampling_policy_canonical_model": "melix-eval-policy",
+                "sampling_policy_matched_alias": "melix-eval-policy-q4",
+                "sampling_policy_source_url": "https://example.invalid/eval-export-card",
+                "sampling_request_override_applied": False,
+                "recommended_sampling_required": True,
+                "sampling_seed": 7,
+                "sampling_seed_source": "request",
+                "chat_template_source": "model+request",
+                "chat_template_effective_kwargs_hash": "eval-export-template-hash",
+                "chat_template_request_override_applied": True,
+                "chat_template_forced_override_applied": False,
+                "policy_reasoning_mode": "disabled",
+                "policy_reasoning_source": "request",
             }),
         ]) + "\n"
     )
@@ -2175,6 +2219,58 @@ def test_build_benchmark_summary_csv_uses_canonical_rows(tmp_path: Path) -> None
     assert "bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k" in csv_text
 
 
+def test_build_benchmark_summary_csv_ignores_non_dict_rows() -> None:
+    bundle = {
+        "benchmark_summary_rows": [
+            "not-a-row",
+            {
+                "job_id": "bench-1",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "synthetic",
+                "suites": ["smoke"],
+                "context_lengths": [32],
+                "generation_length": 8,
+                "batch_sizes": [1],
+                "repeats": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "request_p50_ms": 11.0,
+                "request_p95_ms": 12.0,
+                "status": "completed",
+                "output_dir": "/tmp/bench-1",
+                "created_at_unix_ms": 1,
+                "updated_at_unix_ms": 2,
+            },
+            42,
+        ]
+    }
+
+    rows = list(csv.DictReader(io.StringIO(build_benchmark_summary_csv(bundle))))
+
+    assert [row["job_id"] for row in rows] == ["bench-1"]
+
+
+def test_build_benchmark_summary_csv_treats_non_iterable_rows_as_empty() -> None:
+    rows = list(csv.DictReader(io.StringIO(build_benchmark_summary_csv({"benchmark_summary_rows": 42}))))
+
+    assert rows == []
+
+
+def test_build_benchmark_summary_csv_accepts_non_list_iterables() -> None:
+    bundle = {
+        "benchmark_summary_rows": (
+            {"job_id": "bench-1", "model_id": "melix-dev-text", "task_kind": "text-generation"},
+            "not-a-row",
+        )
+    }
+
+    rows = list(csv.DictReader(io.StringIO(build_benchmark_summary_csv(bundle))))
+
+    assert [row["job_id"] for row in rows] == ["bench-1"]
+
+
 def test_build_benchmark_summary_csv_serializes_tuple_and_none_values() -> None:
     class CustomOutputPath:
         def __str__(self) -> str:
@@ -2321,6 +2417,7 @@ def test_build_benchmark_matrix_summary_and_requests_csv_use_canonical_rows(tmp_
     assert "tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count" in summary_lines[0]
     assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in request_lines[0]
     assert "dataset_materialize_ms,prompt_render_ms,warmup_ms" in request_lines[0]
+    assert "effective_policy_schema,effective_config_hash,sampling_temperature" in request_lines[0]
     assert summary_lines[1].startswith(
         "bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,"
     )
@@ -2331,6 +2428,11 @@ def test_build_benchmark_matrix_summary_and_requests_csv_use_canonical_rows(tmp_
     )
     assert list(csv.DictReader(io.StringIO(requests_csv)))[0]["created_at_unix_ms"] == "111"
     assert list(csv.DictReader(io.StringIO(requests_csv)))[0]["tool_latency_ms"] == "6.25"
+    request_row = list(csv.DictReader(io.StringIO(requests_csv)))[0]
+    assert request_row["effective_config_hash"] == "matrix-policy-hash"
+    assert request_row["sampling_policy_source_url"] == "https://example.invalid/matrix-card"
+    assert request_row["chat_template_effective_kwargs_hash"] == "matrix-template-hash"
+    assert request_row["policy_reasoning_mode"] == "enabled"
 
 
 def test_export_csv_preserves_probe_columns() -> None:
@@ -2637,6 +2739,28 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
                 "code_tests_passed": 2,
                 "code_tests_total": 2,
                 "code_failure_detail": "",
+                "effective_policy_schema": "melix.text_effective_policy_receipt.v1",
+                "effective_config_hash": "sample-policy-hash",
+                "sampling_temperature": 0.4,
+                "sampling_temperature_source": "catalog",
+                "sampling_top_p": 0.91,
+                "sampling_top_p_source": "catalog",
+                "sampling_max_tokens": 96,
+                "sampling_max_tokens_source": "request",
+                "sampling_policy_lookup_status": "known",
+                "sampling_policy_canonical_model": "melix-sample-policy",
+                "sampling_policy_matched_alias": "melix-sample-policy-q4",
+                "sampling_policy_source_url": "https://example.invalid/sample-card",
+                "sampling_request_override_applied": False,
+                "recommended_sampling_required": True,
+                "sampling_seed": 11,
+                "sampling_seed_source": "request",
+                "chat_template_source": "model",
+                "chat_template_effective_kwargs_hash": "sample-template-hash",
+                "chat_template_request_override_applied": False,
+                "chat_template_forced_override_applied": False,
+                "policy_reasoning_mode": "enabled",
+                "policy_reasoning_source": "template",
             }
         ]
     }
@@ -2656,6 +2780,12 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
     assert rows[0]["extraction_status"] == "extracted"
     assert rows[0]["parse_status"] == "parsed_code_block"
     assert rows[0]["validation_status"] == "validated"
+    assert rows[0]["effective_config_hash"] == "sample-policy-hash"
+    assert rows[0]["sampling_temperature"] == "0.4"
+    assert rows[0]["sampling_policy_canonical_model"] == "melix-sample-policy"
+    assert rows[0]["recommended_sampling_required"] == "True"
+    assert rows[0]["chat_template_effective_kwargs_hash"] == "sample-template-hash"
+    assert rows[0]["policy_reasoning_source"] == "template"
     assert rows[0]["input_modalities"] == "text"
 
 

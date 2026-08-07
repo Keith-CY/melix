@@ -35,6 +35,488 @@ struct TextEndpointContractTests {
         #expect(message.content == "alpha\nbeta")
     }
 
+    @Test("gateway request context budget keeps output caps distinct from context windows")
+    func gatewayRequestContextBudgetKeepsOutputCapsDistinctFromContextWindows() throws {
+        let longContextBudget = try #require(
+            GatewayRequestContextBudget.derive(
+                contextWindowTokens: 131_072,
+                outputCapTokens: 512,
+                promptTokensEstimated: 2,
+                estimateSlackTokens: 2_048
+            )
+        )
+
+        #expect(longContextBudget.contextLength == 2_562)
+        #expect(longContextBudget.outputCapTokens == 512)
+        #expect(longContextBudget.contextLength != longContextBudget.outputCapTokens)
+        #expect(longContextBudget.metadata["melix.gateway.context_length"] == "2562")
+        #expect(longContextBudget.metadata["melix.gateway.requested_context"] == "2562")
+        #expect(longContextBudget.metadata["melix.gateway.context_source"] == "control_plane_prompt_budget")
+        #expect(longContextBudget.metadata["melix.gateway.context_window_tokens"] == "131072")
+        #expect(longContextBudget.metadata["melix.gateway.output_cap_tokens"] == "512")
+        #expect(longContextBudget.metadata["melix.gateway.prompt_tokens_estimated"] == "2")
+        #expect(longContextBudget.metadata["melix.gateway.prompt_tokens_estimate_source"] == "control_plane_heuristic_utf8_whitespace")
+        #expect(longContextBudget.metadata["melix.gateway.prompt_tokens_estimate_slack"] == "2048")
+
+        let clampedBudget = try #require(
+            GatewayRequestContextBudget.derive(
+                contextWindowTokens: 1_024,
+                outputCapTokens: 2_048,
+                promptTokensEstimated: 100,
+                estimateSlackTokens: 0
+            )
+        )
+        #expect(clampedBudget.contextLength == 1_024)
+
+        #expect(
+            GatewayRequestContextBudget.derive(
+                contextWindowTokens: 0,
+                outputCapTokens: 512,
+                promptTokensEstimated: 2,
+                estimateSlackTokens: 0
+            ) == nil
+        )
+    }
+
+    @Test("session compaction policy treats max history zero as unlimited")
+    func sessionCompactionPolicyTreatsMaxHistoryZeroAsUnlimited() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-unlimited",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 12),
+                SessionHistoryItemEstimate(estimatedTokens: 8),
+            ],
+            usableContextTokens: 128,
+            maxHistoryItems: 0
+        )
+
+        #expect(plan.historyPolicy == .unlimited)
+        #expect(plan.itemsBefore == 2)
+        #expect(plan.itemsAfter == 2)
+        #expect(plan.estimatedTokensBefore == 20)
+        #expect(plan.estimatedTokensAfter == 20)
+        #expect(plan.compactionRequired == false)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["schema_version"] as? String == "melix.session_compaction_policy_receipt.v1")
+        #expect(receipt["request_id"] as? String == "req-unlimited")
+        #expect(receipt["session_id"] as? String == "session-context")
+        #expect(receipt["model_id"] as? String == "melix-dev-text")
+        #expect(receipt["history_policy"] as? String == "unlimited")
+        #expect(receipt["items_before"] as? Int == 2)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 20)
+        #expect(receipt["estimated_tokens_after"] as? Int == 20)
+        #expect(receipt["usable_context_tokens"] as? Int == 128)
+        #expect(receipt["max_history_items"] as? Int == 0)
+        #expect(receipt["watermark_state"] as? String == "within_budget")
+        #expect(receipt["tier_applied"] as? String == "none")
+        #expect(receipt["compaction_required"] as? Bool == false)
+        #expect(plan.extFields["melix.session_compaction.receipt_schema"] == "melix.session_compaction_policy_receipt.v1")
+        #expect(plan.extFields["melix.session_compaction.receipt_count"] == "1")
+    }
+
+    @Test("session compaction policy bounds tail history before request assembly")
+    func sessionCompactionPolicyBoundsTailHistoryBeforeRequestAssembly() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-tail",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: Array(repeating: SessionHistoryItemEstimate(estimatedTokens: 5), count: 200),
+            usableContextTokens: 128,
+            maxHistoryItems: 12
+        )
+
+        #expect(plan.historyPolicy == .boundedTail)
+        #expect(plan.itemsBefore == 200)
+        #expect(plan.itemsAfter == 12)
+        #expect(plan.estimatedTokensBefore == 1_000)
+        #expect(plan.estimatedTokensAfter == 60)
+        #expect(plan.compactionRequired == false)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "bounded_tail")
+        #expect(receipt["items_before"] as? Int == 200)
+        #expect(receipt["items_after"] as? Int == 12)
+        #expect(receipt["estimated_tokens_before"] as? Int == 1_000)
+        #expect(receipt["estimated_tokens_after"] as? Int == 60)
+        #expect(receipt["tier_applied"] as? String == "drop_tail_history")
+        #expect(receipt["watermark_state"] as? String == "within_budget")
+    }
+
+    @Test("session compaction policy preserves protected grounding outside bounded tail")
+    func sessionCompactionPolicyPreservesProtectedGroundingOutsideBoundedTail() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-protected-grounding",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 30, protectedGrounding: true),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+            ],
+            usableContextTokens: 80,
+            maxHistoryItems: 2
+        )
+
+        #expect(plan.historyPolicy == .boundedTail)
+        #expect(plan.itemsBefore == 5)
+        #expect(plan.itemsAfter == 3)
+        #expect(plan.estimatedTokensBefore == 70)
+        #expect(plan.estimatedTokensAfter == 50)
+        #expect(plan.protectedGroundingItemsBefore == 1)
+        #expect(plan.protectedGroundingItemsAfter == 1)
+        #expect(plan.protectedGroundingPreserved == true)
+        #expect(plan.compactionRequired == false)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "bounded_tail")
+        #expect(receipt["items_before"] as? Int == 5)
+        #expect(receipt["items_after"] as? Int == 3)
+        #expect(receipt["estimated_tokens_before"] as? Int == 70)
+        #expect(receipt["estimated_tokens_after"] as? Int == 50)
+        #expect(receipt["protected_grounding_items_before"] as? Int == 1)
+        #expect(receipt["protected_grounding_items_after"] as? Int == 1)
+        #expect(receipt["protected_grounding_preserved"] as? Bool == true)
+        #expect(receipt["tier_applied"] as? String == "drop_tail_history")
+        #expect(receipt["watermark_state"] as? String == "within_budget")
+    }
+
+    @Test("session compaction policy requires compaction when protected grounding keeps pressure over budget")
+    func sessionCompactionPolicyRequiresCompactionWhenProtectedGroundingKeepsPressureOverBudget() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-protected-grounding-overflow",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 75, protectedGrounding: true),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+                SessionHistoryItemEstimate(estimatedTokens: 10),
+            ],
+            usableContextTokens: 80,
+            maxHistoryItems: 1
+        )
+
+        #expect(plan.historyPolicy == .compactionRequired)
+        #expect(plan.itemsBefore == 3)
+        #expect(plan.itemsAfter == 2)
+        #expect(plan.estimatedTokensBefore == 95)
+        #expect(plan.estimatedTokensAfter == 85)
+        #expect(plan.protectedGroundingItemsBefore == 1)
+        #expect(plan.protectedGroundingItemsAfter == 1)
+        #expect(plan.protectedGroundingPreserved == true)
+        #expect(plan.compactionRequired == true)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "compaction_required")
+        #expect(receipt["items_before"] as? Int == 3)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 95)
+        #expect(receipt["estimated_tokens_after"] as? Int == 85)
+        #expect(receipt["protected_grounding_items_before"] as? Int == 1)
+        #expect(receipt["protected_grounding_items_after"] as? Int == 1)
+        #expect(receipt["protected_grounding_preserved"] as? Bool == true)
+        #expect(receipt["tier_applied"] as? String == "requires_compaction")
+        #expect(receipt["watermark_state"] as? String == "overflow")
+        #expect(receipt["compaction_required"] as? Bool == true)
+    }
+
+    @Test("session compaction policy escalates when bounded tail still exceeds budget")
+    func sessionCompactionPolicyEscalatesWhenBoundedTailStillExceedsBudget() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-compact",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 80),
+                SessionHistoryItemEstimate(estimatedTokens: 80),
+                SessionHistoryItemEstimate(estimatedTokens: 80),
+            ],
+            usableContextTokens: 100,
+            maxHistoryItems: 2
+        )
+
+        #expect(plan.historyPolicy == .compactionRequired)
+        #expect(plan.itemsBefore == 3)
+        #expect(plan.itemsAfter == 2)
+        #expect(plan.estimatedTokensBefore == 240)
+        #expect(plan.estimatedTokensAfter == 160)
+        #expect(plan.compactionRequired == true)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "compaction_required")
+        #expect(receipt["items_before"] as? Int == 3)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 240)
+        #expect(receipt["estimated_tokens_after"] as? Int == 160)
+        #expect(receipt["tier_applied"] as? String == "requires_compaction")
+        #expect(receipt["watermark_state"] as? String == "overflow")
+        #expect(receipt["compaction_required"] as? Bool == true)
+    }
+
+    @Test("session compaction policy requires compaction when usable context is zero")
+    func sessionCompactionPolicyRequiresCompactionWhenUsableContextIsZero() throws {
+        let plan = SessionCompactionPolicy.plan(
+            requestID: "req-zero-context",
+            sessionID: "session-context",
+            modelID: "melix-dev-text",
+            historyItems: [
+                SessionHistoryItemEstimate(estimatedTokens: 1),
+            ],
+            usableContextTokens: 0,
+            maxHistoryItems: 0
+        )
+
+        #expect(plan.historyPolicy == .compactionRequired)
+        #expect(plan.itemsBefore == 1)
+        #expect(plan.itemsAfter == 1)
+        #expect(plan.estimatedTokensBefore == 1)
+        #expect(plan.estimatedTokensAfter == 1)
+        #expect(plan.compactionRequired == true)
+
+        let receipt = try Self.firstSessionCompactionReceipt(from: plan)
+        #expect(receipt["history_policy"] as? String == "compaction_required")
+        #expect(receipt["items_before"] as? Int == 1)
+        #expect(receipt["items_after"] as? Int == 1)
+        #expect(receipt["estimated_tokens_before"] as? Int == 1)
+        #expect(receipt["estimated_tokens_after"] as? Int == 1)
+        #expect(receipt["usable_context_tokens"] as? Int == 0)
+        #expect(receipt["tier_applied"] as? String == "requires_compaction")
+        #expect(receipt["watermark_state"] as? String == "overflow")
+        #expect(receipt["compaction_required"] as? Bool == true)
+    }
+
+    @Test("chat translation attaches session compaction receipt before worker dispatch")
+    func chatTranslationAttachesSessionCompactionReceiptBeforeWorkerDispatch() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-live-compaction-tail" })
+        let normalized = NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: "melix-dev-text",
+            messages: [
+                NormalizedTextMessage(role: "system", content: "one"),
+                NormalizedTextMessage(role: "user", content: "two"),
+                NormalizedTextMessage(role: "assistant", content: "three"),
+                NormalizedTextMessage(role: "user", content: "four"),
+            ],
+            stream: true,
+            temperature: nil,
+            topP: nil,
+            maxTokens: 16,
+            sessionID: "session-live-tail",
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "session-live-tail",
+                modelID: "melix-dev-text",
+                usableContextTokens: 128,
+                maxHistoryItems: 2
+            )
+        )
+        let ext = translated.workerRequest.execution.ext
+        let receipt = try Self.firstSessionCompactionReceipt(from: translated.workerRequest)
+
+        #expect(ext["melix.session_compaction.receipt_schema"] == "melix.session_compaction_policy_receipt.v1")
+        #expect(ext["melix.session_compaction.receipt_count"] == "1")
+        #expect(receipt["request_id"] as? String == "req-live-compaction-tail")
+        #expect(receipt["session_id"] as? String == "session-live-tail")
+        #expect(receipt["model_id"] as? String == "melix-dev-text")
+        #expect(receipt["history_policy"] as? String == "bounded_tail")
+        #expect(receipt["items_before"] as? Int == 4)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 5)
+        #expect(receipt["estimated_tokens_after"] as? Int == 3)
+        #expect(receipt["usable_context_tokens"] as? Int == 128)
+        #expect(receipt["max_history_items"] as? Int == 2)
+        #expect(receipt["tier_applied"] as? String == "drop_tail_history")
+        #expect(receipt["compaction_required"] as? Bool == false)
+    }
+
+    @Test("chat translation marks compaction required when retained session items exceed usable context")
+    func chatTranslationMarksCompactionRequiredWhenRetainedSessionItemsExceedUsableContext() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-live-compaction-required" })
+        let denseMessage = String(repeating: "abcdefghij", count: 20)
+        let normalized = NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: "melix-dev-text",
+            messages: [
+                NormalizedTextMessage(role: "user", content: denseMessage),
+                NormalizedTextMessage(role: "assistant", content: denseMessage),
+                NormalizedTextMessage(role: "user", content: denseMessage),
+            ],
+            stream: false,
+            temperature: nil,
+            topP: nil,
+            maxTokens: 16,
+            sessionID: "session-live-overflow",
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "session-live-overflow",
+                modelID: "melix-dev-text",
+                usableContextTokens: 64,
+                maxHistoryItems: 2
+            )
+        )
+        let receipt = try Self.firstSessionCompactionReceipt(from: translated.workerRequest)
+
+        #expect(receipt["request_id"] as? String == "req-live-compaction-required")
+        #expect(receipt["history_policy"] as? String == "compaction_required")
+        #expect(receipt["items_before"] as? Int == 3)
+        #expect(receipt["items_after"] as? Int == 2)
+        #expect(receipt["estimated_tokens_before"] as? Int == 150)
+        #expect(receipt["estimated_tokens_after"] as? Int == 100)
+        #expect(receipt["usable_context_tokens"] as? Int == 64)
+        #expect(receipt["watermark_state"] as? String == "overflow")
+        #expect(receipt["tier_applied"] as? String == "requires_compaction")
+        #expect(receipt["compaction_required"] as? Bool == true)
+    }
+
+    @Test("chat translation skips session compaction receipt without resolved session context")
+    func chatTranslationSkipsSessionCompactionReceiptWithoutResolvedSessionContext() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-live-compaction-skipped" })
+        let normalized = NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: "melix-dev-text",
+            messages: [
+                NormalizedTextMessage(role: "user", content: "hello"),
+            ],
+            stream: true,
+            temperature: nil,
+            topP: nil,
+            maxTokens: 16,
+            sessionID: "session-live",
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil
+        )
+
+        let blankSession = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "  ",
+                modelID: "melix-dev-text",
+                usableContextTokens: 128,
+                maxHistoryItems: 2
+            )
+        )
+        let blankModel = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "session-live",
+                modelID: "  ",
+                usableContextTokens: 128,
+                maxHistoryItems: 2
+            )
+        )
+
+        #expect(blankSession.workerRequest.execution.ext["melix.session_compaction.receipt_schema"] == nil)
+        #expect(blankSession.workerRequest.execution.ext["melix.session_compaction.receipts_json"] == nil)
+        #expect(blankModel.workerRequest.execution.ext["melix.session_compaction.receipt_schema"] == nil)
+        #expect(blankModel.workerRequest.execution.ext["melix.session_compaction.receipts_json"] == nil)
+    }
+
+    @Test("chat translation estimates media and empty parts in session compaction receipts")
+    func chatTranslationEstimatesMediaAndEmptyPartsInSessionCompactionReceipts() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-live-compaction-media" })
+        let emptyPart = Melix_Worker_V1_MessagePart()
+        var imagePart = Melix_Worker_V1_MessagePart()
+        imagePart.media.mediaType = .image
+        imagePart.imageUri = "file:///tmp/image.png"
+        var videoPart = Melix_Worker_V1_MessagePart()
+        videoPart.media.mediaType = .video
+        videoPart.videoUri = "file:///tmp/video.mp4"
+        let normalized = NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: "melix-dev-text",
+            messages: [
+                NormalizedTextMessage(role: "system", parts: [emptyPart]),
+                NormalizedTextMessage(role: "user", parts: [imagePart]),
+                NormalizedTextMessage(role: "user", parts: [videoPart]),
+            ],
+            stream: true,
+            temperature: nil,
+            topP: nil,
+            maxTokens: 16,
+            sessionID: "session-live-media",
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            sessionCompactionContext: SessionCompactionRequestContext(
+                sessionID: "session-live-media",
+                modelID: "melix-dev-text",
+                usableContextTokens: 2_048,
+                maxHistoryItems: 0
+            )
+        )
+        let receipt = try Self.firstSessionCompactionReceipt(from: translated.workerRequest)
+
+        #expect(emptyPart.part == nil)
+        #expect(receipt["history_policy"] as? String == "unlimited")
+        #expect(receipt["items_before"] as? Int == 3)
+        #expect(receipt["items_after"] as? Int == 3)
+        #expect(receipt["estimated_tokens_before"] as? Int == 1_281)
+        #expect(receipt["estimated_tokens_after"] as? Int == 1_281)
+        #expect(receipt["max_history_items"] as? Int == 0)
+    }
+
+    private static func firstSessionCompactionReceipt(from plan: SessionCompactionPlan) throws -> [String: Any] {
+        let receiptsJSON = try #require(plan.extFields["melix.session_compaction.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        return try #require(receipts.first)
+    }
+
+    private static func firstSessionCompactionReceipt(
+        from request: Melix_Worker_V1_GenerateRequest
+    ) throws -> [String: Any] {
+        let receiptsJSON = try #require(request.execution.ext["melix.session_compaction.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        return try #require(receipts.first)
+    }
+
+    private static func effectivePolicyReceipt(
+        from request: Melix_Worker_V1_GenerateRequest
+    ) throws -> [String: Any] {
+        let receiptJSON = try #require(request.execution.ext["melix.effective_policy.receipt_json"])
+        return try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptJSON.utf8)) as? [String: Any]
+        )
+    }
+
+    private static func effectivePolicySampling(
+        from request: Melix_Worker_V1_GenerateRequest
+    ) throws -> [String: Any] {
+        let receipt = try effectivePolicyReceipt(from: request)
+        return try #require(receipt["sampling"] as? [String: Any])
+    }
+
     @Test("stream options encode include_usage across public contracts")
     func streamOptionsEncodeIncludeUsageAcrossPublicContracts() throws {
         let encoder = JSONEncoder()
@@ -1160,6 +1642,18 @@ struct TextEndpointContractTests {
     @Test("ocr execution policy stays disabled when model settings do not declare OCR defaults")
     func ocrExecutionPolicyStaysDisabledWithoutModelDefaults() {
         let policy = OCRExecutionPolicy(modelSettings: .init())
+
+        #expect(policy == nil)
+    }
+
+    @Test("generic generation config does not opt a text or VLM model into OCR policy")
+    func genericGenerationConfigDoesNotEnableOCRExecutionPolicy() {
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.temperature"] = "0.2"
+        modelSettings.ext["melix.generation_config.top_p"] = "0.95"
+        modelSettings.ext["melix.generation_config.max_tokens"] = "1024"
+
+        let policy = OCRExecutionPolicy(modelSettings: modelSettings)
 
         #expect(policy == nil)
     }
@@ -2609,6 +3103,346 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.temperature == 0.2)
         #expect(translated.workerRequest.sampling.topP == 0.88)
         #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+        #expect(sampling["policy_lookup_status"] as? String == "unknown")
+    }
+
+    @Test("chat translation falls back to imported generation-config top-k")
+    func chatTranslationFallsBackToImportedGenerationConfigTopK() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-generation-config-top-k" })
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.top_k"] = "64"
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(modelSettings: modelSettings)
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "mlx-community/gemma-4-31b-it-4bit",
+                messages: [.init(role: "user", content: "Use the model default top-k.")]
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "gemma-4::swift",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+
+        #expect(translated.workerRequest.sampling.topK == 64)
+        #expect(translated.workerRequest.execution.ext["melix.generation.top_k"] == "64")
+        #expect(
+            translated.workerRequest.execution.ext[
+                "melix.effective_policy.sampling.request_override_applied"
+            ] == "false"
+        )
+    }
+
+    @Test("explicit request top-k overrides imported generation-config top-k")
+    func explicitRequestTopKOverridesImportedGenerationConfigTopK() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-request-top-k" })
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.top_k"] = "64"
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(modelSettings: modelSettings)
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "mlx-community/gemma-4-31b-it-4bit",
+                messages: [.init(role: "user", content: "Use my top-k override.")],
+                topK: 12
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "gemma-4::swift",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+
+        #expect(translated.workerRequest.sampling.topK == 12)
+        #expect(translated.workerRequest.execution.ext["melix.generation.top_k"] == "12")
+        #expect(
+            translated.workerRequest.execution.ext[
+                "melix.effective_policy.sampling.policy_lookup_status"
+            ] == "operator_override"
+        )
+        #expect(
+            translated.workerRequest.execution.ext[
+                "melix.effective_policy.sampling.request_override_applied"
+            ] == "true"
+        )
+    }
+
+    @Test("chat translation emits effective policy receipt for merged sampling template and reasoning policy")
+    func chatTranslationEmitsEffectivePolicyReceiptForMergedSamplingTemplateAndReasoningPolicy() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-effective-policy" })
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.generation_config.temperature"] = "0.2"
+        modelSettings.ext["melix.generation_config.top_p"] = "0.88"
+        modelSettings.ext["melix.generation_config.max_tokens"] = "512"
+        modelSettings.ext["chat_template_kwargs"] = #"{"enable_thinking":true,"tokenize":true}"#
+        modelSettings.ext["chat_template_forced_kwargs"] = #"{"add_generation_prompt":true}"#
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")],
+                reasoningEffort: "medium",
+                temperature: 0.5,
+                seed: 123,
+                chatTemplateKwargs: ChatTemplateRequestConfiguration(
+                    values: [
+                        "chat_template": .string("request-template"),
+                    ]
+                )
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            modelChatTemplatePolicy: try ModelChatTemplatePolicy(modelSettings: modelSettings),
+            modelSamplingPolicy: ModelSamplingPolicy(modelSettings: modelSettings)
+        )
+        let ext = translated.workerRequest.execution.ext
+        let receiptJSON = try #require(ext["melix.effective_policy.receipt_json"])
+        let receipt = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptJSON.utf8)) as? [String: Any]
+        )
+        let sampling = try #require(receipt["sampling"] as? [String: Any])
+        let chatTemplate = try #require(receipt["chat_template"] as? [String: Any])
+        let reasoning = try #require(receipt["reasoning"] as? [String: Any])
+
+        #expect(translated.workerRequest.sampling.temperature == 0.5)
+        #expect(translated.workerRequest.sampling.topP == 0.88)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 512)
+        #expect(ext["melix.generation.output_cap_source"] == "policy")
+        #expect(ext["melix.effective_policy.receipt_schema"] == "melix.text_effective_policy_receipt.v1")
+        #expect(ext["melix.effective_policy.sampling.temperature_source"] == "request")
+        #expect(ext["melix.effective_policy.sampling.top_p_source"] == "model")
+        #expect(ext["melix.effective_policy.sampling.max_tokens_source"] == "model")
+        #expect(ext["melix.effective_policy.sampling.seed_source"] == "request")
+        #expect(ext["melix.effective_policy.chat_template.source"] == "model+request+forced")
+        #expect(ext["melix.effective_policy.chat_template.request_override_applied"] == "true")
+        #expect(ext["melix.effective_policy.chat_template.forced_override_applied"] == "true")
+        #expect(ext["melix.effective_policy.reasoning.mode"] == "enabled")
+        #expect(ext["melix.effective_policy.reasoning.source"] == "template")
+        #expect(ext["melix.effective_policy.effective_config_hash"]?.range(
+            of: #"^[0-9a-f]{64}$"#,
+            options: String.CompareOptions.regularExpression
+        ) != nil)
+        #expect(receipt["schema_version"] as? String == "melix.text_effective_policy_receipt.v1")
+        #expect(sampling["temperature_source"] as? String == "request")
+        #expect(sampling["top_p_source"] as? String == "model")
+        #expect(sampling["max_tokens_source"] as? String == "model")
+        #expect(sampling["seed_source"] as? String == "request")
+        #expect(chatTemplate["source"] as? String == "model+request+forced")
+        #expect(chatTemplate["request_override_applied"] as? Bool == true)
+        #expect(chatTemplate["forced_override_applied"] as? Bool == true)
+        #expect(chatTemplate["forced_keys"] as? [String] == ["add_generation_prompt"])
+        #expect(reasoning["mode"] as? String == "enabled")
+        #expect(reasoning["source"] as? String == "template")
+        #expect(reasoning["effort"] as? String == "medium")
+    }
+
+    @Test("chat translation uses catalog sampling policy for aliased model identity")
+    func chatTranslationUsesCatalogSamplingPolicyForAliasedModelIdentity() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-policy-catalog" })
+        let sourceURL = "https://github.com/Keith-CY/melix/blob/main/docs/plans/2026-07-11-issue-1385-model-policy-catalog.md"
+        let catalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "melix-dev-policy",
+                aliases: ["melix-dev-policy-q4.gguf"],
+                sampling: .init(temperature: 0.42, topP: 0.91, maxTokens: 1_024),
+                sourceURL: sourceURL
+            ),
+        ])
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.alias = "Melix Dev Policy Q4"
+        modelSettings.ext["melix.model_path"] = "/models/melix-dev-policy-q4.gguf"
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(
+                modelID: "/models/melix-dev-policy-q4.gguf",
+                modelSettings: modelSettings,
+                catalog: catalog
+            )
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "/models/melix-dev-policy-q4.gguf",
+                messages: [.init(role: "user", content: "Use the catalog policy.")]
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "worker-text",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+        let ext = translated.workerRequest.execution.ext
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+
+        #expect(translated.workerRequest.sampling.temperature == 0.42)
+        #expect(translated.workerRequest.sampling.topP == 0.91)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 1_024)
+        #expect(ext["melix.effective_policy.sampling.policy_lookup_status"] == "known")
+        #expect(ext["melix.effective_policy.sampling.policy_canonical_model"] == "melix-dev-policy")
+        #expect(ext["melix.effective_policy.sampling.policy_matched_alias"] == "melix-dev-policy-q4.gguf")
+        #expect(ext["melix.effective_policy.sampling.policy_source_url"] == sourceURL)
+        #expect(ext["melix.effective_policy.sampling.request_override_applied"] == "false")
+        #expect(sampling["policy_lookup_status"] as? String == "known")
+        #expect(sampling["policy_canonical_model"] as? String == "melix-dev-policy")
+        #expect(sampling["policy_matched_alias"] as? String == "melix-dev-policy-q4.gguf")
+        #expect(sampling["policy_source_url"] as? String == sourceURL)
+        #expect(sampling["request_override_applied"] as? Bool == false)
+    }
+
+    @Test("text model policy catalog prefers canonical identities over earlier aliases")
+    func textModelPolicyCatalogPrefersCanonicalIdentitiesOverEarlierAliases() throws {
+        let catalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "legacy-policy",
+                aliases: ["canonical-policy"],
+                sampling: .init(temperature: 0.11),
+                sourceURL: "https://example.invalid/legacy"
+            ),
+            .init(
+                canonicalModelID: "canonical-policy",
+                aliases: [],
+                sampling: .init(temperature: 0.72, topP: 0.93),
+                sourceURL: "https://example.invalid/canonical"
+            ),
+        ])
+
+        let result = try #require(catalog.lookup(identities: ["canonical-policy"]))
+
+        #expect(result.canonicalModelID == "canonical-policy")
+        #expect(result.matchedAlias == "canonical-policy")
+        #expect(result.sampling.temperature == 0.72)
+        #expect(result.sampling.topP == 0.93)
+        #expect(result.sourceURL == "https://example.invalid/canonical")
+    }
+
+    @Test("chat translation records operator override while retaining catalog fallback fields")
+    func chatTranslationRecordsOperatorOverrideWhileRetainingCatalogFallbackFields() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-policy-override" })
+        let catalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "melix-dev-policy",
+                aliases: ["melix-dev-policy-q4.gguf"],
+                sampling: .init(temperature: 0.42, topP: 0.91, maxTokens: 1_024),
+                sourceURL: "https://github.com/Keith-CY/melix/blob/main/docs/plans/2026-07-11-issue-1385-model-policy-catalog.md"
+            ),
+        ])
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(
+                modelID: "melix-dev-policy-q4.gguf",
+                modelSettings: .init(),
+                catalog: catalog
+            )
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-policy-q4.gguf",
+                messages: [.init(role: "user", content: "Use one request override.")],
+                temperature: 0.64
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "worker-text",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+
+        #expect(translated.workerRequest.sampling.temperature == 0.64)
+        #expect(translated.workerRequest.sampling.topP == 0.91)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 1_024)
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.temperature_source"] == "request")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.top_p_source"] == "model")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.policy_lookup_status"] == "operator_override")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.request_override_applied"] == "true")
+        #expect(sampling["policy_lookup_status"] as? String == "operator_override")
+        #expect(sampling["request_override_applied"] as? Bool == true)
+    }
+
+    @Test("chat translation records strict recommended sampling opt-in in effective policy receipts")
+    func chatTranslationRecordsStrictRecommendedSamplingOptIn() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-policy-strict" })
+        let sourceURL = "https://github.com/Keith-CY/melix/blob/main/docs/plans/2026-07-11-issue-1385-strict-policy-opt-in.md"
+        let catalog = TextModelPolicyCatalog(entries: [
+            .init(
+                canonicalModelID: "melix-dev-policy",
+                aliases: ["melix-dev-policy-q4.gguf"],
+                sampling: .init(temperature: 0.42, topP: 0.91, maxTokens: 1_024),
+                sourceURL: sourceURL
+            ),
+        ])
+        let modelSamplingPolicy = try #require(
+            ModelSamplingPolicy(
+                modelID: "melix-dev-policy-q4.gguf",
+                modelSettings: .init(),
+                catalog: catalog
+            )
+        )
+
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-policy-q4.gguf",
+                messages: [.init(role: "user", content: "Require the catalog policy.")],
+                recommendedSampling: .strict
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "worker-text",
+            modelSamplingPolicy: modelSamplingPolicy
+        )
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+
+        #expect(normalized.recommendedSampling == .strict)
+        #expect(translated.workerRequest.sampling.temperature == 0.42)
+        #expect(translated.workerRequest.sampling.topP == 0.91)
+        #expect(translated.workerRequest.sampling.maxOutputTokens == 1_024)
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.policy_lookup_status"] == "known")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.recommended_sampling_required"] == "true")
+        #expect(sampling["policy_lookup_status"] as? String == "known")
+        #expect(sampling["recommended_sampling_required"] as? Bool == true)
+    }
+
+    @Test("recommended sampling request mode decodes boolean string and invalid values")
+    func recommendedSamplingRequestModeDecodesBooleanStringAndInvalidValues() throws {
+        struct Envelope: Codable, Equatable {
+            let mode: RecommendedSamplingPolicyMode
+        }
+
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+
+        #expect(
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":true}"#.utf8)).mode == .strict
+        )
+        #expect(
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":false}"#.utf8)).mode == .off
+        )
+        #expect(
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":"required"}"#.utf8)).mode == .strict
+        )
+        #expect(
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":"disabled"}"#.utf8)).mode == .off
+        )
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(Envelope.self, from: Data(#"{"mode":"maybe"}"#.utf8))
+        }
+
+        #expect(
+            try String(data: encoder.encode(Envelope(mode: .strict)), encoding: .utf8)?
+                .contains(#""mode":"strict""#) == true
+        )
+        #expect(
+            try String(data: encoder.encode(Envelope(mode: .off)), encoding: .utf8)?
+                .contains(#""mode":"off""#) == true
+        )
     }
 
     @Test("chat translation wrapper falls back to gateway serving defaults when no model policy exists")
@@ -2643,6 +3477,11 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.sampling.temperature == 0.35)
         #expect(translated.workerRequest.sampling.topP == 0.92)
         #expect(translated.workerRequest.sampling.maxOutputTokens == 384)
+        let sampling = try Self.effectivePolicySampling(from: translated.workerRequest)
+        #expect(sampling["policy_lookup_status"] as? String == "unknown")
+        #expect(sampling["request_override_applied"] as? Bool == false)
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.policy_lookup_status"] == "unknown")
+        #expect(translated.workerRequest.execution.ext["melix.effective_policy.sampling.request_override_applied"] == "false")
         #expect(translated.workerRequest.execution.ext["melix.stream.interval_tokens"] == "3")
         #expect(translated.workerRequest.execution.ext["melix.gateway.max_concurrent_requests"] == "5")
         #expect(translated.workerRequest.execution.ext["melix.gateway.concurrent_processing"] == "true")

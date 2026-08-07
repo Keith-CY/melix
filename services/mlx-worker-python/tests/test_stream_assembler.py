@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -21,13 +22,47 @@ def test_pipe_channel_name_caches_repeated_headers() -> None:
     assert RequestStreamAssembler._pipe_channel_name(" analysis metadata\n") == "analysis"
     assert RequestStreamAssembler._pipe_channel_name(" analysis metadata\n") == "analysis"
     assert RequestStreamAssembler._pipe_channel_name("FINAL metadata") == "final"
+    assert RequestStreamAssembler._pipe_channel_name("commentary metadata") == "commentary"
+    assert RequestStreamAssembler._pipe_channel_name("commentary\tmetadata other") == "commentary"
+    assert RequestStreamAssembler._pipe_channel_name("commentary\tmetadata") == "commentary"
+    assert RequestStreamAssembler._pipe_channel_name("analysis") == "analysis"
+    assert RequestStreamAssembler._pipe_channel_name("FiNaL") == "final"
     assert RequestStreamAssembler._pipe_channel_name("   ") == ""
 
     cache_info = RequestStreamAssembler._pipe_channel_name.cache_info()
     assert cache_info.hits == 1
-    assert cache_info.misses == 3
+    assert cache_info.misses == 8
 
     RequestStreamAssembler._pipe_channel_name.cache_clear()
+
+
+def test_token_count_compression_reuses_cached_weight_shape() -> None:
+    stream_assembler._cached_compress_delta_token_counts.cache_clear()
+    weights = [
+        384 if index % 3 == 0 else 128 if index % 3 == 1 else 1
+        for index in range(192)
+    ]
+    expected = RequestStreamAssembler._compress_delta_token_counts(weights, 8192)
+
+    assert RequestStreamAssembler._compress_delta_token_counts(list(weights), 8192) == expected
+    assert sum(expected) == 8192
+
+    cache_info = stream_assembler._cached_compress_delta_token_counts.cache_info()
+    assert cache_info.hits == 1
+    assert cache_info.misses == 1
+
+    expected[0] = -1
+    assert RequestStreamAssembler._compress_delta_token_counts(weights, 8192)[0] != -1
+
+    stream_assembler._cached_compress_delta_token_counts.cache_clear()
+
+
+def test_single_delta_single_token_annotation_reuses_existing_list() -> None:
+    assembler = RequestStreamAssembler("req-single-delta", False, "", "")
+    deltas = [AssemblyDelta(content_text="visible")]
+
+    assert assembler._annotate_token_counts(deltas, 1) is deltas
+    assert assembler._annotate_token_counts(deltas, 2)[0].token_count == 2
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -812,6 +847,40 @@ def test_pipe_channel_name_lowercases_only_the_channel_token() -> None:
     assert RequestStreamAssembler._pipe_channel_name("\r\n") == ""
 
 
+def test_longest_marker_prefix_suffix_reuses_precomputed_marker_prefixes() -> None:
+    prefixes = RequestStreamAssembler._MARKER_PREFIX_SUFFIXES[
+        RequestStreamAssembler._THINK_CLOSE
+    ]
+
+    assert prefixes[2] == "</thi"
+    assert (
+        RequestStreamAssembler._longest_marker_prefix_suffix(
+            "reasoning body </thi",
+            RequestStreamAssembler._THINK_CLOSE,
+        )
+        is prefixes[2]
+    )
+    assert RequestStreamAssembler._longest_marker_prefix_suffix(
+        "tool body </tool",
+        RequestStreamAssembler._TOOL_CLOSE,
+    ) == "</tool"
+    assert RequestStreamAssembler._longest_marker_prefix_suffix(
+        "pipe tool body <tool_call|",
+        RequestStreamAssembler._PIPE_TOOL_CLOSE,
+    ) == "<tool_call|"
+    assert RequestStreamAssembler._longest_marker_prefix_suffix(
+        "pipe channel header <channel|",
+        RequestStreamAssembler._PIPE_CHANNEL_HEADER_CLOSE,
+    ) == "<channel|"
+    assert (
+        RequestStreamAssembler._longest_marker_prefix_suffix(
+            "body <custom",
+            "<custom-end>",
+        )
+        == "<custom"
+    )
+
+
 def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-tool-first",
@@ -911,6 +980,37 @@ def test_plain_buffer_without_tag_marker_flushes_without_structural_scans(monkey
     assert completed.assistant_text == "plain text chunk without markup"
     assert completed.metrics["stream_prefix_hold_chars"] == 0
     assert completed.metrics["stream_short_reply_flush_count"] == 0
+
+
+def test_extra_delta_token_distribution_uses_round_robin_batches() -> None:
+    deltas = [
+        AssemblyDelta(reasoning_text=f"thought {index}")
+        if index % 2 == 0
+        else AssemblyDelta(content_text=f"visible {index}")
+        for index in range(6)
+    ]
+
+    adjusted = RequestStreamAssembler._distribute_extra_delta_tokens(
+        deltas,
+        [1, 1, 1, 1, 1, 1],
+        10,
+    )
+
+    assert adjusted == [5, 1, 4, 1, 4, 1]
+
+
+def test_compress_delta_token_counts_uses_round_batches() -> None:
+    weights = [400, 1, 250, 4]
+
+    compressed = RequestStreamAssembler._compress_delta_token_counts(weights, 600)
+
+    assert compressed == [345, 1, 250, 4]
+    assert sum(compressed) == 600
+
+    saturated = RequestStreamAssembler._compress_delta_token_counts(weights, 655)
+
+    assert saturated == weights
+    assert sum(saturated) == sum(weights)
 
 
 def test_plain_token_metadata_keeps_fast_path_and_metrics(monkeypatch) -> None:
@@ -1696,6 +1796,39 @@ def test_partial_structural_tag_suffix_returns_last_marker_match() -> None:
     assert assembler._partial_structural_tag_suffix() == "<tool"
 
 
+def test_partial_structural_tag_suffix_rejects_overlong_literal_tail_before_slicing() -> None:
+    class RecordingBuffer(str):
+        slice_keys: list[object]
+
+        def __new__(cls) -> "RecordingBuffer":
+            instance = str.__new__(cls, "literal <" + ("x" * 4096))
+            instance.slice_keys = []
+            return instance
+
+        def __getitem__(self, key):  # type: ignore[override,no-untyped-def]
+            self.slice_keys.append(key)
+            return super().__getitem__(key)
+
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-suffix-long-literal",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    buffer = RecordingBuffer()
+    assembler._buffer = buffer
+
+    assert assembler._partial_structural_tag_suffix() == ""
+    assert buffer.slice_keys == []
+
+    valid_buffer = str.__new__(RecordingBuffer, "literal <tool")
+    valid_buffer.slice_keys = []
+    assembler._buffer = valid_buffer
+
+    assert assembler._partial_structural_tag_suffix() == "<tool"
+    assert valid_buffer.slice_keys == [slice(8, None, None)]
+
+
 def test_partial_structural_tag_suffix_ignores_complete_or_unknown_markers() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-partial-suffix-no-false-positives",
@@ -1721,6 +1854,33 @@ def test_partial_structural_tag_suffix_ignores_complete_or_unknown_markers() -> 
 
     assembler._buffer = "answer"
     assert assembler._partial_structural_tag_suffix() == ""
+
+
+def test_longest_marker_prefix_suffix_uses_marker_prefix_without_text_slice() -> None:
+    class RecordingText(str):
+        slice_keys: list[object]
+        endswith_args: list[str]
+
+        def __new__(cls) -> "RecordingText":
+            instance = str.__new__(cls, "reasoning body </thi")
+            instance.slice_keys = []
+            instance.endswith_args = []
+            return instance
+
+        def __getitem__(self, key):  # type: ignore[override,no-untyped-def]  # pragma: no cover
+            self.slice_keys.append(key)
+            return super().__getitem__(key)
+
+        def endswith(self, suffix: Any, *args: Any) -> bool:  # type: ignore[override]
+            self.endswith_args.append(suffix)
+            return super().endswith(suffix, *args)
+
+    text = RecordingText()
+
+    assert RequestStreamAssembler._longest_marker_prefix_suffix(text, "</think>") == "</thi"
+    assert text.slice_keys == []
+    assert text.endswith_args == ["</think", "</thin", "</thi"]
+
 
 
 def test_partial_pipe_reasoning_marker_is_suppressed_at_completion() -> None:
@@ -2044,11 +2204,13 @@ def test_truncated_reasoning_is_recoverable_and_not_public_content() -> None:
         tool_parser_mode="qwen",
     )
 
-    assert assembler.accept(StreamFragment(raw_text="<think>unfinished")) == []
+    deltas = assembler.accept(StreamFragment(raw_text="<think>unfinished"))
     completed = assembler.completed()
 
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["unfinished"]
+    assert [delta.content_text for delta in deltas if delta.content_text] == []
     assert completed.assistant_text == ""
-    assert completed.reasoning_text == ""
+    assert completed.reasoning_text == "unfinished"
     assert completed.metrics["malformed_reasoning_count"] == 1
     assert completed.metrics["reasoning_channel_recovery_count"] == 1
     assert completed.metrics["malformed_tool_fragment_count"] == 0
@@ -2419,6 +2581,101 @@ def test_empty_thinking_block_is_suppressed_as_thinking_off_sentinel() -> None:
     assert completed.metrics["reasoning_leak_count"] == 0
 
 
+def test_think_reasoning_streams_before_close_and_holds_only_close_marker_suffix() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-streaming-think-body",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<think>")) == []
+    assert assembler._buffer == ""
+
+    first = assembler.accept(StreamFragment(raw_text="<think>plan step"))
+    assert [delta.reasoning_text for delta in first if delta.reasoning_text] == ["plan step"]
+    assert assembler._buffer == ""
+
+    split_close = assembler.accept(StreamFragment(raw_text="<think>plan step</thi"))
+    assert split_close == []
+    assert assembler._buffer == "</thi"
+
+    final = assembler.accept(StreamFragment(raw_text="<think>plan step</think>READY"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in final if delta.content_text] == ["READY"]
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == "READY"
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
+def test_gemma_reasoning_streams_before_split_channel_close_without_markup_leak() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-streaming-gemma-thought-body",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="gemma",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>thought")) == []
+    assert assembler._buffer == ""
+
+    first = assembler.accept(StreamFragment(raw_text="<|channel>thought\nplan step"))
+    assert [delta.reasoning_text for delta in first if delta.reasoning_text] == ["\nplan step"]
+    assert assembler._buffer == ""
+
+    split_close = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\nplan step<chan")
+    )
+    assert split_close == []
+    assert assembler._buffer == "<chan"
+
+    final = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\nplan step<channel|>READY")
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in final if delta.content_text] == ["READY"]
+    assert completed.reasoning_text == "\nplan step"
+    assert completed.assistant_text == "READY"
+    assert completed.metrics["harmony_channel_hidden_count"] == 1
+    assert completed.metrics["harmony_channel_markup_leak_count"] == 0
+
+
+def test_disabled_gemma_reasoning_never_leaks_while_channel_is_streaming() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-disabled-streaming-gemma-thought-body",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="gemma",
+    )
+
+    assert assembler.accept(StreamFragment(raw_text="<|channel>thought")) == []
+    assert assembler._buffer == ""
+
+    first = assembler.accept(StreamFragment(raw_text="<|channel>thought\nhidden plan"))
+    assert first == []
+    assert assembler._buffer == ""
+
+    split_close = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\nhidden plan<channel")
+    )
+    assert split_close == []
+    assert assembler._buffer == "<channel"
+
+    final = assembler.accept(
+        StreamFragment(raw_text="<|channel>thought\nhidden plan<channel|>READY")
+    )
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in final if delta.content_text] == ["READY"]
+    assert completed.reasoning_text == ""
+    assert completed.assistant_text == "READY"
+    assert completed.metrics["suppressed_reasoning_count"] == 1
+    assert completed.metrics["reasoning_parser_bypassed_count"] == 1
+    assert completed.metrics["reasoning_leak_count"] == 0
+
+
 def test_pipe_reasoning_channel_is_suppressed_and_visible_tail_emitted() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-pipe-reasoning-channel",
@@ -2459,7 +2716,7 @@ def test_empty_pipe_reasoning_channel_is_suppressed_as_thinking_off_sentinel() -
     assert completed.metrics["reasoning_leak_count"] == 0
 
 
-def test_unclosed_reasoning_channel_recovers_visible_answer_tail_at_eos() -> None:
+def test_unclosed_reasoning_channel_holds_possible_visible_tail_until_eos() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-unclosed-reasoning-visible-tail",
         reasoning_enabled=True,
@@ -2467,13 +2724,85 @@ def test_unclosed_reasoning_channel_recovers_visible_answer_tail_at_eos() -> Non
         tool_parser_mode="qwen",
     )
 
-    assert assembler.accept(StreamFragment(raw_text="<think>plan step\n\nFinal answer")) == []
-    completed = assembler.completed()
+    first = assembler.accept(StreamFragment(raw_text="<think>plan step"))
+    second = assembler.accept(StreamFragment(raw_text="<think>plan step\n\nFinal answer"))
+    terminal, completed = assembler.finalize()
 
+    assert [delta.reasoning_text for delta in first + second if delta.reasoning_text] == [
+        "plan step",
+    ]
+    assert [delta.content_text for delta in first + second if delta.content_text] == []
+    assert [delta.content_text for delta in terminal if delta.content_text] == ["Final answer"]
     assert completed.reasoning_text == "plan step"
     assert completed.assistant_text == "Final answer"
     assert completed.metrics["malformed_reasoning_count"] == 1
     assert completed.metrics["reasoning_channel_recovery_count"] == 1
+    repeated_terminal, repeated_completed = assembler.finalize()
+    assert repeated_terminal == []
+    assert repeated_completed == completed
+
+
+def test_unclosed_reasoning_candidate_split_across_fragments_is_not_streamed_as_reasoning() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-unclosed-reasoning-split-visible-tail",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    first = assembler.accept(StreamFragment(raw_text="<think>plan step\n"))
+    second = assembler.accept(StreamFragment(raw_text="<think>plan step\n\nFinal answer"))
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in first + second if delta.reasoning_text] == [
+        "plan step",
+    ]
+    assert [delta.content_text for delta in first + second if delta.content_text] == []
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == "Final answer"
+
+
+def test_well_formed_reasoning_flushes_ambiguous_paragraph_when_close_arrives() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-well-formed-reasoning-ambiguous-paragraph",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    first = assembler.accept(StreamFragment(raw_text="<think>plan step\n\nsecond thought"))
+    second = assembler.accept(
+        StreamFragment(raw_text="<think>plan step\n\nsecond thought</think>Final answer")
+    )
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in first if delta.reasoning_text] == ["plan step"]
+    assert [delta.reasoning_text for delta in second if delta.reasoning_text] == [
+        "\n\nsecond thought",
+    ]
+    assert [delta.content_text for delta in second if delta.content_text] == ["Final answer"]
+    assert completed.reasoning_text == "plan step\n\nsecond thought"
+    assert completed.assistant_text == "Final answer"
+
+
+def test_unclosed_reasoning_visible_tail_buffer_has_bounded_safe_commit() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-unclosed-reasoning-bounded-visible-tail",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    visible = "A" * (RequestStreamAssembler._MAX_AMBIGUOUS_REASONING_TAIL_CHARS + 1)
+
+    deltas = assembler.accept(StreamFragment(raw_text=f"<think>plan step\n\n{visible}"))
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["plan step"]
+    assert [delta.content_text for delta in deltas if delta.content_text] == [visible]
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == visible
+    assert completed.metrics["reasoning_ambiguous_tail_max_chars"] == len(visible) + 2
+    assert completed.metrics["reasoning_visible_tail_safe_commit_count"] == 1
 
 
 def test_unclosed_pipe_reasoning_channel_recovers_visible_answer_tail_at_eos() -> None:
@@ -2659,7 +2988,7 @@ def test_unclosed_reasoning_recovery_preserves_hidden_when_visible_tail_is_empty
     assembler.accept(StreamFragment(raw_text="<think>hidden plan\n\n"))
     completed = assembler.completed()
 
-    assert completed.reasoning_text == "hidden plan"
+    assert completed.reasoning_text == "hidden plan\n\n"
     assert completed.assistant_text == ""
     assert completed.metrics["reasoning_channel_recovery_count"] == 1
 
@@ -2675,6 +3004,24 @@ def test_unclosed_reasoning_recovery_marker_avoids_plain_phrase_false_positive()
     assembler.accept(StreamFragment(raw_text="<think>hidden\nFinal boss is defeated."))
     completed = assembler.completed()
 
-    assert completed.reasoning_text == ""
+    assert completed.reasoning_text == "hidden\nFinal boss is defeated."
     assert completed.assistant_text == ""
     assert completed.metrics["reasoning_channel_recovery_count"] == 1
+
+
+def test_unclosed_reasoning_drops_partial_close_marker_without_duplicate_content() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-close-unclosed-reasoning",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+
+    deltas = assembler.accept(StreamFragment(raw_text="<think>plan step</thi"))
+    completed = assembler.completed()
+
+    assert [delta.reasoning_text for delta in deltas if delta.reasoning_text] == ["plan step"]
+    assert [delta.content_text for delta in deltas if delta.content_text] == []
+    assert completed.reasoning_text == "plan step"
+    assert completed.assistant_text == ""
+    assert completed.metrics["malformed_reasoning_count"] == 1

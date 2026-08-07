@@ -4,6 +4,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote_plus, urlencode
@@ -30,9 +31,14 @@ _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _BARE_SIZE_HINT_SEARCH = _BARE_SIZE_HINT_RE.search
 _EXPLICIT_SIZE_HINT_SEARCH = _EXPLICIT_SIZE_HINT_RE.search
+_README_MODEL_SIZE_TABLE_PREFIX = "README\nMODEL SIZE | "
+_README_MODEL_SIZE_TABLE_PREFIX_LENGTH = len(_README_MODEL_SIZE_TABLE_PREFIX)
 _NEXT_LINK_REL_MARKER = 'rel="next"'
+_NEXT_LINK_REL_SUFFIX = '>; rel="next"'
 _CURSOR_QUERY_KEY = "cursor="
 _CURSOR_QUERY_KEY_LEN = len(_CURSOR_QUERY_KEY)
+_CURSOR_QUERY_PARAM_KEY = "&cursor="
+_CURSOR_QUERY_PARAM_KEY_LEN = len(_CURSOR_QUERY_PARAM_KEY)
 _URL_HEX_DIGITS = {
     "0": 0,
     "1": 1,
@@ -76,8 +82,6 @@ _COMMON_4BIT_OPTIQ_EXCLUDED_TAGS = {
     "float16",
     "qat",
 }
-
-
 @dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
     repo_id: str
@@ -351,6 +355,13 @@ class HubCatalog:
 
 
 def _next_cursor_from_link(link_header: str) -> str:
+    suffix_start = link_header.find(_NEXT_LINK_REL_SUFFIX)
+    if suffix_start >= 0:
+        url_start = link_header.rfind("<", 0, suffix_start)
+        if url_start >= 0:
+            return _cursor_query_value(link_header, url_start + 1, suffix_start)
+        return ""
+
     marker = _NEXT_LINK_REL_MARKER
     marker_len = len(marker)
     search_start = 0
@@ -366,21 +377,7 @@ def _next_cursor_from_link(link_header: str) -> str:
         if url_start < 0:
             search_start = relation_start + marker_len
             continue
-        url_content_start = url_start + 1
-        query_end = link_header.find("#", url_content_start, url_end)
-        if query_end < 0:
-            query_end = url_end
-        cursor_start = link_header.find(_CURSOR_QUERY_KEY, url_content_start, query_end)
-        while cursor_start >= 0:
-            previous_char = link_header[cursor_start - 1] if cursor_start > url_content_start else ""
-            if previous_char == "?" or previous_char == "&":
-                value_start = cursor_start + _CURSOR_QUERY_KEY_LEN
-                value_end = link_header.find("&", value_start, query_end)
-                if value_end < 0:
-                    value_end = query_end
-                return _unquote_plus_ascii_cursor(link_header[value_start:value_end])
-            cursor_start = link_header.find(_CURSOR_QUERY_KEY, cursor_start + _CURSOR_QUERY_KEY_LEN, query_end)
-        return ""
+        return _cursor_query_value(link_header, url_start + 1, url_end)
 
 
 def _cursor_query_value(url: str, start: int, end: int) -> str:
@@ -392,13 +389,13 @@ def _cursor_query_value(url: str, start: int, end: int) -> str:
         query_end = end
 
     value_start = query_start + 1
-    if url.startswith("cursor=", value_start, query_end):
-        value_start += len("cursor=")
+    cursor_start = url.find(_CURSOR_QUERY_PARAM_KEY, value_start, query_end)
+    if cursor_start >= 0:
+        value_start = cursor_start + _CURSOR_QUERY_PARAM_KEY_LEN
+    elif url.startswith(_CURSOR_QUERY_KEY, value_start, query_end):
+        value_start += _CURSOR_QUERY_KEY_LEN
     else:
-        cursor_start = url.find("&cursor=", value_start, query_end)
-        if cursor_start < 0:
-            return ""
-        value_start = cursor_start + len("&cursor=")
+        return ""
 
     value_end = url.find("&", value_start, query_end)
     if value_end < 0:
@@ -415,10 +412,12 @@ def _unquote_plus_ascii_cursor(value: str) -> str:
     common_cursor = (
         value.replace("+", " ")
         .replace("%2F", "/")
-        .replace("%2f", "/")
         .replace("%2B", "+")
-        .replace("%2b", "+")
     )
+    if "%" not in common_cursor:
+        return common_cursor
+
+    common_cursor = common_cursor.replace("%2f", "/").replace("%2b", "+")
     if "%" not in common_cursor:
         return common_cursor
 
@@ -449,10 +448,16 @@ def _unquote_plus_ascii_cursor(value: str) -> str:
 
 
 def _string(value: Any) -> str:
+    if type(value) is str:
+        return value
     return value if isinstance(value, str) else ""
 
 
 def _int(value: Any) -> int:
+    if type(value) is int:
+        return value
+    if value is None:
+        return 0
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -494,15 +499,15 @@ def _is_mlx_atom(value: str) -> bool:
 def _tag_payload_contains_mlx(value: Any) -> bool:
     if type(value) is list:
         for item in value:
-            if type(item) is str and (
-                item == "MLX" or item == "mlx" or (len(item) == 3 and _is_mlx_atom(item))
+            if type(item) is str and len(item) == 3 and (
+                item == "mlx" or item == "MLX" or _is_mlx_atom(item)
             ):
                 return True
         return False
     if isinstance(value, list):
         for item in value:
-            if isinstance(item, str) and (
-                item == "MLX" or item == "mlx" or (len(item) == 3 and _is_mlx_atom(item))
+            if isinstance(item, str) and len(item) == 3 and (
+                item == "mlx" or item == "MLX" or _is_mlx_atom(item)
             ):
                 return True
         return False
@@ -561,32 +566,45 @@ def _base_models(value: Any) -> list[str]:
 
 
 def _repo_id_contains_mlx(repo_id: str) -> bool:
-    return "mlx" in repo_id or (
-        ("M" in repo_id or "L" in repo_id or "X" in repo_id) and "mlx" in repo_id.lower()
-    )
+    if "mlx" in repo_id:
+        return True
+    if "x" not in repo_id and "X" not in repo_id:
+        return False
+    return "mlx" in repo_id.lower()
 
 
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     raw_library_name = payload.get("library_name")
     library_name = raw_library_name if isinstance(raw_library_name, str) else ""
-    if library_name and _is_mlx_atom(library_name):
+    if library_name == "mlx" or library_name == "MLX" or (
+        library_name and _is_mlx_atom(library_name)
+    ):
         return True
     raw_repo_id = payload.get("id") or payload.get("modelId")
     repo_id = raw_repo_id if isinstance(raw_repo_id, str) else ""
     if repo_id and _repo_id_contains_mlx(repo_id):
         return True
+    card_data = payload.get("cardData")
+    if isinstance(card_data, dict):
+        if not library_name:
+            raw_card_library_name = card_data.get("library_name")
+            if raw_card_library_name == "mlx" or raw_card_library_name == "MLX":
+                return True
+        card_tags = card_data.get("tags")
+        if card_tags and _tag_payload_contains_mlx(card_tags):
+            return True
     if _tag_payload_contains_mlx(payload.get("tags")):
         return True
-    card_data = payload.get("cardData")
     if not isinstance(card_data, dict):
         return False
     raw_card_library_name = card_data.get("library_name")
-    if not library_name and isinstance(raw_card_library_name, str) and _is_mlx_atom(raw_card_library_name):
+    if (
+        not library_name
+        and isinstance(raw_card_library_name, str)
+        and _is_mlx_atom(raw_card_library_name)
+    ):
         return True
-    card_tags = card_data.get("tags")
-    if not card_tags:
-        return False
-    return _tag_payload_contains_mlx(card_tags)
+    return False
 
 
 def _is_mlx_compatible(
@@ -600,7 +618,7 @@ def _is_mlx_compatible(
     lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
     if "mlx" in lowered_tags:
         return True
-    if _is_mlx_atom(library_name):
+    if library_name == "mlx" or library_name == "MLX" or _is_mlx_atom(library_name):
         return True
     if _repo_id_contains_mlx(repo_id):
         return True
@@ -884,26 +902,24 @@ def _size_hint_from_marked_text(text: str) -> int:
 
 
 def _direct_size_hint_from_text(text: str) -> int:
-    if len(text) >= 4 and text[-3].isspace():
-        unit_suffix = ord(text[-1])
-        if unit_suffix == 66 or unit_suffix == 98:  # B or b
-            unit_initial = ord(text[-2])
-            if unit_initial == 77 or unit_initial == 109:  # M or m
-                multiplier = _SIZE_HINT_MB
-            elif unit_initial == 71 or unit_initial == 103:  # G or g
-                multiplier = _SIZE_HINT_GB
-            elif unit_initial == 75 or unit_initial == 107:  # K or k
-                multiplier = _SIZE_HINT_KB
-            else:
-                multiplier = 0
-            if multiplier:
-                value_text = text[:-3]
-                if value_text.isdecimal():
-                    return int(value_text) * multiplier
-                try:
-                    return int(float(value_text) * multiplier)
-                except ValueError:
-                    return 0
+    if len(text) >= 4:
+        unit_suffix = text[-3:]
+        if unit_suffix == " MB" or unit_suffix == " mb":
+            multiplier = _SIZE_HINT_MB
+        elif unit_suffix == " GB" or unit_suffix == " gb":
+            multiplier = _SIZE_HINT_GB
+        elif unit_suffix == " KB" or unit_suffix == " kb":
+            multiplier = _SIZE_HINT_KB
+        else:
+            multiplier = 0
+        if multiplier:
+            value_text = text[:-3]
+            if value_text.isdecimal():
+                return int(value_text) * multiplier
+            try:
+                return int(float(value_text) * multiplier)
+            except ValueError:
+                return 0
 
     text_length = len(text)
     value_start = 0
@@ -958,7 +974,34 @@ def _direct_size_hint_from_text(text: str) -> int:
         return 0
 
 
+def _direct_size_hint_from_span(text: str, value_start: int, value_end: int) -> int:
+    if value_end - value_start >= 4:
+        unit_suffix = text[value_end - 3 : value_end]
+        if unit_suffix == " MB" or unit_suffix == " mb":
+            multiplier = _SIZE_HINT_MB
+        elif unit_suffix == " GB" or unit_suffix == " gb":
+            multiplier = _SIZE_HINT_GB
+        elif unit_suffix == " KB" or unit_suffix == " kb":
+            multiplier = _SIZE_HINT_KB
+        else:
+            multiplier = 0
+        if multiplier:
+            value_text = text[value_start : value_end - 3]
+            if value_text.isdecimal():
+                return int(value_text) * multiplier
+            try:
+                return int(float(value_text) * multiplier)
+            except ValueError:
+                return 0
+    return _direct_size_hint_from_text(text[value_start:value_end])
+
+
+@lru_cache(maxsize=4096)
 def _direct_card_size_hint_from_text(text: str) -> int:
+    if text.startswith("MODEL SIZE:") or text.startswith("MODEL SIZE|"):
+        return _direct_size_hint_from_text(text[11:])
+    if text.startswith("Model size: "):
+        return _direct_size_hint_from_text(text[12:])
     stripped_text = _strip_model_size_label(text)
     if stripped_text:
         return _direct_size_hint_from_text(stripped_text)
@@ -968,7 +1011,7 @@ def _direct_card_size_hint_from_text(text: str) -> int:
 def _direct_size_hint_from_line(text: str, value_start: int) -> int:
     newline_index = text.find("\n", value_start)
     if newline_index >= 0:
-        return _direct_size_hint_from_text(text[value_start:newline_index])
+        return _direct_size_hint_from_span(text, value_start, newline_index)
     value_end = value_start
     text_length = len(text)
     while (
@@ -976,16 +1019,19 @@ def _direct_size_hint_from_line(text: str, value_start: int) -> int:
         and text[value_end] not in "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
     ):
         value_end += 1
-    return _direct_size_hint_from_text(text[value_start:value_end])
+    return _direct_size_hint_from_span(text, value_start, value_end)
 
 
+@lru_cache(maxsize=4096)
 def _direct_explicit_size_hint_from_text(text: str) -> int:
+    if text.startswith(_README_MODEL_SIZE_TABLE_PREFIX):
+        return _direct_size_hint_from_line(text, _README_MODEL_SIZE_TABLE_PREFIX_LENGTH)
+    marker_index = text.find("Model size: ", 0, 64)
+    if marker_index >= 0:
+        return _direct_size_hint_from_line(text, marker_index + 12)
     marker_index = text.find("MODEL SIZE | ")
     if marker_index >= 0:
         return _direct_size_hint_from_line(text, marker_index + 13)
-    marker_index = text.find("Model size: ")
-    if marker_index >= 0:
-        return _direct_size_hint_from_line(text, marker_index + 12)
     marker_index = text.find("MODEL SIZE")
     if marker_index < 0:
         marker_index = text.find("Model size")
@@ -1063,7 +1109,12 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
 
 
 def _may_contain_model_marker(text: str) -> bool:
-    return "MO" in text or "Mo" in text or "mo" in text or "mO" in text
+    return (
+        "Mo" in text
+        or "MO" in text
+        or "mo" in text
+        or "mO" in text
+    )
 
 
 def _parameter_count(value: Any) -> int:

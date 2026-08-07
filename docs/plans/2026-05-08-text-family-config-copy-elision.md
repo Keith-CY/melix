@@ -24,6 +24,35 @@ The probe repeatedly resolves a Qwen3-MoE text family config using a large read-
 
 The 2026-05-09 follow-up slice keeps the same registered probe and narrows the new behavior change to `_split_csv()`: empty metadata strings return immediately without allocating split parts, and non-empty values strip each CSV item once.
 
+The 2026-07-23 follow-up keeps the same registered probe and narrows the new behavior change to `_bool_from_any()`: exact normalized string literals (`"true"`, `"false"`, `"on"`, etc.) return before the fallback `strip().lower()` normalization. Whitespace-padded and mixed-case strings still use the fallback path, preserving the existing bool parsing behavior while avoiding per-resolution string normalization for already-normalized metadata values.
+
+The 2026-07-28 follow-up keeps the same registered probe and narrows the behavior-preserving change to `_bool_value()`: missing and empty metadata still return the caller default, exact normalized bool literals now return before `strip()`, and whitespace-only metadata still falls back to the default after the strip. This avoids one string strip on common already-normalized metadata flags while preserving padded and mixed-case bool parsing through `_bool_from_any()`.
+
+A third 2026-07-28 follow-up keeps the same registered probe and narrows the behavior-preserving change to the `melix.text.moe.gate_dequant` metadata branch in `resolve_text_family_config()`: exact normalized bool literals now return before `strip()`, while padded literals and blank metadata still use the existing normalization and config/default inference fallback. The registered probe sets this metadata flag to `"true"`, so it directly measures the avoided strip allocation on the Qwen3-MoE config resolution workload.
+
+Local Linux registered probe samples for the 2026-07-28 gate-dequant follow-up on this host:
+
+- baseline `origin/main`: `155.58828357607126`, `156.18404797278345`, `148.04696892388165`, `156.57016937620938` ms; mean `154.09736746223643` ms.
+- gate-dequant exact bool fast path: `147.03070437535644`, `150.84489956498146`, `147.67564996145666` ms; mean `148.51708463393152` ms.
+- delta: `-5.580282828304917` ms, `3.621270707088774%` faster (`1.0375733394044149x`).
+- registered base-vs-head runner sample: base `157.6743083074689` ms, head `155.5105272680521` ms; `coverage_pct=100.0`; `config_copy_calls_mean`, `config_key_accesses_mean`, and `peak_bytes_mean` unchanged.
+
+A second 2026-07-28 follow-up keeps the same registered probe and narrows to `_resolved_expert_count()`: missing or empty `melix.text.moe.expert_count` metadata now returns to config/default inference before calling `strip()`, and an empty `melix.text.moe.expert_count_source` similarly avoids a source normalization call. Invalid non-empty expert-count metadata still falls through to the existing family-default path after the guarded `ValueError` handling.
+
+Local Linux registered probe samples for the 2026-07-28 expert-metadata follow-up on this host:
+
+- baseline `origin/main`: `151.5909326262772`, `158.11064094305038`, `149.95074956677854` ms; mean `153.217441045368` ms.
+- expert-metadata empty fast path: `148.41943220235407`, `148.65166936069727`, `151.46144940517843` ms; mean `149.510850322743` ms.
+- delta: `-3.706590722625` ms, `2.419170231100%` faster (`1.024791449681x`).
+- `config_copy_calls_mean`: unchanged at `0.0`; `config_key_accesses_mean`: unchanged at `20000.0`; `peak_bytes_mean`: unchanged at `1008.0`.
+
+Local Linux registered probe samples for the 2026-07-23 follow-up on this host:
+
+- baseline `origin/main`: `156.5028017386794`, `164.59141615778208`, `158.0336649902165` ms; mean `159.709294295559` ms.
+- exact bool literal fast path: `152.33040382154286`, `152.0294691901654`, `150.74609643779695` ms; mean `151.701989816501` ms.
+- delta: `-8.007304479058` ms, `5.013674698300%` faster (`1.052783120964x`).
+- `config_copy_calls_mean`: unchanged at `0.0`; `config_key_accesses_mean`: unchanged at `20000.0`.
+
 Metrics:
 
 - `elapsed_ms_mean`

@@ -33,6 +33,7 @@ struct DiskCacheTierMetrics: Sendable {
 struct RestoredBoundarySnapshot: Sendable {
     let snapshot: Melix_Worker_V1_SnapshotRef
     let model: Melix_Worker_V1_ModelSpec
+    let execution: Melix_Worker_V1_ExecutionMetadata?
     let messages: [Melix_Worker_V1_ChatMessage]
     let resumeHint: String
     let acceleration: Melix_Worker_V1_AccelerationPolicy
@@ -63,6 +64,7 @@ private struct PersistedSnapshotEnvelope: Codable {
     let snapshotID: String
     let snapshotData: Data
     let modelData: Data
+    let executionData: Data?
     let messagesData: [Data]
     let resumeHint: String
     let accelerationData: Data
@@ -82,6 +84,7 @@ private struct StoredL2PrefixRecord: Sendable {
 private struct StoredBoundarySnapshotRecord: Sendable {
     let snapshot: Melix_Worker_V1_SnapshotRef
     let model: Melix_Worker_V1_ModelSpec
+    let execution: Melix_Worker_V1_ExecutionMetadata?
     let messages: [Melix_Worker_V1_ChatMessage]
     let resumeHint: String
     let acceleration: Melix_Worker_V1_AccelerationPolicy
@@ -97,8 +100,7 @@ actor DiskCacheStore {
     private let snapshotsURL: URL
     private let runtimeCacheFingerprint: String
 
-    private var prefixesByID: [String: StoredL2PrefixRecord]
-    private var prefixIDByKey: [String: String]
+    private var prefixesByLogicalKey: [CacheLogicalPrefixKey: StoredL2PrefixRecord]
     private var snapshotsByID: [String: StoredBoundarySnapshotRecord]
     private var prefixRestoreLookups: UInt64
     private var prefixRestoreHits: UInt64
@@ -126,12 +128,7 @@ actor DiskCacheStore {
             snapshotsURL: snapshotsURL,
             runtimeCacheFingerprint: runtimeCacheFingerprint
         )
-        self.prefixesByID = loaded.prefixes
-        self.prefixIDByKey = Dictionary(
-            uniqueKeysWithValues: loaded.prefixes.values.map { record in
-                (diskCacheKeyIdentifier(record.prefix.cacheKey), record.prefix.prefixID)
-            }
-        )
+        self.prefixesByLogicalKey = loaded.prefixes
         self.snapshotsByID = loaded.snapshots
         self.prefixRestoreLookups = 0
         self.prefixRestoreHits = 0
@@ -162,11 +159,11 @@ actor DiskCacheStore {
             quantizedBytes: quantizedBytes,
             unquantizedBytes: normalizedTable.blocks.reduce(UInt64(0)) { $0 + $1.bytes }
         )
-        prefixesByID[persistedPrefix.prefixID] = record
-        prefixIDByKey[diskCacheKeyIdentifier(persistedPrefix.cacheKey)] = persistedPrefix.prefixID
+        let logicalKey = CacheLogicalPrefixKey(persistedPrefix)
+        prefixesByLogicalKey[logicalKey] = record
 
         pendingWriteBackOperations += 1
-        writePrefixRecord(record)
+        writePrefixRecord(record, logicalKey: logicalKey)
         pendingWriteBackOperations -= 1
         completedWriteBackCount += 1
     }
@@ -174,6 +171,7 @@ actor DiskCacheStore {
     func saveSnapshot(
         snapshot: Melix_Worker_V1_SnapshotRef,
         model: Melix_Worker_V1_ModelSpec,
+        execution: Melix_Worker_V1_ExecutionMetadata? = nil,
         messages: [Melix_Worker_V1_ChatMessage],
         resumeHint: String,
         acceleration: Melix_Worker_V1_AccelerationPolicy,
@@ -199,6 +197,7 @@ actor DiskCacheStore {
         let record = StoredBoundarySnapshotRecord(
             snapshot: snapshot,
             model: model,
+            execution: execution,
             messages: messages,
             resumeHint: resumeHint,
             acceleration: acceleration,
@@ -211,11 +210,11 @@ actor DiskCacheStore {
     }
 
     func ownershipSnapshot() -> DiskCacheOwnershipSnapshot {
-        let tables = prefixesByID.values.map(\.blockTable)
+        let tables = prefixesByLogicalKey.values.map(\.blockTable)
         let pageCount = Set(tables.flatMap(\.pages).map(\.pageID)).count
         let blockCount = Set(tables.flatMap(\.blocks).map(\.blockID)).count
         return DiskCacheOwnershipSnapshot(
-            prefixCount: prefixesByID.count,
+            prefixCount: prefixesByLogicalKey.count,
             pageCount: pageCount,
             blockCount: blockCount,
             snapshotCount: snapshotsByID.count
@@ -234,6 +233,7 @@ actor DiskCacheStore {
         return RestoredBoundarySnapshot(
             snapshot: record.snapshot,
             model: record.model,
+            execution: record.execution,
             messages: record.messages,
             resumeHint: record.resumeHint,
             acceleration: record.acceleration,
@@ -253,8 +253,11 @@ actor DiskCacheStore {
         prefixRestoreLookups += 1
         defer { pendingRestoreOperations -= 1 }
 
-        guard let prefixID = prefixIDByKey[diskCacheKeyIdentifier(cacheKey)],
-              let record = prefixesByID[prefixID] else {
+        let matchingRecords = prefixesByLogicalKey.values.filter {
+            diskCacheKeyIdentifier($0.prefix.cacheKey) == diskCacheKeyIdentifier(cacheKey)
+        }
+        guard matchingRecords.count == 1,
+              let record = matchingRecords.first else {
             return nil
         }
 
@@ -285,26 +288,31 @@ actor DiskCacheStore {
     }
 
     func summary() -> DiskCacheSummary {
-        let prefixRecords = prefixesByID.values
+        let prefixRecords = prefixesByLogicalKey.values
         let l2Bytes = prefixRecords.reduce(UInt64(0)) { $0 + $1.quantizedBytes }
         let quantizedBytes = l2Bytes
         let unquantizedBytes = prefixRecords.reduce(UInt64(0)) { $0 + $1.unquantizedBytes }
 
-        let groupedPrefixes = Dictionary(grouping: prefixRecords) { $0.prefix.scope.scopeID }
-        let groupedSnapshots = Dictionary(grouping: snapshotsByID.values) { $0.blockTable.scopeID }
+        let groupedPrefixes = Dictionary(grouping: prefixRecords) {
+            CacheScopeIdentity($0.prefix.scope)
+        }
+        let groupedSnapshots = Dictionary(grouping: snapshotsByID.values) {
+            CacheScopeIdentity(diskSnapshotScope($0))
+        }
 
-        let scopeIDs = Set(groupedPrefixes.keys).union(groupedSnapshots.keys).sorted()
-        let scopeSummaries = scopeIDs.compactMap { scopeID -> DiskCacheScopeSummary? in
-            let prefixGroup = groupedPrefixes[scopeID] ?? []
-            let snapshotGroup = groupedSnapshots[scopeID] ?? []
-            guard let firstPrefix = prefixGroup.first ?? snapshotGroup.first.flatMap({ snapshot in
-                prefixesByID.values.first(where: { $0.blockTable.scopeID == snapshot.blockTable.scopeID })
-            }) else {
+        let scopeIdentities = Set(groupedPrefixes.keys).union(groupedSnapshots.keys).sorted {
+            $0.components.lexicographicallyPrecedes($1.components)
+        }
+        let scopeSummaries = scopeIdentities.compactMap { scopeIdentity -> DiskCacheScopeSummary? in
+            let prefixGroup = groupedPrefixes[scopeIdentity] ?? []
+            let snapshotGroup = groupedSnapshots[scopeIdentity] ?? []
+            guard let scope = prefixGroup.first?.prefix.scope
+                    ?? snapshotGroup.first.map(diskSnapshotScope) else {
                 return nil
             }
 
             return DiskCacheScopeSummary(
-                scope: firstPrefix.prefix.scope,
+                scope: scope,
                 l2Bytes: prefixGroup.reduce(UInt64(0)) { $0 + $1.quantizedBytes },
                 snapshotCount: UInt64(snapshotGroup.count)
             )
@@ -332,38 +340,40 @@ actor DiskCacheStore {
         cacheKey: Melix_Worker_V1_CacheKey,
         includePinned: Bool
     ) -> UInt64 {
-        let matchingPrefixIDs = prefixesByID.values.compactMap { record -> String? in
-            guard diskMatches(scope: scope, prefix: record.prefix),
-                  diskMatches(cacheKey: cacheKey, prefix: record.prefix) else {
-                return nil
-            }
+        let targetsOneLogicalPrefix = diskCacheKeyTargetsOneLogicalPrefix(cacheKey)
+        let requestedLogicalKey = CacheLogicalPrefixKey(scope: scope, cacheKey: cacheKey)
+        let matchingLogicalKeys = prefixesByLogicalKey.compactMap { logicalKey, record -> CacheLogicalPrefixKey? in
+            let matchesRequest = targetsOneLogicalPrefix
+                ? logicalKey == requestedLogicalKey
+                : diskMatches(scope: scope, prefix: record.prefix)
+            guard matchesRequest else { return nil }
             if !includePinned && record.prefix.pinned {
                 return nil
             }
-            return record.prefix.prefixID
+            return logicalKey
         }
 
         var purgedBlocks: UInt64 = 0
-        for prefixID in matchingPrefixIDs {
-            guard let removed = prefixesByID.removeValue(forKey: prefixID) else {
+        for logicalKey in matchingLogicalKeys {
+            guard let removed = prefixesByLogicalKey.removeValue(forKey: logicalKey) else {
                 continue
             }
-            prefixIDByKey.removeValue(forKey: diskCacheKeyIdentifier(removed.prefix.cacheKey))
             purgedBlocks += UInt64(removed.blockTable.blocks.count)
-            try? fileManager.removeItem(at: prefixFileURL(prefixID: prefixID))
+            removePersistedPrefixFiles(logicalKey: logicalKey, prefixID: removed.prefix.prefixID)
         }
 
         let matchingSnapshotIDs = snapshotsByID.values.compactMap { snapshot -> String? in
-            guard snapshotMatches(scope: scope, snapshot: snapshot) else {
-                return nil
+            let matchesRequest: Bool
+            if targetsOneLogicalPrefix {
+                if let snapshotLogicalKey = diskSnapshotLogicalPrefixKey(snapshot) {
+                    matchesRequest = snapshotLogicalKey == requestedLogicalKey
+                } else {
+                    matchesRequest = false
+                }
+            } else {
+                matchesRequest = snapshotMatches(scope: scope, snapshot: snapshot)
             }
-            if !cacheKey.scopeID.isEmpty && snapshot.blockTable.cacheKey.scopeID != cacheKey.scopeID {
-                return nil
-            }
-            if !(cacheKey.prefixHash.isEmpty && cacheKey.fingerprintHash.isEmpty) &&
-                diskCacheKeyIdentifier(snapshot.blockTable.cacheKey) != diskCacheKeyIdentifier(cacheKey) {
-                return nil
-            }
+            guard matchesRequest else { return nil }
             return snapshot.snapshot.snapshotID
         }
 
@@ -376,14 +386,12 @@ actor DiskCacheStore {
     }
 
     func purgeModel(modelID: String) {
-        let prefixIDs = prefixesByID.values
+        let logicalKeys = prefixesByLogicalKey.values
             .filter { $0.prefix.scope.modelID == modelID }
-            .map { $0.prefix.prefixID }
-        for prefixID in prefixIDs {
-            if let removed = prefixesByID.removeValue(forKey: prefixID) {
-                prefixIDByKey.removeValue(forKey: diskCacheKeyIdentifier(removed.prefix.cacheKey))
-            }
-            try? fileManager.removeItem(at: prefixFileURL(prefixID: prefixID))
+            .map { CacheLogicalPrefixKey($0.prefix) }
+        for logicalKey in logicalKeys {
+            guard let removed = prefixesByLogicalKey.removeValue(forKey: logicalKey) else { continue }
+            removePersistedPrefixFiles(logicalKey: logicalKey, prefixID: removed.prefix.prefixID)
         }
 
         let snapshotIDs = snapshotsByID.values
@@ -396,14 +404,12 @@ actor DiskCacheStore {
     }
 
     func purgeScope(_ scope: Melix_Worker_V1_CacheScope) {
-        let prefixIDs = prefixesByID.values
+        let logicalKeys = prefixesByLogicalKey.values
             .filter { diskMatches(scope: scope, prefix: $0.prefix) }
-            .map { $0.prefix.prefixID }
-        for prefixID in prefixIDs {
-            if let removed = prefixesByID.removeValue(forKey: prefixID) {
-                prefixIDByKey.removeValue(forKey: diskCacheKeyIdentifier(removed.prefix.cacheKey))
-            }
-            try? fileManager.removeItem(at: prefixFileURL(prefixID: prefixID))
+            .map { CacheLogicalPrefixKey($0.prefix) }
+        for logicalKey in logicalKeys {
+            guard let removed = prefixesByLogicalKey.removeValue(forKey: logicalKey) else { continue }
+            removePersistedPrefixFiles(logicalKey: logicalKey, prefixID: removed.prefix.prefixID)
         }
 
         let snapshotIDs = snapshotsByID.values
@@ -415,7 +421,10 @@ actor DiskCacheStore {
         }
     }
 
-    private func writePrefixRecord(_ record: StoredL2PrefixRecord) {
+    private func writePrefixRecord(
+        _ record: StoredL2PrefixRecord,
+        logicalKey: CacheLogicalPrefixKey
+    ) {
         guard let envelope = try? PersistedPrefixEnvelope(
             runtimeCacheFingerprint: runtimeCacheFingerprint,
             prefixID: record.prefix.prefixID,
@@ -431,7 +440,16 @@ actor DiskCacheStore {
         guard let data = try? JSONEncoder().encode(envelope) else {
             return
         }
-        try? data.write(to: prefixFileURL(prefixID: record.prefix.prefixID), options: [.atomic])
+        let canonicalURL = prefixFileURL(logicalKey: logicalKey)
+        do {
+            try data.write(to: canonicalURL, options: [.atomic])
+        } catch {
+            return
+        }
+        let legacyURL = legacyPrefixFileURL(prefixID: record.prefix.prefixID)
+        if legacyURL.standardizedFileURL != canonicalURL.standardizedFileURL {
+            try? fileManager.removeItem(at: legacyURL)
+        }
     }
 
     private func writeSnapshotRecord(_ record: StoredBoundarySnapshotRecord) {
@@ -440,6 +458,7 @@ actor DiskCacheStore {
             snapshotID: record.snapshot.snapshotID,
             snapshotData: record.snapshot.serializedData(),
             modelData: record.model.serializedData(),
+            executionData: try record.execution?.serializedData(),
             messagesData: try record.messages.map { try $0.serializedData() },
             resumeHint: record.resumeHint,
             accelerationData: record.acceleration.serializedData(),
@@ -456,8 +475,24 @@ actor DiskCacheStore {
         try? data.write(to: snapshotFileURL(snapshotID: record.snapshot.snapshotID), options: [.atomic])
     }
 
-    private func prefixFileURL(prefixID: String) -> URL {
+    private func prefixFileURL(logicalKey: CacheLogicalPrefixKey) -> URL {
+        Self.prefixFileURL(prefixesURL: prefixesURL, logicalKey: logicalKey)
+    }
+
+    private func legacyPrefixFileURL(prefixID: String) -> URL {
         prefixesURL.appendingPathComponent("\(safeFileComponent(prefixID)).json", isDirectory: false)
+    }
+
+    private func removePersistedPrefixFiles(
+        logicalKey: CacheLogicalPrefixKey,
+        prefixID: String
+    ) {
+        let canonicalURL = prefixFileURL(logicalKey: logicalKey)
+        try? fileManager.removeItem(at: canonicalURL)
+        let legacyURL = legacyPrefixFileURL(prefixID: prefixID)
+        if legacyURL.standardizedFileURL != canonicalURL.standardizedFileURL {
+            try? fileManager.removeItem(at: legacyURL)
+        }
     }
 
     private func snapshotFileURL(snapshotID: String) -> URL {
@@ -470,19 +505,28 @@ actor DiskCacheStore {
         snapshotsURL: URL,
         runtimeCacheFingerprint: String
     ) -> (
-        prefixes: [String: StoredL2PrefixRecord],
+        prefixes: [CacheLogicalPrefixKey: StoredL2PrefixRecord],
         snapshots: [String: StoredBoundarySnapshotRecord],
         namespaceMismatchCount: UInt64
     ) {
         ensureDirectory(fileManager: fileManager, url: prefixesURL)
         ensureDirectory(fileManager: fileManager, url: snapshotsURL)
 
-        var prefixes: [String: StoredL2PrefixRecord] = [:]
+        var prefixes: [CacheLogicalPrefixKey: StoredL2PrefixRecord] = [:]
         var snapshots: [String: StoredBoundarySnapshotRecord] = [:]
         var namespaceMismatchCount: UInt64 = 0
 
+        var selectedPrefixFiles: [
+            CacheLogicalPrefixKey: (
+                record: StoredL2PrefixRecord,
+                sourceURL: URL,
+                isCanonical: Bool
+            )
+        ] = [:]
+        var validPrefixFilesByLogicalKey: [CacheLogicalPrefixKey: [URL]] = [:]
         if let contents = try? fileManager.contentsOfDirectory(at: prefixesURL, includingPropertiesForKeys: nil) {
-            for fileURL in contents where fileURL.pathExtension == "json" {
+            for fileURL in contents.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+            where fileURL.pathExtension == "json" {
                 guard let data = try? Data(contentsOf: fileURL),
                       let envelope = try? JSONDecoder().decode(PersistedPrefixEnvelope.self, from: data) else {
                     continue
@@ -496,13 +540,39 @@ actor DiskCacheStore {
                       let blockTable = try? Melix_Worker_V1_BlockTable(serializedBytes: envelope.blockTableData) else {
                     continue
                 }
-                prefixes[envelope.prefixID] = StoredL2PrefixRecord(
+                let logicalKey = CacheLogicalPrefixKey(prefix)
+                let record = StoredL2PrefixRecord(
                     prefix: prefix,
                     blockTableID: envelope.blockTableID,
                     blockTable: normalizedBlockTable(blockTable),
                     quantizedBytes: envelope.quantizedBytes,
                     unquantizedBytes: envelope.unquantizedBytes
                 )
+                let canonicalURL = prefixFileURL(prefixesURL: prefixesURL, logicalKey: logicalKey)
+                let isCanonical = fileURL.standardizedFileURL == canonicalURL.standardizedFileURL
+                validPrefixFilesByLogicalKey[logicalKey, default: []].append(fileURL)
+                if selectedPrefixFiles[logicalKey] == nil
+                    || (isCanonical && selectedPrefixFiles[logicalKey]?.isCanonical == false) {
+                    selectedPrefixFiles[logicalKey] = (record, fileURL, isCanonical)
+                }
+            }
+        }
+
+        for (logicalKey, selected) in selectedPrefixFiles {
+            prefixes[logicalKey] = selected.record
+            let canonicalURL = prefixFileURL(prefixesURL: prefixesURL, logicalKey: logicalKey)
+            var retainedURL = selected.sourceURL
+            if !selected.isCanonical {
+                if fileManager.fileExists(atPath: canonicalURL.path) {
+                    try? fileManager.removeItem(at: canonicalURL)
+                }
+                if (try? fileManager.moveItem(at: selected.sourceURL, to: canonicalURL)) != nil {
+                    retainedURL = canonicalURL
+                }
+            }
+            for sourceURL in validPrefixFilesByLogicalKey[logicalKey] ?? []
+            where sourceURL.standardizedFileURL != retainedURL.standardizedFileURL {
+                try? fileManager.removeItem(at: sourceURL)
             }
         }
 
@@ -525,9 +595,21 @@ actor DiskCacheStore {
                 }
 
                 let messages = envelope.messagesData.compactMap { try? Melix_Worker_V1_ChatMessage(serializedBytes: $0) }
+                let execution: Melix_Worker_V1_ExecutionMetadata?
+                if let executionData = envelope.executionData {
+                    guard let decodedExecution = try? Melix_Worker_V1_ExecutionMetadata(
+                        serializedBytes: executionData
+                    ) else {
+                        continue
+                    }
+                    execution = decodedExecution
+                } else {
+                    execution = nil
+                }
                 snapshots[envelope.snapshotID] = StoredBoundarySnapshotRecord(
                     snapshot: snapshot,
                     model: model,
+                    execution: execution,
                     messages: messages,
                     resumeHint: envelope.resumeHint,
                     acceleration: acceleration,
@@ -539,6 +621,16 @@ actor DiskCacheStore {
         }
 
         return (prefixes, snapshots, namespaceMismatchCount)
+    }
+
+    private static func prefixFileURL(
+        prefixesURL: URL,
+        logicalKey: CacheLogicalPrefixKey
+    ) -> URL {
+        prefixesURL.appendingPathComponent(
+            "logical-\(logicalKey.storageIdentifier).json",
+            isDirectory: false
+        )
     }
 
     private static func ensureDirectory(
@@ -602,14 +694,37 @@ private func snapshotMatches(
     return snapshot.model.modelID == scope.modelID
 }
 
-private func diskMatches(
-    cacheKey: Melix_Worker_V1_CacheKey,
-    prefix: Melix_Worker_V1_PrefixRef
-) -> Bool {
-    guard !(cacheKey.prefixHash.isEmpty && cacheKey.fingerprintHash.isEmpty && cacheKey.scopeID.isEmpty) else {
-        return true
+private func diskSnapshotLogicalPrefixKey(
+    _ snapshot: StoredBoundarySnapshotRecord
+) -> CacheLogicalPrefixKey? {
+    guard let execution = snapshot.execution,
+          diskCacheKeyTargetsOneLogicalPrefix(execution.cacheKey) else {
+        return nil
     }
-    return diskCacheKeyIdentifier(cacheKey) == diskCacheKeyIdentifier(prefix.cacheKey)
+    return CacheLogicalPrefixKey(scope: execution.scope, cacheKey: execution.cacheKey)
+}
+
+private func diskSnapshotScope(
+    _ snapshot: StoredBoundarySnapshotRecord
+) -> Melix_Worker_V1_CacheScope {
+    var scope = snapshot.execution?.scope ?? Melix_Worker_V1_CacheScope()
+    if scope.scopeID.isEmpty {
+        scope.scopeID = snapshot.execution?.cacheKey.scopeID.isEmpty == false
+            ? snapshot.execution?.cacheKey.scopeID ?? ""
+            : snapshot.blockTable.scopeID
+    }
+    if scope.modelID.isEmpty {
+        scope.modelID = snapshot.model.modelID
+    }
+    return scope
+}
+
+private func diskCacheKeyTargetsOneLogicalPrefix(
+    _ cacheKey: Melix_Worker_V1_CacheKey
+) -> Bool {
+    !cacheKey.scopeID.isEmpty
+        || !cacheKey.prefixHash.isEmpty
+        || !cacheKey.fingerprintHash.isEmpty
 }
 
 private func diskCacheKeyIdentifier(_ key: Melix_Worker_V1_CacheKey) -> String {

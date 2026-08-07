@@ -80,7 +80,27 @@ enum OnDemandModelLoader {
         evictBeforeReadyHandle: Bool = false,
         routeKindOverride: WorkerRouteKind? = nil
     ) async throws -> String {
-        try await ensureModelReady(
+        try await ensureTextModelBindingReady(
+            modelID: modelID,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            memoryBudgetBytes: memoryBudgetBytes,
+            evictBeforeReadyHandle: evictBeforeReadyHandle,
+            routeKindOverride: routeKindOverride
+        ).handle
+    }
+
+    static func ensureTextModelBindingReady(
+        modelID: String,
+        modelCatalog: ModelCatalog,
+        workerRegistry: WorkerRegistry?,
+        metricsStore: MetricsStore,
+        memoryBudgetBytes: UInt64 = 0,
+        evictBeforeReadyHandle: Bool = false,
+        routeKindOverride: WorkerRouteKind? = nil
+    ) async throws -> ModelCatalog.BackendRouteBinding {
+        try await ensureModelBindingReady(
             modelID: modelID,
             modelCatalog: modelCatalog,
             workerRegistry: workerRegistry,
@@ -105,8 +125,39 @@ enum OnDemandModelLoader {
         metricsPrefix: String = "model",
         requiresTextCapability: Bool = false,
         summaryOverride: Melix_Controlplane_V1_ModelSummary? = nil,
-        routeKindOverride: WorkerRouteKind? = nil
+        routeKindOverride: WorkerRouteKind? = nil,
+        expectedCurrentRouteGeneration: UInt64? = nil
     ) async throws -> String {
+        try await ensureModelBindingReady(
+            modelID: modelID,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            memoryBudgetBytes: memoryBudgetBytes,
+            evictBeforeReadyHandle: evictBeforeReadyHandle,
+            loadReason: loadReason,
+            metricsPrefix: metricsPrefix,
+            requiresTextCapability: requiresTextCapability,
+            summaryOverride: summaryOverride,
+            routeKindOverride: routeKindOverride,
+            expectedCurrentRouteGeneration: expectedCurrentRouteGeneration
+        ).handle
+    }
+
+    static func ensureModelBindingReady(
+        modelID: String,
+        modelCatalog: ModelCatalog,
+        workerRegistry: WorkerRegistry?,
+        metricsStore: MetricsStore,
+        memoryBudgetBytes: UInt64 = 0,
+        evictBeforeReadyHandle: Bool = false,
+        loadReason: String = "lazy_model_load",
+        metricsPrefix: String = "model",
+        requiresTextCapability: Bool = false,
+        summaryOverride: Melix_Controlplane_V1_ModelSummary? = nil,
+        routeKindOverride: WorkerRouteKind? = nil,
+        expectedCurrentRouteGeneration: UInt64? = nil
+    ) async throws -> ModelCatalog.BackendRouteBinding {
         let resolvedModel = if let summaryOverride {
             summaryOverride
         } else {
@@ -118,6 +169,15 @@ enum OnDemandModelLoader {
         if ModelRuntimeAvailability.isRuntimeCacheMissing(model) {
             throw OnDemandModelLoadError.runtimeCacheMissing
         }
+        let route: WorkerRouteKind?
+        if let routeKindOverride {
+            route = routeKindOverride
+        } else if let inferredRoute = await workerRegistry?.route(for: model) {
+            route = inferredRoute
+        } else {
+            route = WorkerRouteKind(routeClass: model.routeClass)
+                ?? WorkerRouteKind(metadataIdentifier: model.settings.ext["melix.capability.route_kind"])
+        }
         if evictBeforeReadyHandle {
             _ = await evictModelsIfNeededForLoad(
                 targetModelID: modelID,
@@ -126,14 +186,20 @@ enum OnDemandModelLoader {
                 metricsStore: metricsStore
             )
         }
-        if let routeKindOverride {
-            if let handle = await modelCatalog.dispatchHandle(for: modelID, routeKind: routeKindOverride) {
-                _ = await modelCatalog.markModelUsed(id: modelID)
-                return handle
-            }
-        } else if let handle = await modelCatalog.dispatchHandle(for: modelID) {
+        if let route, let workerRegistry, let binding = await reusableBackendRouteBinding(
+            modelID: modelID,
+            model: model,
+            route: route,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore
+        ) {
+            return binding
+        } else if workerRegistry == nil,
+                  let route,
+                  let binding = await modelCatalog.backendRouteBinding(for: modelID, routeKind: route) {
             _ = await modelCatalog.markModelUsed(id: modelID)
-            return handle
+            return binding
         }
         if !evictBeforeReadyHandle {
             _ = await evictModelsIfNeededForLoad(
@@ -147,6 +213,9 @@ enum OnDemandModelLoader {
            !supportsTextServing(model) {
             throw OnDemandModelLoadError.modelNotReady
         }
+        guard let workerRegistry, let route else {
+            throw OnDemandModelLoadError.workerUnavailable
+        }
         let effectiveMemoryBudgetBytes = requestedMemoryBudgetBytes(
             override: memoryBudgetBytes,
             model: model
@@ -154,23 +223,26 @@ enum OnDemandModelLoader {
         guard var modelSpec = BootstrapWorkerPreparation.modelSpec(for: model) else {
             throw OnDemandModelLoadError.modelNotReady
         }
-        guard let workerRegistry else {
-            throw OnDemandModelLoadError.workerUnavailable
-        }
-        let route: WorkerRouteKind
-        if let routeKindOverride {
-            route = routeKindOverride
-        } else if let inferredRoute = await workerRegistry.route(for: model) {
-            route = inferredRoute
-        } else {
-            throw OnDemandModelLoadError.workerUnavailable
-        }
         applyRouteOverrideMetadata(route, model: model, to: &modelSpec)
-        if let handle = await modelCatalog.dispatchHandle(for: modelID, routeKind: route) {
-            _ = await modelCatalog.markModelUsed(id: modelID)
-            return handle
+        if let binding = await reusableBackendRouteBinding(
+            modelID: modelID,
+            model: model,
+            route: route,
+            modelCatalog: modelCatalog,
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore
+        ) {
+            return binding
         }
         guard let workerClient = await workerRegistry.client(for: route) else {
+            throw OnDemandModelLoadError.workerUnavailable
+        }
+        guard let healthClient = workerClient as? any BackendHealthIdentifyingWorkerClientProtocol,
+              let health = try? await healthClient.backendHealthIdentity() else {
+            throw OnDemandModelLoadError.workerUnavailable
+        }
+        let workerInstanceID = health.workerInstanceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !workerInstanceID.isEmpty else {
             throw OnDemandModelLoadError.workerUnavailable
         }
         let trustStartedAt = Date()
@@ -180,7 +252,15 @@ enum OnDemandModelLoader {
             forKey: "control_plane.model_load_trust_resolution_ms"
         )
 
-        _ = await modelCatalog.beginLoad(id: modelID, reason: loadReason)
+        guard let reservation = await modelCatalog.beginBackendRouteLoad(
+            id: modelID,
+            routeKind: route,
+            workerInstanceID: workerInstanceID,
+            reason: loadReason,
+            expectedCurrentGeneration: expectedCurrentRouteGeneration
+        ) else {
+            throw OnDemandModelLoadError.modelNotReady
+        }
         var request = Melix_Worker_V1_LoadModelRequest()
         request.model = modelSpec
         request.memoryBudgetBytes = effectiveMemoryBudgetBytes
@@ -188,6 +268,7 @@ enum OnDemandModelLoader {
         request.warmupAfterLoad = false
         request.diskStreamingMode = modelSpec.settings.diskStreamingMode
         request.loadTrust = ModelLoadTrustPolicyResolver.workerPolicy(from: loadTrustPolicy)
+        request.backendIdentity = reservation.identity
 
         let startedAt = Date()
         let response: Melix_Worker_V1_LoadModelResponse
@@ -213,18 +294,27 @@ enum OnDemandModelLoader {
                 _ = await modelCatalog.recordLoadFailed(
                     id: modelID,
                     reason: failureReason,
-                    memoryBudgetEvidence: memoryBudgetEvidence
+                    memoryBudgetEvidence: memoryBudgetEvidence,
+                    routeKind: route,
+                    expectedRouteGeneration: reservation.generation
                 )
                 throw OnDemandModelLoadError.workerRejected(errorStatus)
             case .unavailable:
-                _ = await modelCatalog.recordLoadFailed(id: modelID, reason: "\(loadReason)_failed")
+                _ = await modelCatalog.recordLoadFailed(
+                    id: modelID,
+                    reason: "\(loadReason)_failed",
+                    routeKind: route,
+                    expectedRouteGeneration: reservation.generation
+                )
                 throw OnDemandModelLoadError.workerUnavailable
             }
         } catch {
             _ = await modelCatalog.recordLoadFailed(
                 id: modelID,
                 reason: "\(loadReason)_failed",
-                loadTrust: loadTrustPolicy
+                loadTrust: loadTrustPolicy,
+                routeKind: route,
+                expectedRouteGeneration: reservation.generation
             )
             throw OnDemandModelLoadError.workerUnavailable
         }
@@ -249,7 +339,9 @@ enum OnDemandModelLoader {
                 loadTrust: ModelLoadTrustPolicyResolver.receiptForLoadFailure(
                     response: response,
                     fallback: loadTrustPolicy
-                )
+                ),
+                routeKind: route,
+                expectedRouteGeneration: reservation.generation
             )
             if !response.error.code.isEmpty
                 || !response.error.message.isEmpty
@@ -259,7 +351,7 @@ enum OnDemandModelLoader {
             throw OnDemandModelLoadError.workerUnavailable
         }
 
-        _ = await modelCatalog.recordLoadSucceeded(
+        guard await modelCatalog.recordLoadSucceeded(
             id: modelID,
             dispatchHandle: response.modelHandle,
             pinRequested: request.pinOnLoad,
@@ -268,8 +360,16 @@ enum OnDemandModelLoader {
                 ? ModelLoadTrustPolicyResolver.controlPlanePolicy(from: response.loadTrust, fallback: loadTrustPolicy)
                 : loadTrustPolicy,
             reason: loadReason,
-            routeKind: route
-        )
+            routeKind: route,
+            expectedRouteGeneration: reservation.generation,
+            workerInstanceID: reservation.workerInstanceID
+        ) != nil else {
+            var unloadRequest = Melix_Worker_V1_UnloadModelRequest()
+            unloadRequest.modelHandle = response.modelHandle
+            unloadRequest.expectedBackendIdentity = reservation.identity
+            _ = try? await workerClient.unloadModel(request: unloadRequest)
+            throw OnDemandModelLoadError.workerUnavailable
+        }
 
         let elapsedMs = Date().timeIntervalSince(startedAt) * 1000
         await metricsStore.set(elapsedMs, forKey: "control_plane.\(metricsPrefix)_first_load_ms")
@@ -290,7 +390,72 @@ enum OnDemandModelLoader {
             forKey: "control_plane.\(metricsPrefix)_first_load_resident_bytes"
         )
 
-        return response.modelHandle
+        guard let binding = await modelCatalog.backendRouteBinding(for: modelID, routeKind: route) else {
+            throw OnDemandModelLoadError.workerUnavailable
+        }
+        return binding
+    }
+
+    private static func reusableBackendRouteBinding(
+        modelID: String,
+        model: Melix_Controlplane_V1_ModelSummary,
+        route: WorkerRouteKind,
+        modelCatalog: ModelCatalog,
+        workerRegistry: WorkerRegistry,
+        metricsStore: MetricsStore
+    ) async -> ModelCatalog.BackendRouteBinding? {
+        guard let binding = await modelCatalog.backendRouteBinding(for: modelID, routeKind: route) else {
+            return nil
+        }
+
+        guard let workerClient = await workerRegistry.client(for: route),
+              let introspectingClient = workerClient as? any LoadedModelsIntrospectingWorkerClientProtocol else {
+            _ = await modelCatalog.markModelUsed(id: modelID)
+            return binding
+        }
+
+        let validationStartedAt = Date()
+        let loadedModels: Melix_Worker_V1_ListLoadedModelsResponse
+        do {
+            loadedModels = try await introspectingClient.listLoadedModels()
+        } catch {
+            await metricsStore.set(
+                Date().timeIntervalSince(validationStartedAt) * 1000,
+                forKey: "control_plane.model_handle_validation_ms"
+            )
+            await metricsStore.increment("control_plane.model_handle_validation_failure_count")
+            if await modelCatalog.invalidateBackendRouteBinding(
+                for: modelID,
+                expected: binding,
+                reason: "worker_identity_validation_failed"
+            ) {
+                await metricsStore.increment("control_plane.model_stale_handle_recovery_count")
+            }
+            return nil
+        }
+        await metricsStore.set(
+            Date().timeIntervalSince(validationStartedAt) * 1000,
+            forKey: "control_plane.model_handle_validation_ms"
+        )
+
+        let matchingLoadedModel = loadedModels.loadedModels.first { loaded in
+            loaded.modelHandle == binding.handle
+                && loaded.hasBackendIdentity
+                && loaded.backendIdentity == binding.identity
+        }
+        guard matchingLoadedModel == nil else {
+            _ = await modelCatalog.markModelUsed(id: modelID)
+            return binding
+        }
+
+        if await modelCatalog.invalidateBackendRouteBinding(
+            for: modelID,
+            expected: binding,
+            reason: "worker_identity_validation_failed"
+        ) {
+            await metricsStore.increment("control_plane.model_stale_handle_recovery_count")
+        }
+        return nil
     }
 
     private static func applyRouteOverrideMetadata(

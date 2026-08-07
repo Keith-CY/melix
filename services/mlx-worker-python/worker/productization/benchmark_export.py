@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
+from worker.productization.effective_policy_evidence import (
+    EFFECTIVE_POLICY_EVIDENCE_FIELDS,
+    empty_effective_policy_evidence,
+)
 from worker.trajectory_provenance import TRAJECTORY_PROVENANCE_CSV_FIELDS
 
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
@@ -630,9 +634,12 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
 
 
 def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
-    return _benchmark_summary_rows_to_csv(
-        (row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)),
-    )
+    raw_rows = bundle.get("benchmark_summary_rows", [])
+    if type(raw_rows) is list:
+        return _benchmark_summary_rows_to_csv(row for row in raw_rows if isinstance(row, dict))
+    if isinstance(raw_rows, Iterable):
+        return _benchmark_summary_rows_to_csv(row for row in raw_rows if isinstance(row, dict))
+    return _benchmark_summary_rows_to_csv(())
 
 
 def build_benchmark_context_csv(bundle: dict[str, object]) -> str:
@@ -1513,6 +1520,7 @@ def _canonical_benchmark_request_columns() -> list[str]:
         "adapter_set_hash",
         "adapter_activation_mode",
         "created_at_unix_ms",
+        *EFFECTIVE_POLICY_EVIDENCE_FIELDS,
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
@@ -1555,6 +1563,7 @@ def _canonical_evaluation_sample_columns() -> list[str]:
         "failure_stage",
         "final_answer",
         "parse_status",
+        *EFFECTIVE_POLICY_EVIDENCE_FIELDS,
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
@@ -1607,6 +1616,10 @@ def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, objec
         "failure_stage": row.get("failure_stage", ""),
         "final_answer": row.get("final_answer", row.get("extracted_result", row.get("predicted", ""))),
         "parse_status": parse_status,
+        **{
+            field_name: row.get(field_name, default_value)
+            for field_name, default_value in empty_effective_policy_evidence().items()
+        },
         **{
             field_name: row.get(field_name, "")
             for field_name in TRAJECTORY_PROVENANCE_CSV_FIELDS
@@ -1707,12 +1720,19 @@ def _canonical_benchmark_matrix_request_columns() -> list[str]:
         "dflash_block_size",
         "dflash_rollback_count",
         "dflash_target_hidden_layers",
+        "feature_guardrail_requested_num_draft_tokens",
+        "feature_guardrail_effective_num_draft_tokens",
+        "feature_guardrail_resource_fanout_estimate",
+        "feature_guardrail_requested_cache_budget_bytes",
+        "feature_guardrail_effective_cache_budget_bytes",
+        "feature_guardrail_reason",
         "tool_call_count",
         "tool_latency_ms",
         "observation_bytes",
         "fatal_rate",
         "turn_count",
         "created_at_unix_ms",
+        *EFFECTIVE_POLICY_EVIDENCE_FIELDS,
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 

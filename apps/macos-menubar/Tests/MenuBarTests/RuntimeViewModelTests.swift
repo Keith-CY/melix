@@ -1257,7 +1257,7 @@ struct RuntimeViewModelTests {
         let session = try #require(viewModel.selectedServerSession)
         #expect(session.servingDefaults.temperature == 0.7)
         #expect(session.servingDefaults.topP == 1.0)
-        #expect(session.servingDefaults.maxTokens == 256)
+        #expect(session.servingDefaults.maxTokens == 1_024)
         #expect(session.servingDefaults.streamIntervalTokens == 1)
         #expect(session.servingDefaults.maxConcurrentRequests == 4)
         #expect(session.servingDefaults.accelerationMode == "baseline")
@@ -2825,9 +2825,42 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedActions.contains("chat:melix-dev-text"))
     }
 
-    @Test("chat submit reports missing managed Hugging Face cache without dispatching")
+    @Test("chat submit preserves the draft when managed Hugging Face cache is missing without an interactive Provider")
     @MainActor
-    func chatSubmitReportsMissingManagedHuggingFaceCacheWithoutDispatching() async throws {
+    func chatSubmitPreservesDraftWhenManagedHuggingFaceCacheIsMissing() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var missingModel = makeModelSummary(state: .modelDiscovered)
+        missingModel.settings.ext["melix.model_path_missing"] = "true"
+        missingModel.settings.ext["melix.model_path"] = "/tmp/hf-cache/models--mlx-community--Qwen3/snapshots/missing"
+        await client.configureSnapshot(makeSnapshot(
+            serverState: .serverReady,
+            models: [missingModel],
+            runtimeSessions: [makeRuntimeSession(lifecycleState: .stopped)]
+        ))
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let modelID = try #require(viewModel.selectedChatServerSession?.modelID)
+        #expect(viewModel.selectedChatServerSession?.isInteractiveReady == false)
+        #expect(viewModel.chatModelNeedsAttachment(modelID: modelID))
+
+        viewModel.chatComposerText = "hello"
+        let transcriptBeforePreflight = viewModel.chatTranscript
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }) == false)
+        #expect(viewModel.chatComposerText == "hello")
+        #expect(viewModel.chatTranscript == transcriptBeforePreflight)
+        #expect(viewModel.chatTranscript.contains { $0.kind == .user } == false)
+        #expect(viewModel.chatTranscript.contains { $0.kind == .error } == false)
+        #expect(viewModel.chatStatusText == "Stopped")
+        #expect(viewModel.lastError == "Start the bound Provider before sending chat prompts.")
+    }
+
+    @Test("chat trusts an interactive Provider when the catalog reports a stale missing runtime cache")
+    @MainActor
+    func chatTrustsInteractiveProviderWhenCatalogReportsStaleMissingRuntimeCache() async throws {
         let client = FakeControlPlaneXPCClient()
         var missingModel = makeModelSummary(state: .modelDiscovered)
         missingModel.settings.ext["melix.model_path_missing"] = "true"
@@ -2841,15 +2874,19 @@ struct RuntimeViewModelTests {
 
         await viewModel.start()
         try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let modelID = try #require(viewModel.selectedChatServerSession?.modelID)
+        #expect(viewModel.selectedChatServerSession?.isInteractiveReady == true)
+        #expect(viewModel.chatModelNeedsAttachment(modelID: modelID) == false)
+
         viewModel.chatComposerText = "hello"
         await viewModel.submitChatPrompt()
 
-        let errorEntry = try #require(viewModel.chatTranscript.last)
-        #expect(await client.recordedActions.contains(where: { $0.hasPrefix("chat:") }) == false)
-        #expect(errorEntry.kind == .error)
-        #expect(errorEntry.body == "Hugging Face cache files are missing. Re-download this model to restore it.")
-        #expect(viewModel.chatStatusText == "Failed • model_runtime_missing")
-        #expect(viewModel.lastError == "Hugging Face cache files are missing. Re-download this model to restore it.")
+        #expect(await client.recordedActions.contains("chat:\(modelID)"))
+        #expect(viewModel.chatComposerText.isEmpty)
+        #expect(viewModel.chatTranscript.contains { $0.kind == .user && $0.body == "hello" })
+        #expect(viewModel.chatTranscript.contains { $0.kind == .error } == false)
+        #expect(viewModel.chatStatusText != "Failed • model_runtime_missing")
+        #expect(viewModel.lastError != "Hugging Face cache files are missing. Re-download this model to restore it.")
     }
 
     @Test("surface selection command center and server session controls update shell state")
@@ -3598,9 +3635,9 @@ struct RuntimeViewModelTests {
 
         #expect(exportPath == nil)
         #expect(await client.recordedActions.isEmpty)
-        #expect(viewModel.chatStatusText == "No Provider")
-        #expect(viewModel.lastError == "Create a Provider before sending chat prompts.")
-        #expect(viewModel.selectedSurface == .server)
+        #expect(viewModel.chatStatusText == "Choose Provider")
+        #expect(viewModel.lastError == "Choose a Provider before sending chat prompts.")
+        #expect(viewModel.selectedSurface == .chat)
     }
 
     @Test("server session sync keeps missing bindings unavailable and surfaces recovery banners")
@@ -8303,6 +8340,11 @@ struct RuntimeViewModelTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
         await viewModel.refreshModelOpsProductState()
+
+        #expect(viewModel.chatModelNeedsAttachment(modelID: modelID) == false)
+        #expect(viewModel.chatModelNeedsAttachment(modelID: "missing/model") == true)
+        #expect(viewModel.chatModelNeedsAttachment(modelID: "   ") == true)
+
         viewModel.createServerSession(modelID: modelID)
         let server = try #require(viewModel.selectedServerSession)
 
@@ -8313,6 +8355,22 @@ struct RuntimeViewModelTests {
         await viewModel.submitChatPrompt()
 
         #expect(await client.recordedActions.contains("chat:\(modelID)"))
+    }
+
+    @Test("chat attachment gate trusts a running provider while its registry model hydrates")
+    @MainActor
+    func chatAttachmentGateTrustsRunningProviderDuringRegistryHydration() async throws {
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(makeSnapshot(serverState: .serverReady, models: []))
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.createServerSession(modelID: modelID)
+        await viewModel.startSelectedServerSession()
+
+        #expect(viewModel.chatModelNeedsAttachment(modelID: modelID) == false)
+        #expect(viewModel.chatModelNeedsAttachment(modelID: "missing/model") == true)
     }
 
     @Test("chat capability list includes text capable Hugging Face cache VLM models")
@@ -8337,6 +8395,87 @@ struct RuntimeViewModelTests {
         #expect(viewModel.chatCapabilities.contains { capability in
             capability.id == "vlm" && capability.modelID == modelID
         })
+    }
+
+    @Test("chat text readiness follows the selected provider's text capable VLM")
+    @MainActor
+    func chatTextReadinessFollowsSelectedProviderTextCapableVLM() async throws {
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeModelSummary(modelID: "melix-dev-text", state: .modelDiscovered),
+                    makeCapabilityModelSummary(
+                        modelID: modelID,
+                        kind: "vlm",
+                        state: .modelDiscovered,
+                        features: ["vlm", "chat"]
+                    ),
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.createServerSession(modelID: modelID)
+        let server = try #require(viewModel.selectedServerSession)
+        await viewModel.startSelectedServerSession()
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: server.id)
+
+        let textCapability = try #require(viewModel.chatCapabilities.first { $0.id == "text" })
+        #expect(textCapability.modelID == modelID)
+        #expect(textCapability.isReady)
+    }
+
+    @Test("chat text readiness trusts an interactive provider during catalog hydration")
+    @MainActor
+    func chatTextReadinessTrustsInteractiveProviderDuringCatalogHydration() async throws {
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(makeSnapshot(serverState: .serverReady, models: []))
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.createServerSession(modelID: modelID)
+        let server = try #require(viewModel.selectedServerSession)
+        await viewModel.startSelectedServerSession()
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: server.id)
+
+        let textCapability = try #require(viewModel.chatCapabilities.first { $0.id == "text" })
+        #expect(textCapability.modelID == modelID)
+        #expect(textCapability.isReady)
+    }
+
+    @Test("chat text readiness requires the bound provider to be interactive")
+    @MainActor
+    func chatTextReadinessRequiresBoundProviderToBeInteractive() async throws {
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [
+                    makeCapabilityModelSummary(
+                        modelID: modelID,
+                        kind: "vlm",
+                        state: .modelWarm,
+                        features: ["vlm", "chat"]
+                    ),
+                ]
+            )
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.createServerSession(modelID: modelID)
+        let server = try #require(viewModel.selectedServerSession)
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: server.id)
+
+        let textCapability = try #require(viewModel.chatCapabilities.first { $0.id == "text" })
+        #expect(textCapability.modelID == modelID)
+        #expect(textCapability.isReady == false)
     }
 
     @Test("local provider creation refreshes ready model options from registry when catalog is empty")
@@ -8428,6 +8567,13 @@ struct RuntimeViewModelTests {
         #expect(viewModel.providerTargets.count == targetCount)
         #expect(viewModel.isCreatingProviderTarget)
         #expect(viewModel.lastError == "Local Provider requires a session name.")
+
+        viewModel.createAndStartLocalServerFromDraft()
+
+        #expect(viewModel.serverSessions.count == sessionCount)
+        #expect(viewModel.providerTargets.count == targetCount)
+        #expect(viewModel.isCreatingProviderTarget)
+        #expect(viewModel.lastError == "Local Provider requires a session name.")
     }
 
     @Test("local provider draft create and start triggers lifecycle start")
@@ -8465,6 +8611,135 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.title == "Qwen Local")
     }
 
+    @Test("packaged provider draft create and start waits for CLI creation before lifecycle start")
+    @MainActor
+    func packagedProviderDraftCreateAndStartWaitsForCLICreation() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-cli-create-start-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let appOperatorStore = OperatorSessionStore(melixHome: melixHome)
+        let directClient = FakeControlPlaneXPCClient()
+        let runnerClient = FakeControlPlaneXPCClient()
+        let readySnapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: modelID, state: .modelWarm)]
+        )
+        await directClient.configureSnapshot(readySnapshot)
+        await runnerClient.configureSnapshot(readySnapshot)
+
+        let inProcessRunner = MelixCLIRunner(
+            client: runnerClient,
+            environment: ["MELIX_HOME": temporaryRoot.path],
+            operatorSessionStore: MelixOperatorSessionStore(melixHome: melixHome)
+        )
+        let workflowRunner = RecordingDelegatingCLIWorkflowRunner(delegate: inProcessRunner)
+        let viewModel = RuntimeViewModel(
+            client: directClient,
+            operatorSessionStore: appOperatorStore,
+            cliWorkflowRunner: workflowRunner
+        )
+
+        await viewModel.start()
+        viewModel.beginProviderCreation()
+        viewModel.newLocalServerTitleDraft = "Gemma 4 Local"
+        viewModel.newLocalServerModelID = modelID
+        viewModel.newLocalServerHostDraft = "127.0.0.1"
+        viewModel.newLocalServerPortDraft = 18_080
+        let initialServerSessionIDs = Set(viewModel.serverSessions.map(\.id))
+        let initialServerSessionCount = viewModel.serverSessions.count
+
+        viewModel.createAndStartLocalServerFromDraft()
+
+        var commands = await workflowRunner.snapshotRecordedCommands()
+        for _ in 0..<300 where commands.count < 4 {
+            try await Task.sleep(for: .milliseconds(10))
+            commands = await workflowRunner.snapshotRecordedCommands()
+        }
+
+        #expect(commands.count == 4)
+        guard commands.count == 4 else {
+            return
+        }
+        guard case .serverSessionCreate = commands[0] else {
+            Issue.record("Expected provider creation to run first.")
+            return
+        }
+        let updateID = try #require(commands.compactMap { command in
+            if case .serverSessionUpdate(let options) = command { return options.serverSessionID }
+            return nil
+        }.first)
+        let selectID = try #require(commands.compactMap { command in
+            if case .serverSessionSelect(let options) = command { return options.serverSessionID }
+            return nil
+        }.first)
+        let startID = try #require(commands.compactMap { command in
+            if case .serverStart(let options) = command { return options.serverSessionID }
+            return nil
+        }.first)
+
+        try await waitForRuntimeViewModelCondition(
+            "expected packaged provider lifecycle start to finish",
+            timeout: .seconds(3)
+        ) {
+            viewModel.selectedServerSession?.id == startID
+                && viewModel.selectedServerSession?.lifecycle == .running
+        }
+
+        #expect(initialServerSessionIDs.contains(updateID) == false)
+        #expect(selectID == updateID)
+        #expect(startID == updateID)
+        #expect(viewModel.serverSessions.count == initialServerSessionCount + 1)
+        #expect(viewModel.selectedServerSession?.id == startID)
+        #expect(viewModel.selectedServerSession?.lifecycle == .running)
+        #expect(viewModel.isCreatingProviderTarget == false)
+        #expect(viewModel.lastCLIWorkflowFailure == nil)
+
+        let actions = await runnerClient.recordedActions
+        #expect(actions.contains("gateway.config:\(startID)"))
+        #expect(actions.contains("serving-defaults.apply:\(startID)"))
+        #expect(actions.contains("server.start:\(startID)"))
+    }
+
+    @Test("packaged provider create and start surfaces a create receipt that is not restored")
+    @MainActor
+    func packagedProviderCreateAndStartSurfacesUnrestoredReceipt() async throws {
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: modelID, state: .modelWarm)]
+            )
+        )
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .serverSessionCreate:
+                return .success("{\"id\":\"server-session-not-restored\"}\n")
+            default:
+                return .success("{}\n")
+            }
+        }
+        let viewModel = RuntimeViewModel(client: client, cliWorkflowRunner: workflowRunner)
+        await viewModel.start()
+        viewModel.beginProviderCreation()
+        viewModel.newLocalServerTitleDraft = "Gemma 4 Local"
+        viewModel.newLocalServerModelID = modelID
+
+        viewModel.createAndStartLocalServerFromDraft()
+
+        try await waitForRuntimeViewModelCondition("expected unrestored create receipt failure") {
+            viewModel.lastCLIWorkflowFailure?.commandID == "server.session.create"
+        }
+        #expect(viewModel.lastCLIWorkflowFailure?.failureKind == .invalidJSON)
+        #expect(viewModel.lastError?.contains("server-session-not-restored") == true)
+        #expect(await workflowRunner.snapshotRecordedCommands().count == 1)
+    }
+
     @Test("provider target rows expose session model endpoint and runtime summary")
     @MainActor
     func providerTargetRowsExposeSessionModelEndpointAndRuntimeSummary() async throws {
@@ -8493,10 +8768,10 @@ struct RuntimeViewModelTests {
         #expect(target.title == "Qwen Local")
         #expect(target.badgeText == "Local")
         #expect(target.detailText == "Qwen 3.5 0.8B • 127.0.0.1:18080")
-        #expect(target.statusText == "Draft • None • Context 256")
+        #expect(target.statusText == "Draft • None • Context 1024")
         #expect(target.loraActiveText.isEmpty)
         #expect(target.accelerationModeText == "None")
-        #expect(target.contextText == "Context 256")
+        #expect(target.contextText == "Context 1024")
     }
 
     @Test("server adapter options expose activated derived models without implicit activation")
@@ -13191,6 +13466,11 @@ struct RuntimeViewModelTests {
         }
         let userEntry = try #require(viewModel.chatTranscript.first { $0.kind == .user })
         let assistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        let reasoningEntry = try #require(viewModel.chatTranscript.first { $0.kind == .reasoning })
+        let userIndex = try #require(viewModel.chatTranscript.firstIndex { $0.kind == .user })
+        let reasoningIndex = try #require(viewModel.chatTranscript.firstIndex { $0.kind == .reasoning })
+        let toolIndex = try #require(viewModel.chatTranscript.firstIndex { $0.kind == .tool })
+        let assistantIndex = try #require(viewModel.chatTranscript.firstIndex { $0.kind == .assistant })
 
         #expect(await client.recordedActions.contains("chat:melix-dev-text"))
         #expect(hasUserEntry)
@@ -13198,7 +13478,11 @@ struct RuntimeViewModelTests {
         #expect(hasReasoningEntry)
         #expect(hasToolEntry)
         #expect(userEntry.detail.isEmpty)
-        #expect(assistantEntry.detail.isEmpty)
+        #expect(assistantEntry.detail == "12 prompt • 24 completion")
+        #expect(reasoningEntry.reasoningElapsedSeconds != nil)
+        #expect(userIndex < reasoningIndex)
+        #expect(reasoningIndex < toolIndex)
+        #expect(toolIndex < assistantIndex)
         #expect(viewModel.chatStatusText.contains("Completed"))
         #expect(viewModel.lastChatUsageText == "12 prompt • 24 completion")
         #expect(await metrics.snapshot()["menu.chat_submit_ms"] != nil)
@@ -13206,6 +13490,585 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.chat_stream_ms"] != nil)
         #expect(await metrics.snapshot()["menu.chat_presentation_lag_ms"] != nil)
         #expect(await metrics.snapshot()["menu.chat_presentation_flush_count"] != nil)
+    }
+
+    @Test("desktop chat sends trusted public identity and explicit Thinking policy")
+    @MainActor
+    func desktopChatSendsTrustedIdentityAndThinkingPolicy() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let selectedServerSessionID = "server-session-blue"
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.runtimeSessions = [
+            ServerSessionRuntimeStore.defaultRuntimeSession(
+                serverSessionID: selectedServerSessionID,
+                updatedAtUnixMS: 1_000
+            ),
+        ]
+        snapshot.models = [
+            makeCapabilityModelSummary(
+                modelID: "mlx-community/gemma-4-31b-it-4bit",
+                kind: "text",
+                state: .modelWarm,
+                features: ["text-generation", "reasoning"]
+            ),
+        ]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "What model are you?"
+
+        await viewModel.submitChatPrompt()
+
+        let request = try #require(await client.recordedChatRequests.last)
+        let identityMessage = try #require(request.messages.first)
+        #expect(request.modelID == "mlx-community/gemma-4-31b-it-4bit")
+        #expect(request.serverSessionID == selectedServerSessionID)
+        #expect(request.enableThinking == true)
+        #expect(identityMessage.role == "system")
+        #expect(identityMessage.content.contains("mlx-community/gemma-4-31b-it-4bit"))
+        #expect(identityMessage.content.contains("#text") == false)
+        #expect(request.messages.dropFirst().first == .init(role: "user", content: "What model are you?"))
+
+        viewModel.chatThinkingEnabled = false
+        viewModel.chatComposerText = "Answer briefly."
+        await viewModel.submitChatPrompt()
+
+        let followUp = try #require(await client.recordedChatRequests.last)
+        #expect(followUp.serverSessionID == selectedServerSessionID)
+        #expect(followUp.enableThinking == false)
+        #expect(followUp.reasoningEffort == "none")
+        #expect(followUp.messages.filter { $0.role == "system" }.count == 1)
+        #expect(followUp.messages.map(\.role) == ["system", "user", "assistant", "user"])
+    }
+
+    @Test("desktop chat binds and sends through a remote Provider target")
+    @MainActor
+    func desktopChatBindsAndSendsThroughRemoteProviderTarget() async throws {
+        let remoteServerID = "lay2-deepseek-v4"
+        let remoteModelID = "deepseek-v4-flash"
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: remoteServerID,
+                    title: "LAY2 DeepSeek V4",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "http://192.0.2.10:50650/v1",
+                    defaultModelID: remoteModelID,
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 0,
+                    toolSupportMode: .forceOff,
+                    credentialRef: RemoteServerStore.credentialRef(for: remoteServerID),
+                    apiKeyHint: "meli...auth",
+                    healthStatus: "ready"
+                ),
+            ],
+            apiKeys: [remoteServerID: "melix-no-auth"]
+        )
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .tokenDelta("MELIX_UI_REMOTE_OK"),
+            .completed(
+                finishReason: "stop",
+                assistantText: "MELIX_UI_REMOTE_OK",
+                reasoningText: ""
+            ),
+        ])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore
+        )
+
+        await viewModel.start()
+        viewModel.bindSelectedChatSessionToProvider(
+            providerTargetID: "remote:\(remoteServerID)"
+        )
+
+        #expect(viewModel.selectedChatSession?.providerTargetID == "remote:\(remoteServerID)")
+        #expect(viewModel.selectedChatSession?.serverSessionID.isEmpty == true)
+        #expect(viewModel.selectedChatProviderTarget?.kind == .remoteServer)
+        #expect(viewModel.selectedChatServerSession == nil)
+        #expect(viewModel.isSelectedChatProviderReady)
+
+        viewModel.chatThinkingEnabled = false
+        viewModel.chatComposerText = "Reply with exactly MELIX_UI_REMOTE_OK"
+        await viewModel.submitChatPrompt()
+
+        let request = try #require(await client.recordedChatRequests.last)
+        let remoteTarget = try #require(request.remoteTarget)
+        #expect(request.modelID == remoteModelID)
+        #expect(request.serverSessionID == remoteServerID)
+        #expect(request.enableThinking == false)
+        #expect(request.reasoningEffort == "none")
+        #expect(remoteTarget.serverID == remoteServerID)
+        #expect(remoteTarget.providerKind == "openai-compatible")
+        #expect(remoteTarget.baseURL == "http://192.0.2.10:50650/v1")
+        #expect(remoteTarget.apiKey == "melix-no-auth")
+        #expect(remoteTarget.modelID == remoteModelID)
+        #expect(remoteTarget.timeoutSeconds == 120)
+        #expect(viewModel.chatTranscript.contains {
+            $0.kind == .assistant && $0.body == "MELIX_UI_REMOTE_OK"
+        })
+
+        viewModel.forkSelectedChatSession()
+        #expect(viewModel.selectedChatSession?.providerTargetID == "remote:\(remoteServerID)")
+        #expect(viewModel.selectedChatProviderTarget?.serverID == remoteServerID)
+    }
+
+    @Test("desktop chat preserves the draft when remote credential, model, or endpoint configuration is missing")
+    @MainActor
+    func desktopChatRejectsIncompleteRemoteProviderConfiguration() async throws {
+        let cases: [(
+            modelID: String,
+            apiKey: String?,
+            providerKind: String,
+            baseURL: String,
+            expectedError: String
+        )] = [
+            (
+                "deepseek-v4-flash",
+                nil,
+                "openai-compatible",
+                "http://192.0.2.10:50650/v1",
+                "Remote Provider lay2-deepseek-v4 has no API key configured."
+            ),
+            (
+                "",
+                "melix-no-auth",
+                "openai-compatible",
+                "http://192.0.2.10:50650/v1",
+                "Remote Provider lay2-deepseek-v4 has no model configured."
+            ),
+            (
+                "deepseek-v4-flash",
+                "melix-no-auth",
+                "   ",
+                "http://192.0.2.10:50650/v1",
+                "Remote Provider lay2-deepseek-v4 has no provider kind configured."
+            ),
+            (
+                "deepseek-v4-flash",
+                "melix-no-auth",
+                "openai-compatible",
+                "   ",
+                "Remote Provider lay2-deepseek-v4 has no endpoint configured."
+            ),
+        ]
+
+        for testCase in cases {
+            let remoteServerID = "lay2-deepseek-v4"
+            let remoteStore = FakeRemoteServerStore(
+                servers: [
+                    RemoteServer(
+                        id: remoteServerID,
+                        title: "LAY2 DeepSeek V4",
+                        providerPreset: .custom,
+                        providerKind: testCase.providerKind,
+                        baseURL: testCase.baseURL,
+                        defaultModelID: testCase.modelID,
+                        timeoutSeconds: 120,
+                        rateLimitPerMinute: 0,
+                        toolSupportMode: .forceOff,
+                        credentialRef: RemoteServerStore.credentialRef(for: remoteServerID),
+                        apiKeyHint: testCase.apiKey == nil ? "" : "meli...auth",
+                        healthStatus: "ready"
+                    ),
+                ],
+                apiKeys: testCase.apiKey.map { [remoteServerID: $0] } ?? [:]
+            )
+            let client = FakeControlPlaneXPCClient()
+            let viewModel = RuntimeViewModel(
+                client: client,
+                remoteServerStore: remoteStore
+            )
+
+            await viewModel.start()
+            viewModel.bindSelectedChatSessionToProvider(
+                providerTargetID: "remote:\(remoteServerID)"
+            )
+            viewModel.chatComposerText = "Keep this draft"
+
+            await viewModel.submitChatPrompt()
+
+            #expect(await client.recordedChatRequests.isEmpty)
+            #expect(viewModel.chatStatusText == "Provider Unavailable")
+            #expect(viewModel.lastError == testCase.expectedError)
+            #expect(viewModel.chatComposerText == "Keep this draft")
+            #expect(viewModel.selectedSurface == .chat)
+        }
+    }
+
+    @Test("desktop chat clears a remote binding after its Provider is removed")
+    @MainActor
+    func desktopChatClearsRemovedRemoteProviderBinding() async throws {
+        let remoteServerID = "lay2-deepseek-v4"
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: remoteServerID,
+                    title: "LAY2 DeepSeek V4",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "http://192.0.2.10:50650/v1",
+                    defaultModelID: "deepseek-v4-flash",
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 0,
+                    toolSupportMode: .forceOff,
+                    credentialRef: RemoteServerStore.credentialRef(for: remoteServerID),
+                    apiKeyHint: "meli...auth",
+                    healthStatus: "ready"
+                ),
+            ],
+            apiKeys: [remoteServerID: "melix-no-auth"]
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            remoteServerStore: remoteStore
+        )
+
+        await viewModel.start()
+        viewModel.bindSelectedChatSessionToProvider(
+            providerTargetID: "remote:\(remoteServerID)"
+        )
+        #expect(viewModel.selectedChatSession?.providerTargetID == "remote:\(remoteServerID)")
+
+        viewModel.removeSelectedRemoteServer()
+        await viewModel.refreshDesktopFoundation()
+
+        #expect(remoteStore.removedIDs == [remoteServerID])
+        #expect(viewModel.selectedChatSession?.providerTargetID == "")
+        #expect(viewModel.selectedChatSession?.serverSessionID == "")
+        #expect(viewModel.selectedChatSession?.statusText == "Choose Provider")
+        #expect(viewModel.selectedChatProviderTarget == nil)
+    }
+
+    @Test("chat streaming state follows reasoning tool and assistant entries independently")
+    @MainActor
+    func chatStreamingStateFollowsEachActiveTranscriptEntry() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(30), event: .reasoningDelta("Reasoning")),
+            .init(delay: .milliseconds(120), event: .toolCallDelta(
+                callID: "tool-1",
+                toolName: "search",
+                argumentsFragment: #"{"q":"melix"}"#
+            )),
+            .init(delay: .milliseconds(350), event: .tokenDelta("Answer")),
+            .init(delay: .milliseconds(120), event: .completed(
+                finishReason: "stop",
+                assistantText: "Answer",
+                reasoningText: "Reasoning"
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        var observedReasoningPhase = false
+        var observedToolPhase = false
+        var observedAssistantPhase = false
+        var reasoningPhaseWasAlwaysValid = true
+        var toolPhaseWasAlwaysValid = true
+        var assistantPhaseWasAlwaysValid = true
+        var maximumSimultaneousStreamingEntries = 0
+        var observedStreamingPhaseOrder: [String] = []
+
+        viewModel.onStateChanged = { [weak viewModel] in
+            guard let viewModel else {
+                return
+            }
+            let streamingEntries = viewModel.chatTranscript.filter {
+                viewModel.isStreamingChatTranscriptEntry($0)
+            }
+            maximumSimultaneousStreamingEntries = max(
+                maximumSimultaneousStreamingEntries,
+                streamingEntries.count
+            )
+            if let phase = streamingEntries.first?.kind.rawValue,
+               observedStreamingPhaseOrder.last != phase {
+                observedStreamingPhaseOrder.append(phase)
+            }
+
+            guard
+                streamingEntries.isEmpty == false,
+                let assistantEntry = viewModel.chatTranscript.first(where: { $0.kind == .assistant })
+            else {
+                return
+            }
+
+            if streamingEntries.contains(where: { $0.kind == .reasoning }) {
+                observedReasoningPhase = true
+                reasoningPhaseWasAlwaysValid = reasoningPhaseWasAlwaysValid
+                    && streamingEntries.count == 1
+                    && viewModel.isStreamingChatTranscriptEntry(assistantEntry) == false
+                    && viewModel.isStreamingAssistantTranscriptEntry(assistantEntry) == false
+                    && viewModel.shouldDisplayChatTranscriptEntry(assistantEntry) == false
+            }
+
+            if streamingEntries.contains(where: { $0.kind == .tool }) {
+                observedToolPhase = true
+                toolPhaseWasAlwaysValid = toolPhaseWasAlwaysValid
+                    && streamingEntries.count == 1
+                    && viewModel.isStreamingChatTranscriptEntry(assistantEntry) == false
+                    && viewModel.isStreamingAssistantTranscriptEntry(assistantEntry) == false
+                    && viewModel.shouldDisplayChatTranscriptEntry(assistantEntry) == false
+            }
+
+            if streamingEntries.contains(where: { $0.kind == .assistant }) {
+                observedAssistantPhase = true
+                assistantPhaseWasAlwaysValid = assistantPhaseWasAlwaysValid
+                    && streamingEntries.count == 1
+                    && viewModel.isStreamingChatTranscriptEntry(assistantEntry)
+                    && viewModel.isStreamingAssistantTranscriptEntry(assistantEntry)
+                    && viewModel.shouldDisplayChatTranscriptEntry(assistantEntry)
+            }
+        }
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Show activity"
+        await viewModel.submitChatPrompt()
+
+        let assistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        #expect(observedReasoningPhase)
+        #expect(observedToolPhase)
+        #expect(observedAssistantPhase)
+        #expect(reasoningPhaseWasAlwaysValid)
+        #expect(toolPhaseWasAlwaysValid)
+        #expect(assistantPhaseWasAlwaysValid)
+        #expect(maximumSimultaneousStreamingEntries == 1)
+        #expect(observedStreamingPhaseOrder == ["reasoning", "tool", "assistant"])
+        #expect(viewModel.chatTranscript.allSatisfy { viewModel.isStreamingChatTranscriptEntry($0) == false })
+        #expect(viewModel.isStreamingAssistantTranscriptEntry(assistantEntry) == false)
+        viewModel.onStateChanged = nil
+    }
+
+    @Test("out-of-order chat deltas keep presentation phases mutually exclusive")
+    @MainActor
+    func outOfOrderChatDeltasKeepPresentationPhasesMutuallyExclusive() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let firstReasoning = String(repeating: "推理", count: 48)
+        let finalReasoning = firstReasoning + "补充"
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(20), event: .tokenDelta("First ")),
+            .init(delay: .zero, event: .reasoningDelta(firstReasoning)),
+            .init(delay: .zero, event: .toolCallDelta(
+                callID: "tool-out-of-order",
+                toolName: "lookup",
+                argumentsFragment: #"{"q":"melix"}"#
+            )),
+            .init(delay: .zero, event: .tokenDelta("second ")),
+            .init(delay: .zero, event: .reasoningDelta("补充")),
+            .init(delay: .zero, event: .tokenDelta("final")),
+            .init(delay: .milliseconds(20), event: .completed(
+                finishReason: "stop",
+                assistantText: "First second final",
+                reasoningText: finalReasoning
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        var maximumSimultaneousStreamingEntries = 0
+        var seenStreamingKinds: Set<String> = []
+        var lastReasoningBody = ""
+        var reasoningChangedWhileInactive = false
+        viewModel.onStateChanged = {
+            let streamingEntries = viewModel.chatTranscript.filter {
+                viewModel.isStreamingChatTranscriptEntry($0)
+            }
+            maximumSimultaneousStreamingEntries = max(
+                maximumSimultaneousStreamingEntries,
+                streamingEntries.count
+            )
+            seenStreamingKinds.formUnion(streamingEntries.map { $0.kind.rawValue })
+
+            guard let reasoningEntry = viewModel.chatTranscript.first(where: { $0.kind == .reasoning }) else {
+                return
+            }
+            if reasoningEntry.body != lastReasoningBody {
+                if lastReasoningBody.isEmpty == false,
+                   viewModel.isStreamingChatTranscriptEntry(reasoningEntry) == false {
+                    reasoningChangedWhileInactive = true
+                }
+                lastReasoningBody = reasoningEntry.body
+            }
+        }
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Interleave every phase"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(maximumSimultaneousStreamingEntries == 1)
+        #expect(seenStreamingKinds == ["assistant", "reasoning", "tool"])
+        #expect(reasoningChangedWhileInactive == false)
+        #expect(viewModel.chatTranscript.first(where: { $0.kind == .assistant })?.body == "First second final")
+        #expect(viewModel.chatTranscript.first(where: { $0.kind == .reasoning })?.body == finalReasoning)
+        #expect(viewModel.chatTranscript.first(where: { $0.kind == .reasoning })?.reasoningElapsedSeconds != nil)
+        #expect(viewModel.chatTranscript.first(where: { $0.kind == .tool })?.body == #"{"q":"melix"}"#)
+    }
+
+    @Test("completed chat reasoning elapsed time survives session switching")
+    @MainActor
+    func completedChatReasoningElapsedTimeSurvivesSessionSwitching() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(20), event: .reasoningDelta("Persistent reasoning")),
+            .init(delay: .milliseconds(20), event: .tokenDelta("Persistent answer")),
+            .init(delay: .zero, event: .completed(
+                finishReason: "stop",
+                assistantText: "Persistent answer",
+                reasoningText: "Persistent reasoning"
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let originalSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.chatComposerText = "Keep the elapsed label"
+
+        await viewModel.submitChatPrompt()
+
+        let completedReasoning = try #require(viewModel.chatTranscript.first { $0.kind == .reasoning })
+        let completedElapsedSeconds = try #require(completedReasoning.reasoningElapsedSeconds)
+        #expect(completedElapsedSeconds >= 1)
+        #expect(viewModel.isStreamingChatTranscriptEntry(completedReasoning) == false)
+
+        viewModel.createChatSession()
+        #expect(viewModel.selectedChatSession?.id != originalSessionID)
+        viewModel.selectChatSession(id: originalSessionID)
+
+        let restoredReasoning = try #require(viewModel.chatTranscript.first { $0.kind == .reasoning })
+        #expect(restoredReasoning.reasoningElapsedSeconds == completedElapsedSeconds)
+        #expect(
+            viewModel.selectedChatSession?.transcript.first { $0.kind == .reasoning }?.reasoningElapsedSeconds
+                == completedElapsedSeconds
+        )
+        #expect(viewModel.isStreamingChatTranscriptEntry(restoredReasoning) == false)
+    }
+
+    @Test("clearing chat invalidates stale in-flight stream events")
+    @MainActor
+    func clearingChatInvalidatesStaleInFlightStreamEvents() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(150), event: .reasoningDelta("stale reasoning")),
+            .init(delay: .milliseconds(80), event: .tokenDelta("stale answer")),
+            .init(delay: .zero, event: .completed(
+                finishReason: "stop",
+                assistantText: "stale answer",
+                reasoningText: "stale reasoning"
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "This request will be cleared"
+        let submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        try await waitForRuntimeViewModelCondition("chat should enter its in-flight state before clear") {
+            viewModel.isChatStreaming
+        }
+        viewModel.clearChatTranscript()
+        await submitTask.value
+
+        #expect(viewModel.chatTranscript.isEmpty)
+        #expect(viewModel.chatStatusText == "Idle")
+        #expect(viewModel.lastChatRequestID.isEmpty)
+        #expect(viewModel.isChatStreaming == false)
+        #expect(viewModel.selectedChatSession?.transcript.isEmpty == true)
+        #expect(viewModel.selectedChatSession?.isStreaming == false)
+    }
+
+    @Test("switching chat sessions invalidates stale in-flight stream events")
+    @MainActor
+    func switchingChatSessionsInvalidatesStaleInFlightStreamEvents() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(150), event: .reasoningDelta("old-session reasoning")),
+            .init(delay: .milliseconds(80), event: .tokenDelta("old-session answer")),
+            .init(delay: .zero, event: .completed(
+                finishReason: "stop",
+                assistantText: "old-session answer",
+                reasoningText: "old-session reasoning"
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let originalSessionID = try #require(viewModel.selectedChatSession?.id)
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.createChatSession()
+        let targetSessionID = try #require(viewModel.selectedChatSession?.id)
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.selectChatSession(id: originalSessionID)
+        viewModel.chatComposerText = "Keep stale output in the original session"
+        let submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        try await waitForRuntimeViewModelCondition("original chat should enter its in-flight state before switch") {
+            viewModel.isChatStreaming
+        }
+        viewModel.selectChatSession(id: targetSessionID)
+        let targetStatusAfterSwitch = viewModel.chatStatusText
+        await submitTask.value
+
+        #expect(viewModel.selectedChatSession?.id == targetSessionID)
+        #expect(viewModel.chatTranscript.isEmpty)
+        #expect(viewModel.chatStatusText == targetStatusAfterSwitch)
+        #expect(viewModel.isChatStreaming == false)
+        let originalSession = try #require(viewModel.chatSessions.first { $0.id == originalSessionID })
+        #expect(originalSession.transcript.contains { $0.kind == .user })
+        #expect(originalSession.transcript.contains { $0.body.contains("old-session") } == false)
+        #expect(originalSession.isStreaming == false)
+    }
+
+    @Test("switching chat providers invalidates stale in-flight stream events")
+    @MainActor
+    func switchingChatProvidersInvalidatesStaleInFlightStreamEvents() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(150), event: .reasoningDelta("old-provider reasoning")),
+            .init(delay: .milliseconds(80), event: .tokenDelta("old-provider answer")),
+            .init(delay: .zero, event: .completed(
+                finishReason: "stop",
+                assistantText: "old-provider answer",
+                reasoningText: "old-provider reasoning"
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let originalServer = try #require(viewModel.selectedServerSession)
+        viewModel.createServerSession(
+            title: "Replacement Provider",
+            modelID: originalServer.modelID
+        )
+        let replacementServer = try #require(viewModel.selectedServerSession)
+        #expect(replacementServer.id != originalServer.id)
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: originalServer.id)
+        viewModel.chatComposerText = "Keep the old provider out of this transcript"
+        let submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        try await waitForRuntimeViewModelCondition("chat should enter its in-flight state before provider switch") {
+            viewModel.isChatStreaming
+        }
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: replacementServer.id)
+        await submitTask.value
+
+        #expect(viewModel.selectedChatSession?.serverSessionID == replacementServer.id)
+        #expect(viewModel.chatStatusText == "Interrupted")
+        #expect(viewModel.chatTranscript.contains { $0.kind == .user })
+        #expect(viewModel.chatTranscript.contains { $0.body.contains("old-provider") } == false)
+        #expect(viewModel.isChatStreaming == false)
+        #expect(viewModel.selectedChatSession?.isStreaming == false)
     }
 
     @Test("chat prompt merges repeated deltas into shared transcript entries")
@@ -13220,7 +14083,9 @@ struct RuntimeViewModelTests {
             .reasoningDelta("Reasoning "),
             .reasoningDelta("trace"),
             .toolCallDelta(callID: "tool-1", toolName: "search", argumentsFragment: ""),
+            .toolCallDelta(callID: "tool-1", toolName: "search", argumentsFragment: ""),
             .toolCallDelta(callID: "tool-1", toolName: "search", argumentsFragment: #"{"q":"melix"}"#),
+            .toolResultDelta(callID: "tool-1", status: "ok", resultJSON: #"{"hits":1}"#),
             .completed(finishReason: "stop", assistantText: "Assistant response", reasoningText: "Reasoning trace"),
         ])
         let viewModel = RuntimeViewModel(client: client)
@@ -13241,6 +14106,132 @@ struct RuntimeViewModelTests {
         #expect(reasoningEntries.first?.body == "Reasoning trace")
         #expect(toolEntries.count == 1)
         #expect(toolEntries.first?.body == #"{"q":"melix"}"#)
+    }
+
+    @Test("late tool results stop tracking a completed tool phase without changing its transcript")
+    @MainActor
+    func lateToolResultsStopTrackingCompletedToolPhase() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .toolCallDelta(
+                callID: "tool-late-result",
+                toolName: "lookup",
+                argumentsFragment: #"{"q":"melix"}"#
+            ),
+            .tokenDelta("Answer"),
+            .toolResultDelta(
+                callID: "tool-late-result",
+                status: "ok",
+                resultJSON: #"{"hits":1}"#
+            ),
+            .completed(finishReason: "stop", assistantText: "Answer", reasoningText: ""),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Handle a late tool result"
+
+        await viewModel.submitChatPrompt()
+
+        let toolEntry = try #require(viewModel.chatTranscript.first { $0.kind == .tool })
+        let assistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        #expect(toolEntry.body == #"{"q":"melix"}"#)
+        #expect(viewModel.isStreamingChatTranscriptEntry(toolEntry) == false)
+        #expect(assistantEntry.body == "Answer")
+    }
+
+    @Test("cancelling a submit task flushes its active reasoning fragment safely")
+    @MainActor
+    func cancellingSubmitTaskFlushesActiveReasoningFragment() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let reasoningText = String(repeating: "reasoning ", count: 48)
+        await client.configureChatEvents([
+            .reasoningDelta(reasoningText),
+            .tokenDelta("Answer"),
+            .completed(finishReason: "stop", assistantText: "Answer", reasoningText: reasoningText),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        var submitTask: Task<Void, Never>?
+        var cancelledDuringReasoning = false
+        viewModel.onStateChanged = {
+            guard cancelledDuringReasoning == false,
+                  let reasoningEntry = viewModel.chatTranscript.first(where: { $0.kind == .reasoning }),
+                  reasoningEntry.body.isEmpty == false,
+                  viewModel.isStreamingChatTranscriptEntry(reasoningEntry)
+            else {
+                return
+            }
+            cancelledDuringReasoning = true
+            submitTask?.cancel()
+        }
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Cancel the presentation wait"
+        submitTask = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+
+        await submitTask?.value
+
+        let reasoningEntry = try #require(viewModel.chatTranscript.first { $0.kind == .reasoning })
+        #expect(cancelledDuringReasoning)
+        #expect(reasoningEntry.body == reasoningText)
+        #expect(viewModel.isChatStreaming == false)
+    }
+
+    @Test("chat phase transitions stop cleanly when the active session is cleared")
+    @MainActor
+    func chatPhaseTransitionsStopWhenActiveSessionIsCleared() async throws {
+        let transitionEvents: [ControlPlaneChatStreamEvent] = [
+            .tokenDelta("Answer"),
+            .toolCallDelta(
+                callID: "tool-after-reasoning",
+                toolName: "lookup",
+                argumentsFragment: #"{"q":"melix"}"#
+            ),
+            .completed(finishReason: "stop", assistantText: "Answer", reasoningText: "Reasoning"),
+            .failed(code: "cancelled", message: "Cancelled"),
+        ]
+
+        for (index, transitionEvent) in transitionEvents.enumerated() {
+            let client = FakeControlPlaneXPCClient()
+            let reasoningText = String(repeating: "reasoning ", count: 48)
+            await client.configureChatEvents([
+                .reasoningDelta(reasoningText),
+                transitionEvent,
+            ])
+            let viewModel = RuntimeViewModel(client: client)
+            var invalidationTask: Task<Void, Never>?
+            var scheduledInvalidation = false
+            viewModel.onStateChanged = {
+                guard scheduledInvalidation == false,
+                      let reasoningEntry = viewModel.chatTranscript.first(where: { $0.kind == .reasoning }),
+                      reasoningEntry.body.isEmpty == false,
+                      viewModel.isStreamingChatTranscriptEntry(reasoningEntry)
+                else {
+                    return
+                }
+                scheduledInvalidation = true
+                invalidationTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(2))
+                    viewModel.clearChatTranscript()
+                }
+            }
+
+            await viewModel.start()
+            try bindSelectedChatSessionToPrimaryServer(viewModel)
+            viewModel.chatComposerText = "Invalidate transition \(index)"
+
+            await viewModel.submitChatPrompt()
+            await invalidationTask?.value
+
+            #expect(scheduledInvalidation)
+            #expect(viewModel.chatTranscript.isEmpty)
+            #expect(viewModel.chatStatusText == "Idle")
+            #expect(viewModel.isChatStreaming == false)
+        }
     }
 
     @Test("chat prompt ignores annotation and tool-result payloads in visible transcript")
@@ -13328,6 +14319,119 @@ struct RuntimeViewModelTests {
         #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) > 1)
     }
 
+    @Test("chat reasoning presentation preserves grapheme clusters and honors Reduce Motion")
+    @MainActor
+    func chatReasoningPresentationPreservesGraphemesAndHonorsReduceMotion() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let reasoningText = "👨‍👩‍👧‍👦e\u{301}🙂结论"
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(30), event: .reasoningDelta(reasoningText)),
+            .init(delay: .milliseconds(250), event: .completed(
+                finishReason: "stop",
+                assistantText: "Done",
+                reasoningText: reasoningText
+            )),
+        ])
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        var visibleReasoningBodies: [String] = []
+        viewModel.onStateChanged = {
+            guard let body = viewModel.chatTranscript.first(where: { $0.kind == .reasoning })?.body,
+                  body.isEmpty == false,
+                  body != visibleReasoningBodies.last
+            else {
+                return
+            }
+            visibleReasoningBodies.append(body)
+        }
+
+        await viewModel.start()
+        viewModel.setChatPresentationReduceMotion(true)
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Show public reasoning"
+
+        await viewModel.submitChatPrompt()
+
+        let reasoningEntry = try #require(viewModel.chatTranscript.first { $0.kind == .reasoning })
+        let metricsSnapshot = await metrics.snapshot()
+        #expect(reasoningEntry.body == reasoningText)
+        #expect(visibleReasoningBodies.first == reasoningText)
+        #expect(visibleReasoningBodies.last == reasoningText)
+        #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) <= 3)
+    }
+
+    @Test("chat reasoning typewriter reveals complete grapheme prefixes")
+    @MainActor
+    func chatReasoningTypewriterRevealsCompleteGraphemePrefixes() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let reasoningText = "👨‍👩‍👧‍👦e\u{301}🙂结论分析完成"
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(20), event: .reasoningDelta(reasoningText)),
+            .init(delay: .milliseconds(350), event: .completed(
+                finishReason: "stop",
+                assistantText: "Done",
+                reasoningText: reasoningText
+            )),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        var visibleReasoningBodies: [String] = []
+        viewModel.onStateChanged = {
+            guard let body = viewModel.chatTranscript.first(where: { $0.kind == .reasoning })?.body,
+                  body.isEmpty == false,
+                  body != visibleReasoningBodies.last
+            else {
+                return
+            }
+            visibleReasoningBodies.append(body)
+        }
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Type the public reasoning"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(visibleReasoningBodies.count > 1)
+        #expect(visibleReasoningBodies.first == "👨‍👩‍👧‍👦")
+        #expect(visibleReasoningBodies.last == reasoningText)
+        #expect(visibleReasoningBodies.allSatisfy { reasoningText.hasPrefix($0) })
+    }
+
+    @Test("chat reasoning burst uses a bounded presentation budget")
+    @MainActor
+    func chatReasoningBurstCatchesUpWithinBoundedPresentationWindow() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let reasoningText = String(repeating: "推理", count: 512)
+        await client.configureScheduledChatEvents([
+            .init(delay: .milliseconds(20), event: .reasoningDelta(reasoningText)),
+            .init(delay: .milliseconds(350), event: .completed(
+                finishReason: "stop",
+                assistantText: "Done",
+                reasoningText: reasoningText
+            )),
+        ])
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Bound the public reasoning backlog"
+
+        await viewModel.submitChatPrompt()
+
+        let reasoningEntry = try #require(viewModel.chatTranscript.first { $0.kind == .reasoning })
+        let metricsSnapshot = await metrics.snapshot()
+        let lagMs = try #require(metricsSnapshot["menu.chat_presentation_lag_ms"])
+        let flushCount = try #require(metricsSnapshot["menu.chat_presentation_flush_count"])
+        let targetBacklogMilliseconds =
+            Double(RuntimeViewModel.chatPresentationTargetFlushesForBacklog)
+            * Double(RuntimeViewModel.chatPresentationFlushIntervalMilliseconds)
+        #expect(reasoningEntry.body == reasoningText)
+        #expect(targetBacklogMilliseconds < 200)
+        #expect(lagMs >= 0)
+        #expect(flushCount <= 10)
+    }
+
     @Test("chat prompt coalesces render cadence without dropping stream transcript events")
     @MainActor
     func chatPromptCoalescesRenderCadenceWithoutDroppingStreamTranscriptEvents() async throws {
@@ -13342,7 +14446,6 @@ struct RuntimeViewModelTests {
         ] + tokenFragments.map(ControlPlaneChatStreamEvent.tokenDelta) + [
             .completed(finishReason: "stop", assistantText: assistantText, reasoningText: ""),
         ]
-        let coalescedRenderBudget = tokenFragments.count / 10
         await client.configureChatEvents(streamEvents)
         let metrics = MenuBarMetricsStore()
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
@@ -13364,7 +14467,18 @@ struct RuntimeViewModelTests {
         try bindSelectedChatSessionToPrimaryServer(viewModel)
         viewModel.chatComposerText = "Stress render cadence"
 
+        let submitStartedAt = ContinuousClock().now
         await viewModel.submitChatPrompt()
+        let submitDuration = submitStartedAt.duration(to: ContinuousClock().now)
+        let submitDurationComponents = submitDuration.components
+        let submitDurationMilliseconds =
+            Double(submitDurationComponents.seconds) * 1_000
+            + Double(submitDurationComponents.attoseconds) / 1_000_000_000_000_000
+        let cadenceWindowBudget = Int(ceil(
+            submitDurationMilliseconds
+                / Double(RuntimeViewModel.chatPresentationFlushIntervalMilliseconds)
+        )) + 2
+        let coalescedRenderBudget = max(tokenFragments.count / 10, cadenceWindowBudget)
 
         let finalAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
         let metricsSnapshot = await metrics.snapshot()
@@ -13487,6 +14601,55 @@ struct RuntimeViewModelTests {
         #expect(viewModel.chatTranscript.filter { $0.kind == .assistant }.isEmpty)
         #expect(viewModel.chatStatusText == "Completed • stop")
         #expect(viewModel.selectedChatSession?.transcript.contains { $0.kind == .assistant && $0.body.isEmpty } == false)
+    }
+
+    @Test("empty reasoning deltas do not create phantom transcript entries")
+    @MainActor
+    func emptyReasoningDeltasDoNotCreatePhantomTranscriptEntries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .reasoningDelta(""),
+            .completed(finishReason: "stop", assistantText: "Done", reasoningText: ""),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Skip empty reasoning"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(viewModel.chatTranscript.contains { $0.kind == .reasoning } == false)
+        #expect(viewModel.chatTranscript.contains { $0.kind == .assistant && $0.body == "Done" })
+    }
+
+    @Test("trailing usage after an empty completion does not recreate the pending assistant row")
+    @MainActor
+    func trailingUsageAfterEmptyCompletionDoesNotRecreatePendingAssistant() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .completed(finishReason: "stop", assistantText: "", reasoningText: ""),
+            .usage(
+                promptTokens: 7,
+                completionTokens: 0,
+                cachedPromptTokens: 0,
+                mediaFeatureCacheHits: 0,
+                mediaFeatureCacheMisses: 0,
+                mediaFeatureEncoderCallsSaved: 0,
+                mediaFeatureWorkSavedBytes: 0
+            ),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Return no assistant text"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(viewModel.chatTranscript.contains { $0.kind == .assistant } == false)
+        #expect(viewModel.lastChatUsageText == "7 prompt • 0 completion")
+        #expect(viewModel.chatStatusText == "Completed • stop")
     }
 
     @Test("chat completion can synthesize transcript entries without prior deltas")

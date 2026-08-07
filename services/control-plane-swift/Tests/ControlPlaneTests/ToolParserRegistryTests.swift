@@ -6,6 +6,73 @@ import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
 struct ToolParserRegistryTests {
+    @Test("tool wire grammar descriptors keep parser and sampler dialects aligned")
+    func toolWireGrammarDescriptorsKeepParserAndSamplerDialectsAligned() throws {
+        let registry = ToolParserRegistry()
+        let json = try #require(registry.wireGrammarDescriptor(for: .qwen))
+        let xml = try #require(registry.wireGrammarDescriptor(for: .xml))
+
+        #expect(json.dialect == "json_object_arguments")
+        #expect(json.argumentStyle == .jsonObject)
+        #expect(json.trigger == "<tool_call>")
+        #expect(json.sentinelTokens == ["<tool_call>", "</tool_call>"])
+        #expect(xml.dialect == "xml_parameter_blocks")
+        #expect(xml.argumentStyle == .xmlParameters)
+        #expect(xml.begin == "<tool_call>")
+        #expect(xml.end == "</tool_call>")
+        #expect(xml.sentinelTokens.contains("</parameter>"))
+        #expect(xml.sentinelTokens.contains("</function>"))
+
+        let encoded = try JSONEncoder().encode(xml)
+        let decoded = try JSONDecoder().decode(ToolWireGrammarDescriptor.self, from: encoded)
+        #expect(decoded == xml)
+    }
+
+    @Test("tool parser modes without sampler dialects do not inherit Qwen wire markers")
+    func unsupportedSamplerWireModesHaveNoDescriptor() {
+        let registry = ToolParserRegistry()
+
+        for mode in [
+            ToolParserMode.text,
+            .json,
+            .gemma,
+            .minimax,
+            .glm,
+            .mistral,
+        ] {
+            let descriptor: ToolWireGrammarDescriptor? = registry.wireGrammarDescriptor(for: mode)
+            #expect(descriptor == nil)
+        }
+    }
+
+    @Test("translator omits sampler wire metadata for unsupported parser modes")
+    func translatorOmitsUnsupportedSamplerWireMetadata() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-gemma-tool-wire" })
+        let request = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Call the weather tool.")],
+            toolParser: ToolParserRequestConfiguration(mode: .gemma),
+            tools: [
+                OpenAIChatTool(
+                    type: "function",
+                    function: OpenAIChatTool.FunctionDefinition(
+                        name: "weather",
+                        description: "Read weather",
+                        parameters: .object(["type": .string("object")])
+                    )
+                ),
+            ],
+            toolChoice: .mode("required")
+        )
+
+        let ext = try translator.translate(request, modelHandle: "worker-text")
+            .workerRequest.execution.ext
+
+        #expect(ext["melix.tool_parser.mode"] == "gemma")
+        #expect(ext["melix.compat.tool_choice_resolved"] == "required")
+        #expect(ext.keys.allSatisfy { !$0.hasPrefix("melix.tool_wire.") })
+    }
+
     @Test("registered parsers declare audit receipts for wire formats and selector surfaces")
     func registeredParsersDeclareAuditReceiptsForWireFormatsAndSelectorSurfaces() throws {
         let registry = ToolParserRegistry()
@@ -258,16 +325,66 @@ struct ToolParserRegistryTests {
         #expect(ext["melix.compat.reasoning_effort"] == "low")
         #expect(ext["melix.compat.tool_parser_mode"] == "qwen")
         #expect(ext["melix.compat.tool_parser_source"] == "request")
+        #expect(ext["melix.compat.requested_parser"] == "qwen")
+        #expect(ext["melix.compat.resolved_parser"] == "qwen")
+        #expect(ext["melix.compat.parser_fallback_mode"] == "")
+        #expect(ext["melix.compat.parser_refusal_reason"] == "")
         #expect(ext["melix.compat.tool_namespaces"] == "tools.search")
         #expect(ext["melix.compat.tool_choice_requested"] == "required")
         #expect(ext["melix.compat.tool_choice_resolved"] == "required")
+        #expect(ext["melix.tool_wire.dialect"] == "json_object_arguments")
+        #expect(ext["melix.tool_wire.begin"] == "<tool_call>")
+        #expect(ext["melix.tool_wire.end"] == "</tool_call>")
+        #expect(ext["melix.tool_wire.trigger"] == "<tool_call>")
+        #expect(ext["melix.tool_wire.argument_style"] == "json_object")
+        let wireSentinels = try JSONDecoder().decode(
+            [String].self,
+            from: Data((ext["melix.tool_wire.sentinel_tokens"] ?? "").utf8)
+        )
+        #expect(wireSentinels == ["<tool_call>", "</tool_call>"])
         #expect(ext["melix.compat.structured_output_mode"] == "json_schema")
         #expect(ext["melix.compat.output_modalities"] == "text")
         #expect(ext["melix.compat.effective_config_hash"]?.isEmpty == false)
         #expect(receipt.contains(#""compat_surface":"openai.chat.completions""#))
+        #expect(receipt.contains(#""requested_parser":"qwen""#))
+        #expect(receipt.contains(#""resolved_parser":"qwen""#))
+        #expect(receipt.contains(#""parser_fallback_mode":"""#))
+        #expect(receipt.contains(#""parser_refusal_reason":"""#))
         #expect(receipt.contains(#""tool_namespaces":["tools.search"]"#))
         #expect(receipt.contains(#""effective_config_hash":"\#(ext["melix.compat.effective_config_hash"] ?? "")""#))
         #expect(Set(receiptObject.keys) == compatReceiptFieldNames())
+    }
+
+    @Test("compatibility policy receipts decode legacy payloads without parser policy fields")
+    func compatibilityPolicyReceiptsDecodeLegacyPayloadsWithoutParserPolicyFields() throws {
+        let payload = Data(
+            """
+            {
+              "compat_surface": "openai.chat.completions",
+              "stream_mode": "non_stream",
+              "reasoning_mode": "disabled",
+              "reasoning_source": "default",
+              "reasoning_effort": "",
+              "tool_parser_mode": "none",
+              "tool_parser_source": "none",
+              "tool_namespaces": [],
+              "tool_choice_requested": "",
+              "tool_choice_resolved": "none",
+              "structured_output_mode": "text",
+              "output_modalities": ["text"],
+              "effective_config_hash": "legacy-hash"
+            }
+            """.utf8
+        )
+
+        let receipt = try JSONDecoder().decode(TextCompatibilityPolicyReceipt.self, from: payload)
+
+        #expect(receipt.requestedParser == "none")
+        #expect(receipt.resolvedParser == "none")
+        #expect(receipt.parserFallbackMode == "")
+        #expect(receipt.parserRefusalReason == "")
+        #expect(receipt.compatSurface == "openai.chat.completions")
+        #expect(receipt.effectiveConfigHash == "legacy-hash")
     }
 
     @Test("translated text requests attach prompt context boundary receipts")
@@ -1312,6 +1429,10 @@ struct ToolParserRegistryTests {
             "reasoning_effort",
             "tool_parser_mode",
             "tool_parser_source",
+            "requested_parser",
+            "resolved_parser",
+            "parser_fallback_mode",
+            "parser_refusal_reason",
             "tool_namespaces",
             "tool_choice_requested",
             "tool_choice_resolved",

@@ -18,6 +18,11 @@ from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.lora_checkpoint_selection import (
     build_checkpoint_selection_receipt_fields,
 )
+from worker.model_ops.lora_heldout_evaluation import (
+    evaluate_heldout_if_requested as _evaluate_heldout_if_requested,
+    float_ext as _float_ext,
+    write_heldout_evaluation_receipt as _write_heldout_evaluation_receipt,
+)
 from worker.model_ops.lora_runtime_metadata import (
     build_lora_canary_receipt_fields,
     build_quantized_lora_manifest_fields,
@@ -28,7 +33,11 @@ from worker.model_ops.multimodal_lora_contracts import (
     raise_for_adapter_freeze_audit,
 )
 from worker.model_ops.response_only_boundary import ResponseOnlyBoundaryAggregate
-from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest, TrainingResult
+from worker.model_ops.mlx_lm_runner import (
+    MLXLMRunner,
+    TrainingRequest,
+    TrainingResult,
+)
 from worker.model_ops.training_config import LoRATrainingConfig, normalize_training_config
 from worker.model_ops.training_receipts import (
     capability_gate_receipt,
@@ -44,7 +53,7 @@ from worker.model_ops.training_dataset import (
     HFDatasetFetcher,
     ResolvedTrainingDatasetPackage,
     resolve_training_dataset_package,
-    trainer_sample_counts,
+    trainer_sample_counts_with_test,
     write_normalized_dataset_snapshot,
 )
 from worker.model_ops.training_preflight import (
@@ -117,8 +126,14 @@ class LoRATrainingPipeline:
             sample_limit=_int_ext(request_ext, "sample_limit"),
             max_characters_per_sample=_int_ext(request_ext, "max_characters_per_sample"),
         )
-        trainer_sample_count, trainer_validation_sample_count = trainer_sample_counts(
-            dataset.package
+        test_ratio = _float_ext(request_ext, "test_ratio")
+        (
+            trainer_sample_count,
+            trainer_validation_sample_count,
+            _trainer_test_sample_count,
+        ) = trainer_sample_counts_with_test(
+            dataset.package,
+            test_ratio=test_ratio,
         )
 
         emit("normalize_config", 0.35)
@@ -155,6 +170,7 @@ class LoRATrainingPipeline:
             dataset.package,
             output_dir=output_dir,
             manifest_overrides=normalized_manifest_overrides,
+            test_ratio=test_ratio,
         )
         trajectory_provenance = load_trajectory_provenance_from_normalized_snapshot(
             format_name=normalized_snapshot.format,
@@ -254,6 +270,26 @@ class LoRATrainingPipeline:
             loss_best=training_result.metrics.loss_best,
             loss_final=training_result.metrics.loss_final,
         )
+        heldout_evaluation_fields = _heldout_evaluation_manifest_fields(
+            receipt=_write_heldout_evaluation_receipt(
+                output_dir=output_dir,
+                receipt=_evaluate_heldout_if_requested(
+                    runner=self._runner,
+                    job_id=job_id,
+                    source_model=source_model,
+                    training_model_path=training_model_path,
+                    adapter_output_dir=adapter_output_dir,
+                    normalized_snapshot=normalized_snapshot,
+                    config=config,
+                    trainer_dataset_format=trainer_dataset_format,
+                    test_ratio=test_ratio,
+                    runtime_failure_details=runtime_failure_details,
+                    include_baseline=truthy(
+                        request_ext.get("heldout_baseline_compare", "")
+                    ),
+                ),
+            )
+        )
 
         emit("write_manifest", 0.97)
         manifest = {
@@ -284,6 +320,7 @@ class LoRATrainingPipeline:
             "dataset_sample_count": dataset.package.sample_count,
             "trainer_dataset_sample_count": normalized_snapshot.sample_count,
             "trainer_dataset_validation_sample_count": normalized_snapshot.validation_sample_count,
+            "trainer_dataset_test_sample_count": normalized_snapshot.test_sample_count,
             "dataset_source_manifest_path": str(dataset.package.manifest_path),
             "dataset_materialized_package_path": str(dataset.materialized_package_path),
             "dataset_cache_key": dataset.cache_key,
@@ -326,6 +363,7 @@ class LoRATrainingPipeline:
             **quantized_lora_fields,
             **lora_canary_receipt_fields,
             **checkpoint_selection_fields,
+            **heldout_evaluation_fields,
             "training_backend": training_result.execution_backend,
             "adapter_set_hash": adapter_set_hash,
             "weights_path": str(training_result.weights_path),
@@ -568,6 +606,35 @@ def _int_ext(ext: dict[str, str], key: str) -> int:
     if not raw_value:
         return 0
     return int(raw_value)
+
+
+def _heldout_evaluation_manifest_fields(*, receipt: dict[str, Any]) -> dict[str, Any]:
+    fields = {
+        "heldout_evaluation_receipt_path": str(receipt["receipt_path"]),
+        "heldout_evaluation_status": str(receipt["status"]),
+        "heldout_evaluation_reason": str(receipt["reason"]),
+        "heldout_evaluation_backend": str(receipt["backend"]),
+        "heldout_test_ratio": float(receipt["test_ratio"]),
+        "heldout_test_path": str(receipt["test_path"]),
+        "heldout_test_sample_count": int(receipt["sample_count"]),
+        "heldout_test_loss": receipt["loss"],
+        "heldout_test_perplexity": receipt["perplexity"],
+    }
+    # Baseline-comparison fields travel only when the operator opted in via
+    # heldout_baseline_compare, keeping default manifests shape-stable.
+    if "baseline_status" in receipt:
+        fields.update(
+            {
+                "heldout_baseline_status": str(receipt["baseline_status"]),
+                "heldout_baseline_reason": str(receipt.get("baseline_reason", "")),
+                "heldout_baseline_backend": str(receipt.get("baseline_backend", "")),
+                "heldout_baseline_loss": receipt.get("baseline_loss"),
+                "heldout_baseline_perplexity": receipt.get("baseline_perplexity"),
+                "heldout_loss_delta": receipt.get("loss_delta"),
+                "heldout_perplexity_ratio": receipt.get("perplexity_ratio"),
+            }
+        )
+    return fields
 
 
 def _write_alignment_trace(path: Path, samples: list[dict[str, Any]]) -> None:
@@ -826,6 +893,7 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
     to_float = float
     is_instance = isinstance
     list_type = list
+    percentile_value = _percentile_value
     score_total = 0.0
     candidate_group_margins: list[float] = []
     candidate_group_margins_append = candidate_group_margins.append
@@ -874,10 +942,11 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
     if not scores:
         return {}
     scores.sort()
+    scores_len = len(scores)
     summary: dict[str, float | int] = {
-        "reward_mean": score_total / len(scores),
-        "reward_p50": _percentile_value(scores, 0.5),
-        "reward_p95": _percentile_value(scores, 0.95),
+        "reward_mean": score_total / scores_len,
+        "reward_p50": percentile_value(scores, 0.5),
+        "reward_p95": percentile_value(scores, 0.95),
     }
     if candidate_group_margins:
         candidate_group_margins.sort()
@@ -887,11 +956,11 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
                 "candidate_group_count": candidate_group_count,
                 "candidate_group_reward_margin_mean": candidate_group_margin_total
                 / candidate_group_count,
-                "candidate_group_reward_margin_p50": _percentile_value(
+                "candidate_group_reward_margin_p50": percentile_value(
                     candidate_group_margins,
                     0.5,
                 ),
-                "candidate_group_reward_margin_p95": _percentile_value(
+                "candidate_group_reward_margin_p95": percentile_value(
                     candidate_group_margins,
                     0.95,
                 ),

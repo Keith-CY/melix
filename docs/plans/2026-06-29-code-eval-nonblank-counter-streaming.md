@@ -53,3 +53,14 @@ state before whitespace membership so characters after the first nonblank byte o
 common content lines skip the non-line-whitespace lookup. This is intended to
 reduce per-character dispatch cost while preserving the existing no-allocation
 streaming behavior and splitline-compatible boundary semantics.
+
+## 2026-07-25 follow-up slice: uniform plain-assert separator count
+
+This follow-up keeps the registered `code-eval-count-tests-line-scan` probe and
+stays limited to `_count_plain_assert_statement_lines()`. Large generated
+code-evaluation fixtures commonly contain one unindented `assert ...` statement
+per line. The plain-assert counter can prove that uniform shape with C-backed
+separator counts before falling back to the existing line walk for indented,
+blank-line, mixed-statement, or identifier-boundary cases. The behavior remains
+identical while reducing Python-loop overhead for the uniform assert payloads
+measured by the registered probe.

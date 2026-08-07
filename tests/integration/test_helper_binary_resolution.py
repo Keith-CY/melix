@@ -264,6 +264,115 @@ def test_live_stack_starts_and_stops_swift_vision_worker(
     assert not stack.swift_vision_worker_stderr_path.exists()
 
 
+def test_live_stack_starts_stops_and_restarts_python_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stack = helpers.LiveMelixStack(
+        tmp_path,
+        start_swift_text_worker=False,
+        start_python_worker=False,
+        environment_overrides={"MELIX_PYTHONPATH_PREFIX": "/workspace-prefix"},
+    )
+    stack.python_socket_path = tmp_path / "python.sock"
+    stack.python_worker_metrics_path = tmp_path / "python-metrics.json"
+    stack.python_worker_stdout_path = tmp_path / "python.stdout.log"
+    stack.python_worker_stderr_path = tmp_path / "python.stderr.log"
+    stack.python_socket_path.touch()
+
+    popen_calls: list[dict[str, object]] = []
+    handshakes: list[Path] = []
+    stopped: list[str] = []
+
+    class FakeProcess:
+        next_pid = 2000
+
+        def __init__(self) -> None:
+            self.pid = FakeProcess.next_pid
+            FakeProcess.next_pid += 1
+
+        def poll(self) -> None:
+            return None
+
+    tick = 0.0
+
+    def fake_perf_counter() -> float:
+        nonlocal tick
+        tick += 0.1
+        return tick
+
+    def fake_popen(command: list[str], **kwargs: object) -> FakeProcess:
+        popen_calls.append({"command": command, **kwargs})
+        return FakeProcess()
+
+    monkeypatch.setattr(helpers.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        helpers,
+        "wait_for_worker_handshake",
+        lambda socket_path, **kwargs: handshakes.append(socket_path),
+    )
+    monkeypatch.setattr(helpers.time, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(helpers.time, "perf_counter_ns", lambda: 456)
+    monkeypatch.setattr(stack, "_stop_process", lambda name, process: stopped.append(name))
+
+    stack.start_python_worker()
+
+    assert not stack.python_socket_path.exists()
+    assert handshakes == [stack.python_socket_path]
+    assert stack.python_worker is not None
+    assert stack.python_worker.pid == 2000
+    assert stack.startup_timings["python_worker_ready_ms"] == pytest.approx(100.0)
+    first_call = popen_calls[0]
+    assert first_call["command"] == [
+        "uv",
+        "run",
+        "--project",
+        str(tmp_path / "services/mlx-worker-python"),
+        "python",
+        "-m",
+        "worker.bootstrap",
+        "--socket-path",
+        str(stack.python_socket_path),
+        "--backend-mode",
+        "deterministic",
+    ]
+    assert first_call["env"]["PYTHONPATH"] == os.pathsep.join(  # type: ignore[index]
+        [
+            "/workspace-prefix",
+            str(tmp_path),
+            str(tmp_path / "services/mlx-worker-python"),
+        ]
+    )
+    assert first_call["env"]["MELIX_PYTHON_WORKER_METRICS_PATH"] == str(  # type: ignore[index]
+        stack.python_worker_metrics_path
+    )
+    assert first_call["env"]["MELIX_PYTHON_WORKER_STARTUP_T0_NS"] == "456"  # type: ignore[index]
+
+    with pytest.raises(RuntimeError, match="python worker is already running"):
+        stack.start_python_worker()
+
+    stack.python_socket_path.touch()
+    stack.python_worker_metrics_path.touch()
+    stack.stop_python_worker()
+
+    assert stopped == ["python worker"]
+    assert stack.python_worker is None
+    assert stack.python_worker_stdout is None
+    assert stack.python_worker_stderr is None
+    assert not stack.python_socket_path.exists()
+    assert not stack.python_worker_metrics_path.exists()
+    assert not stack.python_worker_stdout_path.exists()
+    assert not stack.python_worker_stderr_path.exists()
+
+    stack.start_python_worker()
+
+    assert stack.python_worker is not None
+    assert stack.python_worker.pid == 2001
+    assert handshakes == [stack.python_socket_path, stack.python_socket_path]
+    stack.stop_python_worker()
+    assert stopped == ["python worker", "python worker"]
+
+
 def test_live_stack_exposes_capabilities_url(tmp_path: Path) -> None:
     stack = helpers.LiveMelixStack(tmp_path)
 
@@ -317,6 +426,145 @@ def test_wait_for_http_model_states_reads_capabilities_models(
     )
 
     assert observed_requests == [("http://127.0.0.1:12436/api/capabilities", "GET", "1")]
+
+
+def test_wait_for_http_model_states_polls_below_the_gateway_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock_values = iter([0.0, 0.1, 1.1])
+    sleeps: list[float] = []
+    attempts = 0
+
+    class FakeResponse:
+        def __init__(self, state: str) -> None:
+            self.state = state
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"models": [{"model_id": "melix-dev-text", "state": self.state}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float) -> FakeResponse:
+        nonlocal attempts
+        attempts += 1
+        return FakeResponse("loading" if attempts == 1 else "warm")
+
+    monkeypatch.setattr(helpers.time, "time", lambda: next(clock_values))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", fake_urlopen)
+
+    helpers.wait_for_http_model_states(
+        11434,
+        required_states={"melix-dev-text": "warm"},
+        timeout_seconds=5.0,
+    )
+
+    assert attempts == 2
+    assert sleeps == [helpers.MODEL_STATE_POLL_INTERVAL_SECONDS]
+
+
+def test_wait_for_http_model_states_honors_rate_limit_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock_values = iter([0.0, 0.1, 0.2, 3.2])
+    sleeps: list[float] = []
+    attempts = 0
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"models": [{"model_id": "melix-dev-text", "state": "warm"}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float) -> FakeResponse:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise helpers.urllib.error.HTTPError(
+                request.full_url,
+                429,
+                "Too Many Requests",
+                {"Retry-After": "3"},
+                None,
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr(helpers.time, "time", lambda: next(clock_values))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", fake_urlopen)
+
+    helpers.wait_for_http_model_states(
+        11434,
+        required_states={"melix-dev-text": "warm"},
+        timeout_seconds=5.0,
+    )
+
+    assert attempts == 2
+    assert sleeps == [3.0]
+
+
+def test_wait_for_http_model_states_stops_when_rate_limit_reaches_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock_values = iter([0.0, 0.1, 0.6])
+    sleeps: list[float] = []
+
+    def fake_urlopen(request, timeout: float) -> None:
+        raise helpers.urllib.error.HTTPError(
+            request.full_url,
+            429,
+            "Too Many Requests",
+            {"Retry-After": "30"},
+            None,
+        )
+
+    monkeypatch.setattr(helpers.time, "time", lambda: next(clock_values))
+    monkeypatch.setattr(helpers.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(helpers.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(
+        AssertionError,
+        match="Control plane never exposed the required model states",
+    ):
+        helpers.wait_for_http_model_states(
+            11434,
+            required_states={"melix-dev-text": "warm"},
+            timeout_seconds=0.5,
+        )
+
+    assert sleeps == []
+
+
+@pytest.mark.parametrize(
+    ("header_value", "expected_seconds"),
+    [(None, 1.0), ("invalid", 1.0), ("0", 1.0), ("3", 3.0)],
+)
+def test_http_retry_after_seconds_is_bounded_and_has_a_safe_default(
+    header_value: str | None,
+    expected_seconds: float,
+) -> None:
+    headers = {} if header_value is None else {"Retry-After": header_value}
+    error = helpers.urllib.error.HTTPError(
+        "http://127.0.0.1:11434/api/capabilities",
+        429,
+        "Too Many Requests",
+        headers,
+        None,
+    )
+
+    assert helpers._http_retry_after_seconds(error) == expected_seconds
 
 
 def test_wait_for_http_model_states_reports_swift_vision_exit(tmp_path: Path) -> None:

@@ -561,6 +561,56 @@ struct ControlPlaneServiceTests {
         #expect(listener.requestedPort == UInt32(MelixGatewayDefaults.port))
     }
 
+    @Test("applying a secondary gateway owner keeps the running listener pinned to its bootstrap session")
+    func applyingSecondaryGatewayOwnerKeepsRunningListenerPinnedToBootstrapSession() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-gateway-secondary-owner-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            metricsStore: metricsStore,
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
+        )
+
+        let response = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                serverSessionID: "server-session-secondary",
+                host: "0.0.0.0",
+                port: 18_080,
+                defaultModelID: "melix-dev-text",
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+        let secondary = try #require(
+            response.server.snapshot.gatewayConfig.listeners.first {
+                $0.serverSessionID == "server-session-secondary"
+            }
+        )
+        let running = try #require(
+            response.server.snapshot.gatewayConfig.listeners.first {
+                $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
+            }
+        )
+
+        #expect(response.ok)
+        #expect(!secondary.activeBinding)
+        #expect(secondary.effectiveHost == "0.0.0.0")
+        #expect(secondary.effectivePort == 18_080)
+        #expect(!secondary.requiresRestart)
+        #expect(running.activeBinding)
+        #expect(running.effectiveHost == "127.0.0.1")
+        #expect(running.effectivePort == 11_434)
+        #expect(await metricsStore.value(forKey: "gateway.config_requires_restart_count") == 1)
+    }
+
     @Test("execute rejects gateway config target mismatches and typed payload validation failures")
     func executeRejectsGatewayConfigTargetMismatchesAndTypedPayloadValidationFailures() async throws {
         let service = ControlPlaneService(modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()))
@@ -639,10 +689,11 @@ struct ControlPlaneServiceTests {
         defer { try? FileManager.default.removeItem(at: temporaryRoot) }
 
         let metricsStore = MetricsStore()
+        let gatewayConfigStore = GatewayConfigStore(storeURL: storeURL, defaults: [:])
         let service = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
             metricsStore: metricsStore,
-            gatewayConfigStore: GatewayConfigStore(storeURL: storeURL, defaults: [:]),
+            gatewayConfigStore: gatewayConfigStore,
             gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
         )
 
@@ -659,6 +710,17 @@ struct ControlPlaneServiceTests {
         #expect(!response.ok)
         #expect(response.error.code == "gateway_config_persist_failed")
         #expect(await metricsStore.value(forKey: "gateway.config_persist_failures") == 1)
+        let refreshDiagnostics = await gatewayConfigStore.refreshDiagnostics()
+        #expect(
+            await metricsStore.value(forKey: "gateway.config_refresh_failure_count")
+                == Double(refreshDiagnostics.totalFailureCount)
+        )
+        #expect(
+            await metricsStore.value(forKey: "gateway.config_refresh_consecutive_failure_count")
+                == Double(refreshDiagnostics.consecutiveFailureCount)
+        )
+        #expect(await metricsStore.value(forKey: "gateway.config_refresh_serving_last_known_good") == 0)
+        #expect(await metricsStore.value(forKey: "gateway.config_refresh_last_failure_kind_code") == 2)
     }
 
     @Test("execute projects typed serving defaults state through server snapshots")
@@ -1509,6 +1571,90 @@ struct ControlPlaneServiceTests {
         #expect(snapshotAfterWake.server.snapshot.runtimeSessions.first?.wakeReason == .requestActivity)
     }
 
+    @Test("startChat uses the requested server session lifecycle and activity")
+    func startChatUsesRequestedServerSessionLifecycleAndActivity() async throws {
+        let selectedServerSessionID = "server-session-blue"
+        var defaultSession = ServerSessionRuntimeStore.defaultRuntimeSession(updatedAtUnixMS: 1_000)
+        defaultSession.lifecycleState = .paused
+        var selectedSession = ServerSessionRuntimeStore.defaultRuntimeSession(
+            serverSessionID: selectedServerSessionID,
+            updatedAtUnixMS: 1_000
+        )
+        selectedSession.lifecycleState = .sleeping
+        selectedSession.powerState = .deepSleep
+        let runtimeStore = ServerSessionRuntimeStore(
+            runtimeSessions: [defaultSession, selectedSession],
+            nowUnixMS: { 3_000 }
+        )
+        let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await modelCatalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::local")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeCompletedExecuteEvent(
+                requestID: "chat-selected-session-lifecycle",
+                finishReason: "stop",
+                assistant: "awake",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            serverSessionRuntimeStore: runtimeStore,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-selected-session-lifecycle" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                serverSessionID: selectedServerSessionID,
+                messages: [.init(role: "user", content: "wake only the selected session")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let wakeSnapshotResponse = try await service.execute(makeServerSnapshotRequest())
+        var snapshot = wakeSnapshotResponse.server.snapshot
+        let unchangedDefault = try #require(snapshot.runtimeSessions.first(where: {
+            $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
+        }))
+        let awakenedSelected = try #require(snapshot.runtimeSessions.first(where: {
+            $0.serverSessionID == selectedServerSessionID
+        }))
+
+        #expect(unchangedDefault.lifecycleState == .paused)
+        #expect(awakenedSelected.lifecycleState == .ready)
+        #expect(awakenedSelected.powerState == .active)
+        #expect(awakenedSelected.wakeReason == .requestActivity)
+
+        _ = await runtimeStore.startServerSession(
+            serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID
+        )
+        _ = await runtimeStore.pauseServerSession(serverSessionID: selectedServerSessionID)
+
+        do {
+            _ = try await service.startChat(
+                ControlPlaneChatRequest(
+                    modelID: "melix-dev-text",
+                    serverSessionID: selectedServerSessionID,
+                    messages: [.init(role: "user", content: "the selected session is paused")]
+                )
+            )
+            Issue.record("Expected the selected paused Server Session to block chat dispatch")
+        } catch let error as ControlPlaneChatExecutionError {
+            #expect(String(describing: error).contains("server_paused"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        let pausedSnapshotResponse = try await service.execute(makeServerSnapshotRequest())
+        snapshot = pausedSnapshotResponse.server.snapshot
+        #expect(snapshot.runtimeSessions.first(where: {
+            $0.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID
+        })?.lifecycleState == .ready)
+        #expect(snapshot.runtimeSessions.first(where: {
+            $0.serverSessionID == selectedServerSessionID
+        })?.lifecycleState == .paused)
+    }
+
     @Test("startChat syncs managed registry models before lazy load")
     func startChatSyncsManagedRegistryModelsBeforeLazyLoad() async throws {
         let importedModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
@@ -2301,6 +2447,75 @@ struct ControlPlaneServiceTests {
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::local")
     }
 
+    @Test("execute workerless Python embedding load fails closed")
+    func executeWorkerlessPythonEmbeddingLoadFailsClosed() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        let service = ControlPlaneService(modelCatalog: catalog)
+
+        let response = try await service.execute(
+            makeLoadModelRequest(modelID: "melix-dev-embed")
+        )
+        let model = try #require(await catalog.model(id: "melix-dev-embed"))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "worker_unavailable")
+        #expect(response.error.details["route"] == "python_embedding")
+        #expect(model.state == .modelFailed)
+        #expect(await catalog.dispatchHandle(for: "melix-dev-embed") == nil)
+    }
+
+    @Test("execute model.load routes from the service catalog when registry catalog differs")
+    func executeModelLoadUsesServiceCatalogRouteWhenRegistryCatalogDiffers() async throws {
+        let serviceCatalog = ModelCatalog(seedModels: [ModelCatalog.devEmbeddingModel()])
+        let registryCatalog = ModelCatalog(seedModels: [])
+        let textClient = ModelLifecycleWorkerClient()
+        let registry = WorkerRegistry(
+            defaultTextClient: textClient,
+            modelCatalog: registryCatalog
+        )
+        let service = ControlPlaneService(
+            modelCatalog: serviceCatalog,
+            workerRegistry: registry
+        )
+
+        let response = try await service.execute(
+            makeLoadModelRequest(modelID: "melix-dev-embed")
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "worker_unavailable")
+        #expect(response.error.details["route"] == "python_embedding")
+        #expect(await textClient.loadRequests.isEmpty)
+    }
+
+    @Test("execute worker-backed model.load fails closed without an executable spec")
+    func executeWorkerBackedModelLoadFailsClosedWithoutExecutableSpec() async throws {
+        var model = ModelCatalog.devEmbeddingModel()
+        model.modelID = "registry-artifact-without-path"
+        model.settings.ext["embedding_backend_id"] = "mlx-bert-v1"
+        model.settings.ext["embedding_execution_kind"] = "artifact"
+        model.settings.ext.removeValue(forKey: "melix.model_path")
+        let catalog = ModelCatalog(seedModels: [model])
+        let registry = WorkerRegistry(
+            defaultTextClient: NullWorkerClient(),
+            modelCatalog: catalog
+        )
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: registry
+        )
+
+        let response = try await service.execute(
+            makeLoadModelRequest(modelID: model.modelID)
+        )
+        let failedModel = try #require(await catalog.model(id: model.modelID))
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "worker_model_spec_missing")
+        #expect(failedModel.state == .modelFailed)
+        #expect(await catalog.dispatchHandle(for: model.modelID) == nil)
+    }
+
     @Test("execute model.load reports a missing managed Hugging Face cache before worker load")
     func executeModelLoadReportsMissingManagedHuggingFaceCacheBeforeWorkerLoad() async throws {
         var model = ModelCatalog.devTextModel()
@@ -2474,6 +2689,74 @@ struct ControlPlaneServiceTests {
         #expect(model.state == .modelWarm)
         #expect(model.residency.transitionReason == "operator_load")
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == "melix-dev-text::swift")
+    }
+
+    @Test("stale control-plane load cleanup cannot unload a replacement reusing the handle")
+    func staleControlPlaneLoadCleanupCannotUnloadReplacementReusingHandle() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let worker = ModelLifecycleWorkerClient()
+        await worker.prepareStaleLoadCleanupRace()
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: worker, modelCatalog: catalog)
+        )
+        let staleLoad = Task {
+            try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+        }
+
+        let staleRequest = await worker.waitForFirstLoadRequest()
+        let replacementReservation = try #require(await catalog.beginBackendRouteLoad(
+            id: "melix-dev-text",
+            routeKind: .swiftText,
+            workerInstanceID: worker.staleLoadCleanupWorkerInstanceID,
+            reason: "explicit_replacement"
+        ))
+        await worker.installReplacement(identity: replacementReservation.identity)
+        _ = try #require(await catalog.recordLoadSucceeded(
+            id: "melix-dev-text",
+            dispatchHandle: worker.staleLoadCleanupReusedHandle,
+            routeKind: .swiftText,
+            expectedRouteGeneration: replacementReservation.generation,
+            workerInstanceID: replacementReservation.workerInstanceID
+        ))
+
+        await worker.releaseFirstLoad()
+        let response = try await staleLoad.value
+
+        let cleanup = try #require(await worker.unloadRequests.first)
+        let replacement = try #require(await catalog.backendRouteBinding(
+            for: "melix-dev-text",
+            routeKind: .swiftText
+        ))
+        #expect(response.ok)
+        #expect(cleanup.modelHandle == worker.staleLoadCleanupReusedHandle)
+        #expect(cleanup.force)
+        #expect(cleanup.expectedBackendIdentity == staleRequest.backendIdentity)
+        #expect(cleanup.expectedBackendIdentity != replacement.identity)
+        #expect(await worker.unloadResponseCodes == ["model_identity_mismatch"])
+        #expect(await worker.currentResidentIdentity() == replacement.identity)
+        #expect(replacement.generation == replacementReservation.generation)
+    }
+
+    @Test("execute worker-backed model.load fails closed when backend identity is unavailable or empty")
+    func executeWorkerBackedModelLoadFailsClosedWithoutBackendIdentity() async throws {
+        for workerInstanceID: String? in [nil, "   "] {
+            let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+            let workerClient = ModelLifecycleWorkerClient()
+            await workerClient.setHealthWorkerInstanceID(workerInstanceID)
+            let service = ControlPlaneService(
+                modelCatalog: catalog,
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+            )
+
+            let response = try await service.execute(makeLoadModelRequest(modelID: "melix-dev-text"))
+
+            #expect(!response.ok)
+            #expect(response.error.code == "worker_identity_unavailable")
+            #expect(await workerClient.loadRequests.isEmpty)
+            #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
+            #expect(await catalog.model(id: "melix-dev-text")?.state == .modelFailed)
+        }
     }
 
     @Test("execute worker-backed model.load forwards adapter-set hash from model settings")
@@ -2776,9 +3059,11 @@ struct ControlPlaneServiceTests {
 
         let response = try await service.execute(makeUnloadModelRequest(modelID: "melix-dev-text"))
         let events = try await eventTask.value
+        let unloadRequest = try #require(await workerClient.unloadRequests.first)
         await service.unsubscribe(subscription.subscriptionID)
 
         #expect(response.ok)
+        #expect(unloadRequest.force)
         #expect(events.map(\.modelState.state) == [.modelEvicting, .modelUnloaded])
         #expect(await catalog.dispatchHandle(for: "melix-dev-text") == nil)
     }
@@ -2911,6 +3196,7 @@ struct ControlPlaneServiceTests {
             "unload:melix-old-text::local",
             "load:melix-dev-text",
         ])
+        #expect(await workerClient.unloadRequests.map(\.force) == [false])
         #expect(evicted.state == .modelUnloaded)
         #expect(evicted.residency.transitionReason == "ttl_expired")
         #expect(loaded.state == .modelWarm)
@@ -2972,6 +3258,7 @@ struct ControlPlaneServiceTests {
         let ready = try #require(await catalog.model(id: "melix-dev-text"))
 
         #expect(unloadRequests.map(\.modelHandle) == ["melix-old-text::local"])
+        #expect(unloadRequests.map(\.force) == [false])
         #expect(generated.execution.modelHandle == "melix-dev-text::local")
         #expect(evicted.state == .modelUnloaded)
         #expect(evicted.residency.transitionReason == "ttl_expired")
@@ -7871,8 +8158,8 @@ struct ControlPlaneServiceTests {
         #expect(recordedJob.error.code == "unavailable")
     }
 
-    @Test("execute maps image generate deadline_exceeded failures into explicit timeout state")
-    func executeMapsImageGenerateDeadlineExceededFailuresIntoTimeoutState() async throws {
+    @Test("execute does not replay an ambiguous image deadline failure")
+    func executeMapsExhaustedImageGenerateDeadlineRecoveryIntoTypedUnavailableState() async throws {
         let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         _ = await modelCatalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
         let imageClient = ScriptedImageWorkerClient()
@@ -7912,12 +8199,12 @@ struct ControlPlaneServiceTests {
 
         #expect(response.ok == false)
         #expect(response.error.code == "deadline_exceeded")
-        #expect(response.error.message.contains("600-second creative workflow deadline"))
         #expect(recordedJob.state == Melix_Controlplane_V1_ImageJobState.imageJobFailed)
         #expect(recordedJob.progress.stage == "timed_out")
         #expect(recordedJob.error.code == "deadline_exceeded")
         #expect(recordedJob.timeoutSeconds == 600)
         #expect(recordedJob.recipe.prompt == "Draw a fox")
+        #expect(await imageClient.loadModelCallCount == 0)
     }
 
     @Test("execute falls back to request mapped image jobs when worker job identifiers drift")
@@ -8003,7 +8290,12 @@ struct ControlPlaneServiceTests {
         )
 
         let cases: [(String, Error, String, String)] = [
-            ("req-image-generate-unavailable", WorkerClientError.unavailable, "unavailable", "Image worker request failed"),
+            (
+                "req-image-generate-unavailable",
+                WorkerClientError.unavailable,
+                "unavailable",
+                "unavailable"
+            ),
             ("req-image-generate-cancelled", WorkerClientError.requestFailed(code: "cancelled", message: "operator stop"), "cancelled", "operator stop"),
             ("req-image-generate-empty", WorkerClientError.requestFailed(code: "", message: ""), "unavailable", "Image worker request failed."),
             ("req-image-generate-resource", WorkerClientError.requestFailed(code: "RESOURCE_EXHAUSTED", message: "queue full"), "resource_exhausted", "queue full"),
@@ -8802,6 +9094,7 @@ struct ControlPlaneServiceTests {
     @Test("startChat routes remote server targets through the remote provider client")
     func startChatRoutesRemoteServerTargetsThroughTheRemoteProviderClient() async throws {
         let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .reasoningDelta("remote reasoning"),
             .tokenDelta("remote"),
             .usage(promptTokens: 11, completionTokens: 3),
             .completed(finishReason: "stop", assistantText: "remote"),
@@ -8812,6 +9105,11 @@ struct ControlPlaneServiceTests {
             ControlPlaneChatRequest(
                 modelID: "",
                 messages: [.init(role: "user", content: "hello")],
+                enableThinking: false,
+                reasoningEffort: "none",
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 128,
                 remoteTarget: .init(
                     serverID: "sub2api",
                     providerKind: "openai-compatible",
@@ -8834,7 +9132,13 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.baseURL == "https://sub2api.example/v1")
         #expect(lastRequest.apiKey == "sk-secret")
         #expect(lastRequest.modelID == "gemini-2.5-flash")
+        #expect(lastRequest.enableThinking == false)
+        #expect(lastRequest.reasoningEffort == "none")
+        #expect(lastRequest.temperature == 0.2)
+        #expect(lastRequest.topP == 0.9)
+        #expect(lastRequest.maxTokens == 128)
         #expect(events == [
+            .reasoningDelta("remote reasoning"),
             .tokenDelta("remote"),
             .usage(
                 promptTokens: 11,
@@ -8845,23 +9149,36 @@ struct ControlPlaneServiceTests {
                 mediaFeatureEncoderCallsSaved: 0,
                 mediaFeatureWorkSavedBytes: 0
             ),
-            .completed(finishReason: "stop", assistantText: "remote", reasoningText: ""),
+            .completed(
+                finishReason: "stop",
+                assistantText: "remote",
+                reasoningText: "remote reasoning"
+            ),
         ])
     }
 
     @Test("startChat can resume a disconnected request through resumeRequestID")
     func startChatCanResumeADisconnectedRequestThroughResumeRequestID() async throws {
-        let modelCatalog = ModelCatalog()
-        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        var gemma4 = ModelCatalog.devVLMModel()
+        gemma4.modelID = "mlx-community/gemma-4-31b-it-4bit"
+        gemma4.settings.ext["vision_family_id"] = "gemma4-v1"
+        gemma4.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        gemma4.settings.ext["melix.model_path"] = "/tmp/gemma-4-31b-it-4bit"
+        let modelCatalog = ModelCatalog(seedModels: [gemma4])
         let textClient = BlockingAbortTextWorkerClient()
+        let vlmClient = ScriptedChatWorkerClient(events: [])
         let service = ControlPlaneService(
             modelCatalog: modelCatalog,
-            workerRegistry: WorkerRegistry(defaultTextClient: textClient)
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: vlmClient,
+                modelCatalog: modelCatalog
+            )
         )
 
         let initial = try await service.startChat(
             ControlPlaneChatRequest(
-                modelID: "melix-dev-text",
+                modelID: gemma4.modelID,
                 messages: [.init(role: "user", content: "hello")]
             )
         )
@@ -8878,7 +9195,7 @@ struct ControlPlaneServiceTests {
 
         let resumed = try await service.startChat(
             ControlPlaneChatRequest(
-                modelID: "melix-dev-text",
+                modelID: gemma4.modelID,
                 messages: [.init(role: "user", content: "hello")],
                 resumeRequestID: initial.requestID
             )
@@ -8897,6 +9214,7 @@ struct ControlPlaneServiceTests {
         let resumedEvents = try await resumedCollector.value
 
         #expect(resumed.requestID == initial.requestID)
+        #expect(resumed.modelID == gemma4.modelID)
         #expect(resumedEvents.contains(where: {
             if case .tokenDelta("resumed") = $0 { return true }
             return false
@@ -8952,6 +9270,18 @@ struct ControlPlaneServiceTests {
             defaults: [:]
         )
         try await servingDefaultsStore.apply(command: makeApplyServingDefaultsCommand(
+            temperature: 0.11,
+            topP: 0.81,
+            maxTokens: 111,
+            streamIntervalTokens: 1,
+            maxConcurrentRequests: 2,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 2,
+            completionBatchSize: 2
+        ))
+        let selectedServerSessionID = "server-session-blue"
+        try await servingDefaultsStore.apply(command: makeApplyServingDefaultsCommand(
+            serverSessionID: selectedServerSessionID,
             temperature: 0.44,
             topP: 0.93,
             maxTokens: 320,
@@ -8983,6 +9313,7 @@ struct ControlPlaneServiceTests {
         let execution = try await service.startChat(
             ControlPlaneChatRequest(
                 modelID: "melix-dev-text",
+                serverSessionID: selectedServerSessionID,
                 messages: [.init(role: "user", content: "Hello")]
             )
         )
@@ -9002,6 +9333,59 @@ struct ControlPlaneServiceTests {
                 == "max_concurrent_requests,prefill_batch_size,completion_batch_size"
         )
         #expect(generated.execution.ext["melix.gateway.batch.disabled_reason"] == "incompatible_batch_size")
+    }
+
+    @Test("startChat default coordinator uses process memory telemetry")
+    func startChatDefaultCoordinatorUsesProcessMemoryTelemetry() async throws {
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.memoryBudgetBytes = 0
+        textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "1"
+        let modelCatalog = ModelCatalog(seedModels: [textModel])
+        _ = await modelCatalog.loadModel(id: "melix-dev-text")
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeQueuedExecuteEvent(requestID: "chat-process-memory-telemetry"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-process-memory-telemetry",
+                finishReason: "stop",
+                assistant: "done",
+                reasoning: ""
+            ),
+        ])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-process-memory-telemetry" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")]
+            )
+        )
+        _ = try await Array(execution.stream)
+        let generated = try #require(await textClient.lastGenerateRequest)
+
+        #expect(generated.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        let headroomString = try #require(
+            generated.execution.ext["melix.serving.memory_admission.memory_headroom_bytes"]
+        )
+        let headroomBytes = try #require(UInt64(headroomString))
+        let estimatedActiveString = try #require(
+            generated.execution.ext["melix.serving.memory_admission.estimated_active_bytes"]
+        )
+        let estimatedActiveBytes = try #require(UInt64(estimatedActiveString))
+        let detectedMemoryBytes = try #require(RequestCoordinator.processInfoPhysicalMemoryBytes())
+        let usableMemoryBytes = detectedMemoryBytes > headroomBytes
+            ? detectedMemoryBytes - headroomBytes
+            : 0
+
+        #expect(headroomBytes > 0)
+        #expect(estimatedActiveBytes > 0)
+        #expect(
+            generated.execution.ext["melix.serving.memory_admission.fits_memory"]
+                == String(estimatedActiveBytes <= usableMemoryBytes)
+        )
     }
 
     @Test("startChat propagates explicit reasoning and template flags before worker dispatch")
@@ -9132,10 +9516,9 @@ struct ControlPlaneServiceTests {
             )
         )
         let loadRequest = try #require(await textClient.lastLoadModelRequest)
+        _ = try await Array(execution.stream)
         let generated = try #require(await textClient.lastGenerateRequest)
         let model = await modelCatalog.model(id: "melix-dev-text")
-
-        _ = try await Array(execution.stream)
 
         #expect(loadRequest.model.modelID == "melix-dev-text")
         #expect(loadRequest.pinOnLoad == false)
@@ -9184,6 +9567,98 @@ struct ControlPlaneServiceTests {
         // ScriptedChatWorkerClient echoes the loaded handle; loader tests cover suffixed Python handles.
         #expect(generated.execution.modelHandle == "melix-dev-vlm")
         #expect(model?.state == .modelWarm)
+    }
+
+    @Test("startChat routes MLX Gemma 4 text requests through the shared text companion")
+    func startChatRoutesMLXGemma4TextRequestsThroughTextCompanion() async throws {
+        var gemma4 = ModelCatalog.devVLMModel()
+        gemma4.modelID = "mlx-community/gemma-4-31b-it-4bit"
+        gemma4.settings.alias = "Gemma 4 31B 4-bit"
+        gemma4.settings.ext["vision_family_id"] = "gemma4-v1"
+        gemma4.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        gemma4.settings.ext["melix.model_path"] = "/tmp/gemma-4-31b-it-4bit"
+
+        let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), gemma4])
+        let textClient = ScriptedChatWorkerClient(events: [
+            makeTokenExecuteEvent(requestID: "chat-gemma4-companion", text: "ready"),
+            makeCompletedExecuteEvent(
+                requestID: "chat-gemma4-companion",
+                finishReason: "stop",
+                assistant: "ready",
+                reasoning: ""
+            ),
+        ])
+        let vlmClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: vlmClient,
+                modelCatalog: modelCatalog
+            ),
+            chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-gemma4-companion" })
+        )
+
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: gemma4.modelID,
+                messages: [.init(role: "user", content: "Reply with ready.")]
+            )
+        )
+        let events = try await Array(execution.stream)
+
+        let loadRequest = try #require(await textClient.lastLoadModelRequest)
+        let generateRequest = try #require(await textClient.lastGenerateRequest)
+        let companion = try #require(await modelCatalog.model(id: "\(gemma4.modelID)#text"))
+
+        #expect(execution.modelID == gemma4.modelID)
+        #expect(events.contains(.tokenDelta("ready")))
+        #expect(loadRequest.model.modelID == "\(gemma4.modelID)#text")
+        #expect(loadRequest.model.modelKind == "text")
+        #expect(loadRequest.model.ext["melix.companion.source_model_id"] == gemma4.modelID)
+        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "swift_text")
+        #expect(generateRequest.execution.modelHandle == "\(gemma4.modelID)#text")
+        #expect(companion.routeClass == .workerRouteSwiftText)
+        #expect(await vlmClient.lastLoadModelRequest == nil)
+        #expect(await vlmClient.lastGenerateRequest == nil)
+    }
+
+    @Test("startChat keeps the served Gemma 4 id in text companion load failures")
+    func startChatKeepsServedGemma4IDInTextCompanionLoadFailures() async throws {
+        var gemma4 = ModelCatalog.devVLMModel()
+        gemma4.modelID = "mlx-community/gemma-4-31b-it-4bit"
+        gemma4.settings.ext["vision_family_id"] = "gemma4-v1"
+        gemma4.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        gemma4.settings.ext["melix.model_path"] = "/tmp/gemma-4-31b-it-4bit"
+
+        let modelCatalog = ModelCatalog(seedModels: [gemma4])
+        let textClient = ModelLifecycleWorkerClient()
+        await textClient.setLoadError(WorkerClientError.unavailable)
+        let vlmClient = ScriptedChatWorkerClient(events: [])
+        let service = ControlPlaneService(
+            modelCatalog: modelCatalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: vlmClient,
+                modelCatalog: modelCatalog
+            )
+        )
+
+        do {
+            _ = try await service.startChat(
+                ControlPlaneChatRequest(
+                    modelID: gemma4.modelID,
+                    messages: [.init(role: "user", content: "hello")]
+                )
+            )
+            Issue.record("Expected the companion load failure to surface")
+        } catch let error as ControlPlaneChatExecutionError {
+            let message = String(describing: error)
+            #expect(message.contains(gemma4.modelID))
+            #expect(message.contains("#text") == false)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
     @Test("startChat lazy text loads preserve adapter-set hash in worker requests")
@@ -10804,9 +11279,30 @@ struct ControlPlaneServiceTests {
     }
 }
 
-private actor ScriptedImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+private protocol ControlPlaneTestWorkerHealth: BackendHealthIdentifyingWorkerClientProtocol {
+    func testWorkerInstanceID() async throws -> String
+}
+
+extension ControlPlaneTestWorkerHealth {
+    func testWorkerInstanceID() async throws -> String {
+        String(reflecting: Self.self)
+    }
+
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerInstanceID = try await testWorkerInstanceID()
+        return response
+    }
+}
+
+private actor ScriptedImageWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     private(set) var lastImageGenerateRequest: Melix_Worker_V1_ImageGenerateRequest?
     private(set) var lastImageEditRequest: Melix_Worker_V1_ImageEditRequest?
+    private(set) var loadModelCallCount = 0
     private var imageGenerateResponse = Melix_Worker_V1_ImageGenerateResponse()
     private var imageEditResponse = Melix_Worker_V1_ImageEditResponse()
     private var imageGenerateError: Error?
@@ -10849,6 +11345,7 @@ private actor ScriptedImageWorkerClient: WorkerRoutingClient, NonTextInferenceWo
     func loadModel(
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        loadModelCallCount += 1
         var response = Melix_Worker_V1_LoadModelResponse()
         response.ok = true
         response.modelHandle = "\(request.model.modelID)::python"
@@ -10904,7 +11401,11 @@ private enum ImageWorkerFailure: Error {
     case synthetic
 }
 
-private actor BlockingImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+private actor BlockingImageWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     private var generateRequests: [String: Melix_Worker_V1_ImageGenerateRequest] = [:]
     private var generateContinuations: [String: CheckedContinuation<Melix_Worker_V1_ImageGenerateResponse, Error>] = [:]
 
@@ -11014,7 +11515,11 @@ private actor BlockingImageWorkerClient: WorkerRoutingClient, NonTextInferenceWo
     }
 }
 
-private actor AbortFalseImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+private actor AbortFalseImageWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     func canDispatchRequests() async -> Bool {
         true
     }
@@ -11085,7 +11590,11 @@ private actor AbortFalseImageWorkerClient: WorkerRoutingClient, NonTextInference
     }
 }
 
-private actor ThrowingAbortImageWorkerClient: WorkerRoutingClient, NonTextInferenceWorkerClientProtocol {
+private actor ThrowingAbortImageWorkerClient:
+    WorkerRoutingClient,
+    NonTextInferenceWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     func canDispatchRequests() async -> Bool {
         true
     }
@@ -11191,7 +11700,7 @@ private actor StubImageJobAdmissionController: ImageJobAdmissionControlling {
     }
 }
 
-private actor BlockingAbortTextWorkerClient: WorkerRoutingClient {
+private actor BlockingAbortTextWorkerClient: WorkerRoutingClient, ControlPlaneTestWorkerHealth {
     private let abortError: Error?
     private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
 
@@ -11230,6 +11739,7 @@ private actor BlockingAbortTextWorkerClient: WorkerRoutingClient {
         request: Melix_Worker_V1_LoadModelRequest
     ) async throws -> Melix_Worker_V1_LoadModelResponse {
         var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
         response.modelHandle = request.model.modelID
         return response
     }
@@ -11299,7 +11809,11 @@ private struct ControlPlaneConditionTimeoutError: Error, CustomStringConvertible
     let description: String
 }
 
-private actor RuntimeStatsSnapshotWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWorkerClientProtocol {
+private actor RuntimeStatsSnapshotWorkerClient:
+    WorkerRoutingClient,
+    RuntimeIntrospectingWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
+{
     private let runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse
 
     init(runtimeStatsResponse: Melix_Worker_V1_GetRuntimeStatsResponse) {
@@ -11338,14 +11852,32 @@ private actor RuntimeStatsSnapshotWorkerClient: WorkerRoutingClient, RuntimeIntr
     }
 }
 
-private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
+private actor ModelLifecycleWorkerClient: WorkerRoutingClient, ControlPlaneTestWorkerHealth {
+    let staleLoadCleanupWorkerInstanceID = "control-plane-stale-load-cleanup-worker"
+    let staleLoadCleanupReusedHandle = "melix-dev-text::reused"
+
     private var loadResponse = Melix_Worker_V1_LoadModelResponse()
     private var unloadResponse = Melix_Worker_V1_UnloadModelResponse()
     private var loadError: Error?
     private var unloadError: Error?
+    private var healthWorkerInstanceID: String? = String(reflecting: ModelLifecycleWorkerClient.self)
+    private var staleLoadCleanupRaceEnabled = false
+    private var firstLoadRequest: Melix_Worker_V1_LoadModelRequest?
+    private var firstLoadRequestWaiters: [CheckedContinuation<Melix_Worker_V1_LoadModelRequest, Never>] = []
+    private var firstLoadRelease: CheckedContinuation<Void, Never>?
+    private var residentIdentity: Melix_Worker_V1_BackendModelIdentity?
     private(set) var loadRequests: [Melix_Worker_V1_LoadModelRequest] = []
     private(set) var unloadRequests: [Melix_Worker_V1_UnloadModelRequest] = []
     private(set) var recordedOperations: [String] = []
+    private(set) var unloadResponseCodes: [String] = []
+
+    func prepareStaleLoadCleanupRace() {
+        staleLoadCleanupRaceEnabled = true
+        healthWorkerInstanceID = staleLoadCleanupWorkerInstanceID
+        loadResponse.ok = true
+        loadResponse.modelHandle = staleLoadCleanupReusedHandle
+        loadResponse.residency.state = .warm
+    }
 
     func setLoadResponse(_ response: Melix_Worker_V1_LoadModelResponse) {
         loadResponse = response
@@ -11361,6 +11893,17 @@ private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
 
     func setUnloadError(_ error: Error?) {
         unloadError = error
+    }
+
+    func setHealthWorkerInstanceID(_ workerInstanceID: String?) {
+        healthWorkerInstanceID = workerInstanceID
+    }
+
+    func testWorkerInstanceID() async throws -> String {
+        guard let healthWorkerInstanceID else {
+            throw WorkerClientError.unavailable
+        }
+        return healthWorkerInstanceID
     }
 
     func canDispatchRequests() async -> Bool {
@@ -11387,6 +11930,15 @@ private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
         if let loadError {
             throw loadError
         }
+        if staleLoadCleanupRaceEnabled {
+            firstLoadRequest = request
+            residentIdentity = request.backendIdentity
+            firstLoadRequestWaiters.forEach { $0.resume(returning: request) }
+            firstLoadRequestWaiters.removeAll()
+            await withCheckedContinuation { continuation in
+                firstLoadRelease = continuation
+            }
+        }
         return loadResponse
     }
 
@@ -11398,14 +11950,44 @@ private actor ModelLifecycleWorkerClient: WorkerRoutingClient {
         if let unloadError {
             throw unloadError
         }
+        if staleLoadCleanupRaceEnabled,
+           (!request.hasExpectedBackendIdentity || request.expectedBackendIdentity != residentIdentity) {
+            var response = Melix_Worker_V1_UnloadModelResponse()
+            response.error.code = "model_identity_mismatch"
+            unloadResponseCodes.append(response.error.code)
+            return response
+        }
         return unloadResponse
+    }
+
+    func waitForFirstLoadRequest() async -> Melix_Worker_V1_LoadModelRequest {
+        if let firstLoadRequest {
+            return firstLoadRequest
+        }
+        return await withCheckedContinuation { continuation in
+            firstLoadRequestWaiters.append(continuation)
+        }
+    }
+
+    func installReplacement(identity: Melix_Worker_V1_BackendModelIdentity) {
+        residentIdentity = identity
+    }
+
+    func releaseFirstLoad() {
+        firstLoadRelease?.resume()
+        firstLoadRelease = nil
+    }
+
+    func currentResidentIdentity() -> Melix_Worker_V1_BackendModelIdentity? {
+        residentIdentity
     }
 }
 
 private actor ScriptedModelOperationsWorkerClient:
     WorkerRoutingClient,
     ModelOperationsWorkerClientProtocol,
-    StreamingExportResultsWorkerClientProtocol
+    StreamingExportResultsWorkerClientProtocol,
+    ControlPlaneTestWorkerHealth
 {
     private(set) var lastInfoRequest: Melix_Worker_V1_GetModelInfoRequest?
     private(set) var lastConvertRequest: Melix_Worker_V1_ConvertModelRequest?
@@ -11680,7 +12262,7 @@ private actor ScriptedModelOperationsWorkerClient:
     }
 }
 
-private actor ScriptedChatWorkerClient: WorkerRoutingClient {
+private actor ScriptedChatWorkerClient: WorkerRoutingClient, ControlPlaneTestWorkerHealth {
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
@@ -11768,6 +12350,8 @@ private actor ScriptedRemoteProviderChatClient: RemoteProviderChatClient {
             switch event {
             case .tokenDelta(let text):
                 assistantText += text
+            case .reasoningDelta:
+                break
             case .completed(let completedFinishReason, let completedAssistantText):
                 finishReason = completedFinishReason
                 assistantText = completedAssistantText

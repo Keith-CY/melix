@@ -1816,6 +1816,10 @@ public struct ChatRunOptions: Equatable, Sendable {
     public let message: String
     public let systemPrompt: String
     public let serverSessionID: String
+    public let reasoningEffort: String
+    public let maxTokens: UInt32
+    public let temperature: Double?
+    public let topP: Double?
     public let json: Bool
 
     public init(
@@ -1825,6 +1829,10 @@ public struct ChatRunOptions: Equatable, Sendable {
         message: String,
         systemPrompt: String = "",
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
+        reasoningEffort: String = "",
+        maxTokens: UInt32 = 0,
+        temperature: Double? = nil,
+        topP: Double? = nil,
         json: Bool = false
     ) {
         self.modelID = modelID
@@ -1835,6 +1843,10 @@ public struct ChatRunOptions: Equatable, Sendable {
         self.serverSessionID = serverSessionID.isEmpty
             ? ServerSessionRuntimeStore.defaultServerSessionID
             : serverSessionID
+        self.reasoningEffort = reasoningEffort.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.maxTokens = maxTokens
+        self.temperature = temperature
+        self.topP = topP
         self.json = json
     }
 }
@@ -2119,11 +2131,27 @@ public struct RemoteServerIDOptions: Equatable, Sendable {
 public struct RemoteServerTestOptions: Equatable, Sendable {
     public let remoteServerID: String
     public let remoteModelID: String
+    public let reasoningEffort: String
+    public let maxTokens: UInt32
+    public let temperature: Double?
+    public let topP: Double?
     public let json: Bool
 
-    public init(remoteServerID: String, remoteModelID: String = "", json: Bool = false) {
+    public init(
+        remoteServerID: String,
+        remoteModelID: String = "",
+        reasoningEffort: String = "",
+        maxTokens: UInt32 = 0,
+        temperature: Double? = nil,
+        topP: Double? = nil,
+        json: Bool = false
+    ) {
         self.remoteServerID = remoteServerID
         self.remoteModelID = remoteModelID
+        self.reasoningEffort = reasoningEffort.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.maxTokens = maxTokens
+        self.temperature = temperature
+        self.topP = topP
         self.json = json
     }
 }
@@ -2685,8 +2713,8 @@ public enum MelixCLIParser {
       melix remote-server add --remote-server-id ID --title TITLE --provider kimi|gemini|deepseek|glm|custom [--base-url URL] --model MODEL [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--tool-support-mode auto|force-on|force-off] [--json]
       melix remote-server update --remote-server-id ID [--title TITLE] [--provider PROVIDER] [--base-url URL] [--model MODEL] [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--tool-support-mode auto|force-on|force-off] [--json]
       melix remote-server remove --remote-server-id ID [--json]
-      melix remote-server test --remote-server-id ID [--model MODEL] [--json]
-      melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
+      melix remote-server test --remote-server-id ID [--model MODEL] [--reasoning-effort LEVEL] [--max-tokens N] [--temperature N] [--top-p N] [--json]
+      melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--reasoning-effort LEVEL] [--max-tokens N] [--temperature N] [--top-p N] [--json]
       melix lora list [--model-id MODEL_ID] [--json]
       melix lora run --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME --eval-dataset-id DATASET_ID [--eval-suite SUITE ...] [--output-dir PATH] [--activation-mode (adapter_backed_runtime|fused_derived_model)] [--training-mode auto|lora|qlora|dora] [training options...] [evaluation options...] [--json]
       melix lora train --model-id MODEL_ID (--dataset-uri PATH | --hf-dataset-path REPO) --adapter-name NAME [--target-repo REPO] [--training-mode (lora|qlora|dora)] [--preset PRESET] [--experiment-group GROUP] [--rank N] [--alpha N] [--dropout N] [--target-modules CSV] [--num-layers N] [--batch-size N] [--epochs N] [--max-steps N] [--learning-rate N] [--max-seq-length N] [--sample-limit N] [--gradient-accumulation N] [--resume-adapter PATH | --resume-from-manifest PATH] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-train-split SPLIT] [--hf-valid-split SPLIT] [--text-feature NAME] [--prompt-feature NAME] [--completion-feature NAME] [--chat-feature NAME] [--derived-model-alias NAME] [--response-only] [--mask-prompt] [--gradient-checkpointing] [--preflight-fit-check] [--allow-memory-risk] [--json]
@@ -4201,6 +4229,19 @@ public enum MelixCLIParser {
                     message: message,
                     systemPrompt: values.single["--system"] ?? "",
                     serverSessionID: values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID,
+                    reasoningEffort: values.single["--reasoning-effort"] ?? "",
+                    maxTokens: try parsePositiveUInt32Value(
+                        values.single["--max-tokens"],
+                        option: "--max-tokens"
+                    ) ?? 0,
+                    temperature: try parseFiniteDoubleValue(
+                        values.single["--temperature"],
+                        option: "--temperature"
+                    ),
+                    topP: try parseFiniteDoubleValue(
+                        values.single["--top-p"],
+                        option: "--top-p"
+                    ),
                     json: values.flags.contains("--json")
                 )
             )
@@ -4310,6 +4351,19 @@ public enum MelixCLIParser {
                 .init(
                     remoteServerID: remoteServerID,
                     remoteModelID: values.single["--model"] ?? values.single["--remote-model"] ?? "",
+                    reasoningEffort: values.single["--reasoning-effort"] ?? "",
+                    maxTokens: try parsePositiveUInt32Value(
+                        values.single["--max-tokens"],
+                        option: "--max-tokens"
+                    ) ?? 0,
+                    temperature: try parseFiniteDoubleValue(
+                        values.single["--temperature"],
+                        option: "--temperature"
+                    ),
+                    topP: try parseFiniteDoubleValue(
+                        values.single["--top-p"],
+                        option: "--top-p"
+                    ),
                     json: json
                 )
             )
@@ -5993,6 +6047,19 @@ public enum MelixCLIParser {
         return parsed
     }
 
+    private static func parsePositiveUInt32Value(
+        _ value: String?,
+        option: String
+    ) throws -> UInt32? {
+        guard let parsed = try parseUInt32Value(value, option: option) else {
+            return nil
+        }
+        guard parsed > 0 else {
+            throw MelixCLIError.usage("Invalid value for \(option). Expected a positive integer.")
+        }
+        return parsed
+    }
+
     private static func parseDoubleValue(
         _ value: String?,
         option: String,
@@ -6003,6 +6070,19 @@ public enum MelixCLIParser {
         }
         guard let parsed = Double(value) else {
             throw MelixCLIError.usage("Invalid value for \(option). Expected a numeric value.")
+        }
+        return parsed
+    }
+
+    private static func parseFiniteDoubleValue(
+        _ value: String?,
+        option: String
+    ) throws -> Double? {
+        guard let parsed = try parseDoubleValue(value, option: option) else {
+            return nil
+        }
+        guard parsed.isFinite else {
+            throw MelixCLIError.usage("Invalid value for \(option). Expected a finite numeric value.")
         }
         return parsed
     }
@@ -8546,6 +8626,10 @@ public actor MelixCLIRunner {
                 ControlPlaneChatRequest(
                     modelID: "",
                     messages: [.init(role: "user", content: "Reply with OK.")],
+                    reasoningEffort: options.reasoningEffort.isEmpty ? nil : options.reasoningEffort,
+                    temperature: options.temperature,
+                    topP: options.topP,
+                    maxTokens: options.maxTokens > 0 ? options.maxTokens : nil,
                     remoteTarget: target
                 )
             )
@@ -8572,7 +8656,12 @@ public actor MelixCLIRunner {
                 execution = try await client.startChat(
                     ControlPlaneChatRequest(
                         modelID: options.modelID,
+                        serverSessionID: options.serverSessionID,
                         messages: buildChatMessages(options: options),
+                        reasoningEffort: options.reasoningEffort.isEmpty ? nil : options.reasoningEffort,
+                        temperature: options.temperature,
+                        topP: options.topP,
+                        maxTokens: options.maxTokens > 0 ? options.maxTokens : nil,
                         remoteTarget: remoteTarget
                     )
                 )

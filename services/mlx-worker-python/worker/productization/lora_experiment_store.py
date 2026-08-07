@@ -184,6 +184,15 @@ class LoraExperimentStore:
                     "latest_preset_title": str(latest_run.get("preset_title", "")),
                     "latest_tokens_per_second": _optional_finite_float(latest_run.get("tokens_per_second")) or 0.0,
                     "latest_peak_memory_gb": _optional_finite_float(latest_run.get("peak_memory_gb")) or 0.0,
+                    "latest_heldout_test_loss": _optional_finite_float(
+                        latest_run.get("heldout_test_loss")
+                    ),
+                    "latest_heldout_test_perplexity": _optional_finite_float(
+                        latest_run.get("heldout_test_perplexity")
+                    ),
+                    "latest_heldout_test_sample_count": _int_value(
+                        latest_run.get("heldout_test_sample_count")
+                    ),
                     "latest_checkpoint_count": _int_value(latest_run.get("checkpoint_count")),
                     "latest_checkpoint_path": _str_value(latest_run.get("latest_checkpoint_path")),
                     "latest_checkpoint_step": _int_value(latest_run.get("checkpoint_step")),
@@ -238,6 +247,15 @@ class LoraExperimentStore:
                         ),
                         "resume_ready": bool(best_run.get("resume_ready", False)),
                         "loss_best": best_loss if best_loss is not None else 0.0,
+                        "heldout_test_loss": _optional_finite_float(
+                            best_run.get("heldout_test_loss")
+                        ),
+                        "heldout_test_perplexity": _optional_finite_float(
+                            best_run.get("heldout_test_perplexity")
+                        ),
+                        "heldout_test_sample_count": _int_value(
+                            best_run.get("heldout_test_sample_count")
+                        ),
                         "export_eligible": bool(best_run.get("export_eligible", False)),
                     },
                     "updated_at_unix_ms": _int_value(latest_run.get("updated_at_unix_ms")),
@@ -314,6 +332,12 @@ class LoraExperimentStore:
                     "validation_sample_count",
                     manifest.get("trainer_dataset_validation_sample_count", manifest.get("validation_sample_count", 0)),
                 ),
+            ),
+            "heldout_test_sample_count": _int_value(
+                final_metrics.get("heldout_test_sample_count"),
+                dataset.get("test_sample_count"),
+                manifest.get("heldout_test_sample_count"),
+                manifest.get("trainer_dataset_test_sample_count"),
             ),
             "preset_id": str(hyperparameters.get("preset_id") or manifest.get("preset_id", "")),
             "preset_title": str(hyperparameters.get("preset_title") or manifest.get("preset_title", "")),
@@ -404,6 +428,26 @@ class LoraExperimentStore:
                 _manifest_optional_float(manifest, "loss_best", "training.loss_best"),
             ),
             "validation_loss_best": _optional_finite_float(final_metrics.get("validation_loss_best")),
+            "heldout_test_loss": _optional_finite_float(
+                final_metrics.get("heldout_test_loss"),
+                _manifest_optional_float(manifest, "heldout_test_loss"),
+            ),
+            "heldout_test_perplexity": _optional_finite_float(
+                final_metrics.get("heldout_test_perplexity"),
+                _manifest_optional_float(manifest, "heldout_test_perplexity"),
+            ),
+            "heldout_baseline_loss": _optional_finite_float(
+                _manifest_optional_float(manifest, "heldout_baseline_loss")
+            ),
+            "heldout_baseline_perplexity": _optional_finite_float(
+                _manifest_optional_float(manifest, "heldout_baseline_perplexity")
+            ),
+            "heldout_loss_delta": _optional_finite_float(
+                _manifest_optional_float(manifest, "heldout_loss_delta")
+            ),
+            "heldout_perplexity_ratio": _optional_finite_float(
+                _manifest_optional_float(manifest, "heldout_perplexity_ratio")
+            ),
             "loss_series_row_count": _int_value(training.get("loss_series_row_count")),
             "loss_series": _list_value(training.get("loss_series")),
             "base_model": base_model,

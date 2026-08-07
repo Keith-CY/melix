@@ -56,6 +56,11 @@ _REQUEST_PROBE_KEYS = (
     "dflash_block_size",
     "dflash_rollback_count",
     "dflash_target_hidden_layers",
+    "feature_guardrail_requested_num_draft_tokens",
+    "feature_guardrail_effective_num_draft_tokens",
+    "feature_guardrail_resource_fanout_estimate",
+    "feature_guardrail_requested_cache_budget_bytes",
+    "feature_guardrail_effective_cache_budget_bytes",
     "tool_call_count",
     "tool_latency_ms",
     "observation_bytes",
@@ -173,6 +178,11 @@ _METRIC_DIRECTION_BY_KEY = {
     "extracted_result_chars_mean": "neutral",
     "failed_count": "lower_is_better",
     "failed_count_mean": "lower_is_better",
+    "feature_guardrail_effective_cache_budget_bytes_mean": "neutral",
+    "feature_guardrail_effective_num_draft_tokens_mean": "neutral",
+    "feature_guardrail_requested_cache_budget_bytes_mean": "neutral",
+    "feature_guardrail_requested_num_draft_tokens_mean": "neutral",
+    "feature_guardrail_resource_fanout_estimate_mean": "neutral",
     "failure_count": "lower_is_better",
     "fatal_rate": "lower_is_better",
     "fatal_rate_rate": "lower_is_better",
@@ -1168,6 +1178,7 @@ def _comparison_section(
         row for row in metric_deltas if str(row.get("metric") or "").startswith("telemetry.")
     ]
     all_delta_rows = [*metric_deltas, *agentic_adapter_deltas]
+    regressions, improvements, unchanged = _classify_comparison_delta_rows(all_delta_rows)
     return {
         "baseline_report_id": _side_report_id("baseline", baseline_evidence),
         "current_report_id": _side_report_id("candidate", candidate_evidence),
@@ -1176,12 +1187,35 @@ def _comparison_section(
         "probe_deltas": probe_deltas,
         "telemetry_deltas": telemetry_deltas,
         "agentic_adapter_deltas": list(agentic_adapter_deltas),
-        "regressions": [row for row in all_delta_rows if row.get("result") == "fail"],
-        "improvements": [row for row in all_delta_rows if _is_improvement(row)],
-        "unchanged": [row for row in all_delta_rows if _float_or_none(row.get("delta")) == 0.0],
+        "regressions": regressions,
+        "improvements": improvements,
+        "unchanged": unchanged,
         "reproducibility_warnings": list(reproducibility_warnings),
         "comparison_validity": "valid" if baseline_evidence and candidate_evidence and not reproducibility_warnings else "partial",
     }
+
+
+def _classify_comparison_delta_rows(
+    rows: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+    regressions: list[dict[str, object]] = []
+    improvements: list[dict[str, object]] = []
+    unchanged: list[dict[str, object]] = []
+    for row in rows:
+        if row.get("result") == "fail":
+            regressions.append(row)
+        delta = _float_or_none(row.get("delta"))
+        if delta is None:
+            continue
+        direction = str(row.get("direction") or "")
+        if (
+            (direction == "lower_is_better" and delta < 0)
+            or (direction == "higher_is_better" and delta > 0)
+        ):
+            improvements.append(row)
+        if delta == 0.0:
+            unchanged.append(row)
+    return regressions, improvements, unchanged
 
 
 def _comparison_delta(row: dict[str, object]) -> dict[str, object]:
@@ -2197,18 +2231,6 @@ def _render_artifacts_markdown(artifacts: object) -> list[str]:
         lines.append(f"- {label}: `{_markdown_cell(path)}`")
     lines.append("")
     return lines
-
-
-def _is_improvement(row: dict[str, object]) -> bool:
-    delta = _float_or_none(row.get("delta"))
-    if delta is None:
-        return False
-    direction = str(row.get("direction") or "")
-    if direction == "lower_is_better":
-        return delta < 0
-    if direction == "higher_is_better":
-        return delta > 0
-    return False
 
 
 def _dict_list(value: object) -> list[dict[str, object]]:

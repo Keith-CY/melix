@@ -314,20 +314,31 @@ class BenchmarkLoadedModelResolution:
         yield self.loaded_model
 
 
+_CAPABILITY_SINGLE_VALUE_CACHE_MAX_SIZE = 128
+_CAPABILITY_SINGLE_VALUE_CACHE: dict[str, str] = {}
+_CAPABILITY_SINGLE_VALUE_CACHE_MISSING = object()
+
+
 def _split_capability_values(raw_value: str) -> list[str]:
     if "," not in raw_value:
-        stripped = raw_value.strip()
+        try:
+            stripped = _CAPABILITY_SINGLE_VALUE_CACHE[raw_value]
+        except KeyError:
+            stripped = raw_value.strip()
+            if len(_CAPABILITY_SINGLE_VALUE_CACHE) >= _CAPABILITY_SINGLE_VALUE_CACHE_MAX_SIZE:
+                _CAPABILITY_SINGLE_VALUE_CACHE.clear()
+            _CAPABILITY_SINGLE_VALUE_CACHE[raw_value] = stripped
         return [stripped] if stripped else []
-    return list(_split_capability_value_tuple(raw_value))
+    return _split_capability_value_list(raw_value).copy()
 
 
 @lru_cache(maxsize=128)
-def _split_capability_value_tuple(raw_value: str) -> tuple[str, ...]:
-    return tuple(
+def _split_capability_value_list(raw_value: str) -> list[str]:
+    return [
         stripped
         for part in raw_value.split(",")
         if (stripped := part.strip())
-    )
+    ]
 
 
 def _default_capability_lists(model_kind: str) -> tuple[list[str], list[str]]:
@@ -5438,6 +5449,31 @@ class MaintenanceCore:
     @staticmethod
     @lru_cache(maxsize=256)
     def _shape_benchmark_prompt(prompt: str, *, context_length: int) -> str:
+        if context_length == 1:
+            if prompt and prompt[0] > " ":
+                first_space = prompt.find(" ")
+                if first_space >= 0:
+                    first_token = prompt[:first_space]
+                    if (
+                        first_token.isascii()
+                        and "\t" not in first_token
+                        and "\n" not in first_token
+                        and "\r" not in first_token
+                        and "\v" not in first_token
+                        and "\f" not in first_token
+                    ):
+                        return ShapedBenchmarkPrompt(first_token, (first_token,), 1)
+            stripped_prompt = prompt.lstrip()
+            if not stripped_prompt:
+                return ShapedBenchmarkPrompt("benchmark", ("benchmark",), 1)
+            first_token_end = 0
+            for first_token_end, char in enumerate(stripped_prompt):
+                if char.isspace():
+                    break
+            else:
+                first_token_end += 1
+            first_token = stripped_prompt[:first_token_end]
+            return ShapedBenchmarkPrompt(first_token, (first_token,), 1)
         tokens = prompt.split()
         if not tokens:
             tokens = ["benchmark"]

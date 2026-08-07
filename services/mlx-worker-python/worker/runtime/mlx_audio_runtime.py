@@ -172,13 +172,13 @@ class MLXAudioTranscriptionRuntime:
                 cleanup_path = Path(handle.name)
                 audio_path = handle.name
 
-        kwargs: dict[str, str] = {}
-        if request.language:
-            kwargs["language"] = request.language
+        model_generate = getattr(loaded_model.model, "generate")
+        request_language = request.language
+        kwargs: dict[str, str] = {"language": request_language} if request_language else {}
 
         try:
             with self._execution_gate:
-                result = loaded_model.model.generate(audio_path, **kwargs)
+                result = model_generate(audio_path, **kwargs)
         finally:
             if cleanup_path is not None:
                 cleanup_path.unlink(missing_ok=True)
@@ -186,8 +186,8 @@ class MLXAudioTranscriptionRuntime:
         detected_language = _normalize_language(getattr(result, "language", ""))
         language_fallback_count = 0
         if not detected_language:
-            detected_language = request.language or "und"
-            language_fallback_count = 1 if request.language else 0
+            detected_language = request_language or "und"
+            language_fallback_count = 1 if request_language else 0
 
         duration_seconds = float(getattr(result, "total_time", 0.0) or 0.0)
         if duration_seconds <= 0:

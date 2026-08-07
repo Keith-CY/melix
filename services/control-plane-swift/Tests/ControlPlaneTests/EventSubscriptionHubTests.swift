@@ -247,11 +247,17 @@ struct CoreUtilityTests {
         let store = MetricsStore()
         await store.increment("requests.inflight")
         await store.set(3.5, forKey: "http.translation_ms")
+        await store.set([
+            "gateway.config_refresh_failure_count": 2,
+            "gateway.config_refresh_serving_last_known_good": 1,
+        ])
         await store.decrement("requests.inflight", by: 5)
 
         let snapshot = await store.snapshot()
         #expect(snapshot.values["requests.inflight"] == 0)
         #expect(snapshot.values["http.translation_ms"] == 3.5)
+        #expect(snapshot.values["gateway.config_refresh_failure_count"] == 2)
+        #expect(snapshot.values["gateway.config_refresh_serving_last_known_good"] == 1)
     }
 
     @Test("metrics store exports snapshots when an export path is configured")

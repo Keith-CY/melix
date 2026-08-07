@@ -36,13 +36,16 @@ Step-by-step operating procedures for specific workflows. Use these when you nee
 | [Agent UI Walkthrough](runbooks/agent-ui-walkthrough.md) | Browser-based walkthrough workflow for substantial UI/UX changes before App implementation |
 | [Local Stack](runbooks/phase-1-local-stack.md) | Runtime layout, environment exports, and alternate startup modes |
 | [Local Job Remediation](runbooks/local-job-remediation.md) | Log-driven local job diagnoses, bounded retry decisions, and operator-safe remediation receipts |
+| [Agent Tool Guardrail Diagnostics](runbooks/agent-tool-guardrail-diagnostics.md) | Deterministic live-loop fixtures, sanitized events, retry counters, and terminal-failure evidence |
 | [Benchmark, Matrix & LoRA](runbooks/benchmark-matrix-evaluation-and-lora.md) | Full operator guide: benchmarking, matrix runs, evaluation, and LoRA fine-tuning |
 | [Workflow Recipes And URI Inspection](runbooks/workflow-recipes.md) | Built-in workflow recipes, URI inspection, planning, and pipeline-backed apply |
 | [LoRA Adapter Workflow](runbooks/phase-8-lora-adapter-workflow.md) | Training, activating, publishing, and removing LoRA adapters |
 | [Runtime Export Target Manifest](runbooks/runtime-export-target-manifest.md) | Schema-backed export target manifests for Melix, Ollama, GGUF, and MLX-compatible runtimes |
+| [Prompt-Lookup Decoding](runbooks/prompt-lookup-decoding.md) | Draft-model-free speculative decoding: when it helps, opt-in knobs, greedy-identity boundary, and receipts |
 | [Local Install](runbooks/phase-8-local-install.md) | Install Melix as a persistent local service via launch agent |
 | [Homebrew Install](runbooks/homebrew-install.md) | Install and manage Melix through Homebrew |
 | [Packaging Targets](runbooks/platform-packaging-targets.md) | Launch agent, Homebrew, Nix, and preview app-bundle delivery options |
+| [GitHub Release App Updates](runbooks/github-release-app-updates.md) | Independent EdDSA trust, tag-release appcasts, bootstrap acceptance, and recovery without an Apple Developer ID |
 | [Release Gates](runbooks/phase-8-release-gates.md) | Automated release gate workflow and verification criteria |
 | [Product Acceptance](runbooks/phase-8-product-acceptance.md) | Acceptance evidence and product-level smoke procedures |
 | [Runtime Export Smoke Policy](runbooks/runtime-export-smoke-policy.md) | Bounded post-export load, generation, waiver, and receipt checks for runtime export targets |
@@ -73,6 +76,14 @@ These are the authoritative interface and architecture definitions. Do not move 
 
 | Plan | What It Covers |
 |---|---|
+| [Open Issue Completion Wave](plans/2026-07-30-open-issue-completion-wave.md) | Living ordered completion, review, verification, and merge contract for the open issue queue |
+| [Backend Model Identity Enforcement](plans/2026-07-31-backend-model-identity-enforcement.md) | Backend-owned loaded identity, route generations, fail-closed inference guards, replay-safe recovery, diagnostics, and performance evidence for issue #2945 |
+| [Remote Provider Usage-Only SSE Compatibility](plans/2026-08-01-remote-provider-usage-only-sse.md) | Strict compatibility for OpenAI-style terminal usage chunks whose `choices` array is empty |
+| [Remote Provider Desktop Chat](plans/2026-07-31-remote-provider-desktop-chat.md) | Native Chat binding, readiness, credential safety, packaging policy, and real-App acceptance for local and remote Provider targets |
+| [Remote Provider Generation Control Parity](plans/2026-07-31-remote-provider-generation-control-parity.md) | Direct Remote Provider passthrough for reasoning, sampling, and token-limit controls across the control plane and CLI |
+| [GitHub Release App Updates](plans/2026-08-01-github-release-app-updates.md) | Sparkle integration, independent EdDSA signing, packaging, release workflow, UI, and acceptance boundaries |
+| [Packaged App Launch And CI Reliability](plans/2026-08-03-packaged-app-launch-and-ci-reliability.md) | Hardened-runtime dynamic-code loading, Bash 3.2 package workflow portability, runtime launch acceptance, and scheduled Swift test synchronization |
+| [Gemma 4 Cross-Surface Chat Routing Repair](plans/2026-07-18-gemma4-cross-surface-chat-routing.md) | Shared Gemma 4 text companion resolution and real CLI, HTTP, and macOS Chat acceptance |
 | [Runtime-Aware Export And Serving Verification Plan](plans/2026-06-21-runtime-aware-export-and-serving-verification.md) | M3 export target manifests, layout, retention, post-export smoke policy, diagnostics, waiver semantics, and serving evidence |
 | [Export Artifact Layout And Retention Policy](plans/2026-06-24-export-artifact-layout-retention.md) | Runtime export target layout, retention reports, cleanup dry-run/apply behavior, and byte-accounting metrics |
 | [Cross-Runtime Model Inventory Plan](plans/2026-06-24-cross-runtime-model-inventory.md) | M4 source descriptors, scan receipts, usability classification, browse-to-admit receipts, cancellable pulls, and inventory metrics |

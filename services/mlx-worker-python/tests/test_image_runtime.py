@@ -6,14 +6,24 @@ from threading import Event
 
 import pytest
 
-from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2, runtime_pb2
+from packages.protocol.python.worker.v1 import (
+    common_pb2,
+    inference_pb2,
+    maintenance_pb2,
+    runtime_pb2,
+)
 
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.engine.image_edit_core import _supports_image_edit
 from worker.engine.image_generation_core import _supports_image_generation
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime import deterministic_image_generation_runtime as image_runtime
 from worker.runtime.deterministic_image_generation_runtime import (
     DeterministicImageGenerationRuntime,
     ImageGenerationCancelled,
@@ -42,7 +52,9 @@ def build_services(images_root: Path):
     return runtime_service, inference_service, maintenance_core
 
 
-def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
+def load_model(
+    runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec
+) -> str:
     response = runtime_service.LoadModel(
         runtime_pb2.LoadModelRequest(model=model),
         context=None,
@@ -51,19 +63,24 @@ def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpe
     return response.model_handle
 
 
-def test_image_generate_persists_artifacts_and_returns_completed_job(tmp_path: Path) -> None:
+def test_image_generate_persists_artifacts_and_returns_completed_job(
+    tmp_path: Path,
+) -> None:
     runtime_service, inference_service, maintenance_core = build_services(tmp_path)
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
 
     response = inference_service.ImageGenerate(
-        inference_pb2.ImageGenerateRequest(
-            id=common_pb2.RequestIdentity(request_id="image-generate-1"),
-            model_handle=model_handle,
-            prompt="red fox in snow",
-            size="512x512",
-            n=2,
-            response_format="png",
-            artifact_namespace="tests",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageGenerateRequest(
+                id=common_pb2.RequestIdentity(request_id="image-generate-1"),
+                model_handle=model_handle,
+                prompt="red fox in snow",
+                size="512x512",
+                n=2,
+                response_format="png",
+                artifact_namespace="tests",
+            ),
         ),
         context=None,
     )
@@ -102,11 +119,14 @@ def test_image_generate_rejects_non_image_model_handles(tmp_path: Path) -> None:
     text_model_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
 
     response = inference_service.ImageGenerate(
-        inference_pb2.ImageGenerateRequest(
-            id=common_pb2.RequestIdentity(request_id="image-generate-wrong-model"),
-            model_handle=text_model_handle,
-            prompt="should fail",
-            size="512x512",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageGenerateRequest(
+                id=common_pb2.RequestIdentity(request_id="image-generate-wrong-model"),
+                model_handle=text_model_handle,
+                prompt="should fail",
+                size="512x512",
+            ),
         ),
         context=None,
     )
@@ -130,11 +150,14 @@ def test_image_generate_rejects_edit_only_image_families(tmp_path: Path) -> None
     )
 
     response = inference_service.ImageGenerate(
-        inference_pb2.ImageGenerateRequest(
-            id=common_pb2.RequestIdentity(request_id="image-generate-edit-only"),
-            model_handle=model_handle,
-            prompt="should fail",
-            size="512x512",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageGenerateRequest(
+                id=common_pb2.RequestIdentity(request_id="image-generate-edit-only"),
+                model_handle=model_handle,
+                prompt="should fail",
+                size="512x512",
+            ),
         ),
         context=None,
     )
@@ -152,7 +175,9 @@ def test_image_generation_and_edit_probe_bytes_do_not_rescan_images(
     loaded_model = {"model_id": "melix-dev-image"}
 
     def fail_sum(*_args, **_kwargs):
-        raise AssertionError("output byte accounting must not rescan generated images")  # pragma: no cover
+        raise AssertionError(
+            "output byte accounting must not rescan generated images"
+        )  # pragma: no cover
 
     monkeypatch.setattr("builtins.sum", fail_sum)
 
@@ -247,6 +272,127 @@ def test_image_generation_and_edit_bind_model_id_once_per_loop(tmp_path: Path) -
     assert CountingLoadedModel.get_calls == 1
 
 
+def test_image_write_bytes_uses_default_monotonic_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SteppingTime:
+        monotonic_lookups = 0
+        current = 1000.0
+
+        @staticmethod
+        def _monotonic() -> float:
+            SteppingTime.current += 0.25
+            return SteppingTime.current
+
+        def __getattribute__(self, name: str):
+            if name == "monotonic":
+                type(self).monotonic_lookups += 1
+                return type(self)._monotonic
+            return super().__getattribute__(name)
+
+    payload_path = tmp_path / "payload.bin"
+    monkeypatch.setattr(image_runtime, "time", SteppingTime())
+
+    elapsed_ms = DeterministicImageGenerationRuntime._write_bytes(
+        payload_path, b"payload"
+    )
+
+    assert payload_path.read_bytes() == b"payload"
+    assert elapsed_ms == pytest.approx(250.0)
+    assert SteppingTime.monotonic_lookups == 1
+
+
+class CountingTime:
+    monotonic_lookups = 0
+
+    @staticmethod
+    def _monotonic() -> float:
+        return 1000.0
+
+    def __getattribute__(self, name: str):
+        if name == "monotonic":
+            type(self).monotonic_lookups += 1
+            return type(self)._monotonic
+        return super().__getattribute__(name)
+
+
+def test_image_generate_binds_monotonic_once_per_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DeterministicImageGenerationRuntime()
+    counting_time = CountingTime()
+    monkeypatch.setattr(image_runtime, "time", counting_time)
+
+    generated = runtime.generate_images(
+        {"model_id": "melix-dev-image"},
+        inference_pb2.ImageGenerateRequest(
+            prompt="red fox in snow",
+            size="128x128",
+            response_format="png",
+            artifact_namespace="tests",
+            n=5,
+        ),
+        job_id="image-generate-monotonic-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(generated.images) == 5
+    assert generated.images[3] == DeterministicImageGenerationRuntime._render_payload(
+        prompt="red fox in snow",
+        width=128,
+        height=128,
+        variant=3,
+        model_id="melix-dev-image",
+    )
+    assert CountingTime.monotonic_lookups == 1
+
+
+def test_image_edit_reuses_one_monotonic_binding_for_probe_timing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DeterministicImageGenerationRuntime()
+    CountingTime.monotonic_lookups = 0
+    monkeypatch.setattr(image_runtime, "time", CountingTime())
+
+    edited = runtime.edit_image(
+        {"model_id": "melix-dev-image"},
+        inference_pb2.ImageEditRequest(
+            prompt="add stars",
+            image=b"SOURCE_IMAGE",
+            mask=b"MASK_IMAGE",
+            size="128x128",
+            response_format="png",
+            n=5,
+        ),
+        job_id="image-edit-monotonic-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(edited.images) == 5
+    source_digest = runtime._edit_input_digest_from_sha256(
+        runtime._edit_input_sha256(b"SOURCE_IMAGE")
+    )
+    mask_digest = runtime._edit_input_digest_from_sha256(
+        runtime._edit_input_sha256(b"MASK_IMAGE")
+    )
+    assert edited.images[3] == DeterministicImageGenerationRuntime._render_edit_payload(
+        prompt="add stars",
+        width=128,
+        height=128,
+        variant=3,
+        model_id="melix-dev-image",
+        strength=0.0,
+        source_digest=source_digest,
+        mask_digest=mask_digest,
+    )
+    assert CountingTime.monotonic_lookups == 1
+
+
 def test_image_edit_binds_strength_once_per_loop(tmp_path: Path) -> None:
     class CountingStrength:
         float_calls = 0
@@ -287,7 +433,53 @@ def test_image_edit_binds_strength_once_per_loop(tmp_path: Path) -> None:
     assert all(b"STRENGTH=0.65" in payload for payload in edited.images)
 
 
-def test_image_artifact_metadata_reuses_supplied_payload_byte_length(tmp_path: Path) -> None:
+def test_image_edit_builds_static_payload_frame_once_per_loop(tmp_path: Path) -> None:
+    class CountingPrompt:
+        bool_calls = 0
+        format_calls = 0
+
+        def __bool__(self) -> bool:
+            type(self).bool_calls += 1
+            return True
+
+        def __format__(self, format_spec: str) -> str:
+            type(self).format_calls += 1
+            assert format_spec == ""
+            return "add stars"
+
+    class EditRequest:
+        prompt = CountingPrompt()
+        image = b"SOURCE_IMAGE"
+        image_uri = ""
+        mask = b"MASK_IMAGE"
+        mask_uri = ""
+        size = "128x128"
+        response_format = "png"
+        n = 5
+        strength = 0.65
+        source_artifact_id = ""
+        prompt_delta = ""
+        edit_mode = inference_pb2.IMAGE_EDIT_MODE_EDIT
+        ext: dict[str, str] = {}
+
+    runtime = DeterministicImageGenerationRuntime()
+    edited = runtime.edit_image(
+        {"model_id": "melix-dev-image"},
+        EditRequest(),
+        job_id="image-edit-payload-frame-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(edited.images) == 5
+    assert CountingPrompt.bool_calls == 1
+    assert CountingPrompt.format_calls == 1
+    assert all(b"PROMPT=add stars\n" in payload for payload in edited.images)
+
+
+def test_image_artifact_metadata_reuses_supplied_payload_byte_length(
+    tmp_path: Path,
+) -> None:
     class CountingBytes(bytes):
         len_calls = 0
 
@@ -339,16 +531,19 @@ def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> N
     mask_path.write_bytes(b"MASK_IMAGE")
 
     response = inference_service.ImageEdit(
-        inference_pb2.ImageEditRequest(
-            id=common_pb2.RequestIdentity(request_id="image-edit-1"),
-            model_handle=model_handle,
-            prompt="add a comet",
-            image_uri=source_path.as_uri(),
-            mask_uri=mask_path.as_uri(),
-            strength=0.65,
-            size="256x256",
-            response_format="png",
-            n=1,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="image-edit-1"),
+                model_handle=model_handle,
+                prompt="add a comet",
+                image_uri=source_path.as_uri(),
+                mask_uri=mask_path.as_uri(),
+                strength=0.65,
+                size="256x256",
+                response_format="png",
+                n=1,
+            ),
         ),
         context=None,
     )
@@ -371,7 +566,9 @@ def test_image_edit_persists_lineage_and_generated_artifact(tmp_path: Path) -> N
     assert Path(generated_artifact.storage_uri).read_bytes() == response.images[0]
 
 
-def test_image_edit_reuses_input_digests_across_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_image_edit_reuses_input_digests_across_variants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runtime_service, inference_service, _ = build_services(tmp_path)
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
     source_path = tmp_path / "edit-source.png"
@@ -394,15 +591,18 @@ def test_image_edit_reuses_input_digests_across_variants(tmp_path: Path, monkeyp
     )
 
     response = inference_service.ImageEdit(
-        inference_pb2.ImageEditRequest(
-            id=common_pb2.RequestIdentity(request_id="image-edit-digests"),
-            model_handle=model_handle,
-            prompt="add stars",
-            image_uri=source_path.as_uri(),
-            mask_uri=mask_path.as_uri(),
-            size="256x256",
-            response_format="png",
-            n=4,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="image-edit-digests"),
+                model_handle=model_handle,
+                prompt="add stars",
+                image_uri=source_path.as_uri(),
+                mask_uri=mask_path.as_uri(),
+                size="256x256",
+                response_format="png",
+                n=4,
+            ),
         ),
         context=None,
     )
@@ -422,9 +622,17 @@ def test_image_edit_digest_helper_preserves_short_sha256_prefix() -> None:
     payload = b"SOURCE_IMAGE"
     full_digest = hashlib.sha256(payload).hexdigest()
 
-    assert DeterministicImageGenerationRuntime._edit_input_sha256(payload) == full_digest
-    assert DeterministicImageGenerationRuntime._edit_input_digest(payload) == full_digest[:12]
-    assert DeterministicImageGenerationRuntime._edit_input_digest_from_sha256(full_digest) == full_digest[:12]
+    assert (
+        DeterministicImageGenerationRuntime._edit_input_sha256(payload) == full_digest
+    )
+    assert (
+        DeterministicImageGenerationRuntime._edit_input_digest(payload)
+        == full_digest[:12]
+    )
+    assert (
+        DeterministicImageGenerationRuntime._edit_input_digest_from_sha256(full_digest)
+        == full_digest[:12]
+    )
 
 
 def test_image_iterate_and_variation_preserve_lineage_metadata(tmp_path: Path) -> None:
@@ -434,18 +642,21 @@ def test_image_iterate_and_variation_preserve_lineage_metadata(tmp_path: Path) -
     source_path.write_bytes(b"SOURCE_IMAGE")
 
     iterate = inference_service.ImageEdit(
-        inference_pb2.ImageEditRequest(
-            id=common_pb2.RequestIdentity(request_id="image-iterate-1"),
-            model_handle=model_handle,
-            prompt="make the colors warmer",
-            image_uri=source_path.as_uri(),
-            source_artifact_id="artifact-source",
-            prompt_delta="make the colors warmer",
-            edit_mode=inference_pb2.IMAGE_EDIT_MODE_ITERATE,
-            size="256x256",
-            response_format="png",
-            n=1,
-            ext={"melix.image.source_job_id": "job-source"},
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="image-iterate-1"),
+                model_handle=model_handle,
+                prompt="make the colors warmer",
+                image_uri=source_path.as_uri(),
+                source_artifact_id="artifact-source",
+                prompt_delta="make the colors warmer",
+                edit_mode=inference_pb2.IMAGE_EDIT_MODE_ITERATE,
+                size="256x256",
+                response_format="png",
+                n=1,
+                ext={"melix.image.source_job_id": "job-source"},
+            ),
         ),
         context=None,
     )
@@ -457,25 +668,34 @@ def test_image_iterate_and_variation_preserve_lineage_metadata(tmp_path: Path) -
     assert iterate.job.prompt_delta == "make the colors warmer"
     assert iterate.job.edit_mode == inference_pb2.IMAGE_EDIT_MODE_ITERATE
     assert iterate.job.artifacts[0].parent_artifact_id == "artifact-source"
-    assert iterate.job.artifacts[0].ext["melix.image.source_artifact_id"] == "artifact-source"
+    assert (
+        iterate.job.artifacts[0].ext["melix.image.source_artifact_id"]
+        == "artifact-source"
+    )
     assert iterate.job.artifacts[0].ext["melix.image.source_job_id"] == "job-source"
-    assert iterate.job.artifacts[0].ext["melix.image.prompt_delta"] == "make the colors warmer"
+    assert (
+        iterate.job.artifacts[0].ext["melix.image.prompt_delta"]
+        == "make the colors warmer"
+    )
     assert iterate.job.artifacts[0].ext["melix.image.edit_mode"] == "iterate"
     assert iterate.job.artifacts[-1].parent_artifact_id == "artifact-source"
     assert iterate.job.artifacts[-1].ext["melix.image.edit_mode"] == "iterate"
 
     variation = inference_service.ImageEdit(
-        inference_pb2.ImageEditRequest(
-            id=common_pb2.RequestIdentity(request_id="image-variation-1"),
-            model_handle=model_handle,
-            prompt="keep composition",
-            image_uri=source_path.as_uri(),
-            source_artifact_id="artifact-source",
-            edit_mode=inference_pb2.IMAGE_EDIT_MODE_VARIATION,
-            size="256x256",
-            response_format="png",
-            n=1,
-            ext={"melix.image.source_job_id": "job-source"},
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="image-variation-1"),
+                model_handle=model_handle,
+                prompt="keep composition",
+                image_uri=source_path.as_uri(),
+                source_artifact_id="artifact-source",
+                edit_mode=inference_pb2.IMAGE_EDIT_MODE_VARIATION,
+                size="256x256",
+                response_format="png",
+                n=1,
+                ext={"melix.image.source_job_id": "job-source"},
+            ),
         ),
         context=None,
     )
@@ -490,27 +710,35 @@ def test_image_iterate_and_variation_preserve_lineage_metadata(tmp_path: Path) -
     assert variation.job.artifacts[-1].parent_artifact_id == "artifact-source"
 
 
-def test_image_edit_rejects_missing_source_and_invalid_mask_reference(tmp_path: Path) -> None:
+def test_image_edit_rejects_missing_source_and_invalid_mask_reference(
+    tmp_path: Path,
+) -> None:
     runtime_service, inference_service, _ = build_services(tmp_path)
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_image_model())
 
     missing_source = inference_service.ImageEdit(
-        inference_pb2.ImageEditRequest(
-            id=common_pb2.RequestIdentity(request_id="image-edit-missing-source"),
-            model_handle=model_handle,
-            prompt="missing source",
-            size="256x256",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="image-edit-missing-source"),
+                model_handle=model_handle,
+                prompt="missing source",
+                size="256x256",
+            ),
         ),
         context=None,
     )
     missing_mask = inference_service.ImageEdit(
-        inference_pb2.ImageEditRequest(
-            id=common_pb2.RequestIdentity(request_id="image-edit-missing-mask"),
-            model_handle=model_handle,
-            prompt="missing mask",
-            image=b"SOURCE_IMAGE",
-            mask_uri=(tmp_path / "missing-mask.png").as_uri(),
-            size="256x256",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="image-edit-missing-mask"),
+                model_handle=model_handle,
+                prompt="missing mask",
+                image=b"SOURCE_IMAGE",
+                mask_uri=(tmp_path / "missing-mask.png").as_uri(),
+                size="256x256",
+            ),
         ),
         context=None,
     )
@@ -526,12 +754,15 @@ def test_image_edit_rejects_non_image_model_handles(tmp_path: Path) -> None:
     text_model_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
 
     response = inference_service.ImageEdit(
-        inference_pb2.ImageEditRequest(
-            id=common_pb2.RequestIdentity(request_id="image-edit-wrong-model"),
-            model_handle=text_model_handle,
-            prompt="should fail",
-            image=b"SOURCE_IMAGE",
-            size="256x256",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="image-edit-wrong-model"),
+                model_handle=text_model_handle,
+                prompt="should fail",
+                image=b"SOURCE_IMAGE",
+                size="256x256",
+            ),
         ),
         context=None,
     )
@@ -554,12 +785,15 @@ def test_image_edit_rejects_generate_only_image_families(tmp_path: Path) -> None
     )
 
     response = inference_service.ImageEdit(
-        inference_pb2.ImageEditRequest(
-            id=common_pb2.RequestIdentity(request_id="image-edit-generate-only"),
-            model_handle=model_handle,
-            prompt="should fail",
-            image=b"SOURCE_IMAGE",
-            size="256x256",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.ImageEditRequest(
+                id=common_pb2.RequestIdentity(request_id="image-edit-generate-only"),
+                model_handle=model_handle,
+                prompt="should fail",
+                image=b"SOURCE_IMAGE",
+                size="256x256",
+            ),
         ),
         context=None,
     )
@@ -582,12 +816,15 @@ def test_image_edit_returns_canceled_job_when_runtime_cancelled(tmp_path: Path) 
     registry.image_generation_runtime = CancelingImageRuntime()
     try:
         response = inference_service.ImageEdit(
-            inference_pb2.ImageEditRequest(
-                id=common_pb2.RequestIdentity(request_id="image-edit-cancelled"),
-                model_handle=model_handle,
-                prompt="cancel this edit",
-                image=b"SOURCE_IMAGE",
-                size="256x256",
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.ImageEditRequest(
+                    id=common_pb2.RequestIdentity(request_id="image-edit-cancelled"),
+                    model_handle=model_handle,
+                    prompt="cancel this edit",
+                    image=b"SOURCE_IMAGE",
+                    size="256x256",
+                ),
             ),
             context=None,
         )
@@ -600,7 +837,9 @@ def test_image_edit_returns_canceled_job_when_runtime_cancelled(tmp_path: Path) 
     assert response.job.operation == "image_edit"
 
 
-def test_deterministic_image_runtime_reports_probe_snapshot_and_validates_inputs(tmp_path: Path) -> None:
+def test_deterministic_image_runtime_reports_probe_snapshot_and_validates_inputs(
+    tmp_path: Path,
+) -> None:
     runtime = DeterministicImageGenerationRuntime()
     loaded_model = runtime.load_model(WorkerModelCatalog.dev_image_model())
     request = inference_pb2.ImageGenerateRequest(

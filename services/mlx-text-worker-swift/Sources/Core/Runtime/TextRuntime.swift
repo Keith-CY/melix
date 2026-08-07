@@ -5,10 +5,19 @@ import MelixWorkerProtocol
 struct LoadedTextModel: @unchecked Sendable {
     let storage: Any
     let residentBytesHint: UInt64
+    let textFamilyID: String
+    let cacheEpochID: String
 
-    init(storage: Any, residentBytesHint: UInt64 = 0) {
+    init(
+        storage: Any,
+        residentBytesHint: UInt64 = 0,
+        textFamilyID: String = "",
+        cacheEpochID: String = UUID().uuidString.lowercased()
+    ) {
         self.storage = storage
         self.residentBytesHint = residentBytesHint
+        self.textFamilyID = textFamilyID
+        self.cacheEpochID = cacheEpochID
     }
 }
 
@@ -53,6 +62,27 @@ struct RuntimePrefillResult: Sendable {
     let appliedAcceleration: Melix_Worker_V1_AccelerationPolicy
     let acceleratedPrefillGainPct: Int
     let activeKVQuantizationRatio: Int
+    let pagedCacheEvidence: RuntimePagedCacheEvidence?
+
+    init(
+        context: TextPrefillContext,
+        promptTokens: Int,
+        requestedPrefillStepTokens: Int,
+        effectivePrefillWindowTokens: Int,
+        appliedAcceleration: Melix_Worker_V1_AccelerationPolicy,
+        acceleratedPrefillGainPct: Int,
+        activeKVQuantizationRatio: Int,
+        pagedCacheEvidence: RuntimePagedCacheEvidence? = nil
+    ) {
+        self.context = context
+        self.promptTokens = promptTokens
+        self.requestedPrefillStepTokens = requestedPrefillStepTokens
+        self.effectivePrefillWindowTokens = effectivePrefillWindowTokens
+        self.appliedAcceleration = appliedAcceleration
+        self.acceleratedPrefillGainPct = acceleratedPrefillGainPct
+        self.activeKVQuantizationRatio = activeKVQuantizationRatio
+        self.pagedCacheEvidence = pagedCacheEvidence
+    }
 }
 
 struct TextRuntimeCancellationError: LocalizedError, Equatable {
@@ -304,6 +334,7 @@ struct TextGenerationSummary: Sendable {
     let promptTokens: Int
     let completionTokens: Int
     let tokensPerSecond: Double?
+    let finishReason: String
     let decodeBatchSize: Int?
     let modelEvalBatchSize: Int?
     let decodeLoopIterations: Int?
@@ -320,11 +351,13 @@ struct TextGenerationSummary: Sendable {
     let dflashTargetHiddenLayers: Int?
     let activeKVProbe: ActiveKVProbeSummary?
     let decodeBatchProbe: DecodeBatchProbeSummary?
+    let decodeBatchFallbackReason: String?
 
     init(
         promptTokens: Int,
         completionTokens: Int,
         tokensPerSecond: Double?,
+        finishReason: String = "stop",
         decodeBatchSize: Int? = nil,
         modelEvalBatchSize: Int? = nil,
         decodeLoopIterations: Int? = nil,
@@ -340,11 +373,13 @@ struct TextGenerationSummary: Sendable {
         dflashRollbackCount: Int? = nil,
         dflashTargetHiddenLayers: Int? = nil,
         activeKVProbe: ActiveKVProbeSummary? = nil,
-        decodeBatchProbe: DecodeBatchProbeSummary? = nil
+        decodeBatchProbe: DecodeBatchProbeSummary? = nil,
+        decodeBatchFallbackReason: String? = nil
     ) {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
         self.tokensPerSecond = tokensPerSecond
+        self.finishReason = finishReason
         self.decodeBatchSize = decodeBatchSize
         self.modelEvalBatchSize = modelEvalBatchSize
         self.decodeLoopIterations = decodeLoopIterations
@@ -361,6 +396,33 @@ struct TextGenerationSummary: Sendable {
         self.dflashTargetHiddenLayers = dflashTargetHiddenLayers
         self.activeKVProbe = activeKVProbe
         self.decodeBatchProbe = decodeBatchProbe
+        self.decodeBatchFallbackReason = decodeBatchFallbackReason
+    }
+
+    func withDecodeBatchFallbackReason(_ reason: String?) -> TextGenerationSummary {
+        TextGenerationSummary(
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            tokensPerSecond: tokensPerSecond,
+            finishReason: finishReason,
+            decodeBatchSize: decodeBatchSize,
+            modelEvalBatchSize: modelEvalBatchSize,
+            decodeLoopIterations: decodeLoopIterations,
+            perBatchOutputTokenCount: perBatchOutputTokenCount,
+            perBatchOutputTokensPerSecond: perBatchOutputTokensPerSecond,
+            speculativeAcceptedTokens: speculativeAcceptedTokens,
+            speculativeRejectedTokens: speculativeRejectedTokens,
+            speculativeFallbackCount: speculativeFallbackCount,
+            speculativeDraftProposeMillis: speculativeDraftProposeMillis,
+            speculativeTargetVerifyMillis: speculativeTargetVerifyMillis,
+            dflashEnabled: dflashEnabled,
+            dflashBlockSize: dflashBlockSize,
+            dflashRollbackCount: dflashRollbackCount,
+            dflashTargetHiddenLayers: dflashTargetHiddenLayers,
+            activeKVProbe: activeKVProbe,
+            decodeBatchProbe: decodeBatchProbe,
+            decodeBatchFallbackReason: reason ?? decodeBatchFallbackReason
+        )
     }
 }
 
@@ -502,7 +564,20 @@ enum TextBatchGenerationEvent: Sendable {
 protocol TextRuntimeBackend: Sendable {
     var runtimeName: String { get }
     var supportsHomogeneousBatchDecode: Bool { get }
+    var supportsPagedKVCache: Bool { get }
     func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats?
+    func pagedKVPoolStats() async -> RuntimePagedKVPoolStats
+    func pagedKVPoolProjection() async -> RuntimePagedKVPoolProjection
+    func pagedKVPoolSnapshot() async -> RuntimePagedKVPoolSnapshot
+    func setPagedKVPrefixPinned(
+        _ prefix: Melix_Worker_V1_PrefixRef,
+        pinned: Bool
+    ) async -> Bool
+    func purgePagedKVCache(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) async -> UInt64
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel
     func unloadModel(_ model: LoadedTextModel) async
     func prefill(
@@ -513,8 +588,34 @@ protocol TextRuntimeBackend: Sendable {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        logicalCacheIdentity: HotCacheLogicalIdentity,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult
     func generateEvents(
         model: LoadedTextModel,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error>
+    func generateEvents(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
         messages: [Melix_Worker_V1_ChatMessage],
         sampling: Melix_Worker_V1_SamplingConfig,
         shouldAbort: @escaping @Sendable () -> Bool
@@ -538,8 +639,40 @@ protocol TextRuntimeBackend: Sendable {
 extension TextRuntimeBackend {
     var supportsHomogeneousBatchDecode: Bool { false }
 
+    var supportsPagedKVCache: Bool { false }
+
     func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats? {
         nil
+    }
+
+    func pagedKVPoolStats() async -> RuntimePagedKVPoolStats {
+        .empty
+    }
+
+    func pagedKVPoolProjection() async -> RuntimePagedKVPoolProjection {
+        .empty
+    }
+
+    func pagedKVPoolSnapshot() async -> RuntimePagedKVPoolSnapshot {
+        RuntimePagedKVPoolSnapshot(
+            stats: await pagedKVPoolStats(),
+            projection: await pagedKVPoolProjection()
+        )
+    }
+
+    func setPagedKVPrefixPinned(
+        _ prefix: Melix_Worker_V1_PrefixRef,
+        pinned: Bool
+    ) async -> Bool {
+        false
+    }
+
+    func purgePagedKVCache(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) async -> UInt64 {
+        0
     }
 
     func unloadModel(_ model: LoadedTextModel) async {}
@@ -557,6 +690,48 @@ extension TextRuntimeBackend {
         )
     }
 
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        _ = execution
+        return try await prefill(
+            model: model,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        logicalCacheIdentity: HotCacheLogicalIdentity,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        _ = logicalCacheIdentity
+        return try await prefill(
+            model: model,
+            execution: execution,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
     func generateEvents(
         model: LoadedTextModel,
         messages: [Melix_Worker_V1_ChatMessage],
@@ -565,6 +740,22 @@ extension TextRuntimeBackend {
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
         throw RuntimeUnavailableError(
             message: "Text generation is not available for the current backend."
+        )
+    }
+
+    func generateEvents(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        _ = execution
+        return try await generateEvents(
+            model: model,
+            messages: messages,
+            sampling: sampling,
+            shouldAbort: shouldAbort
         )
     }
 
@@ -613,8 +804,43 @@ struct TextRuntime: Sendable {
         backend.supportsHomogeneousBatchDecode
     }
 
+    var supportsPagedKVCache: Bool {
+        backend.supportsPagedKVCache
+    }
+
     func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats? {
         await backend.runtimeStatsOverlay()
+    }
+
+    func pagedKVPoolStats() async -> RuntimePagedKVPoolStats {
+        await backend.pagedKVPoolStats()
+    }
+
+    func pagedKVPoolProjection() async -> RuntimePagedKVPoolProjection {
+        await backend.pagedKVPoolProjection()
+    }
+
+    func pagedKVPoolSnapshot() async -> RuntimePagedKVPoolSnapshot {
+        await backend.pagedKVPoolSnapshot()
+    }
+
+    func setPagedKVPrefixPinned(
+        _ prefix: Melix_Worker_V1_PrefixRef,
+        pinned: Bool
+    ) async -> Bool {
+        await backend.setPagedKVPrefixPinned(prefix, pinned: pinned)
+    }
+
+    func purgePagedKVCache(
+        scope: Melix_Worker_V1_CacheScope,
+        cacheKey: Melix_Worker_V1_CacheKey,
+        includePinned: Bool
+    ) async -> UInt64 {
+        await backend.purgePagedKVCache(
+            scope: scope,
+            cacheKey: cacheKey,
+            includePinned: includePinned
+        )
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> RuntimeLoadResult {
@@ -650,6 +876,48 @@ struct TextRuntime: Sendable {
         )
     }
 
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        try await backend.prefill(
+            model: model,
+            execution: execution,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func prefill(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        logicalCacheIdentity: HotCacheLogicalIdentity,
+        messages: [Melix_Worker_V1_ChatMessage],
+        prefillStepSize: UInt32,
+        resumeHint: String,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> RuntimePrefillResult {
+        try await backend.prefill(
+            model: model,
+            execution: execution,
+            logicalCacheIdentity: logicalCacheIdentity,
+            messages: messages,
+            prefillStepSize: prefillStepSize,
+            resumeHint: resumeHint,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
     func generateEvents(
         model: LoadedTextModel,
         messages: [Melix_Worker_V1_ChatMessage],
@@ -658,6 +926,22 @@ struct TextRuntime: Sendable {
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
         try await backend.generateEvents(
             model: model,
+            messages: messages,
+            sampling: sampling,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    func generateEvents(
+        model: LoadedTextModel,
+        execution: Melix_Worker_V1_ExecutionMetadata,
+        messages: [Melix_Worker_V1_ChatMessage],
+        sampling: Melix_Worker_V1_SamplingConfig,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        try await backend.generateEvents(
+            model: model,
+            execution: execution,
             messages: messages,
             sampling: sampling,
             shouldAbort: shouldAbort
@@ -759,7 +1043,7 @@ private func deterministicVisionDelayNanos(
     return 20_000_000
 }
 
-private func processResidentMemoryBytes() -> UInt64 {
+func processResidentMemoryBytes() -> UInt64 {
     var info = mach_task_basic_info()
     var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info_data_t>.size / MemoryLayout<natural_t>.size)
     let result: kern_return_t = withUnsafeMutablePointer(to: &info) { pointer in

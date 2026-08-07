@@ -131,6 +131,282 @@ Expected effect:
 - leave registry selection, schema serialization, protobuf config handling, and
   tool definitions unchanged.
 
+## Follow-up Slice: Full List Template Branch
+
+The 2026-07-06 follow-up keeps `built_in_tool_config(list(BUILTIN_AGENTIC_TOOL_NAMES))`
+behavior unchanged, but checks the full-list template case inside the list branch
+instead of first comparing the caller's list to the canonical tuple. The hot path
+still returns a fresh mutable protobuf copy from the built-in template, while the
+registered selector probe's full-list workload avoids an unnecessary cross-type
+sequence comparison before taking the existing template fast path.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache` `full_config_template_elapsed_ms_mean`;
+- preserve mutation isolation for returned `ToolConfig` messages;
+- leave partial selections, tuple full selections, registry selection, and tool
+  definitions unchanged.
+
+## Follow-up Slice: Empty OpenAI Tool Selection Fast Path
+
+The 2026-07-08 follow-up keeps `ToolRegistry.as_openai_tools()` copy-on-return
+behavior unchanged, but returns a fresh empty list before binding copy helpers or
+entering the template-cloning comprehension when a selected registry has no
+OpenAI tool templates. Empty selected registries are already cached by
+`ToolRegistry.select(())`; this slice narrows the zero-tool OpenAI schema path
+without changing full or partial registry payloads.
+
+Expected effect:
+
+- reduce `tool-registry-openai-tools-template-cache` `empty_elapsed_ms_mean` for
+  empty selected registries;
+- preserve fresh-list mutation isolation for `as_openai_tools()` callers;
+- leave non-empty OpenAI tool payload construction, registry selection,
+  schema serialization, and protobuf config handling unchanged.
+
+## Follow-up Slice: Always-only Selection Metrics Cache
+
+The 2026-07-08 always-only follow-up keeps agentic tool selection receipts and
+selected registry identity unchanged, but reuses precomputed full-catalog metrics
+and dropped-tool counts when the selection runs against the built-in agentic tool
+catalog. Custom registries still compute their own metrics at call time. This
+narrow slice targets the registered selector probe's `always_only_*` and
+`whitespace_turn_*` workloads, which repeatedly return the always-only fallback
+receipt.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache`
+  `always_only_planning_elapsed_ms_mean` and
+  `whitespace_turn_planning_elapsed_ms_mean`;
+- preserve fresh receipt payloads, selected registry identity, selected schema
+  bytes, full schema bytes, and custom-registry behavior;
+- leave registry selection, OpenAI schema generation, and protobuf config
+  materialization unchanged.
+
+## Follow-up Slice: No-keyword Fallback Always-only Cache
+
+The 2026-07-08 no-keyword fallback follow-up keeps agentic tool selection
+receipts unchanged for non-empty user turns that do not match any optional tool
+keyword. When no vector tool ids were supplied, the selector now checks keyword
+matches before allocating the mutable selected-tool accumulators; once the scans
+prove there are no vector or keyword hits, it returns through the same built-in
+always-only cache used by the max-capacity and whitespace fast paths. This avoids
+building fallback selection accumulators, rebuilding the one-tool selection
+registry, and recomputing registry metrics for generic no-keyword fallback turns
+while preserving fresh receipt payloads.
+
+The registered `tool-registry-select-name-index-cache` probe now reports
+`no_keyword_fallback_planning_elapsed_ms_mean` and
+`no_keyword_fallback_selected_schema_bytes_mean` so this fallback path remains a
+PR-scoped performance gate.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache`
+  `no_keyword_fallback_planning_elapsed_ms_mean`;
+- preserve selected registry identity, selected schema bytes, full schema bytes,
+  and receipt fields for no-keyword fallback turns;
+- leave vector, keyword, whitespace, max-capacity, registry selection, OpenAI
+  schema generation, and protobuf config materialization unchanged.
+
+## Follow-up Slice: Local Compute Seed Fast Path
+
+The 2026-07-09 follow-up keeps non-policy agentic tool selection receipts
+unchanged, but seeds the built-in always-available `local_compute` selection
+state directly after the early always-only exits. The selector already requires
+`local_compute` as the sole always-available tool and `max_selected_tools > 1` at
+that point, so this avoids one helper call, membership check, duplicate check,
+and whitespace normalization guard before vector or keyword tools are appended.
+Policy-aware selection keeps the generic helper path because it must still apply
+network/tool policy receipts and denied-tool bookkeeping.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache`
+  `selector_planning_elapsed_ms_mean` and
+  `current_capacity_planning_elapsed_ms_mean` for non-policy selections that add
+  vector or keyword tools;
+- preserve selected registry identity, selected tool order, selected schema
+  bytes, full schema bytes, and receipt fields;
+- leave policy-aware selection, registry selection, OpenAI schema generation,
+  and protobuf config materialization unchanged.
+
+## Follow-up Slice: Schema Consistency Ordered Fallback Elision
+
+The 2026-07-22 follow-up keeps `preflight_agentic_tool_schema_consistency(...)`
+receipt ordering unchanged, but removes the final sorted seen-affordance fallback.
+`known_tool_names` is constructed only from the catalog snapshot, selectable
+built-in names, and the callable registry snapshot, and the ordering pass already
+covers those same sources. The preflight can therefore avoid an unreachable sorted
+tuple allocation while preserving deterministic ordering for built-in, catalog,
+and registry-local tool names.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for consistency preflight paths
+  that only reference built-in agentic tools;
+- preserve referenced-tool ordering, invalid-affordance counting, missing-tool
+  receipts, and sanitization behavior;
+- leave registry selection, OpenAI schema generation, and protobuf config
+  materialization unchanged.
+
+## Follow-up Slice: Preflight Name Set Cache
+
+The 2026-07-22 preflight-name-set follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts and referenced-tool
+ordering unchanged, but stores each `ToolRegistry` name snapshot as a cached
+`frozenset` during registry initialization. Consistency preflight can then reuse
+those cached membership sets instead of rebuilding `set(registry.names())` and
+`set(catalog.names())` on every call. The ordered tuple snapshots remain the
+source for receipt ordering.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload;
+- preserve callable/missing/referenced tool receipts and deterministic ordering;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
+## Follow-up Slice: Default Catalog Preflight Set Reuse
+
+The 2026-07-22 preflight follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts and referenced-tool
+ordering unchanged, but reuses the catalog's cached name set as the known-tool
+membership set when the catalog already contains the selectable built-in names and
+the callable registry is a subset of that catalog. The same slice skips the
+separate selectable built-in and registry-local ordering sources when the active
+catalog already provides the canonical selectable built-in names and covers the
+callable registry. Custom registries or catalogs that need extra membership still
+fall back to the explicit union and additional ordering sources.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for the default catalog;
+- preserve callable/missing/referenced tool receipts, invalid-affordance counts,
+  and deterministic ordering;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
+## Follow-up Slice: Selected Source Membership Set
+
+The 2026-07-27 selected-source follow-up keeps agentic tool selection receipts
+unchanged, but tracks duplicate selected tool names in a `set[str]` instead of a
+`dict[str, str]`. The receipt source remains stored in the ordered
+`selected_tools` payload, so the membership structure only needs set semantics.
+This removes two-value dict entry writes from vector, keyword, and policy-aware
+selection append paths while preserving selected tool order and source labels.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `selector_planning_elapsed_ms_mean`, `current_capacity_planning_elapsed_ms_mean`,
+  and `policy_planning_elapsed_ms_mean` workloads;
+- preserve selected registry identity, selected tool order, source labels,
+  selected schema bytes, full schema bytes, and denial receipts;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
+## Follow-up Slice: Worker ToolConfig Serialized Copy
+
+The 2026-07-28 follow-up keeps `ToolRegistry.as_worker_tool_config()` behavior
+unchanged and still returns a fresh mutable protobuf message, but copies cached
+worker tool configs from the registry's serialized `ToolConfig` bytes instead of
+keeping and `CopyFrom`-cloning a cached template message. The built-in full
+catalog fast paths keep their existing template-copy behavior because local
+measurement showed cached-byte parsing was slower for that path; this slice is
+limited to registry-owned selected/config materialization.
+
+Expected effect:
+
+- reduce `tool-registry-schema-bytes-cache`
+  `partial_selection_tool_config_elapsed_ms_mean` for repeated partial-selection
+  config materialization;
+- keep `built_in_tool_config_elapsed_ms_mean` and
+  `full_selection_tool_config_elapsed_ms_mean` neutral-to-improved by leaving the
+  full-catalog template branch unchanged;
+- preserve fresh mutable protobuf return objects and mutation isolation;
+- leave registry selection, OpenAI schema generation, and tool definitions
+  unchanged.
+
+## Follow-up Slice: Policy Local Compute Seed Fast Path
+
+The 2026-07-29 follow-up keeps policy-aware agentic tool selection receipts
+unchanged, but seeds the always-available `local_compute` entry directly after
+the early policy fallback exits. `allow_web=False` only disables network-capable
+tools, so the built-in `local_compute` seed does not need to pass through the
+generic policy append helper before vector or keyword candidates are considered.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `policy_planning_elapsed_ms_mean` workload;
+- preserve selected registry identity, selected tool order, source labels,
+  selected schema bytes, full schema bytes, and denied-tool receipts;
+- leave non-policy selection, registry selection, OpenAI schema generation,
+  protobuf config handling, and tool definitions unchanged.
+
+## Follow-up Slice: Common Preflight Source Fast Path
+
+The 2026-07-30 follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts unchanged, but returns
+the common exact source labels (`workflow_selected`, `retrieved_context`,
+`viewed_procedure`, and `tool_affordance`) before running the generic tool-name
+regex sanitizer. The fallback still strips and validates non-exact or custom
+source labels through the existing regex path.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for repeated common preflight
+  source labels;
+- preserve normalized fallback behavior and redaction of invalid custom source
+  strings;
+- leave referenced-tool ordering, missing-tool receipts, registry selection,
+  OpenAI schema generation, protobuf config handling, and tool definitions
+  unchanged.
+
+## Follow-up Slice: Exact Dict Affordance Name Fast Path
+
+The 2026-07-30 exact-dict follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts unchanged, but handles
+plain `dict` affordance payloads directly before falling back to the generic
+`Mapping.get(...)` loop. Workflow-selected and retrieved-context affordances are
+constructed as regular dictionaries on the hot path, so direct key checks avoid
+repeated mapping method dispatch while preserving the existing `tool_id`,
+`tool_name`, then `name` precedence and invalid non-string handling.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for repeated dict affordance
+  preflights;
+- preserve referenced-tool ordering, invalid-affordance counting, missing-tool
+  receipts, and receipt redaction behavior;
+- leave custom `Mapping` affordances, registry selection, OpenAI schema
+  generation, protobuf config handling, and tool definitions unchanged.
+
+## Follow-up Slice: Default Preflight Order Set Elision
+
+The 2026-07-30 default-order follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` referenced-tool ordering and
+receipts unchanged, but skips the duplicate-tracking `ordered_name_set` allocation
+and set writes when the default catalog already provides the complete ordering
+source and no registry-only ordering pass is required. Custom catalogs or
+registry-only custom tools keep the generic de-duplication path.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for default catalog preflights;
+- preserve referenced-tool ordering, missing-tool receipts, invalid-affordance
+  counting, and custom catalog/registry behavior;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
@@ -138,7 +414,16 @@ Expected effect:
    least 95% coverage for touched scope.
 3. Run the registered probe command locally before and after the slice and
    compare the relevant registered metric (`schema_payload_elapsed_ms_mean` for
-   schema-payload slices, or `elapsed_ms_mean` for the OpenAI tool payload slice)
-   over repeated samples.
+   schema-payload slices, `elapsed_ms_mean` for the OpenAI tool payload slice,
+   `no_keyword_fallback_planning_elapsed_ms_mean` for the no-keyword fallback
+   slice, `preflight_consistency_elapsed_ms_mean` for preflight slices,
+   `selector_planning_elapsed_ms_mean` and
+   `current_capacity_planning_elapsed_ms_mean` for the local-compute seed slice,
+   `selector_planning_elapsed_ms_mean`,
+   `current_capacity_planning_elapsed_ms_mean`, and
+   `policy_planning_elapsed_ms_mean` for the selected-source membership slice or
+   policy local-compute seed slice, or
+   `partial_selection_tool_config_elapsed_ms_mean` for the worker ToolConfig
+   serialized-copy slice) over repeated samples.
 4. Push only if local evidence is neutral-to-improved and rely on the GitHub
    PR-scoped performance workflow as the merge gate.

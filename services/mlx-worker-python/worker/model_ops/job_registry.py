@@ -384,6 +384,7 @@ class ModelOpsJobRegistry:
     ) -> None:
         read_manifest_dict = self._read_manifest_dict
         resolved_job_id = self._resolved_job_id
+        resolved_restore_path_job_id = self._resolved_restore_path_job_id
         resolved_output_dir_for_restore = self._resolved_output_dir_for_restore
         jobs = self._jobs
         job_type = ModelOpsJob
@@ -397,7 +398,10 @@ class ModelOpsJobRegistry:
             else:
                 continue
 
-            job_id = resolved_job_id(manifest_path, payload)
+            if "job_id" in payload:
+                job_id = resolved_job_id(manifest_path, payload)
+            else:
+                job_id = resolved_restore_path_job_id(operation, manifest_path)
             if not job_id or job_id in jobs:
                 continue
 
@@ -432,14 +436,45 @@ class ModelOpsJobRegistry:
 
     @staticmethod
     def _resolved_job_id(manifest_path: Path, payload: dict[str, Any]) -> str:
-        manifest_job_id = str(payload.get("job_id", "")).strip()
-        if manifest_job_id:
-            return manifest_job_id
+        if "job_id" in payload:
+            manifest_job_id = str(payload["job_id"]).strip()
+            if manifest_job_id:
+                return manifest_job_id
 
-        for candidate in manifest_path.parts[::-1]:
+        parts = manifest_path.parts
+        if len(parts) >= 2:
+            parent_name = parts[-2]
+            if parent_name.startswith("model-ops-"):
+                return parent_name
+        if len(parts) >= 3:
+            grandparent_name = parts[-3]
+            if grandparent_name.startswith("model-ops-"):
+                return grandparent_name
+
+        for candidate in reversed(parts):
             if candidate.startswith("model-ops-"):
                 return candidate
         return ""
+
+    @staticmethod
+    def _resolved_restore_path_job_id(operation: str, manifest_path: Path) -> str:
+        path_text = os.fspath(manifest_path)
+        parent_end = path_text.rfind("/")
+        if parent_end < 0:
+            candidate = path_text
+        elif operation == "activate_adapter":
+            grandparent_end = path_text.rfind("/", 0, parent_end)
+            if grandparent_end < 0:
+                candidate = path_text[:parent_end]
+            else:
+                grandparent_start = path_text.rfind("/", 0, grandparent_end) + 1
+                candidate = path_text[grandparent_start:grandparent_end]
+        else:
+            parent_start = path_text.rfind("/", 0, parent_end) + 1
+            candidate = path_text[parent_start:parent_end]
+        if candidate.startswith("model-ops-"):
+            return candidate
+        return ModelOpsJobRegistry._resolved_job_id(manifest_path, {})
 
     @staticmethod
     def _resolved_output_dir_for_restore(operation: str, manifest_path: Path) -> Path:
@@ -616,7 +651,7 @@ class ModelOpsJobRegistry:
     def _removed_derived_targets_from_ordered_jobs(
         cls,
         jobs: tuple[ModelOpsJob, ...],
-    ) -> dict[str, set[str]]:
+    ) -> tuple[set[str], set[str], set[str], set[str]]:
         removed_model_ids: set[str] = set()
         removed_manifest_paths: set[str] = set()
         removed_adapter_manifest_paths: set[str] = set()
@@ -637,22 +672,24 @@ class ModelOpsJobRegistry:
             activation_job_id = str(manifest.get("activation_job_id", "")).strip()
             if activation_job_id:
                 removed_activation_job_ids.add(activation_job_id)
-        return {
-            "model_ids": removed_model_ids,
-            "manifest_paths": removed_manifest_paths,
-            "adapter_manifest_paths": removed_adapter_manifest_paths,
-            "activation_job_ids": removed_activation_job_ids,
-        }
+        return (
+            removed_model_ids,
+            removed_manifest_paths,
+            removed_adapter_manifest_paths,
+            removed_activation_job_ids,
+        )
 
     @classmethod
     def _active_derived_model_job_rows(
         cls,
         jobs: tuple[ModelOpsJob, ...],
     ) -> tuple[tuple[ModelOpsJob, dict[str, Any], str], ...]:
-        removed_targets = cls._removed_derived_targets_from_ordered_jobs(jobs)
-        removed_model_ids = removed_targets["model_ids"]
-        removed_manifest_paths = removed_targets["manifest_paths"]
-        removed_activation_job_ids = removed_targets["activation_job_ids"]
+        (
+            removed_model_ids,
+            removed_manifest_paths,
+            _removed_adapter_manifest_paths,
+            removed_activation_job_ids,
+        ) = cls._removed_derived_targets_from_ordered_jobs(jobs)
         active_rows: list[tuple[ModelOpsJob, dict[str, Any], str]] = []
         for job in jobs:
             if job.operation != "activate_adapter" or job.status != "completed":

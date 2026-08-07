@@ -32,6 +32,766 @@ struct RequestCoordinatorTests {
         }
     }
 
+    @Test("a configured model catalog never dispatches without a backend binding")
+    func configuredCatalogRequiresBackendBinding() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .emptyThenSuccess)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(requestID: "req-missing-backend-binding")
+            )
+            Issue.record("Expected the missing backend binding to fail before dispatch.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .workerUnavailable)
+        }
+        #expect(await workerClient.generateCallCount == 0)
+    }
+
+    @Test("an empty backend stream receives one fresh dispatch")
+    func emptyBackendStreamRecoversBeforeResponse() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .emptyThenSuccess)
+        let metrics = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metrics,
+            modelCatalog: catalog
+        )
+
+        let events = try await recoveredCoordinatorEvents(
+            coordinator: coordinator,
+            requestID: "req-empty-stream-recovery"
+        )
+
+        #expect(events.contains { if case .completed = $0.payload { true } else { false } })
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metrics.value(forKey: "control_plane.backend_identity_retry_allowed_count") == 1)
+    }
+
+    @Test("repeated empty backend streams exhaust recovery")
+    func repeatedEmptyBackendStreamExhaustsRecovery() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .alwaysEmpty)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        await #expect(throws: BackendRouteRecovery.recoveryExhaustedError()) {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: coordinator,
+                requestID: "req-empty-stream-exhausted"
+            )
+        }
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+    }
+
+    @Test("a backend stream with output but no terminal event is partial")
+    func backendStreamWithoutTerminalIsPartial() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .tokenThenEnd)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        await #expect(throws: BackendRouteRecovery.partialStreamFailure()) {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: coordinator,
+                requestID: "req-stream-missing-terminal"
+            )
+        }
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+    }
+
+    @Test("a completed backend stream drops trailing events")
+    func completedBackendStreamDropsTrailingEvents() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .completedThenToken)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let events = try await recoveredCoordinatorEvents(
+            coordinator: coordinator,
+            requestID: "req-terminal-cutoff"
+        )
+
+        #expect(events.filter { if case .completed = $0.payload { true } else { false } }.count == 1)
+        #expect(events.allSatisfy { if case .tokenDelta = $0.payload { false } else { true } })
+    }
+
+    @Test("backend stream creation without semantic output remains replay safe")
+    func backendStreamCreationWithoutSemanticOutputRemainsReplaySafe() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .streamFailureThenSuccess)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-replay-before-output")
+        )
+        let events = try await collectRequestCoordinatorEvents(execution.stream)
+        let identities = await workerClient.requestedIdentities
+
+        #expect(events.contains { if case .tokenDelta = $0.payload { true } else { false } })
+        #expect(events.contains { if case .completed = $0.payload { true } else { false } })
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(identities.count == 2)
+        #expect(identities.first?.routeGeneration == 1)
+        #expect((identities.last?.routeGeneration ?? 0) > (identities.first?.routeGeneration ?? 0))
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_retry_allowed_count") == 1)
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_retry_exhausted_count") == 0)
+    }
+
+    @Test("backend admission opens the response and suppresses later transport replay")
+    func backendAdmissionSuppressesLaterTransportReplay() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .admissionThenFailure)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-admission-partial")
+        )
+        var sawAdmission = false
+
+        do {
+            for try await event in execution.stream {
+                if case .admitted = event.payload {
+                    sawAdmission = true
+                }
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
+
+        #expect(sawAdmission)
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
+    }
+
+    @Test(
+        "external worker pre-response failures receive one fresh dispatch",
+        arguments: ["connect_error", "read_error", "write_error", "protocol_error", "timeout"]
+    )
+    func externalWorkerPreResponseFailureMatrix(failureCode: String) async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(
+            script: .preResponseFailureThenSuccess(failureCode)
+        )
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-\(failureCode)")
+        )
+        let events = try await collectRequestCoordinatorEvents(execution.stream)
+
+        #expect(events.filter { if case .tokenDelta = $0.payload { true } else { false } }.count == 1)
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+    }
+
+    @Test("reused backend endpoint cannot emit until replacement identity is loaded")
+    func reusedBackendEndpointRequiresReplacementIdentity() async throws {
+        await BackendIdentityRecoveryDiagnostics.shared.resetForTesting()
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .identityMismatchThenSuccess)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "reused-port-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-reused-backend-endpoint")
+        )
+        let events = try await collectRequestCoordinatorEvents(execution.stream)
+        let requestedIdentities = await workerClient.requestedIdentities
+        let loadedIdentities = await workerClient.loadedIdentities
+        let diagnostics = await BackendIdentityRecoveryDiagnostics.shared.snapshot()
+
+        #expect(events.filter { if case .tokenDelta = $0.payload { true } else { false } }.count == 1)
+        #expect(requestedIdentities.count == 2)
+        #expect(loadedIdentities.count == 1)
+        #expect(requestedIdentities.last == loadedIdentities.first)
+        #expect((requestedIdentities.last?.routeGeneration ?? 0) > (requestedIdentities.first?.routeGeneration ?? 0))
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_mismatch_count") == 1)
+        #expect(diagnostics.lastMismatch?.loadedModelID == "other-model-on-reused-endpoint")
+        #expect(diagnostics.lastMismatch?.mismatchReason == "model_id")
+    }
+
+    @Test("repeated identity mismatch events exhaust exactly one retry")
+    func repeatedIdentityMismatchEventsExhaustOneRetry() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .alwaysIdentityMismatch)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: coordinator,
+                requestID: "req-repeated-identity-mismatch"
+            )
+            Issue.record("Expected typed backend recovery exhaustion.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.recoveryExhaustedError())
+        }
+
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_exhausted_count"
+        ) == 1)
+    }
+
+    @Test("identity mismatch stops consuming trailing events before replay")
+    func identityMismatchStopsTrailingEventsBeforeReplay() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(
+            script: .identityMismatchThenTrailingToken
+        )
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let events = try await recoveredCoordinatorEvents(
+            coordinator: coordinator,
+            requestID: "req-mismatch-trailing-token"
+        )
+
+        #expect(events.filter { if case .tokenDelta = $0.payload { true } else { false } }.count == 1)
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+    }
+
+    @Test("phase-aware decode identity mismatch after prefill is never replayed")
+    func phaseAwareDecodeIdentityMismatchAfterPrefillIsNeverReplayed() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let initialBinding = try #require(
+            await catalog.backendRouteBinding(for: "melix-dev-text", routeKind: .swiftText)
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let translated = makeTranslatedChatRequest(
+            requestID: "req-phase-aware-decode-mismatch",
+            saveBoundarySnapshot: true
+        )
+        let execution = try await coordinator.startChatCompletion(translated)
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+                Issue.record("Expected typed partial stream failure.")
+            } catch let error as WorkerClientError {
+                #expect(error == BackendRouteRecovery.partialStreamFailure())
+            } catch {
+                Issue.record("Unexpected phase-aware stream error: \(error)")
+            }
+        }
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitIdentityMismatchAndFinish(
+            requestID: "req-phase-aware-decode-mismatch"
+        )
+        _ = await consumer.result
+
+        #expect(await workerClient.prefillRequestObservations().count == 1)
+        #expect(await workerClient.decodeRequestObservations().count == 1)
+        #expect(await catalog.backendRouteBinding(
+            for: "melix-dev-text",
+            routeKind: .swiftText
+        ) == initialBinding)
+    }
+
+    @Test("identity mismatch event after token output is never replayed")
+    func identityMismatchEventAfterTokenOutputIsNeverReplayed() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .tokenThenIdentityMismatch)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-token-then-identity-mismatch")
+        )
+        var tokenCount = 0
+
+        do {
+            for try await event in execution.stream {
+                if case .tokenDelta = event.payload {
+                    tokenCount += 1
+                }
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
+
+        #expect(tokenCount == 1)
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
+    }
+
+    @Test("identity mismatch recovery load failure is typed as exhausted")
+    func identityMismatchRecoveryLoadFailureIsTypedAsExhausted() async throws {
+        try await assertRecoveryLoadFailure(
+            script: .identityMismatchThenLoadFailure,
+            requestID: "req-identity-mismatch-load-failure"
+        )
+    }
+
+    @Test("transport recovery load failure is typed as exhausted")
+    func transportRecoveryLoadFailureIsTypedAsExhausted() async throws {
+        try await assertRecoveryLoadFailure(
+            script: .streamFailureThenLoadFailure,
+            requestID: "req-transport-load-failure"
+        )
+    }
+
+    private func assertRecoveryLoadFailure(
+        script: BackendIdentityRecoveryWorkerClient.Script,
+        requestID: String
+    ) async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: script)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: coordinator,
+                requestID: requestID
+            )
+            Issue.record("Expected typed backend recovery exhaustion.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.recoveryExhaustedError())
+        }
+
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_exhausted_count"
+        ) == 1)
+    }
+
+    @Test("concurrent identity mismatch dispatches coalesce one fresh binding")
+    func concurrentIdentityMismatchDispatchesCoalesceOneFreshBinding() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(
+            script: .concurrentIdentityMismatchThenSuccess
+        )
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let firstCoordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+        let secondCoordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        async let firstEvents = recoveredCoordinatorEvents(
+            coordinator: firstCoordinator,
+            requestID: "req-concurrent-mismatch-1"
+        )
+        async let secondEvents = recoveredCoordinatorEvents(
+            coordinator: secondCoordinator,
+            requestID: "req-concurrent-mismatch-2"
+        )
+        let eventSets = try await [firstEvents, secondEvents]
+
+        #expect(eventSets.allSatisfy { events in
+            events.filter { if case .tokenDelta = $0.payload { true } else { false } }.count == 1
+        })
+        #expect(await workerClient.generateCallCount == 4)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_recovery_coalesced_caller_count"
+        ) == 1)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_fresh_binding_count"
+        ) == 1)
+    }
+
+    @Test("backend identity recovery probe emits measured control-plane evidence")
+    func backendIdentityRecoveryProbeEmitsMeasuredControlPlaneEvidence() async throws {
+        let metricsStore = MetricsStore()
+
+        let concurrentClient = BackendIdentityRecoveryWorkerClient(
+            script: .concurrentIdentityMismatchThenSuccess
+        )
+        let concurrentCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await concurrentCatalog.loadModel(
+            id: "melix-dev-text",
+            dispatchHandle: "probe-initial-handle"
+        )
+        let concurrentRegistry = WorkerRegistry(
+            defaultTextClient: concurrentClient,
+            modelCatalog: concurrentCatalog
+        )
+        let firstCoordinator = RequestCoordinator(
+            workerRegistry: concurrentRegistry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: concurrentCatalog
+        )
+        let secondCoordinator = RequestCoordinator(
+            workerRegistry: concurrentRegistry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: concurrentCatalog
+        )
+        async let firstEvents = recoveredCoordinatorEvents(
+            coordinator: firstCoordinator,
+            requestID: "probe-concurrent-1"
+        )
+        async let secondEvents = recoveredCoordinatorEvents(
+            coordinator: secondCoordinator,
+            requestID: "probe-concurrent-2"
+        )
+        _ = try await [firstEvents, secondEvents]
+
+        let exhaustedClient = BackendIdentityRecoveryWorkerClient(script: .alwaysStreamFailure)
+        let exhaustedCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await exhaustedCatalog.loadModel(
+            id: "melix-dev-text",
+            dispatchHandle: "probe-exhausted-handle"
+        )
+        let exhaustedCoordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: exhaustedClient,
+                modelCatalog: exhaustedCatalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: exhaustedCatalog
+        )
+        do {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: exhaustedCoordinator,
+                requestID: "probe-exhausted"
+            )
+            Issue.record("Expected recovery exhaustion in control-plane probe.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.recoveryExhaustedError())
+        }
+
+        let tokenClient = BackendIdentityRecoveryWorkerClient(script: .tokenThenFailure)
+        let tokenCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await tokenCatalog.loadModel(
+            id: "melix-dev-text",
+            dispatchHandle: "probe-token-handle"
+        )
+        let tokenCoordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: tokenClient,
+                modelCatalog: tokenCatalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: tokenCatalog
+        )
+        do {
+            _ = try await recoveredCoordinatorEvents(
+                coordinator: tokenCoordinator,
+                requestID: "probe-token-partial"
+            )
+            Issue.record("Expected token partial failure in control-plane probe.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
+
+        let toolClient = BackendIdentityRecoveryWorkerClient(script: .toolResultThenFailure)
+        let toolCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await toolCatalog.loadModel(
+            id: "melix-dev-text",
+            dispatchHandle: "probe-tool-handle"
+        )
+        let toolCoordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: toolClient,
+                modelCatalog: toolCatalog
+            ),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: toolCatalog
+        )
+        var completedToolCount = 0
+        do {
+            let execution = try await toolCoordinator.startChatCompletion(
+                makeTranslatedChatRequest(requestID: "probe-tool-partial")
+            )
+            for try await event in execution.stream {
+                if case .toolResultDelta = event.payload {
+                    completedToolCount += 1
+                }
+            }
+            Issue.record("Expected tool partial failure in control-plane probe.")
+        } catch let error as WorkerClientError {
+            #expect(error == BackendRouteRecovery.partialStreamFailure())
+        }
+
+        #expect(completedToolCount == 1)
+        let binding = ModelCatalog.BackendRouteBinding(
+            modelID: "probe-model",
+            adapterID: "probe-adapter",
+            generation: 7,
+            handle: "probe-handle",
+            routeKind: .swiftText
+        )
+        let boundaryIterations = 2_000
+        var boundarySamples: [Double] = []
+        for _ in 0..<7 {
+            let started = DispatchTime.now().uptimeNanoseconds
+            for _ in 0..<boundaryIterations {
+                var request = Melix_Worker_V1_GenerateRequest()
+                BackendModelIdentityStamping.stamp(binding, on: &request)
+                _ = BackendRouteRecoveryClassifier.shouldRecover(
+                    WorkerClientError.requestFailed(
+                        code: "read_error",
+                        message: "probe"
+                    )
+                )
+            }
+            let elapsed = DispatchTime.now().uptimeNanoseconds - started
+            boundarySamples.append(
+                Double(elapsed) / 1_000_000 / Double(boundaryIterations)
+            )
+        }
+        let sortedBoundarySamples = boundarySamples.sorted()
+        let p95Index = max(
+            0,
+            Int(ceil(Double(sortedBoundarySamples.count) * 0.95)) - 1
+        )
+        let metricSnapshot = await metricsStore.snapshot()
+        let payload: [String: Double] = [
+            "control_plane_probe_available": 1,
+            "control_plane_boundary_latency_ms_mean":
+                boundarySamples.reduce(0, +) / Double(boundarySamples.count),
+            "control_plane_boundary_latency_ms_p95": sortedBoundarySamples[p95Index],
+            "retry_allowed_count":
+                metricSnapshot.values["control_plane.backend_identity_retry_allowed_count"] ?? 0,
+            "retry_suppressed_count":
+                metricSnapshot.values["control_plane.backend_identity_retry_suppressed_count"] ?? 0,
+            "retry_exhausted_count":
+                metricSnapshot.values["control_plane.backend_identity_retry_exhausted_count"] ?? 0,
+            "recovery_coalesced_caller_count":
+                metricSnapshot.values[
+                    "control_plane.backend_identity_recovery_coalesced_caller_count"
+                ] ?? 0,
+            "fresh_binding_count":
+                metricSnapshot.values["control_plane.backend_identity_fresh_binding_count"] ?? 0,
+            "duplicate_completed_tool_count": Double(completedToolCount - 1),
+        ]
+
+        #expect(payload["retry_allowed_count"] == 3)
+        #expect(payload["retry_suppressed_count"] == 2)
+        #expect(payload["retry_exhausted_count"] == 1)
+        #expect(payload["recovery_coalesced_caller_count"] == 1)
+        #expect(payload["fresh_binding_count"] == 2)
+        #expect(payload["duplicate_completed_tool_count"] == 0)
+        if ProcessInfo.processInfo.environment["MELIX_BACKEND_IDENTITY_PROBE"] == "1" {
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            let json = try #require(String(data: data, encoding: .utf8))
+            print("MELIX_BACKEND_IDENTITY_PROBE_JSON=\(json)")
+        }
+    }
+
+    @Test("backend transport failure after token output is typed and never replayed")
+    func backendTransportFailureAfterTokenOutputIsTypedAndNeverReplayed() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .tokenThenFailure)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-token-partial")
+        )
+        var sawToken = false
+        do {
+            for try await event in execution.stream {
+                if case .tokenDelta = event.payload {
+                    sawToken = true
+                }
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == .requestFailed(
+                code: "partial_stream_failure",
+                message: "The backend stream failed after response output began and was not replayed."
+            ))
+        }
+
+        #expect(sawToken)
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
+    }
+
+    @Test("backend transport failure after completed tool output is typed and never replayed")
+    func backendTransportFailureAfterCompletedToolOutputIsTypedAndNeverReplayed() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .toolResultThenFailure)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-tool-result-partial")
+        )
+        var sawToolResult = false
+        do {
+            for try await event in execution.stream {
+                if case .toolResultDelta = event.payload {
+                    sawToolResult = true
+                }
+            }
+            Issue.record("Expected typed partial stream failure.")
+        } catch let error as WorkerClientError {
+            #expect(error == .requestFailed(
+                code: "partial_stream_failure",
+                message: "The backend stream failed after response output began and was not replayed."
+            ))
+        }
+
+        #expect(sawToolResult)
+        #expect(await workerClient.generateCallCount == 1)
+        #expect(await workerClient.loadCallCount == 0)
+        #expect(await metricsStore.value(
+            forKey: "control_plane.backend_identity_retry_suppressed_count"
+        ) == 1)
+    }
+
+    @Test("backend pre-response retry exhaustion returns a stable typed failure")
+    func backendPreResponseRetryExhaustionReturnsAStableTypedFailure() async throws {
+        let workerClient = BackendIdentityRecoveryWorkerClient(script: .alwaysStreamFailure)
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "initial-handle")
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let coordinator = RequestCoordinator(
+            workerRegistry: registry,
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-backend-retry-exhausted")
+        )
+        do {
+            for try await _ in execution.stream {}
+            Issue.record("Expected typed backend recovery exhaustion.")
+        } catch let error as WorkerClientError {
+            #expect(error == .requestFailed(
+                code: "backend_route_recovery_exhausted",
+                message: "The backend route could not be recovered before response output began."
+            ))
+        }
+
+        #expect(await workerClient.generateCallCount == 2)
+        #expect(await workerClient.loadCallCount == 1)
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_retry_allowed_count") == 1)
+        #expect(await metricsStore.value(forKey: "control_plane.backend_identity_retry_exhausted_count") == 1)
+    }
+
     @Test("request cancellation triggers worker abort")
     func cancellationTriggersWorkerAbort() async throws {
         let workerClient = BlockingWorkerClient()
@@ -142,6 +902,7 @@ struct RequestCoordinatorTests {
             return events
         }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-resume-grace")
         await workerClient.emitToken(requestID: "req-resume-grace", text: "resumed")
         await workerClient.finishDecode(requestID: "req-resume-grace", assistantText: "resumed")
 
@@ -722,6 +1483,45 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("phase-aware worker stream readiness wakes only for its request registration")
+    func phaseAwareWorkerStreamReadinessWakesOnlyForItsRequestRegistration() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let requestID = "req-readiness-registered"
+        let readiness = Task {
+            await workerClient.waitForRequestStream(requestID: requestID)
+        }
+
+        await workerClient.waitUntilRequestStreamWaiterInstalled(requestID: requestID)
+        #expect(await workerClient.requestStreamWaiterCount(requestID: requestID) == 1)
+
+        var unrelatedRequest = Melix_Worker_V1_GenerateRequest()
+        unrelatedRequest.execution.id.requestID = "req-readiness-unrelated"
+        _ = try await workerClient.generate(request: unrelatedRequest)
+        #expect(await workerClient.requestStreamWaiterCount(requestID: requestID) == 1)
+
+        var matchingRequest = Melix_Worker_V1_GenerateRequest()
+        matchingRequest.execution.id.requestID = requestID
+        _ = try await workerClient.generate(request: matchingRequest)
+
+        #expect(await readiness.value)
+        #expect(await workerClient.requestStreamWaiterCount(requestID: requestID) == 0)
+    }
+
+    @Test("phase-aware worker stream readiness fails within its deadline")
+    func phaseAwareWorkerStreamReadinessFailsWithinItsDeadline() async {
+        let workerClient = PhaseAwareWorkerClient()
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        #expect(
+            await workerClient.waitForRequestStream(
+                requestID: "req-readiness-missing",
+                timeout: ciScaledWaitDuration(milliseconds: 20)
+            ) == false
+        )
+        #expect(started.duration(to: clock.now) < ciScaledWaitDuration(milliseconds: 1_000))
+    }
+
     @Test("admitted text requests refresh model recency for same-family eviction planning")
     func admittedTextRequestsRefreshModelRecencyForSameFamilyEvictionPlanning() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -742,6 +1542,8 @@ struct RequestCoordinatorTests {
         let consumer = Task {
             for try await _ in execution.stream {}
         }
+        defer { consumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-recency")
         await workerClient.emitToken(requestID: "req-recency", text: "assistant")
         await workerClient.finish(requestID: "req-recency")
         _ = try await consumer.value
@@ -756,6 +1558,11 @@ struct RequestCoordinatorTests {
         let schedulerReadModel = SchedulerReadModel()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::swift-vision")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-vlm",
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
@@ -794,7 +1601,10 @@ struct RequestCoordinatorTests {
 
         #expect(queuedOrAdmitted?.lane == "multimodal.vision.background")
 
-        #expect(await visionClient.generatedRequestIDs == ["req-vlm-background"])
+        let generatedRequestIDs = await waitForGeneratedRequestIDs(count: 1, attempts: 50) {
+            await visionClient.generatedRequestIDs
+        }
+        #expect(generatedRequestIDs == ["req-vlm-background"])
         #expect(try await coordinator.cancel(requestID: "req-vlm-background"))
         let consumer = Task {
             do {
@@ -811,6 +1621,11 @@ struct RequestCoordinatorTests {
         let metricsStore = MetricsStore()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-vlm",
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
@@ -952,9 +1767,10 @@ struct RequestCoordinatorTests {
         #expect(Set(payloads.compactMap { $0["request_id"] as? String }) == Set((0..<count).map { "req-\($0)" }))
     }
 
-    @Test("python text compatibility sessions use generate instead of phase-aware prefill")
-    func pythonTextCompatibilitySessionsUseGenerateInsteadOfPhaseAwarePrefill() async throws {
-        let workerClient = PhaseAwareWorkerClient()
+    @Test("structured text routes ignore legacy python compatibility metadata")
+    func structuredTextRoutesIgnoreLegacyPythonCompatibilityMetadata() async throws {
+        let textWorkerClient = PhaseAwareWorkerClient()
+        let pythonCompatibilityClient = BlockingWorkerClient()
         let schedulerReadModel = SchedulerReadModel()
         var model = ModelCatalog.devTextModel()
         model.modelID = "local-python-text"
@@ -962,13 +1778,19 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.capability.route_kind"] = WorkerRouteKind.pythonCompatibility.rawValue
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: "local-python-text", dispatchHandle: "local-python-text::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textWorkerClient,
+            pythonCompatibilityClient: pythonCompatibilityClient,
+            modelCatalog: catalog
+        )
+        #expect(await workerRegistry.route(forModelID: "local-python-text") == .pythonCompatibility)
         let coordinator = RequestCoordinator(
-            workerRegistry: WorkerRegistry(
-                defaultTextClient: BlockingWorkerClient(),
-                visionClient: workerClient,
-                pythonCompatibilityClient: workerClient,
-                modelCatalog: catalog
-            ),
+            workerRegistry: workerRegistry,
             abortRegistry: AbortRegistry(),
             schedulerReadModel: schedulerReadModel,
             modelCatalog: catalog
@@ -991,15 +1813,22 @@ struct RequestCoordinatorTests {
             return events
         }
 
-        for _ in 0..<100 where await workerClient.generatedRequestIDs.isEmpty {
-            try? await Task.sleep(nanoseconds: 10_000_000)
+        let prefillRequest = await waitForPrefillRequest(workerClient: textWorkerClient)
+        let decodeRequest = await waitForDecodeRequest(workerClient: textWorkerClient)
+        guard prefillRequest != nil, decodeRequest != nil else {
+            #expect(prefillRequest != nil)
+            #expect(decodeRequest != nil)
+            #expect(try await coordinator.cancel(requestID: "req-python-text-session"))
+            _ = await consumer.result
+            return
         }
-        #expect(await workerClient.generatedRequestIDs == ["req-python-text-session"])
-        #expect(await workerClient.lastPrefillRequest() == nil)
-        #expect(await workerClient.lastDecodeRequest() == nil)
+        #expect(prefillRequest?.execution.id.requestID == "req-python-text-session")
+        #expect(decodeRequest?.execution.id.requestID == "req-python-text-session")
+        #expect(await textWorkerClient.generatedRequestIDs.isEmpty)
+        #expect(await pythonCompatibilityClient.generatedRequestIDs.isEmpty)
 
-        await workerClient.emitToken(requestID: "req-python-text-session", text: "local answer")
-        await workerClient.finish(requestID: "req-python-text-session")
+        await textWorkerClient.emitToken(requestID: "req-python-text-session", text: "local answer")
+        await textWorkerClient.finishDecode(requestID: "req-python-text-session", assistantText: "local answer")
         let events = try await consumer.value
         let progress = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
@@ -1016,9 +1845,10 @@ struct RequestCoordinatorTests {
         #expect(progress?.phase == .requestCompleted)
     }
 
-    @Test("text-backed Gemma 4 VLM follow-ups use generate instead of phase-aware prefill")
-    func textBackedGemma4VLMFollowUpsUseGenerateInsteadOfPhaseAwarePrefill() async throws {
-        let workerClient = PhaseAwareWorkerClient()
+    @Test("structured Gemma 4 VLM text follow-ups use phase-aware text companion routing")
+    func structuredGemma4VLMTextFollowUpsUsePhaseAwareTextCompanionRouting() async throws {
+        let textWorkerClient = PhaseAwareWorkerClient()
+        let legacyVLMClient = BlockingWorkerClient()
         let sessionGraphStore = SessionGraphStore(nowUnixMs: { 9_000 })
         _ = await sessionGraphStore.recordRequestStart(
             sessionID: "session-gemma4-text",
@@ -1043,11 +1873,16 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "\(model.modelID)::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
-                defaultTextClient: BlockingWorkerClient(),
-                visionClient: workerClient,
-                pythonCompatibilityClient: workerClient,
+                defaultTextClient: textWorkerClient,
+                visionClient: legacyVLMClient,
+                pythonCompatibilityClient: legacyVLMClient,
                 modelCatalog: catalog
             ),
             abortRegistry: AbortRegistry(),
@@ -1074,34 +1909,34 @@ struct RequestCoordinatorTests {
             return events
         }
 
-        for _ in 0..<100 {
-            if await workerClient.generatedRequestIDs.isEmpty == false {
-                break
-            }
-            if await workerClient.lastPrefillRequest() != nil {
-                break
-            }
-            try? await Task.sleep(nanoseconds: 10_000_000)
+        let prefillRequest = await waitForPrefillRequest(workerClient: textWorkerClient)
+        let decodeRequest = await waitForDecodeRequest(workerClient: textWorkerClient)
+        guard prefillRequest != nil, decodeRequest != nil else {
+            #expect(prefillRequest != nil)
+            #expect(decodeRequest != nil)
+            #expect(try await coordinator.cancel(requestID: "req-gemma4-text-follow-up"))
+            _ = await consumer.result
+            return
         }
-        #expect(await workerClient.lastPrefillRequest() == nil)
-        #expect(await workerClient.lastDecodeRequest() == nil)
-        #expect(await workerClient.generatedRequestIDs == ["req-gemma4-text-follow-up"])
+        #expect(prefillRequest?.execution.id.requestID == "req-gemma4-text-follow-up")
+        #expect(decodeRequest?.execution.id.requestID == "req-gemma4-text-follow-up")
+        #expect(await textWorkerClient.generatedRequestIDs.isEmpty)
+        #expect(await legacyVLMClient.generatedRequestIDs.isEmpty)
 
-        if await workerClient.generatedRequestIDs.isEmpty == false {
-            await workerClient.emitToken(requestID: "req-gemma4-text-follow-up", text: "text-backed")
-            await workerClient.finish(requestID: "req-gemma4-text-follow-up")
-        } else {
-            await workerClient.emitDecodeStarted(
-                requestID: "req-gemma4-text-follow-up",
-                decodeHandle: "decode-req-gemma4-text-follow-up"
-            )
-            await workerClient.finishDecode(requestID: "req-gemma4-text-follow-up")
-        }
+        await textWorkerClient.emitDecodeStarted(
+            requestID: "req-gemma4-text-follow-up",
+            decodeHandle: decodeRequest?.decodeHandle ?? "decode-req-gemma4-text-follow-up"
+        )
+        await textWorkerClient.emitToken(requestID: "req-gemma4-text-follow-up", text: "text-backed")
+        await textWorkerClient.finishDecode(
+            requestID: "req-gemma4-text-follow-up",
+            assistantText: "text-backed"
+        )
         _ = try await consumer.value
     }
 
-    @Test("VLM generic generate does not block dispatch on cache observability refresh")
-    func vlmGenericGenerateDoesNotBlockDispatchOnCacheObservabilityRefresh() async throws {
+    @Test("structured VLM text companion generate does not block on cache observability refresh")
+    func structuredVLMTextCompanionGenerateDoesNotBlockOnCacheObservabilityRefresh() async throws {
         let workerClient = PhaseAwareWorkerClient()
         var model = ModelCatalog.devVLMModel()
         model.modelID = "melix-vlm-observability"
@@ -1111,10 +1946,15 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "\(model.modelID)::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let metricsStore = MetricsStore()
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
-                defaultTextClient: BlockingWorkerClient(),
+                defaultTextClient: workerClient,
                 visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
@@ -1153,11 +1993,17 @@ struct RequestCoordinatorTests {
         await workerClient.finish(requestID: "req-vlm-observability")
         _ = try await consumer.value
 
-        #expect(await workerClient.runtimeStatsCallCount == 2)
+        for _ in 0..<100 {
+            if await workerClient.cacheStatsCallCount > 0 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(await workerClient.runtimeStatsCallCount == 1)
         #expect(await workerClient.cacheStatsCallCount == 1)
         let metrics = await metricsStore.snapshot()
         #expect(metrics.values["cache.memory_bytes"] == 0)
-        #expect(metrics.values["python_worker.generation_stream_owner_mode_code"] == 0)
+        #expect(metrics.values["python_worker.generation_stream_owner_mode_code"] == nil)
     }
 
     @Test("warm VLM requests reuse recent worker dispatch readiness")
@@ -1171,10 +2017,15 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.execution_mode"] = "text_backed"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: model.modelID, dispatchHandle: "\(model.modelID)::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let metricsStore = MetricsStore()
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
-                defaultTextClient: BlockingWorkerClient(),
+                defaultTextClient: workerClient,
                 visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
@@ -1194,6 +2045,8 @@ struct RequestCoordinatorTests {
         let firstConsumer = Task {
             for try await _ in first.stream {}
         }
+        defer { firstConsumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-vlm-dispatch-cache-1")
         await workerClient.emitToken(requestID: "req-vlm-dispatch-cache-1", text: "one")
         await workerClient.finish(requestID: "req-vlm-dispatch-cache-1")
         _ = await firstConsumer.result
@@ -1208,6 +2061,8 @@ struct RequestCoordinatorTests {
         let secondConsumer = Task {
             for try await _ in second.stream {}
         }
+        defer { secondConsumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-vlm-dispatch-cache-2")
         await workerClient.emitToken(requestID: "req-vlm-dispatch-cache-2", text: "two")
         await workerClient.finish(requestID: "req-vlm-dispatch-cache-2")
         _ = await secondConsumer.result
@@ -1222,6 +2077,11 @@ struct RequestCoordinatorTests {
         let workerClient = BlockingWorkerClient()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::swift-vision")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-vlm",
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
@@ -1290,6 +2150,8 @@ struct RequestCoordinatorTests {
         let consumer = Task {
             for try await _ in execution.stream {}
         }
+        defer { consumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-text-under-load")
         await workerClient.emitToken(requestID: "req-text-under-load", text: "Hello")
         await workerClient.finish(requestID: "req-text-under-load")
         _ = try await consumer.value
@@ -1570,8 +2432,8 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 0)
     }
 
-    @Test("text-only cooperative python VLM requests can enter multimodal continuous batch admission")
-    func textOnlyCooperativePythonVLMRequestsCanEnterMultimodalContinuousBatchAdmission() async throws {
+    @Test("structured VLM text companions ignore legacy cooperative Python batching hints")
+    func structuredVLMTextCompanionsIgnoreLegacyCooperativePythonBatchingHints() async throws {
         let workerClient = PhaseAwareWorkerClient()
         let schedulerReadModel = SchedulerReadModel()
         let metricsStore = MetricsStore()
@@ -1580,9 +2442,14 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.text_only_step_cooperative"] = "true"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
-                defaultTextClient: BlockingWorkerClient(),
+                defaultTextClient: workerClient,
                 visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
@@ -1615,48 +2482,24 @@ struct RequestCoordinatorTests {
             }
         }
 
-        let execution2 = try await coordinator.startChatCompletion(
-            makeTranslatedChatRequest(
-                requestID: "req-vlm-text-batch-2",
-                modelID: "melix-dev-vlm",
-                messages: [makeWorkerTextMessage("Explain cooperative VLM batching.")],
-                executionExt: [
-                    "melix.gateway.concurrent_processing": "true",
-                    "melix.gateway.max_concurrent_sequences": "2",
-                    "melix.gateway.prefill_batch_size": "2",
-                    "melix.gateway.completion_batch_size": "2",
-                    "melix.vlm.text_only_step_cooperative": "true",
-                ]
-            )
-        )
-        let consumer2 = Task {
-            do {
-                for try await _ in execution2.stream {
-                }
-            } catch {
-            }
-        }
-
         let generatedIDs = await waitForGeneratedRequests(
             workerClient: workerClient,
-            requestIDs: ["req-vlm-text-batch-1", "req-vlm-text-batch-2"]
+            requestIDs: ["req-vlm-text-batch-1"]
         )
         let metrics = await metricsStore.snapshot()
 
-        #expect(Set(generatedIDs).isSuperset(of: ["req-vlm-text-batch-1", "req-vlm-text-batch-2"]))
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity", default: -1] == 2)
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity", default: -1] == 2)
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled", default: -1] == 1)
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 0)
+        #expect(generatedIDs.contains("req-vlm-text-batch-1"))
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity"] == nil)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity"] == nil)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled"] == nil)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code"] == nil)
 
         #expect(try await coordinator.cancel(requestID: "req-vlm-text-batch-1"))
-        #expect(try await coordinator.cancel(requestID: "req-vlm-text-batch-2"))
         _ = await consumer1.result
-        _ = await consumer2.result
     }
 
-    @Test("text-only Python VLM batch-generator requests can enter multimodal continuous-batch admission")
-    func textOnlyPythonVLMBatchGeneratorRequestsCanEnterMultimodalContinuousBatchAdmission() async throws {
+    @Test("structured VLM text companions ignore legacy Python batch-generator hints")
+    func structuredVLMTextCompanionsIgnoreLegacyPythonBatchGeneratorHints() async throws {
         let workerClient = PhaseAwareWorkerClient()
         let metricsStore = MetricsStore()
         var model = ModelCatalog.devVLMModel()
@@ -1664,9 +2507,14 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
-                defaultTextClient: BlockingWorkerClient(),
+                defaultTextClient: workerClient,
                 visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
@@ -1698,48 +2546,24 @@ struct RequestCoordinatorTests {
             }
         }
 
-        let execution2 = try await coordinator.startChatCompletion(
-            makeTranslatedChatRequest(
-                requestID: "req-vlm-bg-batch-2",
-                modelID: "melix-dev-vlm",
-                messages: [makeWorkerTextMessage("Explain batch generator VLM batching.")],
-                executionExt: [
-                    "melix.gateway.concurrent_processing": "true",
-                    "melix.gateway.max_concurrent_sequences": "2",
-                    "melix.gateway.prefill_batch_size": "2",
-                    "melix.gateway.completion_batch_size": "2",
-                    "melix.vlm.text_only_batch_generator": "true",
-                ]
-            )
-        )
-        let consumer2 = Task {
-            do {
-                for try await _ in execution2.stream {
-                }
-            } catch {
-            }
-        }
-
         let generatedIDs = await waitForGeneratedRequests(
             workerClient: workerClient,
-            requestIDs: ["req-vlm-bg-batch-1", "req-vlm-bg-batch-2"]
+            requestIDs: ["req-vlm-bg-batch-1"]
         )
         let metrics = await metricsStore.snapshot()
 
-        #expect(Set(generatedIDs).isSuperset(of: ["req-vlm-bg-batch-1", "req-vlm-bg-batch-2"]))
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity", default: -1] == 2)
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity", default: -1] == 2)
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled", default: -1] == 1)
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 0)
+        #expect(generatedIDs.contains("req-vlm-bg-batch-1"))
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity"] == nil)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity"] == nil)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled"] == nil)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code"] == nil)
 
         #expect(try await coordinator.cancel(requestID: "req-vlm-bg-batch-1"))
-        #expect(try await coordinator.cancel(requestID: "req-vlm-bg-batch-2"))
         _ = await consumer1.result
-        _ = await consumer2.result
     }
 
-    @Test("python VLM requests with media do not use cooperative text batching")
-    func pythonVLMRequestsWithMediaDoNotUseCooperativeTextBatching() async throws {
+    @Test("structured vision routes with media do not use cooperative Python text batching")
+    func structuredVisionRoutesWithMediaDoNotUseCooperativePythonTextBatching() async throws {
         let workerClient = PhaseAwareWorkerClient()
         let metricsStore = MetricsStore()
         var model = ModelCatalog.devVLMModel()
@@ -1747,6 +2571,11 @@ struct RequestCoordinatorTests {
         model.settings.ext["melix.vlm.text_only_step_cooperative"] = "true"
         let catalog = ModelCatalog(seedModels: [model])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: model.modelID,
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
@@ -1780,41 +2609,25 @@ struct RequestCoordinatorTests {
             } catch {
             }
         }
-        let generatedIDs = await waitForGeneratedRequests(
+        let decodeRequestIDs = await waitForDecodeRequests(
             workerClient: workerClient,
             requestIDs: ["req-vlm-image-not-batchable"]
         )
         let metrics = await metricsStore.snapshot()
 
-        #expect(generatedIDs == ["req-vlm-image-not-batchable"])
+        #expect(decodeRequestIDs == ["req-vlm-image-not-batchable"])
         #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity", default: -1] == 2)
         #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity", default: -1] == 1)
         #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled", default: -1] == 0)
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 2)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 0)
 
         #expect(try await coordinator.cancel(requestID: "req-vlm-image-not-batchable"))
         _ = await consumer.result
     }
 
-    @Test("python speech requests publish speech streaming metrics")
-    func pythonSpeechRequestsPublishSpeechStreamingMetrics() async throws {
+    @Test("chat completions reject speech-only structured routes before dispatch")
+    func chatCompletionsRejectSpeechOnlyStructuredRoutesBeforeDispatch() async throws {
         let workerClient = PhaseAwareWorkerClient()
-        await workerClient.setRuntimeStatsResponse({
-            var response = Melix_Worker_V1_GetRuntimeStatsResponse()
-            response.stats.lastProbeKind = "speech"
-            response.stats.lastSpeechLatencyMs = 18
-            response.stats.lastAudioOutputBytes = 4096
-            response.stats.lastAudioChunkCount = 4
-            response.stats.lastAudioModelLoadLatencyMs = 7
-            response.stats.lastAudioBackendUnavailableCount = 1
-            response.stats.lastVoiceFallbackCount = 2
-            response.stats.lastSpeechStreamingEnabled = true
-            response.stats.lastSpeechStreamingIntervalMs = 25
-            response.stats.lastSpeechFirstAudioLatencyMs = 3
-            return response
-        }())
-        let schedulerReadModel = SchedulerReadModel()
-        let metricsStore = MetricsStore()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devSpeechModel()])
         _ = await catalog.loadModel(id: "melix-dev-speech", dispatchHandle: "melix-dev-speech::python")
         let coordinator = RequestCoordinator(
@@ -1824,33 +2637,15 @@ struct RequestCoordinatorTests {
                 modelCatalog: catalog
             ),
             abortRegistry: AbortRegistry(),
-            schedulerReadModel: schedulerReadModel,
-            metricsStore: metricsStore
+            modelCatalog: catalog
         )
 
-        let execution = try await coordinator.startChatCompletion(
-            makeTranslatedChatRequest(requestID: "req-speech-metrics", modelID: "melix-dev-speech")
-        )
-        let consumer = Task {
-            for try await _ in execution.stream {}
+        await #expect(throws: RequestCoordinatorError.self) {
+            _ = try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(requestID: "req-speech-chat", modelID: "melix-dev-speech")
+            )
         }
-        await workerClient.emitToken(requestID: "req-speech-metrics", text: "speech")
-        await workerClient.finish(requestID: "req-speech-metrics")
-        _ = try await consumer.value
-
-        let metrics = await metricsStore.snapshot()
-        let progress = await schedulerReadModel.progressSnapshot(for: "req-speech-metrics")
-
-        #expect(progress?.lane == "multimodal.audio.speech.background")
-        #expect(metrics.values["audio.speech_latency_ms", default: -1] == 18)
-        #expect(metrics.values["audio.model_load_latency_ms", default: -1] == 7)
-        #expect(metrics.values["audio.backend_unavailable_count", default: -1] == 1)
-        #expect(metrics.values["audio.voice_fallback_count", default: -1] == 2)
-        #expect(metrics.values["audio.speech_streaming_enabled", default: -1] == 1)
-        #expect(metrics.values["audio.speech_streaming_interval_ms", default: -1] == 25)
-        #expect(metrics.values["audio.speech_first_audio_latency_ms", default: -1] == 3)
-        #expect(metrics.values["audio.speech_output_bytes", default: -1] == 4096)
-        #expect(metrics.values["audio.speech_stream_chunk_count", default: -1] == 4)
+        #expect(await workerClient.generatedRequestIDs.isEmpty)
     }
 
     @Test("video-bearing vlm requests publish explicit frame-policy metrics on background lanes")
@@ -1907,6 +2702,8 @@ struct RequestCoordinatorTests {
         let consumer = Task {
             for try await _ in execution.stream {}
         }
+        defer { consumer.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-vlm-video-metrics")
         await workerClient.emitToken(requestID: "req-vlm-video-metrics", text: "video")
         await workerClient.finish(requestID: "req-vlm-video-metrics")
         _ = try await consumer.value
@@ -2162,6 +2959,8 @@ struct RequestCoordinatorTests {
             for try await _ in parentExecution.stream {
             }
         }
+        defer { parentCollector.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-continuity-parent")
         await workerClient.emitToken(requestID: "req-continuity-parent", text: "visible answer")
         await workerClient.finishDecode(
             requestID: "req-continuity-parent",
@@ -2347,6 +3146,8 @@ struct RequestCoordinatorTests {
             for try await _ in execution.stream {
             }
         }
+        defer { collector.cancel() }
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-parser-metrics")
         await workerClient.finishDecode(
             requestID: "req-parser-metrics",
             assistantText: "visible",
@@ -3017,6 +3818,7 @@ struct RequestCoordinatorTests {
         #expect(computedWaitAttemptsMultiplier(environment: ["CI": "true"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "true"]) == 4)
         #expect(computedWaitAttemptsMultiplier(environment: ["GITHUB_ACTIONS": "1"]) == 4)
+        #expect(ciScaledWaitDuration(milliseconds: 500, environment: ["CI": "true"]) == .seconds(2))
     }
 
     @Test("CI_WAIT_MULTIPLIER overrides the default when set within range")
@@ -3168,7 +3970,7 @@ struct RequestCoordinatorTests {
             requestID: "req-long-text-prefill-window",
             phase: .requestPrefilling,
             lane: "text.prefill.background",
-            attempts: 50,
+            attempts: 300,
             matching: { $0.prefillProcessedTokens == 32_768 }
         ))
         await workerClient.emitDecodeStarted(
@@ -3976,6 +4778,7 @@ struct RequestCoordinatorTests {
         }
         defer { prefillConsumer.cancel() }
 
+        try await requireRequestStreamRegistration(prefillWorker, requestID: "req-prefill-abort")
         await prefillWorker.emitPrefillStarted(requestID: "req-prefill-abort")
         _ = try #require(await waitForDecodeRequest(workerClient: prefillWorker))
         let prefillCancelled = try await prefillCoordinator.cancel(requestID: "req-prefill-abort")
@@ -4055,6 +4858,7 @@ struct RequestCoordinatorTests {
         }
         defer { consumer.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-phase-metadata")
         await workerClient.emitPrefillStarted(
             requestID: "req-phase-metadata",
             accelerationMode: .acceleratedPrefill
@@ -4154,6 +4958,7 @@ struct RequestCoordinatorTests {
         }
         defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-first-token-fast-delivery")
         await workerClient.emitToken(requestID: "req-first-token-fast-delivery", text: "fast")
         let deliveredBeforeProgressPublisherFinished = await waitForRecordedWorkerEvent(
             streamRecorder,
@@ -4233,6 +5038,7 @@ struct RequestCoordinatorTests {
         }
         defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-follow-up-token-fast-delivery")
         await workerClient.emitToken(requestID: "req-follow-up-token-fast-delivery", text: "first")
         _ = await waitForRecordedWorkerEvent(
             streamRecorder,
@@ -4298,6 +5104,7 @@ struct RequestCoordinatorTests {
         }
         defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-follow-up-token-progress")
         await workerClient.emitToken(requestID: "req-follow-up-token-progress", text: "first")
         await workerClient.emitToken(requestID: "req-follow-up-token-progress", text: "second")
         await workerClient.finishDecode(requestID: "req-follow-up-token-progress")
@@ -4341,6 +5148,7 @@ struct RequestCoordinatorTests {
         }
         defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-decode-start-progress")
         await workerClient.emitDecodeStarted(
             requestID: "req-decode-start-progress",
             decodeHandle: "decode-req-decode-start-progress"
@@ -4434,7 +5242,9 @@ struct RequestCoordinatorTests {
             }
             return events
         }
+        defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-reasoning-budget")
         await workerClient.emitPrefillStarted(requestID: "req-reasoning-budget")
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitDecodeStarted(
@@ -4508,7 +5318,9 @@ struct RequestCoordinatorTests {
             }
             return events
         }
+        defer { collector.cancel() }
 
+        try await requireRequestStreamRegistration(workerClient, requestID: "req-reasoning-completed")
         await workerClient.emitPrefillStarted(requestID: "req-reasoning-completed")
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         await workerClient.emitDecodeStarted(
@@ -4545,6 +5357,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
         textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -4592,6 +5409,35 @@ struct RequestCoordinatorTests {
         #expect(prefillRequest.execution.ext["melix.acceleration.valid_draft_model_ids"] == "melix-dev-text")
         #expect(prefillRequest.execution.ext["melix.acceleration.profile.profile_admission_status"] == "admitted")
         #expect(prefillRequest.execution.ext["melix.acceleration.profile.proof_matrix_id"] == "profile-proof-throughput-v1")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.schema_version"] == "melix.serving_capability_receipt.v1")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.capabilities"] == "generate_text")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.input_modalities"] == "text")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.output_modalities"] == "text")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.acceleration_profile"] == "throughput")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.requested_mode"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.resolved_mode"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.optional_dependency_source"] == "not_required")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.unsupported_reason"] == "none")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.ignored_flags"] == "")
+        #expect(prefillRequest.execution.ext["melix.serving.capability.fallback_policy"] == "observable_fallback")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.schema_version"] == "melix.resolved_acceleration_config.v1")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.method"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.requested_method"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.sidecar_model"] == "melix-dev-text")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.num_speculative_tokens"] == "7")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.profile"] == "throughput")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.conflicting_flags"] == "")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.controller_scope"] == "request")
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.disabled_reason"] == "none")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.schema_version"] == "melix.serving_memory_admission.v1")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.requested_context"] == "8192")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_context"] == "8192")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.requested_batch"] == "2")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_batch"] == "2")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_headroom_bytes"] == "0")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "unknown")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.admission_reason"] == "unknown_memory_safe_default")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.fits_memory"] == "true")
 
         await workerClient.emitDecodeStarted(
             requestID: "req-gateway-speculative-defaults",
@@ -4630,6 +5476,496 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("gateway feature composition guardrail caps disk-backed speculative fan-out")
+    func gatewayFeatureCompositionGuardrailCapsDiskBackedSpeculativeFanOut() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .unspecified
+        textModel.settings.diskStreamingMode = .diskStreamingRequireDisk
+        textModel.settings.cacheMemoryBudgetBytes = 8_192
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-text"
+        textModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        textModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-gateway-feature-guardrail",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.acceleration_mode": "speculative_decode",
+                    "melix.gateway.acceleration_profile": "throughput",
+                    "melix.gateway.draft_model_id": "melix-dev-text",
+                    "melix.gateway.num_draft_tokens": "7",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(prefillRequest.execution.acceleration.numDraftTokens == 1)
+        #expect(decodeRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(decodeRequest.execution.acceleration.numDraftTokens == 1)
+        #expect(prefillRequest.execution.ext["melix.serving.acceleration_config.num_speculative_tokens"] == "1")
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.schema_version"]
+                == "melix.feature_composition_guardrail.v1"
+        )
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.composition"]
+                == "ssd_expert_streaming_x_speculative_decode"
+        )
+        #expect(prefillRequest.execution.ext["melix.acceleration.feature_guardrail.decision"] == "auto_cap_draft_tokens")
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.requested_num_draft_tokens"] == "7"
+        )
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.effective_num_draft_tokens"] == "1"
+        )
+        #expect(prefillRequest.execution.ext["melix.acceleration.feature_guardrail.resource_fanout_estimate"] == "2")
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.requested_cache_budget_bytes"] == "8192"
+        )
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.effective_cache_budget_bytes"] == "8192"
+        )
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.guardrail_reason"]
+                == "disk_streaming_speculative_fanout_cap"
+        )
+
+        await workerClient.finish(requestID: "req-gateway-feature-guardrail")
+        _ = await consumer.result
+    }
+
+    @Test("gateway feature composition guardrail applies tightened cache budget to worker requests")
+    func gatewayFeatureCompositionGuardrailAppliesTightenedCacheBudgetToWorkerRequests() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let schedulerReadModel = SchedulerReadModel()
+        let metricsStore = MetricsStore()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .unspecified
+        textModel.settings.diskStreamingMode = .diskStreamingRequireDisk
+        textModel.settings.memoryBudgetBytes = 10_000
+        textModel.settings.cacheMemoryBudgetBytes = 4_096
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-text"
+        textModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        textModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        textModel.settings.ext["melix.acceleration.feature_guardrail.draft_weight_bytes"] = "6000"
+        textModel.settings.ext["melix.acceleration.feature_guardrail.memory_threshold_bytes"] = "12000"
+        textModel.settings.ext["melix.acceleration.feature_guardrail.min_cache_budget_bytes"] = "1024"
+        textModel.settings.ext["melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes"] = "1024"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore,
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-gateway-feature-guardrail-budget",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.acceleration_mode": "speculative_decode",
+                    "melix.gateway.acceleration_profile": "throughput",
+                    "melix.gateway.draft_model_id": "melix-dev-text",
+                    "melix.gateway.num_draft_tokens": "7",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(prefillRequest.execution.acceleration.numDraftTokens == 1)
+        #expect(prefillRequest.execution.cacheHints.cacheMemoryBudgetBytes == 2_048)
+        #expect(decodeRequest.execution.acceleration.mode == .speculativeDecode)
+        #expect(decodeRequest.execution.acceleration.numDraftTokens == 1)
+        #expect(decodeRequest.execution.cacheHints.cacheMemoryBudgetBytes == 2_048)
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.decision"]
+                == "auto_cap_draft_tokens_and_tighten_cache_budget"
+        )
+        #expect(
+            prefillRequest.execution.ext["melix.acceleration.feature_guardrail.effective_cache_budget_bytes"] == "2048"
+        )
+
+        await workerClient.finish(requestID: "req-gateway-feature-guardrail-budget")
+        _ = await consumer.result
+    }
+
+    @Test("serving memory admission uses gateway max concurrent sequences")
+    func servingMemoryAdmissionUsesGatewayMaxConcurrentSequences() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-text",
+            routeKind: .swiftText
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: MetricsStore(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-sequences",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "3",
+                    "melix.gateway.prefill_batch_size": "4",
+                    "melix.gateway.completion_batch_size": "5",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.requested_batch"] == "3")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_batch"] == "3")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-sequences",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-sequences", text: "batch")
+        await workerClient.finishDecode(requestID: "req-memory-admission-sequences")
+        _ = await consumer.result
+    }
+
+    @Test("serving memory admission uses single batch when concurrent processing is disabled")
+    func servingMemoryAdmissionUsesSingleBatchWhenConcurrentProcessingIsDisabled() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-text",
+            routeKind: .swiftText
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: MetricsStore(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-concurrency-disabled",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "false",
+                    "melix.gateway.max_concurrent_sequences": "5",
+                    "melix.gateway.prefill_batch_size": "5",
+                    "melix.gateway.completion_batch_size": "5",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.requested_batch"] == "1")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_batch"] == "1")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-concurrency-disabled",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-concurrency-disabled", text: "batch")
+        await workerClient.finishDecode(requestID: "req-memory-admission-concurrency-disabled")
+        _ = await consumer.result
+    }
+
+    @Test("serving memory admission ignores memory audit namespace as context input")
+    func servingMemoryAdmissionIgnoresMemoryAuditNamespaceAsContextInput() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.maxContext = 131_072
+        let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: MetricsStore(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-audit-context-ignored",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.serving.memory_admission.requested_context": "32768",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.requested_context"] == "131072")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_context"] == "8192")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-audit-context-ignored",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-audit-context-ignored", text: "context")
+        await workerClient.finishDecode(requestID: "req-memory-admission-audit-context-ignored")
+        _ = await consumer.result
+    }
+
+    @Test("serving memory admission treats zero detected memory metadata as telemetry")
+    func servingMemoryAdmissionTreatsZeroDetectedMemoryMetadataAsTelemetry() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.maxContext = 131_072
+        textModel.settings.memoryBudgetBytes = 1_073_741_824
+        textModel.settings.ext["melix.serving.memory.available_bytes"] = "0"
+        textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: SchedulerReadModel(),
+            metricsStore: MetricsStore(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-zero-detected-memory",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "4",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.admission_reason"] == "insufficient_memory")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_context"] == "2048")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_batch"] == "1")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.fits_memory"] == "false")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-zero-detected-memory",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-zero-detected-memory", text: "memory")
+        await workerClient.finishDecode(requestID: "req-memory-admission-zero-detected-memory")
+        _ = await consumer.result
+    }
+
+    @Test("serving memory admission uses injected device memory when model metadata is absent")
+    func servingMemoryAdmissionUsesInjectedDeviceMemoryWhenModelMetadataIsAbsent() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.maxContext = 131_072
+        textModel.settings.memoryBudgetBytes = 1_073_741_824
+        textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog,
+            servingMemoryBytesProvider: { 4_294_967_296 }
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-injected-device-memory",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "4",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_headroom_bytes"] == "2147483648")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.admission_reason"] == "memory_step_down")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_context"] == "4096")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_batch"] == "1")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-injected-device-memory",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-injected-device-memory", text: "memory")
+        await workerClient.finishDecode(requestID: "req-memory-admission-injected-device-memory")
+        _ = await consumer.result
+    }
+
+    @Test("serving memory admission prefers explicit model memory metadata over injected device memory")
+    func servingMemoryAdmissionPrefersExplicitModelMemoryMetadataOverInjectedDeviceMemory() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.maxContext = 131_072
+        textModel.settings.memoryBudgetBytes = 1_073_741_824
+        textModel.settings.ext["melix.serving.memory.available_bytes"] = "0"
+        textModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog,
+            servingMemoryBytesProvider: { 17_179_869_184 }
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-memory-admission-metadata-precedence",
+                saveBoundarySnapshot: true,
+                executionExt: [
+                    "melix.gateway.concurrent_processing": "true",
+                    "melix.gateway.max_concurrent_sequences": "4",
+                ]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.admission_reason"] == "insufficient_memory")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.effective_context"] == "2048")
+        #expect(prefillRequest.execution.ext["melix.serving.memory_admission.fits_memory"] == "false")
+
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-memory-admission-metadata-precedence",
+            decodeHandle: decodeRequest.decodeHandle
+        )
+        await workerClient.emitToken(requestID: "req-memory-admission-metadata-precedence", text: "memory")
+        await workerClient.finishDecode(requestID: "req-memory-admission-metadata-precedence")
+        _ = await consumer.result
+    }
+
     @Test("unsupported speculative draft is rejected before worker dispatch")
     func unsupportedSpeculativeDraftIsRejectedBeforeWorkerDispatch() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -4638,6 +5974,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
         textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -4676,6 +6017,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
         textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-text"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -4714,6 +6060,11 @@ struct RequestCoordinatorTests {
         textModel.settings.defaultAccelerationMode = .baseline
         textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -4748,6 +6099,11 @@ struct RequestCoordinatorTests {
     func modelAccelerationDefaultsOverrideGatewaySpeculativeExecutionDefaults() async throws {
         let workerClient = PhaseAwareWorkerClient()
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: "melix-dev-text",
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -4837,6 +6193,16 @@ struct RequestCoordinatorTests {
         var vlmModel = ModelCatalog.devVLMModel()
         vlmModel.state = .modelWarm
         let catalog = ModelCatalog(seedModels: [vlmModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftText
+        )
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: workerClient,
@@ -4905,8 +6271,18 @@ struct RequestCoordinatorTests {
             let workerClient = PhaseAwareWorkerClient()
             var vlmModel = nativeSpeculativeVLMModel()
             vlmModel.state = .modelWarm
-            let catalog = ModelCatalog(seedModels: [vlmModel])
-            let coordinator = RequestCoordinator(
+        let catalog = ModelCatalog(seedModels: [vlmModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftText
+        )
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftVision
+        )
+        let coordinator = RequestCoordinator(
                 workerRegistry: WorkerRegistry(
                     defaultTextClient: workerClient,
                     visionClient: workerClient,
@@ -5001,6 +6377,16 @@ struct RequestCoordinatorTests {
         var vlmModel = nativeSpeculativeVLMModel()
         vlmModel.state = .modelWarm
         let catalog = ModelCatalog(seedModels: [vlmModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftText
+        )
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: vlmModel.modelID,
+            routeKind: .swiftVision
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: workerClient,
@@ -5100,6 +6486,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-active-kv-v1"
         textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5140,6 +6531,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-active-kv-v1"
         textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5180,6 +6576,11 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-active-kv-v1"
         textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
+        await bindBackendRouteForCoordinatorTest(
+            catalog,
+            modelID: textModel.modelID,
+            routeKind: .swiftText
+        )
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
             abortRegistry: AbortRegistry(),
@@ -5208,6 +6609,16 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+}
+
+private func requireRequestStreamRegistration(
+    _ workerClient: PhaseAwareWorkerClient,
+    requestID: String
+) async throws {
+    try #require(
+        await workerClient.waitForRequestStream(requestID: requestID),
+        "Phase-aware worker stream did not register before the readiness deadline."
+    )
 }
 
 private func waitForFileContents(
@@ -5650,7 +7061,14 @@ private actor PhaseAwareWorkerClient:
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol
 {
+    private struct RequestStreamRegistrationWaiter {
+        let continuation: CheckedContinuation<Bool, Never>
+        let timeoutTask: Task<Void, Never>
+    }
+
     private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
+    private var requestStreamRegistrationWaiters: [String: [UUID: RequestStreamRegistrationWaiter]] = [:]
+    private var requestStreamWaiterInstalledWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     private var prefillRequests: [Melix_Worker_V1_PrefillRequest] = []
     private var decodeRequests: [Melix_Worker_V1_DecodeRequest] = []
     private(set) var abortedRequestIDs: [String] = []
@@ -5682,7 +7100,7 @@ private actor PhaseAwareWorkerClient:
         generatedRequests.append(request)
         let requestID = request.execution.id.requestID
         return AsyncThrowingStream { continuation in
-            continuations[requestID] = continuation
+            registerRequestStream(continuation, requestID: requestID)
         }
     }
 
@@ -5768,8 +7186,75 @@ private actor PhaseAwareWorkerClient:
         decodeRequests.append(request)
         let requestID = request.execution.id.requestID
         return AsyncThrowingStream { continuation in
-            continuations[requestID] = continuation
+            registerRequestStream(continuation, requestID: requestID)
         }
+    }
+
+    func waitForRequestStream(
+        requestID: String,
+        timeout: Duration = ciScaledWaitDuration(milliseconds: 1_000)
+    ) async -> Bool {
+        if continuations[requestID] != nil {
+            return true
+        }
+
+        let waiterID = UUID()
+        return await withCheckedContinuation { continuation in
+            let timeoutTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    // Registration cancels the deadline task before resuming the waiter.
+                }
+                await self?.expireRequestStreamWaiter(
+                    requestID: requestID,
+                    waiterID: waiterID
+                )
+            }
+            requestStreamRegistrationWaiters[requestID, default: [:]][waiterID] = .init(
+                continuation: continuation,
+                timeoutTask: timeoutTask
+            )
+            let installedWaiters = requestStreamWaiterInstalledWaiters.removeValue(forKey: requestID) ?? []
+            installedWaiters.forEach { $0.resume() }
+        }
+    }
+
+    func waitUntilRequestStreamWaiterInstalled(requestID: String) async {
+        if requestStreamRegistrationWaiters[requestID]?.isEmpty == false {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            requestStreamWaiterInstalledWaiters[requestID, default: []].append(continuation)
+        }
+    }
+
+    func requestStreamWaiterCount(requestID: String) -> Int {
+        requestStreamRegistrationWaiters[requestID]?.count ?? 0
+    }
+
+    private func registerRequestStream(
+        _ continuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation,
+        requestID: String
+    ) {
+        continuations[requestID] = continuation
+        let waiters = requestStreamRegistrationWaiters.removeValue(forKey: requestID) ?? [:]
+        for waiter in waiters.values {
+            waiter.timeoutTask.cancel()
+            waiter.continuation.resume(returning: true)
+        }
+    }
+
+    private func expireRequestStreamWaiter(requestID: String, waiterID: UUID) {
+        guard var waiters = requestStreamRegistrationWaiters.removeValue(forKey: requestID),
+              let waiter = waiters.removeValue(forKey: waiterID)
+        else {
+            return
+        }
+        if !waiters.isEmpty {
+            requestStreamRegistrationWaiters[requestID] = waiters
+        }
+        waiter.continuation.resume(returning: false)
     }
 
     func abort(requestID: String) async throws -> Bool {
@@ -5979,6 +7464,20 @@ private actor PhaseAwareWorkerClient:
         payload.unixMs = 1
         event.heartbeat = payload
         continuation.yield(event)
+    }
+
+    func emitIdentityMismatchAndFinish(requestID: String) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "decode"
+        event.phase = .executionFailed
+        event.error.error.code = "model_identity_mismatch"
+        event.error.error.message = "stale phase-aware decode binding"
+        continuation.yield(event)
+        continuation.finish()
     }
 
     func finish(requestID: String) {
@@ -6418,6 +7917,293 @@ private enum TestWorkerFailure: Error, Equatable {
     case generateFailed
 }
 
+private actor BackendIdentityRecoveryWorkerClient:
+    WorkerRoutingClient,
+    BackendHealthIdentifyingWorkerClientProtocol
+{
+    enum Script: Sendable {
+        case streamFailureThenSuccess
+        case preResponseFailureThenSuccess(String)
+        case identityMismatchThenSuccess
+        case identityMismatchThenTrailingToken
+        case alwaysIdentityMismatch
+        case tokenThenIdentityMismatch
+        case identityMismatchThenLoadFailure
+        case streamFailureThenLoadFailure
+        case concurrentIdentityMismatchThenSuccess
+        case tokenThenFailure
+        case toolResultThenFailure
+        case admissionThenFailure
+        case alwaysStreamFailure
+        case emptyThenSuccess
+        case alwaysEmpty
+        case tokenThenEnd
+        case completedThenToken
+    }
+
+    private let script: Script
+    private(set) var generateCallCount = 0
+    private(set) var loadCallCount = 0
+    private(set) var requestedIdentities: [Melix_Worker_V1_BackendModelIdentity] = []
+    private(set) var loadedIdentities: [Melix_Worker_V1_BackendModelIdentity] = []
+    private let concurrentInitialGenerateGate = DelayedSchedulerEventGate()
+
+    init(script: Script) {
+        self.script = script
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerInstanceID = "backend-identity-recovery-worker"
+        return response
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        generateCallCount += 1
+        requestedIdentities.append(request.execution.backendIdentity)
+        let callIndex = generateCallCount
+        let script = self.script
+        if case .concurrentIdentityMismatchThenSuccess = script, callIndex <= 2 {
+            if callIndex == 2 {
+                await concurrentInitialGenerateGate.open()
+            }
+            await concurrentInitialGenerateGate.wait()
+        }
+        return AsyncThrowingStream { continuation in
+            switch script {
+            case .emptyThenSuccess where callIndex == 1,
+                 .alwaysEmpty:
+                continuation.finish()
+            case .streamFailureThenSuccess where callIndex == 1,
+                 .alwaysStreamFailure:
+                continuation.finish(throwing: WorkerClientError.requestFailed(
+                    code: "read_error",
+                    message: "scripted pre-response read failure"
+                ))
+            case .preResponseFailureThenSuccess(let code):
+                if callIndex == 1 {
+                    continuation.finish(throwing: WorkerClientError.requestFailed(
+                        code: code,
+                        message: "scripted pre-response \(code)"
+                    ))
+                } else {
+                    Self.yieldSuccess(
+                        requestID: request.execution.id.requestID,
+                        continuation: continuation
+                    )
+                }
+            case .identityMismatchThenSuccess:
+                if callIndex == 1 {
+                    continuation.yield(Self.identityMismatchEvent(request: request))
+                    continuation.finish()
+                } else {
+                    Self.yieldSuccess(
+                        requestID: request.execution.id.requestID,
+                        continuation: continuation
+                    )
+                }
+            case .identityMismatchThenTrailingToken:
+                if callIndex == 1 {
+                    continuation.yield(Self.identityMismatchEvent(request: request))
+                    continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
+                    continuation.finish()
+                } else {
+                    Self.yieldSuccess(
+                        requestID: request.execution.id.requestID,
+                        continuation: continuation
+                    )
+                }
+            case .alwaysIdentityMismatch,
+                 .identityMismatchThenLoadFailure:
+                continuation.yield(Self.identityMismatchEvent(request: request))
+                continuation.finish()
+            case .tokenThenIdentityMismatch:
+                continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
+                continuation.yield(Self.identityMismatchEvent(request: request))
+                continuation.finish()
+            case .streamFailureThenLoadFailure:
+                continuation.finish(throwing: WorkerClientError.requestFailed(
+                    code: "read_error",
+                    message: "scripted pre-response read failure"
+                ))
+            case .concurrentIdentityMismatchThenSuccess:
+                if callIndex <= 2 {
+                    continuation.yield(Self.identityMismatchEvent(request: request))
+                    continuation.finish()
+                } else {
+                    Self.yieldSuccess(
+                        requestID: request.execution.id.requestID,
+                        continuation: continuation
+                    )
+                }
+            case .tokenThenFailure:
+                continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
+                continuation.finish(throwing: WorkerClientError.unavailable)
+            case .toolResultThenFailure:
+                continuation.yield(Self.toolResultEvent(requestID: request.execution.id.requestID))
+                continuation.finish(throwing: WorkerClientError.unavailable)
+            case .admissionThenFailure:
+                continuation.yield(Self.admissionEvent(requestID: request.execution.id.requestID))
+                continuation.finish(throwing: WorkerClientError.unavailable)
+            case .tokenThenEnd:
+                continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
+                continuation.finish()
+            case .completedThenToken:
+                continuation.yield(Self.completedEvent(requestID: request.execution.id.requestID))
+                continuation.yield(Self.tokenEvent(requestID: request.execution.id.requestID))
+                continuation.finish()
+            case .emptyThenSuccess:
+                Self.yieldSuccess(
+                    requestID: request.execution.id.requestID,
+                    continuation: continuation
+                )
+            case .streamFailureThenSuccess:
+                Self.yieldSuccess(
+                    requestID: request.execution.id.requestID,
+                    continuation: continuation
+                )
+            }
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        loadCallCount += 1
+        loadedIdentities.append(request.backendIdentity)
+        switch script {
+        case .identityMismatchThenLoadFailure, .streamFailureThenLoadFailure:
+            throw WorkerClientError.unavailable
+        default:
+            break
+        }
+        if case .concurrentIdentityMismatchThenSuccess = script {
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "replacement-\(loadCallCount)"
+        return response
+    }
+
+    private static func yieldSuccess(
+        requestID: String,
+        continuation: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation
+    ) {
+        continuation.yield(tokenEvent(requestID: requestID))
+        continuation.yield(completedEvent(requestID: requestID))
+        continuation.finish()
+    }
+
+    private static func identityMismatchEvent(
+        request: Melix_Worker_V1_GenerateRequest
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = request.execution.id.requestID
+        event.executionKind = "generate"
+        event.phase = .executionFailed
+        event.error.error.code = "model_identity_mismatch"
+        event.error.error.message = "The reused endpoint loaded a different backend model."
+        event.error.error.backendIdentityMismatch.requestedModelID =
+            request.execution.backendIdentity.requestedModelID
+        event.error.error.backendIdentityMismatch.loadedModelID = "other-model-on-reused-endpoint"
+        event.error.error.backendIdentityMismatch.requestedAdapterID =
+            request.execution.backendIdentity.requestedAdapterID
+        event.error.error.backendIdentityMismatch.loadedAdapterID = ""
+        event.error.error.backendIdentityMismatch.requestedRouteGeneration =
+            request.execution.backendIdentity.routeGeneration
+        event.error.error.backendIdentityMismatch.loadedRouteGeneration = 1
+        event.error.error.backendIdentityMismatch.observedAtUnixMs = 123
+        event.error.error.backendIdentityMismatch.mismatchReason = "model_id"
+        return event
+    }
+
+    private static func tokenEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionDecoding
+        event.tokenDelta.text = "ok"
+        return event
+    }
+
+    private static func toolResultEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionDecoding
+        event.toolResultDelta.callID = "tool-call-1"
+        event.toolResultDelta.resultJson = #"{"ok":true}"#
+        return event
+    }
+
+    private static func admissionEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionPrefilling
+        event.admitted = Melix_Worker_V1_Admitted()
+        return event
+    }
+
+    private static func completedEvent(requestID: String) -> Melix_Worker_V1_ExecuteEvent {
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionCompleted
+        event.completed.assistantText = "ok"
+        event.completed.finishReason = "stop"
+        return event
+    }
+}
+
+private func bindBackendRouteForCoordinatorTest(
+    _ catalog: ModelCatalog,
+    modelID: String,
+    routeKind: WorkerRouteKind
+) async {
+    guard let reservation = await catalog.beginBackendRouteLoad(
+        id: modelID,
+        routeKind: routeKind,
+        workerInstanceID: "coordinator-test-worker",
+        reason: "test_fixture"
+    ) else {
+        Issue.record("Could not reserve backend route \(routeKind.rawValue) for \(modelID).")
+        return
+    }
+    guard await catalog.recordLoadSucceeded(
+        id: modelID,
+        dispatchHandle: "\(modelID)::\(routeKind.rawValue)",
+        reason: "test_fixture",
+        routeKind: routeKind,
+        expectedRouteGeneration: reservation.generation,
+        workerInstanceID: reservation.workerInstanceID
+    ) != nil else {
+        Issue.record("Could not bind backend route \(routeKind.rawValue) for \(modelID).")
+        return
+    }
+}
+
+private func recoveredCoordinatorEvents(
+    coordinator: RequestCoordinator,
+    requestID: String
+) async throws -> [Melix_Worker_V1_ExecuteEvent] {
+    let execution = try await coordinator.startChatCompletion(
+        makeTranslatedChatRequest(requestID: requestID)
+    )
+    return try await collectRequestCoordinatorEvents(execution.stream)
+}
+
 private func makeTranslatedChatRequest(
     requestID: String,
     modelID: String = "melix-dev-text",
@@ -6566,51 +8352,6 @@ private func makeCoordinatorTextModel(
     model.modelID = id
     model.state = state
     return model
-}
-
-/// Multiplier applied to polling-based wait helpers in this test file.
-///
-/// Local runs stay on the fast defaults; CI machines (GitHub-hosted macOS
-/// runners are slower and noisier than developer laptops) get a 4× budget so
-/// phase-transition polls can't race the scheduler under contention. The
-/// actual numerical default still passes locally in a few tens of ms — the
-/// multiplier only affects the *ceiling* before a timeout returns nil.
-///
-/// `CI_WAIT_MULTIPLIER` overrides the default when set to a positive integer
-/// within the accepted range, so future tuning doesn't require a code change.
-private let waitAttemptsMultiplier: Int = {
-    computedWaitAttemptsMultiplier(environment: ProcessInfo.processInfo.environment)
-}()
-
-private let defaultCIWaitMultiplier: Int = 4
-private let maximumCIWaitMultiplier: Int = 100
-
-private func computedWaitAttemptsMultiplier(environment: [String: String]) -> Int {
-    let ciActive = isTruthyEnvironmentFlag(environment["CI"])
-        || isTruthyEnvironmentFlag(environment["GITHUB_ACTIONS"])
-    guard ciActive else {
-        return 1
-    }
-    if let raw = environment["CI_WAIT_MULTIPLIER"]?
-        .trimmingCharacters(in: .whitespacesAndNewlines),
-       let parsed = Int(raw),
-       (1...maximumCIWaitMultiplier).contains(parsed) {
-        return parsed
-    }
-    return defaultCIWaitMultiplier
-}
-
-private func isTruthyEnvironmentFlag(_ value: String?) -> Bool {
-    guard let value else {
-        return false
-    }
-
-    switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-    case "1", "true", "yes", "on":
-        return true
-    default:
-        return false
-    }
 }
 
 private func waitForProgress(

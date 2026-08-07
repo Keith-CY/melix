@@ -17,12 +17,14 @@ from worker.model_ops.hub_catalog import (
     HubSearchPage,
     _bytes_per_parameter,
     _direct_size_hint_from_text,
+    _int,
     _is_mlx_compatible,
     _local_fit_evidence,
     _payload_is_mlx_compatible,
     _quantization_summary,
     _repo_id_contains_mlx,
     _size_hint_from_text,
+    _string,
     _string_list,
 )
 
@@ -99,6 +101,15 @@ def test_string_list_preserves_exact_list_and_list_subclass_inputs() -> None:
     assert _string_list("mlx") == ["mlx"]
 
 
+def test_string_helper_preserves_exact_string_and_string_subclass_inputs() -> None:
+    class CustomString(str):
+        pass
+
+    assert _string("owner/model") == "owner/model"
+    assert _string(CustomString("owner/model")) == "owner/model"
+    assert _string(7) == ""
+
+
 def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tags() -> None:
     assert _bytes_per_parameter([], lowered_tags={"family", "2bit", "float32"}) == 0.25
     assert _bytes_per_parameter([], lowered_tags={"family", "float32", "4-bit"}) == 0.5
@@ -106,6 +117,19 @@ def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tag
     assert _bytes_per_parameter([], lowered_tags={"family", "3-bit", "8bit"}) == 0.375
     assert _bytes_per_parameter([], lowered_tags={"family", "foo4", "bitbar"}) == 2.0
     assert _bytes_per_parameter(["adapter", "2bit-mlx"], lowered_tags=None) == 0.25
+
+
+def test_int_helper_preserves_bool_and_int_subclass_semantics() -> None:
+    class CustomInt(int):
+        pass
+
+    assert _int(7) == 7
+    assert _int(True) == 1
+    assert _int(False) == 0
+    assert _int(CustomInt(9)) == 9
+    assert _int(2.9) == 2
+    assert _int(None) == 0
+    assert _int("3") == 0
 
 
 def test_mlx_library_atom_detection_preserves_mixed_case_without_lowercase_copy() -> None:
@@ -118,10 +142,77 @@ def test_mlx_library_atom_detection_preserves_mixed_case_without_lowercase_copy(
     ) is True
 
 
+def test_mlx_library_exact_detection_skips_atom_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    from worker.model_ops import hub_catalog
+
+    calls = 0
+    original = hub_catalog._is_mlx_atom
+
+    def counted_is_mlx_atom(value: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog, "_is_mlx_atom", counted_is_mlx_atom)
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {"id": "plain/model", "library_name": "mlx", "tags": ["Text-Generation"]}
+    ) is True
+    assert hub_catalog._is_mlx_compatible(
+        repo_id="plain/model",
+        tags=["Text-Generation"],
+        library_name="MLX",
+        card_data={},
+        lowered_tags={"text-generation"},
+    ) is True
+    assert calls == 0
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation"],
+            "cardData": {"library_name": "MlX"},
+        }
+    ) is True
+    assert calls == 1
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation"],
+            "cardData": {"library_name": "mlx"},
+        }
+    ) is True
+    assert calls == 1
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation"],
+            "cardData": {"library_name": "MLX"},
+        }
+    ) is True
+    assert calls == 1
+
+
 def test_mlx_repo_id_detection_preserves_case_insensitive_matches() -> None:
     assert _repo_id_contains_mlx("plain/model") is False
     assert _repo_id_contains_mlx("owner/model-mlx-suffix") is True
     assert _repo_id_contains_mlx("owner/model-MLX-suffix") is True
+
+
+def test_mlx_repo_id_detection_skips_lowercase_copy_without_x() -> None:
+    class CountingRepoId(str):
+        lower_calls = 0
+
+        def lower(self) -> str:  # pragma: no cover - must not run in this fast path
+            type(self).lower_calls += 1
+            return super().lower()
+
+    repo_id = CountingRepoId("plain/model")
+
+    assert _repo_id_contains_mlx(repo_id) is False
+    assert CountingRepoId.lower_calls == 0
 
 
 def test_payload_mlx_tag_detection_preserves_exact_list_and_subclass_semantics() -> None:
@@ -137,6 +228,76 @@ def test_payload_mlx_tag_detection_preserves_exact_list_and_subclass_semantics()
     assert _payload_is_mlx_compatible(
         {"id": "plain/model", "tags": ["Text-Generation"], "cardData": {"tags": ["audio"]}}
     ) is False
+
+
+def test_payload_mlx_tag_detection_fast_paths_exact_membership(monkeypatch: pytest.MonkeyPatch) -> None:
+    from worker.model_ops import hub_catalog
+
+    calls = 0
+    original = hub_catalog._is_mlx_atom
+
+    def counted_is_mlx_atom(value: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog, "_is_mlx_atom", counted_is_mlx_atom)
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": ["Text-Generation", "MLX", object()]}
+    ) is True
+    assert calls == 0
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {"id": "plain/model", "tags": ["Text-Generation", "mLx", object()]}
+    ) is True
+    assert calls == 1
+
+
+def test_payload_card_library_detection_skips_tag_scan_when_top_library_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.model_ops import hub_catalog
+
+    def fail_tag_scan(value: object) -> bool:
+        raise AssertionError(  # pragma: no cover - regression guard
+            f"card library exact path should not scan tags: {value!r}"
+        )
+
+    monkeypatch.setattr(hub_catalog, "_tag_payload_contains_mlx", fail_tag_scan)
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation", object()],
+            "cardData": {"library_name": "mlx", "tags": ["audio", object()]},
+        }
+    ) is True
+
+
+def test_payload_card_tags_skip_top_tag_scan_when_card_tag_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.model_ops import hub_catalog
+
+    calls: list[object] = []
+    original = hub_catalog._tag_payload_contains_mlx
+
+    def counted_tag_scan(value: object) -> bool:
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog, "_tag_payload_contains_mlx", counted_tag_scan)
+
+    card_tag_sentinel = object()
+    payload = {
+        "id": "plain/model",
+        "tags": ["Text-Generation", object()],
+        "cardData": {"tags": ["MLX", card_tag_sentinel]},
+    }
+
+    assert hub_catalog._payload_is_mlx_compatible(payload) is True
+    assert calls == [["MLX", card_tag_sentinel]]
 
 
 class FakeHTTPResponse:
@@ -500,7 +661,7 @@ def test_size_hint_model_marker_scan_preserves_case_insensitive_pairs() -> None:
         "prefix MO suffix",
     ):
         assert hub_catalog_module._may_contain_model_marker(text) is True
-    for text in ("", "m", "M", "metadata only", "adapter notes"):
+    for text in ("", "m", "M", "metadata only", "adapter notes", "massive weights"):
         assert hub_catalog_module._may_contain_model_marker(text) is False
 
 
@@ -544,6 +705,49 @@ def test_direct_explicit_size_hint_handles_common_readme_lines() -> None:
         1.5 * MB
     )
     assert hub_catalog_module._direct_explicit_size_hint_from_text("mOdel size: 12 GB") == 0
+
+
+def test_direct_size_hint_fast_paths_cache_repeated_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    hub_catalog_module._direct_card_size_hint_from_text.cache_clear()
+    hub_catalog_module._direct_explicit_size_hint_from_text.cache_clear()
+    original = hub_catalog_module._direct_size_hint_from_text
+    direct_calls: list[str] = []
+
+    def counting_direct_size_hint(text: str) -> int:
+        direct_calls.append(text)
+        return original(text)
+
+    monkeypatch.setattr(hub_catalog_module, "_direct_size_hint_from_text", counting_direct_size_hint)
+
+    for _ in range(3):
+        assert hub_catalog_module._direct_card_size_hint_from_text("Model size: 12 MB") == 12 * MB
+        assert (
+            hub_catalog_module._direct_explicit_size_hint_from_text(
+                "README\nModel size: 12 MB\nother metadata"
+            )
+            == 12 * MB
+        )
+
+    assert direct_calls == ["12 MB"]
+
+
+def test_direct_size_hint_from_line_parses_common_suffix_without_text_slice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    direct_parser = Mock(side_effect=AssertionError("common suffix should parse from span"))
+    monkeypatch.setattr(hub_catalog_module, "_direct_size_hint_from_text", direct_parser)
+
+    text = "README\nModel size: 1.5 GB\nother metadata"
+
+    assert hub_catalog_module._direct_size_hint_from_line(text, text.index("1.5")) == int(
+        1.5 * GB
+    )
+    separator_text = "prefix Model size: 2 MB\u2028other metadata"
+    assert hub_catalog_module._direct_size_hint_from_line(
+        separator_text, separator_text.index("2")
+    ) == 2 * MB
+    assert hub_catalog_module._direct_size_hint_from_span("bad MB", 0, 6) == 0
+    direct_parser.assert_not_called()
 
 
 def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
@@ -938,6 +1142,12 @@ def test_next_cursor_from_link_requires_cursor_parameter_boundary() -> None:
     )
 
     assert hub_catalog_module._next_cursor_from_link(link_header) == ""
+
+
+def test_next_cursor_from_link_preserves_compact_rel_spacing_fallback() -> None:
+    link_header = '<https://huggingface.co/api/models?limit=10&cursor=compact%2Fpage>;rel="next"'
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "compact/page"
 
 
 def test_search_models_uses_next_cursor_from_link_header() -> None:
@@ -1586,14 +1796,21 @@ def test_search_models_counts_fp32_parameters_as_four_bytes_for_local_fit() -> N
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
 
 
-def test_tag_payload_contains_exact_mlx_without_atom_helper(
+def test_tag_payload_contains_exact_mlx_uses_atom_helper_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    atom_helper = Mock(side_effect=AssertionError("exact MLX list membership should short-circuit"))
-    monkeypatch.setattr(hub_catalog_module, "_is_mlx_atom", atom_helper)
+    calls = 0
+    original = hub_catalog_module._is_mlx_atom
+
+    def counted_is_mlx_atom(value: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(hub_catalog_module, "_is_mlx_atom", counted_is_mlx_atom)
 
     assert hub_catalog_module._tag_payload_contains_mlx(["Text-Generation", "MLX", object()]) is True
-    atom_helper.assert_not_called()
+    assert calls == 0
 
 
 def test_tag_lowering_fallbacks_preserve_direct_helper_compatibility() -> None:

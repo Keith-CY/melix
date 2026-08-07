@@ -26,8 +26,15 @@ _ASCII_PLUS = ord("+")
 _ASCII_MINUS = ord("-")
 _ASCII_AT = ord("@")
 _ASCII_LOWER_D = ord("d")
+_ASCII_COMMENT = ord("#")
+_DIFF_PARSER_ACCEPTS_BYTES = True
 _EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
+_DIFF_FROM_ENV = "MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM"
 _DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
+_SPARSE_SOURCE_LINE_SCAN_THRESHOLD = 8
+_ALLOWLIST_CACHE_MISS = object()
+_ALLOWLIST_LAST_RAW = ""
+_ALLOWLIST_LAST_RESULT: frozenset[str] | None | object = _ALLOWLIST_CACHE_MISS
 
 
 def _is_diff_file_marker(line: str) -> bool:
@@ -83,14 +90,17 @@ def _parse_hunk_new_start(line: str) -> int | None:
     return _parse_hunk_new_start_from_digit(line, new_range_index + 2)
 
 
-def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
+def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
     changed_by_path_setdefault = changed_by_path.setdefault
     header_prefix = _DIFF_HEADER_PREFIX_BYTES
     header_separator = _DIFF_HEADER_SEPARATOR_BYTES
     header_prefix_len = len(header_prefix)
     header_separator_len = len(header_separator)
+    hunk_new_range_marker = b" +"
     parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit_bytes
+    bytes_find = bytes.find
+    bytes_startswith = bytes.startswith
     ascii_backslash = _ASCII_BACKSLASH
     ascii_plus = _ASCII_PLUS
     ascii_minus = _ASCII_MINUS
@@ -98,14 +108,15 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     ascii_lower_d = _ASCII_LOWER_D
     add_changed_line = None
     new_line: int | None = None
-    for line in diff_text.encode().splitlines():
+    diff_bytes = diff_text if isinstance(diff_text, bytes) else diff_text.encode()
+    for line in diff_bytes.split(b"\n"):
         if not line:
             if add_changed_line is not None and new_line is not None:
                 new_line += 1
             continue
         first_char = line[0]
-        if first_char == ascii_lower_d and line.startswith(header_prefix):
-            separator_index = line.find(header_separator, header_prefix_len)
+        if first_char == ascii_lower_d and bytes_startswith(line, header_prefix):
+            separator_index = bytes_find(line, header_separator, header_prefix_len)
             add_changed_line = None
             if separator_index >= 0:
                 current_path = line[separator_index + header_separator_len :].decode()
@@ -113,7 +124,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             new_line = None
             continue
         if first_char == ascii_at and len(line) > 1 and line[1] == ascii_at:
-            new_range_index = line.find(b" +")
+            new_range_index = bytes_find(line, hunk_new_range_marker)
             if new_range_index < 0:
                 new_line = None
                 continue
@@ -121,12 +132,12 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             continue
         if add_changed_line is None or new_line is None:
             continue
-        if first_char == ascii_backslash:
-            continue
         if first_char == ascii_plus:
             add_changed_line(new_line)
             new_line += 1
         elif first_char == ascii_minus:
+            continue
+        elif first_char == ascii_backslash:
             continue
         else:
             new_line += 1
@@ -136,14 +147,30 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
 def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, set[int]]:
     if not rel_paths:
         return {}
+    diff_from = os.environ.get(_DIFF_FROM_ENV, "").strip() or "HEAD"
     proc = subprocess.run(
-        ["git", "diff", "--unified=0", "--", *rel_paths],
+        ["git", "diff", "--unified=0", diff_from, "--", *rel_paths],
         cwd=repo_root,
-        text=True,
         capture_output=True,
         check=True,
     )
     changed_by_path = _parse_changed_lines(proc.stdout)
+    untracked_proc = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", *rel_paths],
+        cwd=repo_root,
+        capture_output=True,
+        check=True,
+    )
+    for raw_path in untracked_proc.stdout.split(b"\0"):
+        if not raw_path:
+            continue
+        rel_path = raw_path.decode("utf-8", errors="surrogateescape")
+        path = repo_root / rel_path
+        try:
+            line_count = len(path.read_bytes().splitlines())
+        except OSError:
+            line_count = 0
+        changed_by_path[rel_path] = set(range(1, line_count + 1))
     return {rel_path: changed_by_path.get(rel_path, set()) for rel_path in rel_paths}
 
 
@@ -173,8 +200,18 @@ def _coverage_path_allowlist_from_raw(raw_value: str) -> frozenset[str] | None:
 
 
 def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
-    raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
-    return _coverage_path_allowlist_from_raw(raw_value)
+    global _ALLOWLIST_LAST_RAW, _ALLOWLIST_LAST_RESULT
+
+    raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "")
+    if raw_value == _ALLOWLIST_LAST_RAW and _ALLOWLIST_LAST_RESULT is not _ALLOWLIST_CACHE_MISS:
+        return _ALLOWLIST_LAST_RESULT  # type: ignore[return-value]
+    raw_value = raw_value.strip()
+    if raw_value == _ALLOWLIST_LAST_RAW and _ALLOWLIST_LAST_RESULT is not _ALLOWLIST_CACHE_MISS:
+        return _ALLOWLIST_LAST_RESULT  # type: ignore[return-value]
+    allowlist = _coverage_path_allowlist_from_raw(raw_value)
+    _ALLOWLIST_LAST_RAW = raw_value
+    _ALLOWLIST_LAST_RESULT = allowlist
+    return allowlist
 
 
 def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -> list[str]:
@@ -194,21 +231,30 @@ def _line_ranges_may_overlap(
         return False
     if len(changed) == 1:
         changed_line = next(iter(changed))
+        if executed_lines and missing_lines:
+            executed_first = executed_lines[0]
+            executed_last = executed_lines[-1]
+            missing_first = missing_lines[0]
+            missing_last = missing_lines[-1]
+            if executed_first <= executed_last and missing_first <= missing_last:
+                first_line = executed_first if executed_first < missing_first else missing_first
+                last_line = executed_last if executed_last > missing_last else missing_last
+                return first_line <= changed_line <= last_line
         if executed_lines:
             first_line = executed_lines[0]
             last_line = executed_lines[-1]
-            if first_line > last_line:
-                first_line = min(executed_lines)
-                last_line = max(executed_lines)
-            if first_line <= changed_line <= last_line:
+            if first_line <= last_line:
+                if first_line <= changed_line <= last_line:
+                    return True
+            elif min(executed_lines) <= changed_line <= max(executed_lines):
                 return True
         if missing_lines:
             first_line = missing_lines[0]
             last_line = missing_lines[-1]
-            if first_line > last_line:
-                first_line = min(missing_lines)
-                last_line = max(missing_lines)
-            if first_line <= changed_line <= last_line:
+            if first_line <= last_line:
+                if first_line <= changed_line <= last_line:
+                    return True
+            elif min(missing_lines) <= changed_line <= max(missing_lines):
                 return True
         return False
 
@@ -238,6 +284,141 @@ def _sorted_line_list_contains(lines: list[int], line_no: int) -> bool:
     return index < len(lines) and lines[index] == line_no
 
 
+def _ascii_bytes_measurable_non_comment_lines(
+    source_path: Path,
+    line_numbers: list[int],
+) -> list[int] | None:
+    source_bytes = source_path.read_bytes()
+    if not source_bytes.isascii():
+        return None
+
+    source_lines = source_bytes.splitlines()
+    source_line_count = len(source_lines)
+    measurable: list[int] = []
+    append_measurable = measurable.append
+    ascii_comment = _ASCII_COMMENT
+    ascii_space = _ASCII_SPACE
+    for line_no in line_numbers:
+        if 1 <= line_no <= source_line_count:
+            line = source_lines[line_no - 1]
+            if not line:
+                continue
+            first_byte = line[0]
+            if first_byte != ascii_comment and first_byte > ascii_space:
+                append_measurable(line_no)
+                continue
+            stripped = line.strip()
+            if stripped and not stripped.startswith(b"#"):
+                append_measurable(line_no)
+    return measurable
+
+
+def _measurable_non_comment_lines(
+    source_path: Path,
+    line_numbers: list[int],
+) -> list[int]:
+    measurable: list[int] = []
+    append_measurable = measurable.append
+    if len(line_numbers) == 1:
+        target_line = line_numbers[0]
+        if target_line < 1:
+            return measurable
+        ascii_measurable = _ascii_bytes_measurable_non_comment_lines(source_path, line_numbers)
+        if ascii_measurable is not None:
+            return ascii_measurable
+        with source_path.open("r", encoding="utf-8") as source_file:
+            for index, line in enumerate(source_file, 1):
+                if index != target_line:
+                    continue
+                first_char = line[0] if line else ""
+                if first_char and first_char != "#" and not first_char.isspace():
+                    append_measurable(index)
+                else:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        append_measurable(index)
+                break
+        return measurable
+    if len(line_numbers) == 2:
+        first_target = line_numbers[0]
+        second_target = line_numbers[1]
+        if second_target < 1:
+            return measurable
+        with source_path.open("r", encoding="utf-8") as source_file:
+            for index, line in enumerate(source_file, 1):
+                if index != first_target and index != second_target:
+                    continue
+                first_char = line[0] if line else ""
+                if first_char and first_char != "#" and not first_char.isspace():
+                    append_measurable(index)
+                else:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        append_measurable(index)
+                if index >= second_target:
+                    break
+        return measurable
+    if len(line_numbers) <= _SPARSE_SOURCE_LINE_SCAN_THRESHOLD:
+        targets = line_numbers
+        if targets[0] > targets[-1]:
+            remaining = set(line_numbers)
+            with source_path.open("r", encoding="utf-8") as source_file:
+                for index, line in enumerate(source_file, 1):
+                    if index in remaining:
+                        first_char = line[0] if line else ""
+                        if first_char and first_char != "#" and not first_char.isspace():
+                            append_measurable(index)
+                        else:
+                            stripped = line.strip()
+                            if stripped and not stripped.startswith("#"):
+                                append_measurable(index)
+                        remaining.remove(index)
+                        if not remaining:
+                            break
+            return measurable
+        target_count = len(targets)
+        target_index = 0
+        while target_index < target_count and targets[target_index] < 1:
+            target_index += 1
+        if target_index >= target_count:
+            return measurable
+        target_line = targets[target_index]
+        with source_path.open("r", encoding="utf-8") as source_file:
+            for index, line in enumerate(source_file, 1):
+                if index != target_line:
+                    continue
+                first_char = line[0] if line else ""
+                if first_char and first_char != "#" and not first_char.isspace():
+                    append_measurable(index)
+                else:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        append_measurable(index)
+                target_index += 1
+                if target_index >= target_count:
+                    break
+                target_line = targets[target_index]
+        return measurable
+
+    ascii_measurable = _ascii_bytes_measurable_non_comment_lines(source_path, line_numbers)
+    if ascii_measurable is not None:
+        return ascii_measurable
+
+    source_lines = source_path.read_text(encoding="utf-8").splitlines()
+    source_line_count = len(source_lines)
+    for line_no in line_numbers:
+        if 1 <= line_no <= source_line_count:
+            line = source_lines[line_no - 1]
+            first_char = line[0] if line else ""
+            if first_char and first_char != "#" and not first_char.isspace():
+                append_measurable(line_no)
+            else:
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    append_measurable(line_no)
+    return measurable
+
+
 def _measurable_changed_lines(
     repo_root: Path,
     coverage_payload: dict[str, object],
@@ -263,22 +444,103 @@ def _measurable_changed_lines(
         executed_lookup = (executed_line,)
         missing_lookup = (missing_line,)
     else:
-        if not _line_ranges_may_overlap(changed, executed_lines, missing_lines):
-            return [], [], []
+        executed_lookup = executed_lines
+        missing_lookup = missing_lines
+        changed_count = len(changed)
+        measured_changed = None
+        dense_sorted_measured = False
+        if changed_count == 1:
+            changed_line = next(iter(changed))
+            singleton_may_overlap = False
+            singleton_combined_sorted = False
+            if (
+                executed_lines
+                and missing_lines
+                and executed_lines[0] <= executed_lines[-1]
+                and missing_lines[0] <= missing_lines[-1]
+            ):
+                singleton_combined_sorted = True
+                first_line = executed_lines[0] if executed_lines[0] < missing_lines[0] else missing_lines[0]
+                last_line = executed_lines[-1] if executed_lines[-1] > missing_lines[-1] else missing_lines[-1]
+                singleton_may_overlap = first_line <= changed_line <= last_line
+            else:
+                if executed_lines:
+                    first_line = executed_lines[0]
+                    last_line = executed_lines[-1]
+                    if first_line > last_line:
+                        first_line = min(executed_lines)
+                        last_line = max(executed_lines)
+                    singleton_may_overlap = first_line <= changed_line <= last_line
+                if not singleton_may_overlap and missing_lines:
+                    first_line = missing_lines[0]
+                    last_line = missing_lines[-1]
+                    if first_line > last_line:
+                        first_line = min(missing_lines)
+                        last_line = max(missing_lines)
+                    singleton_may_overlap = first_line <= changed_line <= last_line
+            if not singleton_may_overlap:
+                return [], [], []
+            if singleton_combined_sorted or (
+                executed_lines and executed_lines[0] <= executed_lines[-1]
+            ):
+                covered_singleton = _sorted_line_list_contains(executed_lines, changed_line)
+            else:
+                covered_singleton = changed_line in executed_lines
+            if covered_singleton:
+                missed_singleton = False
+            elif singleton_combined_sorted or (
+                missing_lines and missing_lines[0] <= missing_lines[-1]
+            ):
+                missed_singleton = _sorted_line_list_contains(missing_lines, changed_line)
+            else:
+                missed_singleton = changed_line in missing_lines
+            if not covered_singleton and not missed_singleton:
+                return [], [], []
+            measured_changed = [changed_line]
+            executed_lookup = (changed_line,) if covered_singleton else ()
+            missing_lookup = (changed_line,) if missed_singleton else ()
+        else:
+            dense_sorted_measured = (
+                changed_count >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
+                and executed_lines
+                and missing_lines
+                and executed_lines[0] <= executed_lines[-1]
+                and missing_lines[0] <= missing_lines[-1]
+            )
+        measured_line_count = len(executed_lines) + len(missing_lines) if dense_sorted_measured else 0
+        if (
+            dense_sorted_measured
+            and measured_line_count
+            and changed_count * 4 >= measured_line_count
+            and isinstance(changed, (set, frozenset))
+        ):
+            executed_lookup = changed.intersection(executed_lines)
+            missing_lookup = changed.intersection(missing_lines)
+            measured_changed = list(executed_lookup)
+            measured_changed.extend(missing_lookup)
+        elif changed_count != 1:
+            if not _line_ranges_may_overlap(changed, executed_lines, missing_lines):
+                return [], [], []
+            measured_changed = None
         if executed_lines and executed_lines[0] > executed_lines[-1]:
             executed_lookup = set(executed_lines)
         else:
-            executed_lookup = executed_lines
+            if measured_changed is None:
+                executed_lookup = executed_lines
         if missing_lines and missing_lines[0] > missing_lines[-1]:
             missing_lookup = set(missing_lines)
         else:
-            missing_lookup = missing_lines
-        if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
+            if measured_changed is None:
+                missing_lookup = missing_lines
+        if measured_changed is not None:
+            pass
+        elif isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
             measured_line_count = len(executed_lookup) + len(missing_lookup)
+            sorted_line_list_contains = _sorted_line_list_contains
             if (
                 measured_line_count
-                and len(changed) >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
-                and len(changed) * 4 >= measured_line_count
+                and changed_count >= _DENSE_CHANGED_LINE_SCAN_THRESHOLD
+                and changed_count * 4 >= measured_line_count
             ):
                 if isinstance(changed, (set, frozenset)):
                     executed_lookup = changed.intersection(executed_lines)
@@ -292,8 +554,8 @@ def _measurable_changed_lines(
                 measured_changed = [
                     line_no
                     for line_no in changed
-                    if _sorted_line_list_contains(executed_lookup, line_no)
-                    or _sorted_line_list_contains(missing_lookup, line_no)
+                    if sorted_line_list_contains(executed_lookup, line_no)
+                    or sorted_line_list_contains(missing_lookup, line_no)
                 ]
         else:
             measured_changed = [
@@ -304,22 +566,21 @@ def _measurable_changed_lines(
     if not measured_changed:
         return [], [], []
 
-    source_lines = (repo_root / rel_path).read_text(encoding="utf-8").splitlines()
-    measurable: list[int] = []
-    for line_no in sorted(measured_changed):
-        stripped = source_lines[line_no - 1].strip()
-        if stripped and not stripped.startswith("#"):
-            measurable.append(line_no)
+    sorted_measured_changed = sorted(measured_changed)
+    measurable = _measurable_non_comment_lines(
+        repo_root / rel_path, sorted_measured_changed
+    )
     if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
+        sorted_line_list_contains = _sorted_line_list_contains
         covered = [
             line_no
             for line_no in measurable
-            if _sorted_line_list_contains(executed_lookup, line_no)
+            if sorted_line_list_contains(executed_lookup, line_no)
         ]
         missed = [
             line_no
             for line_no in measurable
-            if _sorted_line_list_contains(missing_lookup, line_no)
+            if sorted_line_list_contains(missing_lookup, line_no)
         ]
     else:
         covered = []
@@ -375,11 +636,14 @@ def main() -> int:
         print(f"changed_line_coverage={file_pct:.2f}%")
         print()
 
-    overall_pct = 100.0 if total_measurable == 0 else total_covered / total_measurable * 100.0
+    overall_pct = 0.0 if total_measurable == 0 else total_covered / total_measurable * 100.0
     print(f"aggregate_measurable_changed_lines={total_measurable}")
     print(f"aggregate_covered_changed_lines={total_covered}")
     print(f"aggregate_missed_changed_lines={total_missed}")
     print(f"TOTAL {total_measurable} {total_missed} {overall_pct:.0f}%")
+    if total_measurable == 0:
+        print("coverage_error=no_measurable_changed_lines")
+        return 1
     return 0 if overall_pct >= 95.0 else 1
 
 

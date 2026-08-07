@@ -10,6 +10,78 @@ private extension UInt32 {
 }
 
 public actor ModelCatalog {
+    public struct BackendRouteLoadReservation: Equatable, Sendable {
+        public let modelID: String
+        public let adapterID: String
+        public let generation: UInt64
+        public let routeKind: WorkerRouteKind
+        public let workerInstanceID: String
+
+        public var identity: Melix_Worker_V1_BackendModelIdentity {
+            Self.makeIdentity(
+                modelID: modelID,
+                adapterID: adapterID,
+                generation: generation,
+                workerInstanceID: workerInstanceID
+            )
+        }
+
+        private static func makeIdentity(
+            modelID: String,
+            adapterID: String,
+            generation: UInt64,
+            workerInstanceID: String
+        ) -> Melix_Worker_V1_BackendModelIdentity {
+            var identity = Melix_Worker_V1_BackendModelIdentity()
+            identity.requestedModelID = modelID
+            identity.requestedAdapterID = adapterID
+            identity.routeGeneration = generation
+            identity.workerInstanceID = workerInstanceID
+            return identity
+        }
+    }
+
+    public struct BackendRouteInvalidationReceipt: Equatable, Sendable {
+        public let modelID: String
+        public let routeKind: WorkerRouteKind
+        public let failedGeneration: UInt64
+        public let currentGeneration: UInt64
+    }
+
+    public struct BackendRouteBinding: Equatable, Sendable {
+        public let modelID: String
+        public let adapterID: String
+        public let generation: UInt64
+        public let handle: String
+        public let routeKind: WorkerRouteKind
+        public let workerInstanceID: String
+
+        public init(
+            modelID: String,
+            adapterID: String,
+            generation: UInt64,
+            handle: String,
+            routeKind: WorkerRouteKind,
+            workerInstanceID: String = "legacy-unbound-worker"
+        ) {
+            self.modelID = modelID
+            self.adapterID = adapterID
+            self.generation = generation
+            self.handle = handle
+            self.routeKind = routeKind
+            self.workerInstanceID = workerInstanceID
+        }
+
+        public var identity: Melix_Worker_V1_BackendModelIdentity {
+            var identity = Melix_Worker_V1_BackendModelIdentity()
+            identity.requestedModelID = modelID
+            identity.requestedAdapterID = adapterID
+            identity.routeGeneration = generation
+            identity.workerInstanceID = workerInstanceID
+            return identity
+        }
+    }
+
     public struct EvictionDecision: Equatable, Sendable {
         public let modelID: String
         public let reason: String
@@ -138,6 +210,8 @@ public actor ModelCatalog {
     private var models: [String: Melix_Controlplane_V1_ModelSummary]
     private var dispatchHandles: [String: String]
     private var routeDispatchHandles: [DispatchHandleKey: String]
+    private var backendRouteBindings: [DispatchHandleKey: BackendRouteBinding]
+    private var routeGenerations: [DispatchHandleKey: UInt64]
     private var residencyLedger: [String: ResidencyLedger]
     private var activeRequestCountByModelID: [String: UInt32]
     private let seedModelIDs: Set<String>
@@ -175,9 +249,30 @@ public actor ModelCatalog {
                 return (model.modelID, ModelCatalog.defaultDispatchHandle(for: model.modelID))
             }
         )
+        var seededRouteHandles: [DispatchHandleKey: String] = [:]
+        var seededRouteBindings: [DispatchHandleKey: BackendRouteBinding] = [:]
+        var seededRouteGenerations: [DispatchHandleKey: UInt64] = [:]
+        for model in normalizedSeedModels where model.state == .modelWarm || model.state == .modelPinned {
+            let handle = seededDispatchHandles[model.modelID]
+                ?? ModelCatalog.defaultDispatchHandle(for: model.modelID)
+            for routeKind in ModelCatalog.seedRouteKinds(for: model) {
+                let key = DispatchHandleKey(modelID: model.modelID, routeKind: routeKind)
+                seededRouteHandles[key] = handle
+                seededRouteGenerations[key] = 1
+                seededRouteBindings[key] = BackendRouteBinding(
+                    modelID: model.modelID,
+                    adapterID: model.settings.ext["melix.adapter_set_hash"] ?? "",
+                    generation: 1,
+                    handle: handle,
+                    routeKind: routeKind
+                )
+            }
+        }
         self.models = Dictionary(uniqueKeysWithValues: normalizedSeedModels.map { ($0.modelID, $0) })
         self.dispatchHandles = seededDispatchHandles
-        self.routeDispatchHandles = [:]
+        self.routeDispatchHandles = seededRouteHandles
+        self.backendRouteBindings = seededRouteBindings
+        self.routeGenerations = seededRouteGenerations
         self.residencyLedger = ledger
         self.activeRequestCountByModelID = [:]
         self.seedModelIDs = Set(normalizedSeedModels.map(\.modelID))
@@ -210,6 +305,41 @@ public actor ModelCatalog {
         return model
     }
 
+    public func beginBackendRouteLoad(
+        id: String,
+        routeKind: WorkerRouteKind,
+        workerInstanceID: String,
+        reason: String = "load_requested",
+        expectedCurrentGeneration: UInt64? = nil
+    ) -> BackendRouteLoadReservation? {
+        guard let model = models[id] else {
+            return nil
+        }
+        let key = DispatchHandleKey(modelID: id, routeKind: routeKind)
+        if let expectedCurrentGeneration {
+            guard expectedCurrentGeneration > 0,
+                  routeGenerations[key] == expectedCurrentGeneration else {
+                return nil
+            }
+        }
+        let generation = nextGeneration(after: routeGenerations[key] ?? 0)
+        routeGenerations[key] = generation
+        if hasValidBackendRouteBinding(for: id) {
+            touchModel(id: id, transitionReason: reason, clearMemoryBudgetEvidence: true)
+        } else {
+            guard beginLoad(id: id, reason: reason) != nil else {
+                return nil
+            }
+        }
+        return BackendRouteLoadReservation(
+            modelID: id,
+            adapterID: model.settings.ext["melix.adapter_set_hash"] ?? "",
+            generation: generation,
+            routeKind: routeKind,
+            workerInstanceID: workerInstanceID
+        )
+    }
+
     public func recordLoadSucceeded(
         id: String,
         dispatchHandle: String,
@@ -217,10 +347,28 @@ public actor ModelCatalog {
         workerResidency: Melix_Worker_V1_ResidencyInfo? = nil,
         loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil,
         reason: String? = nil,
-        routeKind: WorkerRouteKind? = nil
+        routeKind: WorkerRouteKind? = nil,
+        expectedRouteGeneration: UInt64? = nil,
+        workerInstanceID: String? = nil
     ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
+        }
+
+        var routeGeneration: UInt64?
+        if let routeKind {
+            let key = DispatchHandleKey(modelID: id, routeKind: routeKind)
+            if let expectedRouteGeneration {
+                guard expectedRouteGeneration > 0,
+                      routeGenerations[key] == expectedRouteGeneration else {
+                    return nil
+                }
+                routeGeneration = expectedRouteGeneration
+            } else {
+                let generation = routeGenerations[key] ?? 1
+                routeGenerations[key] = generation
+                routeGeneration = generation
+            }
         }
 
         let loadedState = ModelCatalog.loadedState(
@@ -253,7 +401,56 @@ public actor ModelCatalog {
 
         if loadedState == .modelWarm || loadedState == .modelPinned {
             dispatchHandles[id] = dispatchHandle
-            routeDispatchHandles[DispatchHandleKey(modelID: id, routeKind: routeKind)] = dispatchHandle
+            if let routeKind, let routeGeneration {
+                let routeKey = DispatchHandleKey(modelID: id, routeKind: routeKind)
+                routeDispatchHandles[routeKey] = dispatchHandle
+                backendRouteBindings[routeKey] = BackendRouteBinding(
+                    modelID: id,
+                    adapterID: model.settings.ext["melix.adapter_set_hash"] ?? "",
+                    generation: routeGeneration,
+                    handle: dispatchHandle,
+                    routeKind: routeKind,
+                    workerInstanceID: workerInstanceID ?? "legacy-unbound-worker"
+                )
+            } else {
+                var existingRouteKeys = backendRouteBindings.keys.filter { $0.modelID == id }
+                if existingRouteKeys.isEmpty {
+                    for inferredRoute in ModelCatalog.seedRouteKinds(for: model) {
+                        let inferredKey = DispatchHandleKey(modelID: id, routeKind: inferredRoute)
+                        routeGenerations[inferredKey] = routeGenerations[inferredKey] ?? 1
+                        backendRouteBindings[inferredKey] = BackendRouteBinding(
+                            modelID: id,
+                            adapterID: model.settings.ext["melix.adapter_set_hash"] ?? "",
+                            generation: routeGenerations[inferredKey] ?? 1,
+                            handle: dispatchHandle,
+                            routeKind: inferredRoute,
+                            workerInstanceID: "legacy-unbound-worker"
+                        )
+                    }
+                    existingRouteKeys = backendRouteBindings.keys.filter { $0.modelID == id }
+                }
+                for routeKey in existingRouteKeys {
+                    guard let existing = backendRouteBindings[routeKey] else {
+                        continue
+                    }
+                    let handleChanged = existing.handle != dispatchHandle
+                    let generation = handleChanged
+                        ? nextGeneration(after: routeGenerations[routeKey] ?? existing.generation)
+                        : existing.generation
+                    routeGenerations[routeKey] = generation
+                    routeDispatchHandles[routeKey] = dispatchHandle
+                    backendRouteBindings[routeKey] = BackendRouteBinding(
+                        modelID: existing.modelID,
+                        adapterID: model.settings.ext["melix.adapter_set_hash"] ?? existing.adapterID,
+                        generation: generation,
+                        handle: dispatchHandle,
+                        routeKind: existing.routeKind,
+                        workerInstanceID: handleChanged
+                            ? "legacy-unbound-worker"
+                            : existing.workerInstanceID
+                    )
+                }
+            }
         } else {
             removeDispatchHandles(for: id)
         }
@@ -265,10 +462,24 @@ public actor ModelCatalog {
         id: String,
         reason: String = "load_failed",
         memoryBudgetEvidence: MemoryBudgetEvidence? = nil,
-        loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil
+        loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil,
+        routeKind: WorkerRouteKind? = nil,
+        expectedRouteGeneration: UInt64? = nil
     ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
+        }
+        var scopedRouteKey: DispatchHandleKey?
+        if let routeKind, let expectedRouteGeneration {
+            let key = DispatchHandleKey(modelID: id, routeKind: routeKind)
+            guard routeGenerations[key] == expectedRouteGeneration else {
+                return nil
+            }
+            scopedRouteKey = key
+            routeDispatchHandles.removeValue(forKey: key)
+            backendRouteBindings.removeValue(forKey: key)
+            routeGenerations[key] = nextGeneration(after: expectedRouteGeneration)
+            reconcileLegacyDispatchHandle(for: id)
         }
         touchModel(
             id: id,
@@ -276,14 +487,17 @@ public actor ModelCatalog {
             memoryBudgetEvidence: memoryBudgetEvidence,
             clearMemoryBudgetEvidence: memoryBudgetEvidence == nil
         )
-        model.state = .modelFailed
+        let hasRemainingRoute = hasValidBackendRouteBinding(for: id)
+        model.state = scopedRouteKey != nil && hasRemainingRoute ? .modelWarm : .modelFailed
         model.pinned = false
         model = synchronized(model)
         if let loadTrust {
             model.loadTrust = loadTrust
         }
         models[id] = model
-        removeDispatchHandles(for: id)
+        if scopedRouteKey == nil {
+            removeDispatchHandles(for: id)
+        }
         return model
     }
 
@@ -294,6 +508,7 @@ public actor ModelCatalog {
         guard var model = models[id] else {
             return nil
         }
+        advanceRouteGenerations(for: id)
         touchModel(id: id, transitionReason: reason, clearMemoryBudgetEvidence: true)
         model.state = .modelEvicting
         model.pinned = false
@@ -369,16 +584,46 @@ public actor ModelCatalog {
             return nil
         }
         let isLoaded = dispatchHandles[id] != nil
+        let backendResidencyChanged = Self.backendResidencySettingsChanged(
+            from: model.settings,
+            to: settings
+        )
         model.settings = settings
         model.loadTrust = ModelLoadTrustPolicyResolver.reloadAwarePolicy(
             current: model.loadTrust,
             settings: settings,
             isLoaded: isLoaded
         )
-        touchModel(id: id, transitionReason: "settings_updated")
+        if backendResidencyChanged, isLoaded {
+            advanceRouteGenerations(for: id)
+            removeDispatchHandles(for: id)
+            model.state = .modelUnloaded
+            model.pinned = false
+        }
+        touchModel(
+            id: id,
+            transitionReason: backendResidencyChanged && isLoaded
+                ? "settings_replacement"
+                : "settings_updated"
+        )
         model = synchronized(model)
         models[id] = model
         return model
+    }
+
+    private static func backendResidencySettingsChanged(
+        from current: Melix_Controlplane_V1_ModelSettings,
+        to replacement: Melix_Controlplane_V1_ModelSettings
+    ) -> Bool {
+        for key in [
+            "melix.model_path",
+            "melix.model_revision",
+            "melix.adapter_set_hash",
+            "melix.tokenizer_hash",
+        ] where current.ext[key] != replacement.ext[key] {
+            return true
+        }
+        return false
     }
 
     public func markModelUsed(id: String) -> Melix_Controlplane_V1_ModelSummary? {
@@ -627,12 +872,126 @@ public actor ModelCatalog {
         return routeWorkerFamilies(for: model).count <= 1 ? dispatchHandles[id] : nil
     }
 
+    public func backendRouteBinding(
+        for id: String,
+        routeKind: WorkerRouteKind
+    ) -> BackendRouteBinding? {
+        guard let model = models[id],
+              model.state == .modelWarm || model.state == .modelPinned else {
+            return nil
+        }
+        let key = DispatchHandleKey(modelID: id, routeKind: routeKind)
+        guard let binding = backendRouteBindings[key],
+              binding.generation == routeGenerations[key],
+              binding.handle == routeDispatchHandles[key] else {
+            return nil
+        }
+        return binding
+    }
+
     public func storedDispatchHandle(for id: String) -> String? {
         dispatchHandles[id]
     }
 
     public func storedDispatchHandle(for id: String, routeKind: WorkerRouteKind) -> String? {
         routeDispatchHandles[DispatchHandleKey(modelID: id, routeKind: routeKind)]
+    }
+
+    @discardableResult
+    public func invalidateDispatchHandle(
+        for id: String,
+        expectedDispatchHandle: String,
+        reason: String = "worker_handle_missing"
+    ) -> Bool {
+        let hasMatchingLegacyHandle = dispatchHandles[id] == expectedDispatchHandle
+        let matchingRouteKeys = routeDispatchHandles.compactMap { key, handle in
+            key.modelID == id && handle == expectedDispatchHandle ? key : nil
+        }
+        guard hasMatchingLegacyHandle || !matchingRouteKeys.isEmpty else {
+            return false
+        }
+
+        if hasMatchingLegacyHandle {
+            dispatchHandles.removeValue(forKey: id)
+        }
+        for key in matchingRouteKeys {
+            routeDispatchHandles.removeValue(forKey: key)
+            backendRouteBindings.removeValue(forKey: key)
+            routeGenerations[key] = nextGeneration(after: routeGenerations[key] ?? 0)
+        }
+
+        guard models[id] != nil else {
+            return true
+        }
+        touchModel(id: id, transitionReason: reason, clearMemoryBudgetEvidence: true)
+        guard var model = models[id] else {
+            return true
+        }
+        let hasRemainingHandle = dispatchHandles[id] != nil
+            || routeDispatchHandles.keys.contains(where: { $0.modelID == id })
+        if !hasRemainingHandle {
+            model.state = .modelUnloaded
+            model.pinned = false
+        }
+        models[id] = synchronized(model)
+        return true
+    }
+
+    @discardableResult
+    public func invalidateBackendRouteBinding(
+        for id: String,
+        expected: BackendRouteBinding,
+        reason: String = "model_identity_mismatch"
+    ) -> Bool {
+        invalidateBackendRouteBindingForRecovery(
+            for: id,
+            expected: expected,
+            reason: reason
+        ) != nil
+    }
+
+    public func invalidateBackendRouteBindingForRecovery(
+        for id: String,
+        expected: BackendRouteBinding,
+        reason: String = "model_identity_mismatch"
+    ) -> BackendRouteInvalidationReceipt? {
+        guard id == expected.modelID else {
+            return nil
+        }
+        let key = DispatchHandleKey(modelID: id, routeKind: expected.routeKind)
+        guard backendRouteBindings[key] == expected,
+              routeGenerations[key] == expected.generation,
+              routeDispatchHandles[key] == expected.handle else {
+            return nil
+        }
+
+        backendRouteBindings.removeValue(forKey: key)
+        routeDispatchHandles.removeValue(forKey: key)
+        let currentGeneration = nextGeneration(after: expected.generation)
+        routeGenerations[key] = currentGeneration
+        reconcileLegacyDispatchHandle(for: id)
+
+        guard var model = models[id] else {
+            return BackendRouteInvalidationReceipt(
+                modelID: id,
+                routeKind: expected.routeKind,
+                failedGeneration: expected.generation,
+                currentGeneration: currentGeneration
+            )
+        }
+        touchModel(id: id, transitionReason: reason, clearMemoryBudgetEvidence: true)
+        let hasRemainingHandle = hasValidBackendRouteBinding(for: id)
+        if !hasRemainingHandle {
+            model.state = .modelUnloaded
+            model.pinned = false
+        }
+        models[id] = synchronized(model)
+        return BackendRouteInvalidationReceipt(
+            modelID: id,
+            routeKind: expected.routeKind,
+            failedGeneration: expected.generation,
+            currentGeneration: currentGeneration
+        )
     }
 
     private struct CapabilityAdapterMetadata: Sendable {
@@ -1288,7 +1647,7 @@ public actor ModelCatalog {
             resolvedFamilyID = configuredFamilyID
             resolvedBackendID = configuredBackendID ?? embeddingBackendID(for: resolvedFamilyID)
         } else {
-            resolvedBackendID = configuredBackendID ?? detected.backendID
+            resolvedBackendID = configuredBackendID ?? "deterministic-fixture-v1"
             resolvedFamilyID = defaultEmbeddingFamilyID(
                 for: resolvedBackendID,
                 detectedFamilyID: detected.familyID
@@ -1329,12 +1688,25 @@ public actor ModelCatalog {
         model.settings.ext["embedding_pooling_mode"] = resolvedPoolingMode
         model.settings.ext["embedding_normalization"] = resolvedNormalization
         model.settings.ext["embedding_dimensions"] = resolvedDimensions
+        model.settings.ext["embedding_execution_kind"] = ["mlx-bert-v1", "mlx-xlmr-v1"].contains(resolvedBackendID)
+            ? "artifact"
+            : "fixture"
         model.settings.ext["model_architecture"] = resolvedArchitecture
         model.settings.ext["detected_architecture"] = detected.architecture
         model.settings.ext["detected_family_id"] = detected.familyID
         model.settings.ext["detected_identity_source"] = detected.source
         model.settings.ext["identity_override"] = identityOverride
         applyCapabilityAdapter(embeddingCapabilityAdapter(familyID: resolvedFamilyID), to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .embedText,
+                supportedModalities: [.text],
+                requiresAnyModality: [.text],
+                workerFamily: .retrieval,
+                modelFamilyTarget: "retrieval.\(resolvedFamilyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1396,6 +1768,16 @@ public actor ModelCatalog {
             model.settings.ext["rerank_yes_no_labels"] = resolvedYesNoLabels
         }
         applyCapabilityAdapter(rerankCapabilityAdapter(familyID: resolvedFamilyID), to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .rerankText,
+                supportedModalities: [.text],
+                requiresAnyModality: [.text],
+                workerFamily: .retrieval,
+                modelFamilyTarget: "retrieval.\(resolvedFamilyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1903,27 +2285,26 @@ public actor ModelCatalog {
     private static func inferEmbeddingIdentity(from modelPath: String) -> (
         architecture: String,
         familyID: String,
-        backendID: String,
         source: String
     ) {
         let normalizedPath = modelPath.lowercased()
         if normalizedPath.contains("mxbai") {
-            return ("bert", "mxbai-embed", "bert-v1", "directory_name")
+            return ("bert", "mxbai-embed", "directory_name")
         }
         if normalizedPath.contains("bge") {
-            return ("bert", "bge-m3", "bert-v1", "directory_name")
+            return ("bert", "bge-m3", "directory_name")
         }
         if normalizedPath.contains("xlmr") || normalizedPath.contains("xlm-r") {
-            return ("xlmr", "xlmr", "xlmr-v1", "directory_name")
+            return ("xlmr", "xlmr", "directory_name")
         }
         if normalizedPath.contains("bert") {
-            return ("bert", "bert", "bert-v1", "directory_name")
+            return ("bert", "bert", "directory_name")
         }
-        return ("bert", "bert", "bert-v1", "default")
+        return ("bert", "bert", "default")
     }
 
     private static func embeddingBackendID(for familyID: String) -> String {
-        familyID == "xlmr" ? "xlmr-v1" : "bert-v1"
+        "deterministic-fixture-v1"
     }
 
     private static func embeddingArchitecture(for familyID: String) -> String {
@@ -1934,10 +2315,10 @@ public actor ModelCatalog {
         for backendID: String,
         detectedFamilyID: String
     ) -> String {
-        if backendID == "xlmr-v1" {
+        if ["mlx-xlmr-v1", "xlmr-v1"].contains(backendID) {
             return "xlmr"
         }
-        if ["bert", "bge-m3", "mxbai-embed"].contains(detectedFamilyID) {
+        if ["bert", "xlmr", "bge-m3", "mxbai-embed"].contains(detectedFamilyID) {
             return detectedFamilyID
         }
         return "bert"
@@ -2284,12 +2665,73 @@ public actor ModelCatalog {
         routeDispatchHandles = routeDispatchHandles.filter { entry in
             entry.key.modelID != modelID
         }
+        backendRouteBindings = backendRouteBindings.filter { entry in
+            entry.key.modelID != modelID
+        }
+    }
+
+    private func hasValidBackendRouteBinding(for modelID: String) -> Bool {
+        backendRouteBindings.contains { key, binding in
+            key.modelID == modelID
+                && routeGenerations[key] == binding.generation
+                && routeDispatchHandles[key] == binding.handle
+        }
+    }
+
+    private func reconcileLegacyDispatchHandle(for modelID: String) {
+        let validBindings: [BackendRouteBinding] = backendRouteBindings.compactMap { entry in
+            let (key, binding) = entry
+            guard key.modelID == modelID,
+                  routeGenerations[key] == binding.generation,
+                  routeDispatchHandles[key] == binding.handle else {
+                return nil
+            }
+            return binding
+        }.sorted { lhs, rhs in
+            lhs.routeKind.rawValue < rhs.routeKind.rawValue
+        }
+        if let replacement = validBindings.first {
+            dispatchHandles[modelID] = replacement.handle
+        } else {
+            dispatchHandles.removeValue(forKey: modelID)
+        }
+    }
+
+    private func advanceRouteGenerations(for modelID: String) {
+        let keys = Set(
+            routeGenerations.keys.filter { $0.modelID == modelID }
+                + backendRouteBindings.keys.filter { $0.modelID == modelID }
+                + routeDispatchHandles.keys.filter { $0.modelID == modelID }
+        )
+        for key in keys {
+            routeGenerations[key] = nextGeneration(after: routeGenerations[key] ?? 0)
+        }
+    }
+
+    private func nextGeneration(after generation: UInt64) -> UInt64 {
+        let (next, overflow) = generation.addingReportingOverflow(1)
+        return overflow || next == 0 ? UInt64.max : next
     }
 
     private func routeWorkerFamilies(
         for model: Melix_Controlplane_V1_ModelSummary
     ) -> Set<Melix_Controlplane_V1_WorkerFamily> {
         Set(model.requestRoutes.map(\.workerFamily).filter { $0 != .unspecified })
+    }
+
+    private static func seedRouteKinds(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Set<WorkerRouteKind> {
+        var routes: Set<WorkerRouteKind> = []
+        if let route = WorkerRouteKind(routeClass: model.routeClass) {
+            routes.insert(route)
+        }
+        if let route = WorkerRouteKind(
+            metadataIdentifier: model.settings.ext["melix.capability.route_kind"]
+        ) {
+            routes.insert(route)
+        }
+        return routes
     }
 
     private func memoryBudgetEvidence(for modelID: String) -> MemoryBudgetEvidence {

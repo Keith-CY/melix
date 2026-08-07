@@ -6,7 +6,11 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
 from worker.engine.rerank_core import RerankCore
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime import rerank_backends
@@ -43,7 +47,9 @@ def build_services(environment: dict[str, str] | None = None):
     return runtime_service, inference_service
 
 
-def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
+def load_model(
+    runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec
+) -> str:
     response = runtime_service.LoadModel(
         runtime_pb2.LoadModelRequest(model=model),
         context=None,
@@ -99,30 +105,36 @@ def test_rerank_returns_sorted_scores_and_honors_top_k() -> None:
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_rerank_model())
 
     first = inference_service.Rerank(
-        inference_pb2.RerankRequest(
-            id=common_pb2.RequestIdentity(request_id="rerank-1"),
-            model_handle=model_handle,
-            query="swift control plane runtime",
-            documents=[
-                "swift control plane runtime",
-                "embedding worker batch path",
-                "control plane swift worker route",
-            ],
-            top_k=2,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.RerankRequest(
+                id=common_pb2.RequestIdentity(request_id="rerank-1"),
+                model_handle=model_handle,
+                query="swift control plane runtime",
+                documents=[
+                    "swift control plane runtime",
+                    "embedding worker batch path",
+                    "control plane swift worker route",
+                ],
+                top_k=2,
+            ),
         ),
         context=None,
     )
     second = inference_service.Rerank(
-        inference_pb2.RerankRequest(
-            id=common_pb2.RequestIdentity(request_id="rerank-2"),
-            model_handle=model_handle,
-            query="swift control plane runtime",
-            documents=[
-                "swift control plane runtime",
-                "embedding worker batch path",
-                "control plane swift worker route",
-            ],
-            top_k=2,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.RerankRequest(
+                id=common_pb2.RequestIdentity(request_id="rerank-2"),
+                model_handle=model_handle,
+                query="swift control plane runtime",
+                documents=[
+                    "swift control plane runtime",
+                    "embedding worker batch path",
+                    "control plane swift worker route",
+                ],
+                top_k=2,
+            ),
         ),
         context=None,
     )
@@ -166,7 +178,9 @@ def test_rerank_core_passes_request_documents_without_copying() -> None:
     registry.rerank_runtime = rerank_runtime
 
     response = RerankCore(registry).rerank(
-        Mock(model_handle="model-1", query="swift runtime", documents=documents, top_k=1)
+        Mock(
+            model_handle="model-1", query="swift runtime", documents=documents, top_k=1
+        )
     )
 
     assert response.error.code == ""
@@ -236,12 +250,15 @@ def test_jina_v3_rerank_prefers_exact_query_order() -> None:
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_rerank_model())
 
     rerank = inference_service.Rerank(
-        inference_pb2.RerankRequest(
-            id=common_pb2.RequestIdentity(request_id="rerank-jina-v3"),
-            model_handle=model_handle,
-            query="swift runtime",
-            documents=["runtime swift", "swift runtime"],
-            top_k=2,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.RerankRequest(
+                id=common_pb2.RequestIdentity(request_id="rerank-jina-v3"),
+                model_handle=model_handle,
+                query="swift runtime",
+                documents=["runtime swift", "swift runtime"],
+                top_k=2,
+            ),
         ),
         context=None,
     )
@@ -263,12 +280,15 @@ def test_causal_lm_rerank_produces_positive_and_negative_logits() -> None:
     )
 
     rerank = inference_service.Rerank(
-        inference_pb2.RerankRequest(
-            id=common_pb2.RequestIdentity(request_id="rerank-causal-lm"),
-            model_handle=model_handle,
-            query="swift runtime",
-            documents=["swift runtime is available", "python packaging release"],
-            top_k=2,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.RerankRequest(
+                id=common_pb2.RequestIdentity(request_id="rerank-causal-lm"),
+                model_handle=model_handle,
+                query="swift runtime",
+                documents=["swift runtime is available", "python packaging release"],
+                top_k=2,
+            ),
         ),
         context=None,
     )
@@ -279,7 +299,9 @@ def test_causal_lm_rerank_produces_positive_and_negative_logits() -> None:
     assert rerank.items[1].score < 0
 
 
-def test_jina_v3_skips_pair_and_contiguous_query_checks_when_document_misses_query_terms(monkeypatch) -> None:
+def test_jina_v3_skips_pair_and_contiguous_query_checks_when_document_misses_query_terms(
+    monkeypatch,
+) -> None:
     adapter = JinaV3RerankFamilyAdapter()
     backend = DeterministicRerankBackend()
     ordered_pair_bonus = Mock(return_value=0.0)
@@ -307,7 +329,9 @@ def test_jina_v3_skips_pair_and_contiguous_query_checks_when_document_misses_que
     contains.assert_not_called()
 
 
-def test_causal_lm_skips_pair_and_contiguous_query_checks_when_document_misses_query_terms(monkeypatch) -> None:
+def test_causal_lm_skips_pair_and_contiguous_query_checks_when_document_misses_query_terms(
+    monkeypatch,
+) -> None:
     adapter = CausalLMRerankFamilyAdapter()
     backend = DeterministicRerankBackend()
     ordered_pair_bonus = Mock(return_value=0.0)
@@ -384,7 +408,9 @@ def test_resolve_rerank_backend_and_family_support_basic_family() -> None:
         resolve_rerank_backend("unsupported-backend")
 
 
-def test_score_documents_resolves_backend_and_family_from_loaded_model_metadata() -> None:
+def test_score_documents_resolves_backend_and_family_from_loaded_model_metadata() -> (
+    None
+):
     runtime = DeterministicRerankRuntime()
 
     scores = runtime.score_documents(
@@ -440,7 +466,13 @@ def test_score_documents_reuses_scores_for_duplicate_documents() -> None:
         def __init__(self) -> None:
             self.scored_documents: list[str] = []
 
-        def score(self, backend: DeterministicRerankBackend, query: str, document: str, **kwargs: object) -> float:
+        def score(
+            self,
+            backend: DeterministicRerankBackend,
+            query: str,
+            document: str,
+            **kwargs: object,
+        ) -> float:
             self.scored_documents.append(document)
             return super().score(backend, query, document, **kwargs)
 
@@ -475,11 +507,19 @@ def test_score_documents_builds_query_context_once_for_multiple_documents() -> N
             self.query_contexts: list[object] = []
             self.query_context_builds = 0
 
-        def build_query_context(self, backend: DeterministicRerankBackend, query: str, **kwargs: object):
+        def build_query_context(
+            self, backend: DeterministicRerankBackend, query: str, **kwargs: object
+        ):
             self.query_context_builds += 1
             return super().build_query_context(backend, query, **kwargs)
 
-        def score(self, backend: DeterministicRerankBackend, query: str, document: str, **kwargs: object) -> float:
+        def score(
+            self,
+            backend: DeterministicRerankBackend,
+            query: str,
+            document: str,
+            **kwargs: object,
+        ) -> float:
             self.query_contexts.append(kwargs["query_context"])
             return super().score(backend, query, document, **kwargs)
 
@@ -503,7 +543,9 @@ def test_score_documents_builds_query_context_once_for_multiple_documents() -> N
     assert len(scores) == 3
     assert family.query_context_builds == 1
     assert len(family.query_contexts) == 3
-    assert family.query_contexts[0] is family.query_contexts[1] is family.query_contexts[2]
+    assert (
+        family.query_contexts[0] is family.query_contexts[1] is family.query_contexts[2]
+    )
 
 
 def test_basic_rerank_family_reuses_query_context_token_set_without_copying() -> None:
@@ -589,7 +631,9 @@ def test_rerank_family_query_context_preserves_scoring_semantics(
 
     baseline_score = family.score(backend, query, document)
     query_context = family.build_query_context(backend, query)
-    optimized_score = family.score(backend, query, document, query_context=query_context)
+    optimized_score = family.score(
+        backend, query, document, query_context=query_context
+    )
 
     assert optimized_score == baseline_score
 
@@ -605,7 +649,10 @@ def test_rerank_context_tuple_and_frozenset_collections_are_scored_directly() ->
         query_context.tie_breaker_seed,
         "control swift runtime",
     ) == backend.tie_breaker("swift runtime", "control swift runtime")
-    assert family._ordered_pair_bonus(query_context.query_tokens, ("swift", "runtime")) > 0.0
+    assert (
+        family._ordered_pair_bonus(query_context.query_tokens, ("swift", "runtime"))
+        > 0.0
+    )
     assert family._contains_contiguous_query(
         ("control", "swift", "runtime"),
         query_context.query_tokens,
@@ -644,7 +691,9 @@ def test_ordered_pair_bonus_stops_after_matching_all_query_pairs() -> None:
     )
 
     assert (
-        JinaV3RerankFamilyAdapter._ordered_pair_bonus(("swift", "runtime"), document_tokens)
+        JinaV3RerankFamilyAdapter._ordered_pair_bonus(
+            ("swift", "runtime"), document_tokens
+        )
         == 0.15
     )
     assert document_tokens.access_count <= 2
@@ -660,7 +709,9 @@ def test_contiguous_query_scan_does_not_allocate_document_slices() -> None:
 
         def __getitem__(self, index):
             if isinstance(index, slice):
-                raise AssertionError("contiguous query scan should compare tokens without slicing")
+                raise AssertionError(
+                    "contiguous query scan should compare tokens without slicing"
+                )
             return self.tokens[index]
 
     family = JinaV3RerankFamilyAdapter()
@@ -685,7 +736,9 @@ def test_contiguous_query_scan_does_not_allocate_document_slices() -> None:
         NoSliceTokens(("swift", "runtime"))[0:1]
 
 
-def test_contiguous_query_scan_skips_full_comparison_until_first_token_matches(monkeypatch) -> None:
+def test_contiguous_query_scan_skips_full_comparison_until_first_token_matches(
+    monkeypatch,
+) -> None:
     calls: list[int] = []
     original_sequence_matches_at = rerank_backends._sequence_matches_at
 
@@ -693,7 +746,9 @@ def test_contiguous_query_scan_skips_full_comparison_until_first_token_matches(m
         calls.append(start)
         return original_sequence_matches_at(haystack, needle, start)
 
-    monkeypatch.setattr(rerank_backends, "_sequence_matches_at", tracking_sequence_matches_at)
+    monkeypatch.setattr(
+        rerank_backends, "_sequence_matches_at", tracking_sequence_matches_at
+    )
 
     assert JinaV3RerankFamilyAdapter._contains_contiguous_query(
         ("padding", "runtime", "control", "swift", "runtime"),
@@ -709,7 +764,9 @@ def test_contiguous_query_scan_skips_full_comparison_until_first_token_matches(m
     assert calls == []
 
 
-def test_ordered_pair_bonus_skips_second_token_reads_for_noncandidate_pair_starts() -> None:
+def test_ordered_pair_bonus_skips_second_token_reads_for_noncandidate_pair_starts() -> (
+    None
+):
     class CountingTokens:
         def __init__(self, tokens: tuple[str, ...]) -> None:
             self.tokens = tokens
@@ -738,7 +795,12 @@ def test_ordered_pair_bonus_skips_second_token_reads_for_noncandidate_pair_start
 
 
 @pytest.mark.parametrize(
-    ("family", "expected_exact_order_bonus", "expected_prefix_bonus", "expected_pair_bonus"),
+    (
+        "family",
+        "expected_exact_order_bonus",
+        "expected_prefix_bonus",
+        "expected_pair_bonus",
+    ),
     [
         (JinaV3RerankFamilyAdapter(), 0.1, 0.05, 0.15),
         (CausalLMRerankFamilyAdapter(), 0.75, 0.5, 0.45),
@@ -757,15 +819,27 @@ def test_order_aware_query_context_preserves_exact_order_and_prefix_bonuses(
     shuffled_document = "runtime swift adapters"
     query_context = family.build_query_context(backend, query)
 
-    prefix_score = family.score(backend, query, prefix_document, query_context=query_context)
-    exact_order_score = family.score(backend, query, exact_order_document, query_context=query_context)
-    shuffled_score = family.score(backend, query, shuffled_document, query_context=query_context)
+    prefix_score = family.score(
+        backend, query, prefix_document, query_context=query_context
+    )
+    exact_order_score = family.score(
+        backend, query, exact_order_document, query_context=query_context
+    )
+    shuffled_score = family.score(
+        backend, query, shuffled_document, query_context=query_context
+    )
 
     normalized_prefix_score = prefix_score - backend.tie_breaker(query, prefix_document)
-    normalized_exact_order_score = exact_order_score - backend.tie_breaker(query, exact_order_document)
-    normalized_shuffled_score = shuffled_score - backend.tie_breaker(query, shuffled_document)
+    normalized_exact_order_score = exact_order_score - backend.tie_breaker(
+        query, exact_order_document
+    )
+    normalized_shuffled_score = shuffled_score - backend.tie_breaker(
+        query, shuffled_document
+    )
 
-    assert normalized_prefix_score - normalized_exact_order_score == pytest.approx(expected_prefix_bonus, abs=1e-6)
+    assert normalized_prefix_score - normalized_exact_order_score == pytest.approx(
+        expected_prefix_bonus, abs=1e-6
+    )
     assert normalized_exact_order_score - normalized_shuffled_score == pytest.approx(
         expected_exact_order_bonus + expected_pair_bonus,
         abs=1e-6,
@@ -782,8 +856,12 @@ def test_order_aware_rerank_families_use_combined_order_match_once_for_full_over
 ) -> None:
     backend = DeterministicRerankBackend()
     query_order_matches = Mock(return_value=(True, True))
-    contains = Mock(side_effect=AssertionError("score should use the combined order matcher"))
-    has_prefix = Mock(side_effect=AssertionError("score should use the combined order matcher"))
+    contains = Mock(
+        side_effect=AssertionError("score should use the combined order matcher")
+    )
+    has_prefix = Mock(
+        side_effect=AssertionError("score should use the combined order matcher")
+    )
 
     monkeypatch.setattr(
         JinaV3RerankFamilyAdapter,
@@ -817,25 +895,32 @@ def test_rerank_rejects_missing_and_wrong_model_kinds() -> None:
     text_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
 
     missing = inference_service.Rerank(
-        inference_pb2.RerankRequest(
-            id=common_pb2.RequestIdentity(request_id="rerank-missing"),
-            model_handle="missing-handle",
-            query="swift",
-            documents=["swift worker"],
-            top_k=1,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.RerankRequest(
+                id=common_pb2.RequestIdentity(request_id="rerank-missing"),
+                model_handle="missing-handle",
+                query="swift",
+                documents=["swift worker"],
+                top_k=1,
+            ),
+            source_handle=text_handle,
         ),
         context=None,
     )
     wrong_kind = inference_service.Rerank(
-        inference_pb2.RerankRequest(
-            id=common_pb2.RequestIdentity(request_id="rerank-text"),
-            model_handle=text_handle,
-            query="swift",
-            documents=["swift worker"],
-            top_k=1,
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.RerankRequest(
+                id=common_pb2.RequestIdentity(request_id="rerank-text"),
+                model_handle=text_handle,
+                query="swift",
+                documents=["swift worker"],
+                top_k=1,
+            ),
         ),
         context=None,
     )
 
-    assert missing.error.code == "not_found"
+    assert missing.error.code == "model_identity_mismatch"
     assert wrong_kind.error.code == "invalid_argument"

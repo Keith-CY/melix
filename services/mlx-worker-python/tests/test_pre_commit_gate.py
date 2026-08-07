@@ -495,7 +495,16 @@ def test_head_comparison_snapshot_preserves_base_git_diff_context(tmp_path: Path
     assert (head_repo / "added.py").read_text(encoding="utf-8") == "created\n"
     assert not (head_repo / "removed.py").exists()
     diff_output = subprocess.check_output(
-        ["git", "diff", "--unified=0", "--", "kept.py", "added.py", "removed.py"],
+        [
+            "git",
+            "diff",
+            "--unified=0",
+            "HEAD",
+            "--",
+            "kept.py",
+            "added.py",
+            "removed.py",
+        ],
         cwd=head_repo,
         text=True,
     )
@@ -580,6 +589,7 @@ def test_run_gate_uses_merge_head_as_performance_scope_base(monkeypatch, tmp_pat
 def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path: Path) -> None:
     observed_base_refs: list[str] = []
     observed_head_base_refs: list[str | None] = []
+    observed_probe_base_refs: list[tuple[str | None, str | None]] = []
     monkeypatch.setattr(pre_commit_gate, "_report_run_dir", lambda root: tmp_path / "run")
     monkeypatch.setattr(
         pre_commit_gate,
@@ -607,7 +617,16 @@ def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path
         destination.mkdir()
 
     monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", export_base)
-    monkeypatch.setattr(pre_commit_gate, "run_probe_job", lambda **kwargs: ({"probe": {"id": "probe-one"}}, True))
+    def run_probe(**kwargs):
+        observed_probe_base_refs.append(
+            (
+                kwargs["env"].get("MELIX_BACKEND_IDENTITY_COVERAGE_DIFF_FROM"),
+                kwargs["env"].get("MELIX_PAGED_KV_COVERAGE_DIFF_FROM"),
+            )
+        )
+        return ({"probe": {"id": "probe-one"}}, True)
+
+    monkeypatch.setattr(pre_commit_gate, "run_probe_job", run_probe)
     monkeypatch.setattr(
         pre_commit_gate,
         "build_performance_report",
@@ -629,6 +648,7 @@ def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path
     assert outcome.status == "ok"
     assert observed_head_base_refs == ["merge-head"]
     assert observed_base_refs == ["merge-head"]
+    assert observed_probe_base_refs == [("HEAD", "HEAD")]
 
 
 def test_run_performance_report_preserves_repeat_group_report_rows(

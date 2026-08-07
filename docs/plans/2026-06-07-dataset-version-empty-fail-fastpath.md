@@ -52,3 +52,17 @@ The registered probe remains the validation gate. This follow-up extends
 `scripts/dataset_quality_lengths_probe.py` with failed-partition metrics so CI
 and local Linux runs report `failed_partition_elapsed_ms_*` together with the
 existing quality-length metrics.
+
+## 2026-07-07 follow-up: cached failed id set
+
+This slice keeps the same `prepare_dataset_version(...)` boundary and registered
+`dataset-quality-lengths-chain` probe. It targets repeated calls to
+`_partition_failed_segments(...)` with the same non-empty `fail_segment_ids`
+tuple, as exercised by the registered failed-partition probe samples. The helper
+now reuses a small LRU-cached `frozenset` for the failed id membership table,
+preserving duplicate segment output semantics while avoiding repeated set
+construction across measurements and repeated dataset-version retries.
+
+Validation remains Python-only and locally verifiable on Linux through the
+registered focused tests, changed-scope coverage command, and local PR-scoped
+performance probe comparison against `origin/main`.

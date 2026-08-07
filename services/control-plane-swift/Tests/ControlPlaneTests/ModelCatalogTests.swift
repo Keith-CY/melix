@@ -258,6 +258,648 @@ struct ModelCatalogTests {
         #expect(audit["melix.acceleration.profile.proof_matrix_id"] == "profile-proof-throughput-v1")
     }
 
+    @Test("serving capability audit metadata covers the profile preflight matrix")
+    func servingCapabilityAuditMetadataCoversTheProfilePreflightMatrix() async throws {
+        let textModel = ModelCatalog.devTextModel()
+        let textValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: textModel,
+            requestedMode: .baseline,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        let textMetadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            textValidation.receipt,
+            profileReceipt: textValidation.profileReceipt,
+            model: textModel
+        )
+        #expect(textMetadata["melix.serving.capability.schema_version"] == "melix.serving_capability_receipt.v1")
+        #expect(textMetadata["melix.serving.capability.capabilities"] == "generate_text")
+        #expect(textMetadata["melix.serving.capability.input_modalities"] == "text")
+        #expect(textMetadata["melix.serving.capability.output_modalities"] == "text")
+        #expect(textMetadata["melix.serving.capability.acceleration_profile"] == "balanced")
+        #expect(textMetadata["melix.serving.capability.requested_mode"] == "baseline")
+        #expect(textMetadata["melix.serving.capability.resolved_mode"] == "baseline")
+        #expect(textMetadata["melix.serving.capability.optional_dependency_source"] == "not_required")
+        #expect(textMetadata["melix.serving.capability.unsupported_reason"] == "none")
+        #expect(textMetadata["melix.serving.capability.ignored_flags"] == "")
+        #expect(textMetadata["melix.serving.capability.fallback_policy"] == "observable_fallback")
+
+        let vlmModel = ModelCatalog.devVLMModel()
+        let vlmValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: vlmModel,
+            requestedMode: .baseline,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        let vlmMetadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            vlmValidation.receipt,
+            profileReceipt: vlmValidation.profileReceipt,
+            model: vlmModel
+        )
+        #expect(vlmMetadata["melix.serving.capability.capabilities"] == "generate_text,generate_multimodal")
+        #expect(vlmMetadata["melix.serving.capability.input_modalities"] == "text,image,video")
+        #expect(vlmMetadata["melix.serving.capability.output_modalities"] == "text")
+
+        let imageModel = ModelCatalog.devImageModel()
+        let imageValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: imageModel,
+            requestedMode: .baseline,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        let imageMetadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            imageValidation.receipt,
+            profileReceipt: imageValidation.profileReceipt,
+            model: imageModel
+        )
+        #expect(imageMetadata["melix.serving.capability.capabilities"] == "image_generate,image_edit")
+        #expect(imageMetadata["melix.serving.capability.input_modalities"] == "text,image")
+        #expect(imageMetadata["melix.serving.capability.output_modalities"] == "image")
+
+        var invalidDraftModel = ModelCatalog.devTextModel()
+        invalidDraftModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        invalidDraftModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        let invalidDraftValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: invalidDraftModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "other-draft",
+            requestedProfileID: "throughput"
+        )
+        let invalidDraftMetadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            invalidDraftValidation.receipt,
+            profileReceipt: invalidDraftValidation.profileReceipt,
+            model: invalidDraftModel
+        )
+        #expect(invalidDraftValidation.ok == false)
+        #expect(invalidDraftMetadata["melix.serving.capability.requested_mode"] == "speculative_decode")
+        #expect(invalidDraftMetadata["melix.serving.capability.resolved_mode"] == "baseline")
+        #expect(invalidDraftMetadata["melix.serving.capability.unsupported_reason"] == "draft_model_not_allowed")
+        #expect(invalidDraftMetadata["melix.serving.capability.ignored_flags"] == "draft_model_id")
+        #expect(invalidDraftMetadata["melix.serving.capability.fallback_policy"] == "fail_closed")
+
+        let unsupportedModeValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: ModelCatalog.devTextModel(),
+            requestedMode: .acceleratedPrefill,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        let unsupportedModeMetadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            unsupportedModeValidation.receipt,
+            profileReceipt: unsupportedModeValidation.profileReceipt,
+            model: ModelCatalog.devTextModel()
+        )
+        #expect(unsupportedModeValidation.ok == false)
+        #expect(unsupportedModeMetadata["melix.serving.capability.requested_mode"] == "accelerated_prefill")
+        #expect(unsupportedModeMetadata["melix.serving.capability.resolved_mode"] == "baseline")
+        #expect(unsupportedModeMetadata["melix.serving.capability.unsupported_reason"] == "unsupported_mode")
+        #expect(unsupportedModeMetadata["melix.serving.capability.ignored_flags"] == "acceleration_mode")
+        #expect(unsupportedModeMetadata["melix.serving.capability.fallback_policy"] == "fail_closed")
+
+        var unprovenProfileModel = ModelCatalog.devTextModel()
+        unprovenProfileModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        unprovenProfileModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        unprovenProfileModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        unprovenProfileModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        let unprovenProfileValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: unprovenProfileModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        let unprovenProfileMetadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            unprovenProfileValidation.receipt,
+            profileReceipt: unprovenProfileValidation.profileReceipt,
+            model: unprovenProfileModel
+        )
+        #expect(unprovenProfileValidation.ok == false)
+        #expect(unprovenProfileMetadata["melix.serving.capability.acceleration_profile"] == "throughput")
+        #expect(unprovenProfileMetadata["melix.serving.capability.requested_mode"] == "speculative_decode")
+        #expect(unprovenProfileMetadata["melix.serving.capability.resolved_mode"] == "speculative_decode")
+        #expect(unprovenProfileMetadata["melix.serving.capability.ignored_flags"] == "acceleration_profile")
+        #expect(unprovenProfileMetadata["melix.serving.capability.fallback_policy"] == "fail_closed")
+
+        var admittedDraftModel = ModelCatalog.devTextModel()
+        admittedDraftModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        admittedDraftModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        admittedDraftModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        admittedDraftModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        admittedDraftModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        admittedDraftModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        let admittedDraftValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: admittedDraftModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        let admittedDraftMetadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            admittedDraftValidation.receipt,
+            profileReceipt: admittedDraftValidation.profileReceipt,
+            model: admittedDraftModel
+        )
+        #expect(admittedDraftValidation.ok)
+        #expect(admittedDraftMetadata["melix.serving.capability.acceleration_profile"] == "throughput")
+        #expect(admittedDraftMetadata["melix.serving.capability.requested_mode"] == "speculative_decode")
+        #expect(admittedDraftMetadata["melix.serving.capability.resolved_mode"] == "speculative_decode")
+        #expect(admittedDraftMetadata["melix.serving.capability.unsupported_reason"] == "none")
+        #expect(admittedDraftMetadata["melix.serving.capability.fallback_policy"] == "observable_fallback")
+    }
+
+    @Test("serving capability audit metadata canonicalizes task aliases")
+    func servingCapabilityAuditMetadataCanonicalizesTaskAliases() async throws {
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "alias-heavy-model"
+        model.kind = "custom"
+        model.supportedTasks = [
+            "org.melix.generate-text",
+            "provider.generate_multimodal",
+            "embedding",
+            "reranking",
+            "transcription",
+            "speech",
+            "image-generate",
+            "image.edit",
+        ]
+        model.supportedModalities = ["audio", "image", "text"]
+
+        let validation = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .baseline,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        let metadata = ModelCapabilityReceipts.servingCapabilityAuditMetadata(
+            validation.receipt,
+            profileReceipt: validation.profileReceipt,
+            model: model
+        )
+
+        #expect(
+            metadata["melix.serving.capability.capabilities"]
+                == "generate_text,generate_multimodal,embed_text,rerank_text,transcribe_audio,speak_text,image_generate,image_edit"
+        )
+        #expect(metadata["melix.serving.capability.output_modalities"] == "text,audio,image")
+    }
+
+    @Test("resolved acceleration config receipt normalizes low-level acceleration fields")
+    func resolvedAccelerationConfigReceiptNormalizesLowLevelAccelerationFields() async throws {
+        let baselineValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: ModelCatalog.devTextModel(),
+            requestedMode: .baseline,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        var baselinePolicy = Melix_Worker_V1_AccelerationPolicy()
+        baselinePolicy.mode = .baseline
+        baselinePolicy.profileID = "balanced"
+
+        let baselineConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: baselinePolicy,
+            executionMetadata: [:],
+            validation: baselineValidation
+        )
+        #expect(baselineConfig.method == "baseline")
+        #expect(baselineConfig.requestedMethod == "baseline")
+        #expect(baselineConfig.sidecarModel == "")
+        #expect(baselineConfig.numSpeculativeTokens == 0)
+        #expect(baselineConfig.profile == "balanced")
+        #expect(baselineConfig.conflictingFlags == [])
+        #expect(baselineConfig.controllerScope == "none")
+        #expect(baselineConfig.disabledReason == "none")
+
+        let forcedOffConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: baselinePolicy,
+            executionMetadata: [
+                "melix.gateway.suppressed_overrides": "speculative_decode",
+                "melix.gateway.speculative.disabled_reason": "operator_disabled",
+            ],
+            validation: baselineValidation
+        )
+        #expect(forcedOffConfig.method == "baseline")
+        #expect(forcedOffConfig.requestedMethod == "speculative_decode")
+        #expect(forcedOffConfig.conflictingFlags == ["speculative_decode"])
+        #expect(forcedOffConfig.controllerScope == "none")
+        #expect(forcedOffConfig.disabledReason == "operator_disabled")
+
+        var admittedModel = ModelCatalog.devTextModel()
+        admittedModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        admittedModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        admittedModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        admittedModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        admittedModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        admittedModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        let admittedValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: admittedModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        var speculativePolicy = Melix_Worker_V1_AccelerationPolicy()
+        speculativePolicy.mode = .speculativeDecode
+        speculativePolicy.profileID = "throughput"
+        speculativePolicy.draftModelID = "melix-dev-draft"
+        speculativePolicy.numDraftTokens = 6
+
+        let admittedConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: speculativePolicy,
+            executionMetadata: [:],
+            validation: admittedValidation
+        )
+        #expect(admittedConfig.method == "speculative_decode")
+        #expect(admittedConfig.requestedMethod == "speculative_decode")
+        #expect(admittedConfig.sidecarModel == "melix-dev-draft")
+        #expect(admittedConfig.numSpeculativeTokens == 6)
+        #expect(admittedConfig.profile == "throughput")
+        #expect(admittedConfig.conflictingFlags == [])
+        #expect(admittedConfig.controllerScope == "request")
+        #expect(admittedConfig.disabledReason == "none")
+
+        let admittedMetadata = ModelCapabilityReceipts.resolvedAccelerationConfigAuditMetadata(admittedConfig)
+        #expect(admittedMetadata["melix.serving.acceleration_config.schema_version"] == "melix.resolved_acceleration_config.v1")
+        #expect(admittedMetadata["melix.serving.acceleration_config.method"] == "speculative_decode")
+        #expect(admittedMetadata["melix.serving.acceleration_config.sidecar_model"] == "melix-dev-draft")
+        #expect(admittedMetadata["melix.serving.acceleration_config.num_speculative_tokens"] == "6")
+        #expect(admittedMetadata["melix.serving.acceleration_config.controller_scope"] == "request")
+
+        var invalidDraftModel = admittedModel
+        invalidDraftModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        let invalidDraftValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: invalidDraftModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "other-draft",
+            requestedProfileID: "throughput"
+        )
+        speculativePolicy.draftModelID = "other-draft"
+        let invalidDraftConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: speculativePolicy,
+            executionMetadata: [:],
+            validation: invalidDraftValidation
+        )
+        #expect(invalidDraftConfig.method == "baseline")
+        #expect(invalidDraftConfig.requestedMethod == "speculative_decode")
+        #expect(invalidDraftConfig.sidecarModel == "")
+        #expect(invalidDraftConfig.numSpeculativeTokens == 0)
+        #expect(invalidDraftConfig.profile == "throughput")
+        #expect(invalidDraftConfig.conflictingFlags == ["draft_model_id"])
+        #expect(invalidDraftConfig.disabledReason == "draft_model_not_allowed")
+
+        var unsupportedModePolicy = Melix_Worker_V1_AccelerationPolicy()
+        unsupportedModePolicy.mode = .acceleratedPrefill
+        unsupportedModePolicy.profileID = "balanced"
+        let unsupportedModeValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: ModelCatalog.devTextModel(),
+            requestedMode: .acceleratedPrefill,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        let unsupportedModeConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: unsupportedModePolicy,
+            executionMetadata: [:],
+            validation: unsupportedModeValidation
+        )
+        #expect(unsupportedModeConfig.method == "baseline")
+        #expect(unsupportedModeConfig.requestedMethod == "accelerated_prefill")
+        #expect(unsupportedModeConfig.conflictingFlags == ["acceleration_mode"])
+        #expect(unsupportedModeConfig.disabledReason == "unsupported_mode")
+
+        var unverifiedProfileModel = admittedModel
+        unverifiedProfileModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = ""
+        unverifiedProfileModel.settings.ext["melix.acceleration.profile.verification_status"] = ""
+        let unverifiedProfileValidation = ModelCapabilityReceipts.validateAcceleration(
+            model: unverifiedProfileModel,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        speculativePolicy.draftModelID = "melix-dev-draft"
+        let unverifiedProfileConfig = ModelCapabilityReceipts.resolvedAccelerationConfig(
+            for: speculativePolicy,
+            executionMetadata: [:],
+            validation: unverifiedProfileValidation
+        )
+        #expect(unverifiedProfileConfig.method == "baseline")
+        #expect(unverifiedProfileConfig.requestedMethod == "speculative_decode")
+        #expect(unverifiedProfileConfig.profile == "throughput")
+        #expect(unverifiedProfileConfig.conflictingFlags == ["acceleration_profile"])
+        #expect(unverifiedProfileConfig.disabledReason == "experimental_unverified")
+    }
+
+    @Test("feature composition guardrail caps disk-backed speculative fan-out")
+    func featureCompositionGuardrailCapsDiskBackedSpeculativeFanOut() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingRequireDisk
+        model.settings.cacheMemoryBudgetBytes = 8_192
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        model.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        model.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        model.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        model.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+
+        var policy = Melix_Worker_V1_AccelerationPolicy()
+        policy.mode = .speculativeDecode
+        policy.profileID = "throughput"
+        policy.draftModelID = "melix-dev-draft"
+        policy.numDraftTokens = 6
+
+        let validation = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        let resolution = ModelCapabilityReceipts.featureCompositionGuardrailResolution(
+            for: model,
+            acceleration: policy,
+            executionMetadata: [:],
+            validation: validation
+        )
+
+        #expect(resolution.effectiveAcceleration.mode == .speculativeDecode)
+        #expect(resolution.effectiveAcceleration.numDraftTokens == 1)
+        #expect(resolution.receipt.composition == "ssd_expert_streaming_x_speculative_decode")
+        #expect(resolution.receipt.decision == "auto_cap_draft_tokens")
+        #expect(resolution.receipt.requestedNumDraftTokens == 6)
+        #expect(resolution.receipt.effectiveNumDraftTokens == 1)
+        #expect(resolution.receipt.resourceFanoutEstimate == 2)
+        #expect(resolution.receipt.requestedCacheBudgetBytes == 8_192)
+        #expect(resolution.receipt.effectiveCacheBudgetBytes == 8_192)
+        #expect(resolution.receipt.guardrailReason == "disk_streaming_speculative_fanout_cap")
+
+        let metadata = ModelCapabilityReceipts.featureCompositionGuardrailAuditMetadata(resolution.receipt)
+        #expect(
+            metadata["melix.acceleration.feature_guardrail.schema_version"]
+                == "melix.feature_composition_guardrail.v1"
+        )
+        #expect(metadata["melix.acceleration.feature_guardrail.composition"] == "ssd_expert_streaming_x_speculative_decode")
+        #expect(metadata["melix.acceleration.feature_guardrail.decision"] == "auto_cap_draft_tokens")
+        #expect(metadata["melix.acceleration.feature_guardrail.requested_num_draft_tokens"] == "6")
+        #expect(metadata["melix.acceleration.feature_guardrail.effective_num_draft_tokens"] == "1")
+        #expect(metadata["melix.acceleration.feature_guardrail.resource_fanout_estimate"] == "2")
+        #expect(metadata["melix.acceleration.feature_guardrail.requested_cache_budget_bytes"] == "8192")
+        #expect(metadata["melix.acceleration.feature_guardrail.effective_cache_budget_bytes"] == "8192")
+        #expect(
+            metadata["melix.acceleration.feature_guardrail.guardrail_reason"]
+                == "disk_streaming_speculative_fanout_cap"
+        )
+    }
+
+    @Test("feature composition guardrail tightens cache budget and refuses unsafe compositions")
+    func featureCompositionGuardrailTightensCacheBudgetAndRefusesUnsafeCompositions() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingPreferDisk
+        model.settings.memoryBudgetBytes = 10_000
+        model.settings.cacheMemoryBudgetBytes = 4_096
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        model.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        model.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        model.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        model.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        model.settings.ext["melix.acceleration.feature_guardrail.draft_weight_bytes"] = "6000"
+        model.settings.ext["melix.acceleration.feature_guardrail.memory_threshold_bytes"] = "12000"
+        model.settings.ext["melix.acceleration.feature_guardrail.min_cache_budget_bytes"] = "1024"
+        model.settings.ext["melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes"] = "1024"
+
+        var policy = Melix_Worker_V1_AccelerationPolicy()
+        policy.mode = .speculativeDecode
+        policy.profileID = "throughput"
+        policy.draftModelID = "melix-dev-draft"
+        policy.numDraftTokens = 1
+
+        let validation = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        let tightened = ModelCapabilityReceipts.featureCompositionGuardrailResolution(
+            for: model,
+            acceleration: policy,
+            executionMetadata: [:],
+            validation: validation
+        )
+
+        #expect(tightened.effectiveAcceleration.mode == .speculativeDecode)
+        #expect(tightened.effectiveAcceleration.numDraftTokens == 1)
+        #expect(tightened.receipt.decision == "tighten_cache_budget")
+        #expect(tightened.receipt.requestedCacheBudgetBytes == 4_096)
+        #expect(tightened.receipt.effectiveCacheBudgetBytes == 2_048)
+        #expect(tightened.receipt.guardrailReason == "main_draft_footprint_exceeds_threshold")
+
+        model.settings.ext["melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes"] = "3072"
+        let refused = ModelCapabilityReceipts.featureCompositionGuardrailResolution(
+            for: model,
+            acceleration: policy,
+            executionMetadata: [:],
+            validation: validation
+        )
+
+        #expect(refused.effectiveAcceleration.mode == .baseline)
+        #expect(refused.effectiveAcceleration.numDraftTokens == 0)
+        #expect(refused.effectiveAcceleration.draftModelID == "")
+        #expect(refused.receipt.decision == "refuse_unsafe_composition")
+        #expect(refused.receipt.effectiveNumDraftTokens == 0)
+        #expect(refused.receipt.resourceFanoutEstimate == 1)
+        #expect(refused.receipt.effectiveCacheBudgetBytes == 2_048)
+        #expect(refused.receipt.guardrailReason == "no_safe_effective_cache_budget")
+    }
+
+    @Test("feature composition guardrail labels combined draft cap and cache budget tightening")
+    func featureCompositionGuardrailLabelsCombinedDraftCapAndCacheBudgetTightening() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.diskStreamingMode = .diskStreamingRequireDisk
+        model.settings.memoryBudgetBytes = 10_000
+        model.settings.cacheMemoryBudgetBytes = 4_096
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        model.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        model.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        model.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        model.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        model.settings.ext["melix.acceleration.feature_guardrail.draft_weight_bytes"] = "6000"
+        model.settings.ext["melix.acceleration.feature_guardrail.memory_threshold_bytes"] = "12000"
+        model.settings.ext["melix.acceleration.feature_guardrail.min_cache_budget_bytes"] = "1024"
+        model.settings.ext["melix.acceleration.feature_guardrail.min_safe_cache_budget_bytes"] = "1024"
+
+        var policy = Melix_Worker_V1_AccelerationPolicy()
+        policy.mode = .speculativeDecode
+        policy.profileID = "throughput"
+        policy.draftModelID = "melix-dev-draft"
+        policy.numDraftTokens = 6
+
+        let validation = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        let resolution = ModelCapabilityReceipts.featureCompositionGuardrailResolution(
+            for: model,
+            acceleration: policy,
+            executionMetadata: [:],
+            validation: validation
+        )
+
+        #expect(resolution.effectiveAcceleration.mode == .speculativeDecode)
+        #expect(resolution.effectiveAcceleration.numDraftTokens == 1)
+        #expect(resolution.receipt.decision == "auto_cap_draft_tokens_and_tighten_cache_budget")
+        #expect(resolution.receipt.requestedNumDraftTokens == 6)
+        #expect(resolution.receipt.effectiveNumDraftTokens == 1)
+        #expect(resolution.receipt.requestedCacheBudgetBytes == 4_096)
+        #expect(resolution.receipt.effectiveCacheBudgetBytes == 2_048)
+        #expect(
+            resolution.receipt.guardrailReason
+                == "disk_streaming_speculative_fanout_cap_and_main_draft_footprint_exceeds_threshold"
+        )
+    }
+
+    @Test("memory-aware serving admission receipt caps defaults and preserves explicit overrides")
+    func memoryAwareServingAdmissionReceiptCapsDefaultsAndPreservesExplicitOverrides() async throws {
+        var longContextModel = ModelCatalog.devTextModel()
+        longContextModel.maxContext = 131_072
+        longContextModel.settings.memoryBudgetBytes = 1_073_741_824
+
+        let cappedDefault = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: longContextModel,
+            requestedContext: nil,
+            requestedBatch: 4,
+            detectedMemoryBytes: nil
+        )
+        #expect(cappedDefault.requestedContext == 131_072)
+        #expect(cappedDefault.effectiveContext == 8_192)
+        #expect(cappedDefault.requestedBatch == 4)
+        #expect(cappedDefault.effectiveBatch == 4)
+        #expect(cappedDefault.memoryHeadroomBytes == 0)
+        #expect(cappedDefault.memoryTelemetrySource == "unknown")
+        #expect(cappedDefault.admissionReason == "default_context_cap")
+        #expect(cappedDefault.fitsMemory == true)
+
+        let explicitOverride = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: longContextModel,
+            requestedContext: 32_768,
+            requestedBatch: 4,
+            detectedMemoryBytes: nil
+        )
+        #expect(explicitOverride.requestedContext == 32_768)
+        #expect(explicitOverride.effectiveContext == 32_768)
+        #expect(explicitOverride.effectiveBatch == 4)
+        #expect(explicitOverride.admissionReason == "explicit_override_preserved")
+        #expect(explicitOverride.memoryTelemetrySource == "unknown")
+
+        longContextModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+        let steppedDown = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: longContextModel,
+            requestedContext: nil,
+            requestedBatch: 4,
+            detectedMemoryBytes: 4_294_967_296
+        )
+        #expect(steppedDown.requestedContext == 131_072)
+        #expect(steppedDown.effectiveContext == 4_096)
+        #expect(steppedDown.requestedBatch == 4)
+        #expect(steppedDown.effectiveBatch == 1)
+        #expect(steppedDown.memoryHeadroomBytes == 2_147_483_648)
+        #expect(steppedDown.estimatedActiveBytes == 2_147_483_648)
+        #expect(steppedDown.memoryTelemetrySource == "detected")
+        #expect(steppedDown.admissionReason == "memory_step_down")
+        #expect(steppedDown.fitsMemory == true)
+
+        let metadata = ModelCapabilityReceipts.servingMemoryAdmissionAuditMetadata(steppedDown)
+        #expect(metadata["melix.serving.memory_admission.schema_version"] == "melix.serving_memory_admission.v1")
+        #expect(metadata["melix.serving.memory_admission.requested_context"] == "131072")
+        #expect(metadata["melix.serving.memory_admission.effective_context"] == "4096")
+        #expect(metadata["melix.serving.memory_admission.requested_batch"] == "4")
+        #expect(metadata["melix.serving.memory_admission.effective_batch"] == "1")
+        #expect(metadata["melix.serving.memory_admission.memory_headroom_bytes"] == "2147483648")
+        #expect(metadata["melix.serving.memory_admission.estimated_active_bytes"] == "2147483648")
+        #expect(metadata["melix.serving.memory_admission.memory_telemetry_source"] == "detected")
+        #expect(metadata["melix.serving.memory_admission.admission_reason"] == "memory_step_down")
+        #expect(metadata["melix.serving.memory_admission.fits_memory"] == "true")
+    }
+
+    @Test("memory-aware serving admission labels detected memory fits distinctly")
+    func memoryAwareServingAdmissionLabelsDetectedMemoryFitsDistinctly() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.memoryBudgetBytes = 1_073_741_824
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: nil,
+            requestedBatch: 1,
+            detectedMemoryBytes: 17_179_869_184
+        )
+
+        #expect(receipt.memoryTelemetrySource == "detected")
+        #expect(receipt.memoryHeadroomBytes == 2_147_483_648)
+        #expect(receipt.admissionReason == "detected_memory_fits")
+        #expect(receipt.effectiveContext == 8_192)
+        #expect(receipt.effectiveBatch == 1)
+        #expect(receipt.fitsMemory == true)
+    }
+
+    @Test("memory-aware serving admission ignores zero bytes per token overrides")
+    func memoryAwareServingAdmissionIgnoresZeroBytesPerTokenOverrides() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.memoryBudgetBytes = 1_073_741_824
+        model.settings.ext["melix.serving.memory.bytes_per_token"] = "0"
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: nil,
+            requestedBatch: 1,
+            detectedMemoryBytes: 17_179_869_184
+        )
+
+        #expect(receipt.estimatedActiveBytes == 3_221_225_472)
+        #expect(receipt.admissionReason == "detected_memory_fits")
+        #expect(receipt.fitsMemory == true)
+    }
+
+    @Test("memory-aware serving admission does not step small-context models above their effective context")
+    func memoryAwareServingAdmissionDoesNotStepSmallContextModelsAboveEffectiveContext() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.maxContext = 1_024
+        model.settings.memoryBudgetBytes = 1_073_741_824
+        model.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: model,
+            requestedContext: nil,
+            requestedBatch: 8,
+            detectedMemoryBytes: 4_294_967_296
+        )
+
+        #expect(receipt.requestedContext == 1_024)
+        #expect(receipt.effectiveContext == 1_024)
+        #expect(receipt.requestedBatch == 8)
+        #expect(receipt.effectiveBatch == 1)
+        #expect(receipt.memoryTelemetrySource == "detected")
+        #expect(receipt.estimatedActiveBytes == 1_342_177_280)
+        #expect(receipt.admissionReason == "memory_step_down")
+        #expect(receipt.fitsMemory == true)
+    }
+
+    @Test("memory-aware serving admission treats zero detected memory as telemetry")
+    func memoryAwareServingAdmissionTreatsZeroDetectedMemoryAsTelemetry() async throws {
+        var longContextModel = ModelCatalog.devTextModel()
+        longContextModel.maxContext = 131_072
+        longContextModel.settings.memoryBudgetBytes = 1_073_741_824
+        longContextModel.settings.ext["melix.serving.memory.bytes_per_token"] = "262144"
+
+        let receipt = ModelCapabilityReceipts.servingMemoryAdmissionReceipt(
+            for: longContextModel,
+            requestedContext: nil,
+            requestedBatch: 4,
+            detectedMemoryBytes: 0
+        )
+
+        #expect(receipt.memoryTelemetrySource == "detected")
+        #expect(receipt.memoryHeadroomBytes == 2_147_483_648)
+        #expect(receipt.admissionReason == "insufficient_memory")
+        #expect(receipt.effectiveContext == 2_048)
+        #expect(receipt.effectiveBatch == 1)
+        #expect(receipt.fitsMemory == false)
+    }
+
     @Test("capability receipt validation refuses invalid drafts and inconsistent speculative metadata")
     func capabilityReceiptValidationRefusesInvalidDraftsAndInconsistentSpeculativeMetadata() async throws {
         var model = ModelCatalog.devTextModel()
@@ -464,7 +1106,8 @@ struct ModelCatalogTests {
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.ext["text_family_id"] == "llama")
         #expect(models.first(where: { $0.modelID == "melix-dev-text" })?.settings.ext["melix.capability.route_kind"] == "swift_text")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.routeClass == .workerRoutePythonEmbedding)
-        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_backend_id"] == "bert-v1")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_backend_id"] == "deterministic-fixture-v1")
+        #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_execution_kind"] == "fixture")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["embedding_family_id"] == "bert")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["melix.adapter_set_hash"] == "embedding-family-bert")
         #expect(models.first(where: { $0.modelID == "melix-dev-embed" })?.settings.ext["melix.capability.route_kind"] == "python_embedding")
@@ -574,7 +1217,8 @@ struct ModelCatalogTests {
             "MELIX_DEV_EMBED_MODEL_PATH": "models/mxbai-embed-large-v1",
         ])
 
-        #expect(model.settings.ext["embedding_backend_id"] == "bert-v1")
+        #expect(model.settings.ext["embedding_backend_id"] == "deterministic-fixture-v1")
+        #expect(model.settings.ext["embedding_execution_kind"] == "fixture")
         #expect(model.settings.ext["embedding_family_id"] == "mxbai-embed")
         #expect(model.settings.ext["embedding_pooling_mode"] == "mean")
         #expect(model.settings.ext["embedding_dimensions"] == "10")
@@ -599,7 +1243,7 @@ struct ModelCatalogTests {
 
         #expect(bge.settings.ext["embedding_family_id"] == "bge-m3")
         #expect(bge.settings.ext["detected_family_id"] == "bge-m3")
-        #expect(xlmr.settings.ext["embedding_backend_id"] == "xlmr-v1")
+        #expect(xlmr.settings.ext["embedding_backend_id"] == "deterministic-fixture-v1")
         #expect(xlmr.settings.ext["embedding_family_id"] == "xlmr")
         #expect(xlmr.settings.ext["model_architecture"] == "xlmr")
         #expect(bert.settings.ext["embedding_family_id"] == "bert")
@@ -613,14 +1257,15 @@ struct ModelCatalogTests {
         ])
         let backendOverride = ModelCatalog.devEmbeddingModel(environment: [
             "MELIX_DEV_EMBED_MODEL_PATH": "models/bert-base",
-            "MELIX_DEV_EMBED_BACKEND_ID": "xlmr-v1",
+            "MELIX_DEV_EMBED_BACKEND_ID": "mlx-xlmr-v1",
         ])
 
-        #expect(familyOverride.settings.ext["embedding_backend_id"] == "xlmr-v1")
+        #expect(familyOverride.settings.ext["embedding_backend_id"] == "deterministic-fixture-v1")
         #expect(familyOverride.settings.ext["embedding_family_id"] == "xlmr")
         #expect(familyOverride.settings.ext["model_architecture"] == "xlmr")
         #expect(familyOverride.settings.ext["identity_override"] == "true")
         #expect(backendOverride.settings.ext["embedding_family_id"] == "xlmr")
+        #expect(backendOverride.settings.ext["embedding_backend_id"] == "mlx-xlmr-v1")
         #expect(backendOverride.settings.ext["model_architecture"] == "xlmr")
     }
 

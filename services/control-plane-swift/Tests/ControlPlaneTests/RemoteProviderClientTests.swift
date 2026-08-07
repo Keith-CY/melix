@@ -648,6 +648,82 @@ struct RemoteProviderClientTests {
         #expect(await transport.lastBodyString?.contains(#""stream":false"#) == true)
     }
 
+    @Test("forwards optional OpenAI compatible generation controls")
+    func forwardsOptionalOpenAICompatibleGenerationControls() async throws {
+        let transport = RecordingRemoteProviderTransport(response: .init(
+            statusCode: 200,
+            headers: ["content-type": "application/json"],
+            body: Data(
+                #"{ "choices": [{ "message": { "content": "OK." }, "finish_reason": "stop" }] }"#
+                    .utf8
+            )
+        ))
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+
+        _ = try await client.complete(
+            RemoteProviderChatRequest(
+                serverID: "reasoning-endpoint",
+                providerKind: "openai-compatible",
+                baseURL: "https://reasoning.example/v1",
+                apiKey: "sk-secret",
+                modelID: "deepseek-v4-flash",
+                messages: [.init(role: "user", content: "Reply with exactly OK.")],
+                stream: false,
+                enableThinking: false,
+                reasoningEffort: "none",
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 128
+            )
+        )
+
+        let bodyString = try #require(await transport.lastBodyString)
+        let bodyData = try #require(bodyString.data(using: .utf8))
+        let body = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+        #expect(body["enable_thinking"] as? Bool == false)
+        #expect(body["reasoning_effort"] as? String == "none")
+        #expect(body["temperature"] as? Double == 0.2)
+        #expect(body["top_p"] as? Double == 0.9)
+        #expect(body["max_tokens"] as? Int == 128)
+    }
+
+    @Test("omits enable_thinking unless thinking is explicitly disabled")
+    func omitsEnableThinkingUnlessThinkingIsExplicitlyDisabled() async throws {
+        for enableThinking in [nil, true] as [Bool?] {
+            let transport = RecordingRemoteProviderTransport(response: .init(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    #"{ "choices": [{ "message": { "content": "OK." }, "finish_reason": "stop" }] }"#
+                        .utf8
+                )
+            ))
+            let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+
+            _ = try await client.complete(
+                RemoteProviderChatRequest(
+                    serverID: "strict-endpoint",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://strict.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "gpt-5",
+                    messages: [.init(role: "user", content: "Reply with exactly OK.")],
+                    stream: false,
+                    enableThinking: enableThinking
+                )
+            )
+
+            let bodyString = try #require(await transport.lastBodyString)
+            let bodyData = try #require(bodyString.data(using: .utf8))
+            let body = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+            #expect(body["enable_thinking"] == nil)
+            #expect(body["reasoning_effort"] == nil)
+            #expect(body["temperature"] == nil)
+            #expect(body["top_p"] == nil)
+            #expect(body["max_tokens"] == nil)
+        }
+    }
+
     @Test("parses OpenAI compatible SSE chat completion")
     func parsesOpenAICompatibleSSEChatCompletion() async throws {
         let body = """
@@ -689,6 +765,125 @@ struct RemoteProviderClientTests {
             .completed(finishReason: "stop", assistantText: "hello world"),
         ])
         #expect(await transport.lastBodyString?.contains(#""stream":true"#) == true)
+    }
+
+    @Test("parses OpenAI compatible usage-only terminal SSE chunk")
+    func parsesOpenAICompatibleUsageOnlyTerminalSSEChunk() async throws {
+        let body = """
+        data: {"choices":[{"delta":{"content":"remote answer"},"finish_reason":null}]}
+
+        data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+        data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}
+
+        data: [DONE]
+
+        """
+        let transport = RecordingRemoteProviderTransport(response: .init(
+            statusCode: 200,
+            headers: ["content-type": "text/event-stream"],
+            body: Data(body.utf8)
+        ))
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "usage-only-terminal",
+                providerKind: "openai-compatible",
+                baseURL: "https://usage-only.example/v1",
+                apiKey: "sk-secret",
+                modelID: "reasoning-model",
+                messages: [.init(role: "user", content: "hello")],
+                stream: true
+            )
+        )
+        var events: [RemoteProviderChatStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        #expect(events == [
+            .tokenDelta("remote answer"),
+            .usage(promptTokens: 7, completionTokens: 3),
+            .completed(finishReason: "stop", assistantText: "remote answer"),
+        ])
+    }
+
+    @Test("rejects OpenAI compatible SSE chunk without choices or usage")
+    func rejectsOpenAICompatibleSSEChunkWithoutChoicesOrUsage() async throws {
+        for malformedEvent in [#"{}"#, #"{"choices":[]}"#] {
+            let body = """
+            data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}
+
+            data: \(malformedEvent)
+
+            data: [DONE]
+
+            """
+            let client = OpenAICompatibleRemoteProviderClient(transport: RecordingRemoteProviderTransport(response: .init(
+                statusCode: 200,
+                headers: ["content-type": "text/event-stream"],
+                body: Data(body.utf8)
+            )))
+
+            await #expect(throws: RemoteProviderError.invalidResponse("remote provider response did not include choices")) {
+                _ = try await client.stream(
+                    RemoteProviderChatRequest(
+                        serverID: "malformed-stream",
+                        providerKind: "openai-compatible",
+                        baseURL: "https://malformed.example/v1",
+                        apiKey: "sk-secret",
+                        modelID: "model",
+                        messages: [.init(role: "user", content: "hello")],
+                        stream: true
+                    )
+                )
+            }
+        }
+    }
+
+    @Test("parses OpenAI compatible SSE reasoning separately from assistant text")
+    func parsesOpenAICompatibleSSEReasoningSeparatelyFromAssistantText() async throws {
+        let body = """
+        data: {"choices":[{"delta":{"reasoning_content":"check "},"finish_reason":null}]}
+
+        data: {"choices":[{"delta":{"reasoning_content":"facts"},"finish_reason":null}]}
+
+        data: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}
+
+        data: [DONE]
+
+        """
+        let transport = RecordingRemoteProviderTransport(response: .init(
+            statusCode: 200,
+            headers: ["content-type": "text/event-stream"],
+            body: Data(body.utf8)
+        ))
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "reasoning-endpoint",
+                providerKind: "openai-compatible",
+                baseURL: "https://reasoning.example/v1",
+                apiKey: "sk-secret",
+                modelID: "deepseek-v4-flash",
+                messages: [.init(role: "user", content: "solve")],
+                stream: true,
+                enableThinking: true
+            )
+        )
+        var events: [RemoteProviderChatStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        #expect(events == [
+            .reasoningDelta("check "),
+            .reasoningDelta("facts"),
+            .tokenDelta("answer"),
+            .completed(finishReason: "stop", assistantText: "answer"),
+        ])
     }
 
     @Test("parses Gemini generateContent chat completion")

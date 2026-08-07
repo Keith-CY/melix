@@ -595,6 +595,7 @@ public actor GatewayServingDefaultsStore {
     public func requestedDefaults(
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID
     ) -> GatewayServingDefaultsPolicy {
+        refreshRecordsFromDisk()
         let resolvedServerSessionID = Self.trimmed(serverSessionID).isEmpty
             ? ServerSessionRuntimeStore.defaultServerSessionID
             : Self.trimmed(serverSessionID)
@@ -623,7 +624,7 @@ public actor GatewayServingDefaultsStore {
 
     func apply(
         command: Melix_Controlplane_V1_ApplyServingDefaults
-    ) throws {
+    ) async throws {
         let serverSessionID = Self.trimmed(command.serverSessionID)
         guard !serverSessionID.isEmpty else {
             throw ServingDefaultsValidationError.missingServerSessionID
@@ -660,7 +661,18 @@ public actor GatewayServingDefaultsStore {
             throw ServingDefaultsValidationError.invalidRoutePolicy
         }
 
-        let record = PersistedServingDefaultsRecord(
+        let lockURL = try SiblingFileAdvisoryLock.prepareLockURL(
+            storeURL: storeURL,
+            fileManager: fileManager
+        )
+        let advisoryLock = try await SiblingFileAdvisoryLock.acquire(lockURL: lockURL)
+        defer { advisoryLock.release() }
+
+        var nextRecordsByServerSessionID = Self.loadRecords(
+            from: storeURL,
+            fileManager: fileManager
+        )
+        nextRecordsByServerSessionID[serverSessionID] = PersistedServingDefaultsRecord(
             serverSessionID: serverSessionID,
             temperature: command.temperature,
             topP: command.topP,
@@ -679,8 +691,8 @@ public actor GatewayServingDefaultsStore {
             sourceRawValue: Melix_Controlplane_V1_ServingDefaultsSource.operatorOverride.rawValue,
             updatedAtUnixMS: nowUnixMS()
         )
-        recordsByServerSessionID[serverSessionID] = record
-        try writeRecords()
+        try writeRecords(recordsByServerSessionID: nextRecordsByServerSessionID)
+        recordsByServerSessionID = nextRecordsByServerSessionID
     }
 
     public func summary(
@@ -688,6 +700,7 @@ public actor GatewayServingDefaultsStore {
         defaultModelIDs: [String: String],
         modelSettingsByModelID: [String: Melix_Controlplane_V1_ModelSettings]
     ) -> Melix_Controlplane_V1_ServingDefaultsSummary {
+        refreshRecordsFromDisk()
         var summary = Melix_Controlplane_V1_ServingDefaultsSummary()
         let allServerSessionIDs = Set(
             serverSessionIDs.map(Self.trimmed).filter { !$0.isEmpty }
@@ -712,7 +725,12 @@ public actor GatewayServingDefaultsStore {
             let requestedMultimodalRoutePolicy = record?.multimodalRoutePolicy ?? defaults.multimodalRoutePolicy
             let requestedSpeculativeRoutePolicy = record?.speculativeRoutePolicy ?? defaults.speculativeRoutePolicy
             let defaultModelID = Self.trimmed(defaultModelIDs[serverSessionID] ?? "")
-            let modelSamplingPolicy = modelSettingsByModelID[defaultModelID].flatMap(ModelSamplingPolicy.init)
+            let modelSamplingPolicy = modelSettingsByModelID[defaultModelID].flatMap {
+                ModelSamplingPolicy(
+                    modelID: defaultModelID,
+                    modelSettings: $0
+                )
+            }
             let modelSettings = modelSettingsByModelID[defaultModelID]
             let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
                 concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
@@ -814,7 +832,9 @@ public actor GatewayServingDefaultsStore {
         return summary
     }
 
-    private func writeRecords() throws {
+    private func writeRecords(
+        recordsByServerSessionID: [String: PersistedServingDefaultsRecord]
+    ) throws {
         let document = GatewayServingDefaultsDocument(
             schemaVersion: 1,
             sessions: recordsByServerSessionID.values.sorted { lhs, rhs in
@@ -824,11 +844,14 @@ public actor GatewayServingDefaultsStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(document)
-        try fileManager.createDirectory(
-            at: storeURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
         try data.write(to: storeURL, options: .atomic)
+    }
+
+    private func refreshRecordsFromDisk() {
+        recordsByServerSessionID = Self.loadRecords(
+            from: storeURL,
+            fileManager: fileManager
+        )
     }
 
     private static func loadRecords(

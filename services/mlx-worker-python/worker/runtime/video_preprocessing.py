@@ -20,6 +20,12 @@ SUPPORTED_VIDEO_MIME_TYPES = {
 }
 MAX_VIDEO_FRAME_BUDGET = 128
 VIDEO_REFERENCE_PARSE_CACHE_SIZE = 512
+_VIDEO_REFERENCE_PARSE_SCHEMES = frozenset(("http", "https", "file"))
+_LOCAL_VIDEO_URI_SCHEMES = frozenset(("", "file"))
+_LOCALHOST_LAST_CHARS = frozenset(("t", "T"))
+_LAST_VIDEO_REFERENCE_RAW = ""
+_LAST_VIDEO_REFERENCE_PARSED: ParsedVideoReference | None = None
+_LAST_VIDEO_REFERENCE_PARSER: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +87,7 @@ def prepare_video_input(part) -> PreparedVideoInput:
     uri = str(getattr(part, "video_uri", "") or "").strip()
     if not uri:
         raise VideoPreprocessError("No video input provided.")
-    parsed_reference = _parse_video_reference(uri)
+    parsed_reference = _last_parsed_video_reference(uri)
     _validate_parsed_video_uri(parsed_reference)
     if filename:
         resolved_format = _resolve_video_format(
@@ -144,7 +150,7 @@ def _validate_bounds(duration_ms: int, frame_budget: int, start_ms: int, end_ms:
 @lru_cache(maxsize=VIDEO_REFERENCE_PARSE_CACHE_SIZE)
 def _parse_video_reference(reference: str) -> ParsedVideoReference:
     parsed = urlparse(reference)
-    if parsed.scheme in {"http", "https", "file"}:
+    if parsed.scheme in _VIDEO_REFERENCE_PARSE_SCHEMES:
         parsed_path = parsed.path
         decoded_path = parsed_path if "%" not in parsed_path else unquote(parsed_path)
         path_name, path_suffix = _path_name_and_suffix(decoded_path)
@@ -159,6 +165,24 @@ def _parse_video_reference(reference: str) -> ParsedVideoReference:
         path_name=path_name,
         path_suffix=path_suffix,
     )
+
+
+def _last_parsed_video_reference(reference: str) -> ParsedVideoReference:
+    global _LAST_VIDEO_REFERENCE_PARSED, _LAST_VIDEO_REFERENCE_PARSER, _LAST_VIDEO_REFERENCE_RAW
+
+    parser = _parse_video_reference
+    cached = _LAST_VIDEO_REFERENCE_PARSED
+    if (
+        cached is not None
+        and reference == _LAST_VIDEO_REFERENCE_RAW
+        and parser is _LAST_VIDEO_REFERENCE_PARSER
+    ):
+        return cached
+    parsed = parser(reference)
+    _LAST_VIDEO_REFERENCE_RAW = reference
+    _LAST_VIDEO_REFERENCE_PARSED = parsed
+    _LAST_VIDEO_REFERENCE_PARSER = parser
+    return parsed
 
 
 def _path_name_and_suffix(path: str) -> tuple[str, str]:
@@ -181,7 +205,7 @@ def _validate_video_uri(reference: str | ParsedVideoReference) -> None:
 
 def _validate_parsed_video_uri(reference: ParsedVideoReference) -> None:
     scheme = reference.scheme
-    if scheme in {"", "file"}:
+    if scheme in _LOCAL_VIDEO_URI_SCHEMES:
         return
     if scheme == "https":
         authority = reference.authority
@@ -195,7 +219,7 @@ def _validate_parsed_video_uri(reference: ParsedVideoReference) -> None:
             and ":" not in authority
             and (
                 len(authority) < len("localhost")
-                or authority[-1] not in {"t", "T"}
+                or authority[-1] not in _LOCALHOST_LAST_CHARS
                 or not _authority_mentions_localhost(authority.lower())
             )
         ):
@@ -237,7 +261,7 @@ def _is_plain_allowed_remote_authority(authority: str) -> bool:
         return False
     if len(authority) < len("localhost"):
         return True
-    if authority[-1] not in {"t", "T"}:
+    if authority[-1] not in _LOCALHOST_LAST_CHARS:
         return True
     return not _authority_mentions_localhost(authority.lower())
 

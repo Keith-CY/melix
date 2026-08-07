@@ -17,6 +17,10 @@ The registry entry includes focused `test_command`, `coverage_command`, and `pro
 3. Implement the exact-string fast path before the existing `isinstance` and `str(key)` fallback checks.
 4. Verify with the registered focused tests, changed-scope coverage, and the registered local Linux probe; use PR-scoped performance CI as the merge gate.
 
+## 2026-07-19 incremental slice: shared tuple prefix check
+
+This incremental Python-only slice keeps the `_is_mtp_weight_key` scope and the same registered probe. It reuses `_MTP_WEIGHT_KEY_PREFIXES` for exact strings instead of issuing two separate literal `startswith` calls, while preserving the `str` subclass and custom object fallback behavior described above.
+
 ## Metrics
 
 Success is measured by the registered probe's `key_new_mean_ms` / `key_old_mean_ms` and overall native-MTP loader metrics from `scripts/native_mtp_loader_safetensor_scandir_probe.py`; behavior parity is measured by focused native-MTP loader tests and changed-scope coverage for the touched module.

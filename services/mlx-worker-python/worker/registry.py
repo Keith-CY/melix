@@ -9,6 +9,7 @@ from threading import Event
 from threading import Lock
 import time
 from typing import Any
+from uuid import uuid4
 
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2, runtime_pb2
 
@@ -31,6 +32,8 @@ from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.runtime.mlx_vlm_runtime import MLXVLMRuntime
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
+from worker.runtime.embedding_runtime import EmbeddingRuntime
+from worker.runtime.artifact_embedding_runtime import embedding_request_receipt_snapshot
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 from worker.runtime.runtime_utils import callable_accepts_kwarg
 
@@ -63,6 +66,79 @@ _DEFAULT_SPECULATIVE_PROBE_RECEIPT_PROBE = (
     False,
 )
 
+_EMBEDDING_LOAD_RECEIPT_FIELDS = (
+    "requested_backend_id",
+    "effective_backend_id",
+    "model_hash",
+    "tokenizer_hash",
+    "requested_pooling_mode",
+    "artifact_pooling_mode",
+    "effective_pooling_mode",
+    "requested_normalization",
+    "artifact_normalization",
+    "effective_normalization",
+    "requested_dimensions",
+    "effective_dimensions",
+    "requested_max_length",
+    "effective_max_length",
+    "requested_vector_kind",
+    "effective_vector_kind",
+    "requested_dtype",
+    "effective_dtype",
+    "vector_kind",
+    "dtype",
+    "estimated_resident_bytes",
+    "measured_resident_bytes",
+)
+_EMBEDDING_REQUEST_RECEIPT_FIELDS = (
+    "request_id",
+    "backend_id",
+    "batch_size",
+    "input_token_count",
+    "forward_count",
+    "output_row_count",
+    "dimensions",
+    "vector_kind",
+    "dtype",
+    "finite_output",
+)
+
+
+def _spec_with_embedding_load_receipt(
+    model_spec: common_pb2.ModelSpec,
+    runtime_model: object,
+) -> common_pb2.ModelSpec:
+    if not isinstance(runtime_model, Mapping):
+        return model_spec
+    receipt = runtime_model.get("embedding_load_receipt")
+    if not isinstance(receipt, Mapping):
+        return model_spec
+    projected = common_pb2.ModelSpec()
+    projected.CopyFrom(model_spec)
+    projected.ext["melix.embedding.load.schema"] = "melix.embedding_load_receipt.v1"
+    for field_name in _EMBEDDING_LOAD_RECEIPT_FIELDS:
+        value = receipt.get(field_name)
+        if value is not None:
+            projected.ext[f"melix.embedding.load.{field_name}"] = str(value)
+    return projected
+
+
+def _loaded_model_estimated_resident_bytes(
+    runtime: object,
+    runtime_model: object,
+    *,
+    fallback: int,
+) -> int:
+    estimator = getattr(runtime, "estimate_loaded_resident_bytes", None)
+    if not callable(estimator):
+        return fallback
+    estimated = estimator(runtime_model)
+    if estimated is None:
+        return fallback
+    if isinstance(estimated, bool) or not isinstance(estimated, int) or estimated < 0:
+        raise RuntimeError("Runtime returned an invalid loaded-model resident-byte estimate.")
+    return estimated
+
 
 @dataclass(slots=True)
 class LoadedModel:
@@ -74,8 +150,16 @@ class LoadedModel:
     runtime_kind: str
     residency: common_pb2.ResidencyInfo
     load_trust: common_pb2.ModelLoadTrustPolicy
+    backend_identity: common_pb2.BackendModelIdentity
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class DecodeSessionBinding:
+    request_id: str
+    model_handle: str
+    backend_identity: common_pb2.BackendModelIdentity
 
 
 @dataclass
@@ -85,6 +169,7 @@ class ModelUnloadReceipt:
     unloaded: bool
     pending_unload: bool
     abort_requested: bool = False
+    identity_mismatch: bool = False
     released_at: str = ""
     unloaded_at: str = ""
 
@@ -96,6 +181,7 @@ class ModelUnloadReceipt:
             "unloaded": _bool_text(self.unloaded),
             "pending_unload": _bool_text(self.pending_unload),
             "abort_requested": _bool_text(self.abort_requested),
+            "identity_mismatch": _bool_text(self.identity_mismatch),
             "released_at": self.released_at,
             "unloaded_at": self.unloaded_at,
         }
@@ -137,6 +223,23 @@ def _probe_counter_value(probe: object, primary_key: str, legacy_key: str) -> in
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _diagnostic_identity(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    lower = normalized.lower()
+    is_local_path = (
+        normalized.startswith(("/", "~/", "./", "../", "\\\\", ".\\", "..\\"))
+        or lower.startswith("file:")
+        or (len(normalized) >= 3 and normalized[1:3] in {":\\", ":/"})
+    )
+    if is_local_path:
+        return "[local-path-redacted]"
+    if len(normalized) > 128:
+        return normalized[:125] + "..."
+    return normalized
 
 
 class RequestRuntimeLease:
@@ -237,11 +340,20 @@ class DiskStreamingUnsupported(Exception):
         }
 
 
+@dataclass
+class WorkerInstanceMismatch(Exception):
+    requested_worker_instance_id: str
+    current_worker_instance_id: str
+
+    def __str__(self) -> str:
+        return "The load reservation belongs to a different worker process."
+
+
 class WorkerRegistry:
     def __init__(
         self,
         runtime: MLXTextRuntime | None = None,
-        embedding_runtime: DeterministicEmbeddingRuntime | None = None,
+        embedding_runtime: DeterministicEmbeddingRuntime | EmbeddingRuntime | None = None,
         rerank_runtime: DeterministicRerankRuntime | None = None,
         ocr_runtime: DeterministicOCRRuntime | None = None,
         vlm_runtime: DeterministicVLMRuntime | None = None,
@@ -253,13 +365,14 @@ class WorkerRegistry:
         image_generation_runtime: DeterministicImageGenerationRuntime | None = None,
         model_catalog: WorkerModelCatalog | None = None,
         worker_id: str = "worker-text-001",
+        worker_instance_id: str | None = None,
         process_memory_budget_bytes: int = 0,
         memory_headroom_bytes: int = 0,
         mlx_executor: MLXRuntimeExecutor | None = None,
     ) -> None:
         self._mlx_executor = mlx_executor or MLXRuntimeExecutor()
         self.runtime = runtime or MLXTextRuntime(executor=self._mlx_executor)
-        self.embedding_runtime = embedding_runtime or DeterministicEmbeddingRuntime()
+        self.embedding_runtime = embedding_runtime or EmbeddingRuntime(executor=self._mlx_executor)
         self.rerank_runtime = rerank_runtime or DeterministicRerankRuntime()
         self.ocr_runtime = ocr_runtime or DeterministicOCRRuntime()
         self.vlm_runtime = vlm_runtime or DeterministicVLMRuntime()
@@ -276,6 +389,11 @@ class WorkerRegistry:
         self.image_generation_runtime = image_generation_runtime or DeterministicImageGenerationRuntime()
         self.model_catalog = model_catalog or WorkerModelCatalog()
         self.worker_id = worker_id
+        self.worker_instance_id = (
+            worker_instance_id.strip()
+            if worker_instance_id is not None and worker_instance_id.strip()
+            else str(uuid4())
+        )
         self._process_memory_budget_bytes = max(0, process_memory_budget_bytes)
         self._memory_headroom_bytes = max(0, memory_headroom_bytes)
         self._lock = Lock()
@@ -288,6 +406,8 @@ class WorkerRegistry:
         self._requests: dict[str, RequestState] = {}
         self._request_model_handles: dict[str, str] = {}
         self._request_lease_tokens: dict[str, object] = {}
+        self._decode_session_bindings: dict[str, DecodeSessionBinding] = {}
+        self._request_decode_handles: dict[str, str] = {}
         self._active_model_lease_counts: dict[str, int] = {}
         self._pending_unload_receipts: dict[str, ModelUnloadReceipt] = {}
         self._completed_unload_receipt_limit = _COMPLETED_UNLOAD_RECEIPT_LIMIT
@@ -369,6 +489,8 @@ class WorkerRegistry:
         self._last_image_peak_memory_bytes = 0
         self._last_model_load_trust_policy_resolution_ms = 0.0
         self._model_load_trust_blocked_count = 0
+        self._model_identity_mismatch_count = 0
+        self._last_model_identity_mismatch = common_pb2.BackendIdentityMismatchReceipt()
         self._default_text_load_trust_policy = default_not_applicable_load_trust_policy(
             runtime_kind="text",
             runtime=self.runtime,
@@ -418,7 +540,17 @@ class WorkerRegistry:
         memory_budget_bytes: int = 0,
         disk_streaming_mode: int = common_pb2.DISK_STREAMING_MODE_UNSPECIFIED,
         load_trust: common_pb2.ModelLoadTrustPolicy | None = None,
+        backend_identity: common_pb2.BackendModelIdentity | None = None,
     ) -> LoadedModel:
+        if (
+            backend_identity is not None
+            and backend_identity.worker_instance_id
+            and backend_identity.worker_instance_id != self.worker_instance_id
+        ):
+            raise WorkerInstanceMismatch(
+                requested_worker_instance_id=backend_identity.worker_instance_id,
+                current_worker_instance_id=self.worker_instance_id,
+            )
         resolved = self._resolved_model_spec(model_spec)
         has_settings = resolved.HasField("settings")
         if disk_streaming_mode != common_pb2.DISK_STREAMING_MODE_UNSPECIFIED:
@@ -504,6 +636,8 @@ class WorkerRegistry:
                 required_bytes=required_request_bytes,
             )
 
+        runtime_model: object | None = None
+        reservation_active = True
         try:
             if trust_remote_code:
                 runtime_model = self._load_runtime_model(
@@ -513,6 +647,49 @@ class WorkerRegistry:
                 )
             else:
                 runtime_model = runtime.load_model(resolved)
+            loaded_estimated = _loaded_model_estimated_resident_bytes(
+                runtime,
+                runtime_model,
+                fallback=estimated,
+            )
+            if loaded_estimated != estimated:
+                with self._lock:
+                    self._reserved_model_resident_bytes -= estimated
+                    reservation_active = False
+                    projected_resident_bytes = (
+                        self._loaded_model_resident_bytes
+                        + self._reserved_model_resident_bytes
+                        + loaded_estimated
+                    )
+                    required_process_bytes = (
+                        projected_resident_bytes + self._memory_headroom_bytes
+                    )
+                    if (
+                        self._process_memory_budget_bytes > 0
+                        and required_process_bytes > self._process_memory_budget_bytes
+                    ):
+                        raise MemoryBudgetExceeded(
+                            budget_bytes=self._process_memory_budget_bytes,
+                            headroom_bytes=self._memory_headroom_bytes,
+                            projected_resident_bytes=projected_resident_bytes,
+                            required_bytes=required_process_bytes,
+                        )
+                    self._reserved_model_resident_bytes += loaded_estimated
+                    estimated = loaded_estimated
+                    reservation_active = True
+            required_request_bytes = estimated + self._memory_headroom_bytes
+            if (
+                effective_request_budget_bytes > 0
+                and required_request_bytes > effective_request_budget_bytes
+            ):
+                raise MemoryBudgetExceeded(
+                    budget_bytes=effective_request_budget_bytes,
+                    headroom_bytes=self._memory_headroom_bytes,
+                    projected_resident_bytes=estimated,
+                    required_bytes=required_request_bytes,
+                )
+            if runtime_kind == "embedding":
+                resolved = _spec_with_embedding_load_receipt(resolved, runtime_model)
             if not has_settings and not pin_on_load:
                 residency = self._default_loaded_residency(requested_disk_streaming_mode)
             else:
@@ -522,8 +699,16 @@ class WorkerRegistry:
                     effective_disk_streaming_mode=requested_disk_streaming_mode,
                 )
         except Exception:
-            with self._lock:
-                self._reserved_model_resident_bytes -= estimated
+            if runtime_model is not None:
+                close_loaded_model = getattr(runtime, "close_loaded_model", None)
+                if callable(close_loaded_model):
+                    try:
+                        close_loaded_model(runtime_model)
+                    except Exception:
+                        pass
+            if reservation_active:
+                with self._lock:
+                    self._reserved_model_resident_bytes -= estimated
             raise
 
         with self._lock:
@@ -539,6 +724,10 @@ class WorkerRegistry:
                 runtime_kind=runtime_kind,
                 residency=residency,
                 load_trust=load_trust_policy,
+                backend_identity=self._resolved_backend_identity(
+                    resolved,
+                    backend_identity,
+                ),
             )
             self._loaded_models[handle] = loaded
             self._invalidate_loaded_model_order_locked()
@@ -618,7 +807,13 @@ class WorkerRegistry:
         self._close_loaded_model(loaded_to_close)
         return True
 
-    def request_model_unload(self, handle: str, *, force: bool = False) -> ModelUnloadReceipt:
+    def request_model_unload(
+        self,
+        handle: str,
+        *,
+        force: bool = False,
+        expected_backend_identity: common_pb2.BackendModelIdentity | None = None,
+    ) -> ModelUnloadReceipt:
         loaded_to_close: LoadedModel | None = None
         with self._lock:
             loaded = self._loaded_models.get(handle)
@@ -629,6 +824,18 @@ class WorkerRegistry:
                     unloaded=False,
                     pending_unload=False,
                     abort_requested=bool(force),
+                )
+            if (
+                expected_backend_identity is not None
+                and expected_backend_identity != loaded.backend_identity
+            ):
+                return ModelUnloadReceipt(
+                    model_handle=handle,
+                    found=True,
+                    unloaded=False,
+                    pending_unload=False,
+                    abort_requested=bool(force),
+                    identity_mismatch=True,
                 )
 
             active_lease_count = self._active_model_lease_counts.get(handle, 0)
@@ -771,6 +978,174 @@ class WorkerRegistry:
         with self._lock:
             return self._loaded_models.get(handle)
 
+    def validate_backend_identity(
+        self,
+        handle: str,
+        requested: common_pb2.BackendModelIdentity | None,
+    ) -> common_pb2.ErrorStatus | None:
+        with self._lock:
+            return self._validate_backend_identity_locked(handle, requested)
+
+    def bind_decode_session(
+        self,
+        *,
+        request_id: str,
+        decode_handle: str,
+        loaded_model: LoadedModel,
+    ) -> None:
+        backend_identity = common_pb2.BackendModelIdentity()
+        backend_identity.CopyFrom(loaded_model.backend_identity)
+        with self._lock:
+            if self._request_model_handles.get(request_id) != loaded_model.handle:
+                raise RuntimeError("Prefill request lease no longer owns the loaded model.")
+            self._remove_decode_session_binding_locked(request_id)
+            self._decode_session_bindings[decode_handle] = DecodeSessionBinding(
+                request_id=request_id,
+                model_handle=loaded_model.handle,
+                backend_identity=backend_identity,
+            )
+            self._request_decode_handles[request_id] = decode_handle
+
+    def validate_decode_backend_identity(
+        self,
+        *,
+        request_id: str,
+        decode_handle: str,
+        model_handle: str,
+        requested: common_pb2.BackendModelIdentity | None,
+    ) -> common_pb2.ErrorStatus | None:
+        with self._lock:
+            binding = self._decode_session_bindings.get(decode_handle)
+            if binding is None:
+                return self._validate_backend_identity_locked(model_handle, requested)
+            forced_mismatch_reason: str | None = None
+            if binding.request_id != request_id:
+                forced_mismatch_reason = "decode_request_id_mismatch"
+            elif binding.model_handle != model_handle:
+                forced_mismatch_reason = "decode_model_handle_mismatch"
+            return self._validate_backend_identity_locked(
+                binding.model_handle,
+                requested,
+                forced_mismatch_reason=forced_mismatch_reason,
+                requested_model_handle=model_handle,
+                bound_identity=binding.backend_identity,
+            )
+
+    def _validate_backend_identity_locked(
+        self,
+        handle: str,
+        requested: common_pb2.BackendModelIdentity | None,
+        *,
+        forced_mismatch_reason: str | None = None,
+        requested_model_handle: str | None = None,
+        bound_identity: common_pb2.BackendModelIdentity | None = None,
+    ) -> common_pb2.ErrorStatus | None:
+        loaded = self._loaded_models.get(handle)
+        request_missing = requested is None or not (
+            requested.requested_model_id.strip()
+            and requested.route_generation > 0
+            and requested.worker_instance_id.strip()
+        )
+        bound = (
+            bound_identity
+            if bound_identity is not None
+            else loaded.backend_identity
+            if loaded is not None
+            else common_pb2.BackendModelIdentity()
+        )
+        if request_missing:
+            observed = common_pb2.BackendModelIdentity()
+            code = "model_identity_missing"
+        else:
+            observed = requested
+            code = "model_identity_mismatch"
+            if loaded is not None and observed == bound and forced_mismatch_reason is None:
+                return None
+        mismatch_reason = forced_mismatch_reason or (
+            "model_handle_missing"
+            if loaded is None
+            else self._backend_identity_mismatch_reason(
+                observed,
+                bound,
+                request_missing=request_missing,
+            )
+        )
+        receipt = self._record_model_identity_mismatch_locked(
+            observed,
+            bound,
+            mismatch_reason=mismatch_reason,
+        )
+        details = {
+            "requested_route_generation": str(observed.route_generation),
+            "loaded_route_generation": str(bound.route_generation),
+        }
+        if requested_model_handle is not None:
+            details["requested_model_handle"] = requested_model_handle
+            details["loaded_model_handle"] = handle
+
+        return common_pb2.ErrorStatus(
+            code=code,
+            message="Backend model identity did not match the loaded residency.",
+            retriable=code == "model_identity_mismatch",
+            details=details,
+            backend_identity_mismatch=receipt,
+        )
+
+    def _resolved_backend_identity(
+        self,
+        model: common_pb2.ModelSpec,
+        requested: common_pb2.BackendModelIdentity | None,
+    ) -> common_pb2.BackendModelIdentity:
+        return common_pb2.BackendModelIdentity(
+            requested_model_id=model.model_id,
+            requested_adapter_id=model.ext.get("melix.adapter_set_hash", ""),
+            route_generation=requested.route_generation if requested is not None else 0,
+            worker_instance_id=self.worker_instance_id,
+        )
+
+    def _record_model_identity_mismatch_locked(
+        self,
+        requested: common_pb2.BackendModelIdentity,
+        loaded: common_pb2.BackendModelIdentity,
+        *,
+        mismatch_reason: str,
+    ) -> common_pb2.BackendIdentityMismatchReceipt:
+        self._model_identity_mismatch_count += 1
+        receipt = common_pb2.BackendIdentityMismatchReceipt(
+            requested_model_id=_diagnostic_identity(requested.requested_model_id),
+            loaded_model_id=_diagnostic_identity(loaded.requested_model_id),
+            requested_adapter_id=_diagnostic_identity(requested.requested_adapter_id),
+            loaded_adapter_id=_diagnostic_identity(loaded.requested_adapter_id),
+            requested_route_generation=requested.route_generation,
+            loaded_route_generation=loaded.route_generation,
+            observed_at_unix_ms=int(time.time() * 1000),
+            mismatch_reason=mismatch_reason,
+            requested_worker_instance_id=_diagnostic_identity(requested.worker_instance_id),
+            loaded_worker_instance_id=_diagnostic_identity(loaded.worker_instance_id),
+        )
+        self._last_model_identity_mismatch = receipt
+        return receipt
+
+    @staticmethod
+    def _backend_identity_mismatch_reason(
+        requested: common_pb2.BackendModelIdentity,
+        loaded: common_pb2.BackendModelIdentity,
+        *,
+        request_missing: bool,
+    ) -> str:
+        if request_missing:
+            return "identity_missing"
+        mismatches = []
+        if requested.requested_model_id != loaded.requested_model_id:
+            mismatches.append("model_id")
+        if requested.requested_adapter_id != loaded.requested_adapter_id:
+            mismatches.append("adapter_id")
+        if requested.route_generation != loaded.route_generation:
+            mismatches.append("route_generation")
+        if requested.worker_instance_id != loaded.worker_instance_id:
+            mismatches.append("worker_instance_id")
+        return ",".join(mismatches) or "identity_mismatch"
+
     def list_loaded_models(self) -> list[str]:
         with self._lock:
             return list(self._sorted_loaded_model_handles_locked())
@@ -810,6 +1185,11 @@ class WorkerRegistry:
                 loaded.generation_tps = generation_value
             self._loaded_model_summaries = None
 
+    def record_embedding_request_receipt(self, handle: str) -> None:
+        with self._lock:
+            if handle in self._loaded_models:
+                self._loaded_model_summaries = None
+
     def start_request(self, request_id: str, runtime_kind: str = "text") -> RequestState:
         state = RequestState(request_id=request_id, runtime_kind=runtime_kind)
         loaded_to_close: LoadedModel | None = None
@@ -817,6 +1197,7 @@ class WorkerRegistry:
             existing = self._requests.get(request_id)
             if existing is not None:
                 self._remove_request_from_counters(existing)
+                self._remove_decode_session_binding_locked(request_id)
                 old_handle = self._request_model_handles.pop(request_id, None)
                 self._request_lease_tokens.pop(request_id, None)
                 if old_handle is not None:
@@ -874,6 +1255,7 @@ class WorkerRegistry:
             existing = self._requests.get(request_id)
             if existing is not None:
                 self._remove_request_from_counters(existing)
+                self._remove_decode_session_binding_locked(request_id)
                 old_handle = self._request_model_handles.pop(request_id, None)
                 self._request_lease_tokens.pop(request_id, None)
                 if old_handle is not None:
@@ -900,6 +1282,7 @@ class WorkerRegistry:
             state = self._requests.pop(request_id, None)
             if state is not None:
                 self._remove_request_from_counters(state)
+            self._remove_decode_session_binding_locked(request_id)
             self._request_model_handles.pop(request_id, None)
             self._request_lease_tokens.pop(request_id, None)
             self._decrement_model_lease_count_locked(handle)
@@ -942,10 +1325,18 @@ class WorkerRegistry:
     def set_request_phase(self, request_id: str, phase: str) -> None:
         with self._lock:
             state = self._requests.get(request_id)
-            if state is not None:
-                self._remove_request_from_counters(state)
-                state.phase = phase
-                self._add_request_to_counters(state)
+            if state is None or state.phase == phase:
+                return
+            old_phase = state.phase
+            if old_phase == "prefill" and self._active_prefill_count > 0:
+                self._active_prefill_count -= 1
+            elif old_phase == "decode" and self._active_decode_count > 0:
+                self._active_decode_count -= 1
+            state.phase = phase
+            if phase == "prefill":
+                self._active_prefill_count += 1
+            elif phase == "decode":
+                self._active_decode_count += 1
 
     def finish_request(self, request_id: str) -> None:
         loaded_to_close: LoadedModel | None = None
@@ -953,12 +1344,21 @@ class WorkerRegistry:
             state = self._requests.pop(request_id, None)
             if state is not None:
                 self._remove_request_from_counters(state)
+            self._remove_decode_session_binding_locked(request_id)
             handle = self._request_model_handles.pop(request_id, None)
             self._request_lease_tokens.pop(request_id, None)
             if handle is not None:
                 self._decrement_model_lease_count_locked(handle)
                 loaded_to_close = self._complete_pending_unload_if_unleased_locked(handle)
         self._close_loaded_model(loaded_to_close)
+
+    def _remove_decode_session_binding_locked(self, request_id: str) -> None:
+        decode_handle = self._request_decode_handles.pop(request_id, None)
+        if decode_handle is None:
+            return
+        binding = self._decode_session_bindings.get(decode_handle)
+        if binding is not None and binding.request_id == request_id:
+            self._decode_session_bindings.pop(decode_handle, None)
 
     def abort_request(self, request_id: str) -> bool:
         with self._lock:
@@ -1002,6 +1402,12 @@ class WorkerRegistry:
                 peak_allocation_bytes = 0
                 memory_headroom_bytes = self._memory_headroom_bytes
                 resident_bytes = model_resident_bytes + cache_resident_bytes + kv_cache_bytes
+                model_identity_mismatch_count = self._model_identity_mismatch_count
+                last_model_identity_mismatch = (
+                    self._last_model_identity_mismatch
+                    if model_identity_mismatch_count
+                    else None
+                )
                 has_probe_receipts = self._has_runtime_probe_receipts
                 if has_probe_receipts:
                     last_probe_kind = self._last_probe_kind
@@ -1129,6 +1535,9 @@ class WorkerRegistry:
         stats.kv_cache_bytes = kv_cache_bytes
         stats.peak_allocation_bytes = peak_allocation_bytes
         stats.memory_headroom_bytes = memory_headroom_bytes
+        if last_model_identity_mismatch is not None:
+            stats.model_identity_mismatch_count = model_identity_mismatch_count
+            stats.last_model_identity_mismatch.CopyFrom(last_model_identity_mismatch)
         return stats
 
     @staticmethod
@@ -1136,26 +1545,34 @@ class WorkerRegistry:
         return runtime_kind in _MULTIMODAL_REQUEST_KINDS
 
     def _add_request_to_counters(self, state: RequestState) -> None:
+        phase = state.phase
+        runtime_kind = state.runtime_kind
         self._active_request_count += 1
-        if state.phase == "prefill":
+        if phase == "prefill":
             self._active_prefill_count += 1
-        elif state.phase == "decode":
+        elif phase == "decode":
             self._active_decode_count += 1
-        if self._is_multimodal_request_kind(state.runtime_kind):
+        if runtime_kind in _MULTIMODAL_REQUEST_KINDS:
             self._active_multimodal_request_count += 1
-        if state.runtime_kind == "vlm":
+        if runtime_kind == "vlm":
             self._active_vlm_request_count += 1
 
     def _remove_request_from_counters(self, state: RequestState) -> None:
-        self._active_request_count = max(0, self._active_request_count - 1)
-        if state.phase == "prefill":
-            self._active_prefill_count = max(0, self._active_prefill_count - 1)
-        elif state.phase == "decode":
-            self._active_decode_count = max(0, self._active_decode_count - 1)
-        if self._is_multimodal_request_kind(state.runtime_kind):
-            self._active_multimodal_request_count = max(0, self._active_multimodal_request_count - 1)
-        if state.runtime_kind == "vlm":
-            self._active_vlm_request_count = max(0, self._active_vlm_request_count - 1)
+        phase = state.phase
+        runtime_kind = state.runtime_kind
+        if self._active_request_count > 0:
+            self._active_request_count -= 1
+        if phase == "prefill" and self._active_prefill_count > 0:
+            self._active_prefill_count -= 1
+        elif phase == "decode" and self._active_decode_count > 0:
+            self._active_decode_count -= 1
+        if (
+            runtime_kind in _MULTIMODAL_REQUEST_KINDS
+            and self._active_multimodal_request_count > 0
+        ):
+            self._active_multimodal_request_count -= 1
+        if runtime_kind == "vlm" and self._active_vlm_request_count > 0:
+            self._active_vlm_request_count -= 1
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
         response = cache_pb2.GetCacheStatsResponse()
@@ -1744,6 +2161,16 @@ class WorkerRegistry:
             summary.prompt_tps = loaded.prompt_tps
         if loaded.generation_tps != 0.0:
             summary.generation_tps = loaded.generation_tps
+        summary.backend_identity.CopyFrom(loaded.backend_identity)
+        request_receipt = embedding_request_receipt_snapshot(loaded.runtime_model)
+        if request_receipt is not None:
+            summary.model.ext["melix.embedding.request.schema"] = (
+                "melix.embedding_request_receipt.v1"
+            )
+            for field_name in _EMBEDDING_REQUEST_RECEIPT_FIELDS:
+                value = request_receipt.get(field_name)
+                if value is not None:
+                    summary.model.ext[f"melix.embedding.request.{field_name}"] = str(value)
         return summary
 
     @staticmethod

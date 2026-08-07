@@ -13,6 +13,7 @@ import time
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
+sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python/tests"))
 
 from tests.test_runtime_edges import build_registry  # noqa: E402
 from worker.model_registry.catalog import WorkerModelCatalog  # noqa: E402

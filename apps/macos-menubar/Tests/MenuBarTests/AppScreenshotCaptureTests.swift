@@ -189,6 +189,30 @@ struct AppScreenshotCaptureTests {
         }
     }
 
+    @Test("missing-model screenshot fixture reaches the composer attachment repair state")
+    @MainActor
+    func missingModelScreenshotFixtureReachesComposerAttachmentRepairState() async throws {
+        let viewModel = RuntimeViewModel(client: AppScreenshotCaptureControlPlaneClient())
+        await viewModel.start()
+        let providerID = try #require(viewModel.serverSessions.first?.id)
+
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: providerID)
+        viewModel.updateSelectedServerSessionModelID("melix-dev-missing")
+        await viewModel.stopSelectedServerSession()
+
+        let serverSession = try #require(viewModel.selectedChatServerSession)
+        let modelNeedsAttachment = viewModel.chatModelNeedsAttachment(modelID: serverSession.modelID)
+        let repairState = DesktopChatComposerGate(
+            serverSession: serverSession,
+            capabilities: viewModel.chatCapabilities,
+            isModelMissing: modelNeedsAttachment
+        ).repairState
+
+        #expect(modelNeedsAttachment)
+        #expect(repairState?.primaryActionKind == .attachModel)
+        #expect(repairState?.secondaryActions.map(\.kind) == [.openProviders])
+    }
+
     @Test("live phase 8 renderer writes a png through the shared SwiftUI renderer")
     @MainActor
     func livePhase8RendererWritesPNGThroughSharedRenderer() async throws {

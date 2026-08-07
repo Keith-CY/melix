@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import csv
 from datetime import datetime, timezone
+from functools import lru_cache
 import hashlib
 import io
 import json
+from operator import itemgetter
 import os
 import re
 import time
@@ -49,6 +51,7 @@ _CODE_SOURCE_LANGUAGE_BY_SUFFIX = {
 }
 _SOURCE_KIND_NAME_CACHE_MAX = 4096
 _SOURCE_KIND_BY_NAME: dict[str, str | None] = {}
+_SHA256 = hashlib.sha256
 _MISSING = object()
 
 
@@ -829,11 +832,13 @@ def _input_source_paths(input_path: Path) -> list[Path]:
 
 def _source_size_entries(paths: list[Path]) -> list[tuple[Path, int]]:
     entries: list[tuple[Path, int]] = []
+    entries_append = entries.append
+    path_stat = Path.stat
     for path in paths:
         try:
-            entries.append((path, path.stat().st_size))
+            entries_append((path, path_stat(path).st_size))
         except OSError:
-            entries.append((path, 0))
+            entries_append((path, 0))
     return entries
 
 
@@ -922,7 +927,7 @@ def _partition_failed_segments(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not fail_segment_ids:
         return segments, []
-    failed_id_set = set(fail_segment_ids)
+    failed_id_set = _failed_segment_id_set(fail_segment_ids)
     successful_segments: list[dict[str, Any]] = []
     failed_segments: list[dict[str, Any]] = []
     successful_segments_append = successful_segments.append
@@ -938,6 +943,11 @@ def _partition_failed_segments(
         else:
             successful_segments_append(segment)
     return successful_segments, failed_segments
+
+
+@lru_cache(maxsize=128)
+def _failed_segment_id_set(fail_segment_ids: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(fail_segment_ids)
 
 
 def retry_failed_dataset_version(request: DatasetRetryFailedRequest) -> dict[str, Any]:
@@ -1078,6 +1088,7 @@ def list_dataset_versions(
     versions_append = versions.append
     json_loads = json.loads
     open_file = open
+    common_string_sort_keys = True
     for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
         try:
             with open_file(manifest_path, "rb") as handle:
@@ -1085,11 +1096,15 @@ def list_dataset_versions(
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             continue
         try:
+            created_at = version["created_at"]
+            version_id = version["version_id"]
+            if type(created_at) is not str or type(version_id) is not str:
+                common_string_sort_keys = False
             versions_append(
                 {
                     "dataset_id": version["dataset_id"],
-                    "version_id": version["version_id"],
-                    "created_at": version["created_at"],
+                    "version_id": version_id,
+                    "created_at": created_at,
                     "status": version["status"],
                     "train_count": version["train_count"],
                     "validation_count": version["validation_count"],
@@ -1100,11 +1115,15 @@ def list_dataset_versions(
             )
         except KeyError:
             version_get = version.get
+            created_at = version_get("created_at", "")
+            version_id = version_get("version_id", "")
+            if type(created_at) is not str or type(version_id) is not str:
+                common_string_sort_keys = False
             versions_append(
                 {
                     "dataset_id": version_get("dataset_id", ""),
-                    "version_id": version_get("version_id", ""),
-                    "created_at": version_get("created_at", ""),
+                    "version_id": version_id,
+                    "created_at": created_at,
                     "status": version_get("status", ""),
                     "train_count": version_get("train_count", 0),
                     "validation_count": version_get("validation_count", 0),
@@ -1113,7 +1132,11 @@ def list_dataset_versions(
                     "dataset_version_path": manifest_path,
                 }
             )
-    versions.sort(key=_dataset_version_list_sort_key)
+    versions.sort(
+        key=_DATASET_VERSION_LIST_STRING_SORT_KEY
+        if common_string_sort_keys
+        else _dataset_version_list_sort_key
+    )
     return {
         "schema_version": DATASET_VERSION_LIST_SCHEMA_VERSION,
         "workspace_manifest_path": manifest_path_string,
@@ -1135,14 +1158,18 @@ def _dataset_version_list_sort_key(item: dict[str, Any]) -> tuple[str, str]:
     )
 
 
+_DATASET_VERSION_LIST_STRING_SORT_KEY = itemgetter("created_at", "version_id")
+
+
 def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
+    scandir = os.scandir
+    manifest_suffix = "/dataset-version.json"
     try:
-        with os.scandir(versions_root) as entries:
+        with scandir(os.fspath(versions_root)) as entries:
             for entry in entries:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                manifest_path = f"{entry.path}/dataset-version.json"
-                yield manifest_path
+                yield entry.path + manifest_suffix
     except OSError:
         return
 
@@ -1160,10 +1187,17 @@ def _iter_source_records(
         upload_cap_bytes=upload_cap_bytes,
         source_cap_bytes=source_cap_bytes,
     )
+    operator_failures_append = operator_failures.append
+    source_kind_for_path = _source_kind
+    read_source_text = _read_source_text
+    structured_records = _structured_records
+    normalize_line_endings = _normalize_line_endings
+    metadata_for_path = _metadata_for_path
+    record = _record
     for path in paths:
-        source_kind = _source_kind(path)
+        source_kind = source_kind_for_path(path)
         if source_kind is None:
-            operator_failures.append(
+            operator_failures_append(
                 {
                     "id": _failure_id("unsupported-source", path.name),
                     "code": "DATASET_INGEST_UNSUPPORTED_SOURCE",
@@ -1173,9 +1207,9 @@ def _iter_source_records(
                 }
             )
             continue
-        text = _read_source_text(path, cap_bytes=read_cap_bytes)
+        text = read_source_text(path, cap_bytes=read_cap_bytes)
         if not text or text.isspace():
-            operator_failures.append(
+            operator_failures_append(
                 {
                     "id": _failure_id("empty-source", path.name),
                     "code": "DATASET_INGEST_EMPTY_SOURCE",
@@ -1186,14 +1220,14 @@ def _iter_source_records(
             )
             continue
         if source_kind == "structured_data":
-            yield from _structured_records(path, text, operator_failures)
+            yield from structured_records(path, text, operator_failures)
         else:
-            normalized_text = _normalize_line_endings(text)
-            yield _record(
+            normalized_text = normalize_line_endings(text)
+            yield record(
                 path=path,
                 source_kind=source_kind,
                 text=normalized_text,
-                metadata=_metadata_for_path(path, source_kind),
+                metadata=metadata_for_path(path, source_kind),
                 normalized=True,
             )
 
@@ -1205,21 +1239,16 @@ def _source_read_cap_bytes(*, upload_cap_bytes: int, source_cap_bytes: int) -> i
 
 
 def _read_source_text(path: Path, *, cap_bytes: int = 0) -> str:
+    raw_path = os.fspath(path)
+    open_file = open
     if cap_bytes <= 0:
-        with path.open("rb") as handle:
+        with open_file(raw_path, "rb") as handle:
             return handle.read().decode("utf-8")
-    chunks: list[bytes] = []
-    observed = 0
-    with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(64 * 1024)
-            if not chunk:
-                break
-            observed += len(chunk)
-            if cap_bytes > 0 and observed > cap_bytes:
-                raise OSError(f"source exceeded configured read cap of {cap_bytes} bytes")
-            chunks.append(chunk)
-    return b"".join(chunks).decode("utf-8")
+    with open_file(raw_path, "rb") as handle:
+        payload = handle.read(cap_bytes + 1)
+    if len(payload) > cap_bytes:
+        raise OSError(f"source exceeded configured read cap of {cap_bytes} bytes")
+    return payload.decode("utf-8")
 
 
 def _iter_source_file_paths(input_path: Path) -> list[Path]:
@@ -1249,24 +1278,34 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 
 
 def _classify_source_kind_name(name: str) -> str | None:
-    if name[-4:] == ".txt":
-        if len(name) >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
-            return "pdf"
-        if len(name) >= 9 and name[-9] == "." and name[-8:-4].lower() == "docx":
-            return "docx"
-        return "text"
-    if name[-5:] == ".text":
-        return "text"
-    if name[-3:] == ".md":
-        return "markdown"
-    if name[-3:] == ".py":
-        return "code"
-    if name[-6:] == ".jsonl":
-        return "structured_data"
-    if name[-5:] == ".json":
-        return "structured_data"
-    if name[-4:] in (".csv", ".tsv"):
-        return "structured_data"
+    if not name:
+        return None
+    last_char = name[-1]
+    if last_char == "t":
+        if name[-4:] == ".txt":
+            if len(name) >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
+                return "pdf"
+            if len(name) >= 9 and name[-9] == "." and name[-8:-4].lower() == "docx":
+                return "docx"
+            return "text"
+        if name[-5:] == ".text":
+            return "text"
+    elif last_char == "d":
+        if name[-3:] == ".md":
+            return "markdown"
+    elif last_char == "y":
+        if name[-3:] == ".py":
+            return "code"
+    elif last_char == "l":
+        if name[-6:] == ".jsonl":
+            return "structured_data"
+    elif last_char == "n":
+        if name[-5:] == ".json":
+            return "structured_data"
+    elif last_char == "v":
+        suffix4 = name[-4:]
+        if suffix4 == ".csv" or suffix4 == ".tsv":
+            return "structured_data"
 
     dot_index = name.rfind(".")
     if dot_index < 0:
@@ -1480,21 +1519,32 @@ def _record(
     normalized: bool = False,
 ) -> dict[str, Any]:
     normalized_text = text if normalized else _normalize_line_endings(text)
-    normalized_bytes = normalized_text.encode("utf-8")
+    content_digest_and_size = _record_content_digest_and_size
+    source_id_for_path = _record_source_id
+    path_text = os.fspath(path)
+    content_sha256, byte_size = content_digest_and_size(normalized_text)
     record_metadata = dict(metadata) if metadata else {}
-    sha256 = hashlib.sha256
-    path_name = path.name
-    path_key = str(path).encode("utf-8")
     return {
-        "source_id": sha256(path_key).hexdigest()[:16],
-        "source_uri": path_name,
+        "source_id": source_id_for_path(path_text),
+        "source_uri": path.name,
         "source_kind": source_kind,
-        "content_sha256": sha256(normalized_bytes).hexdigest(),
-        "byte_size": len(normalized_bytes),
+        "content_sha256": content_sha256,
+        "byte_size": byte_size,
         "record_count": 1,
         "text": normalized_text,
         "metadata": record_metadata,
     }
+
+
+@lru_cache(maxsize=4096)
+def _record_content_digest_and_size(normalized_text: str) -> tuple[str, int]:
+    normalized_bytes = normalized_text.encode("utf-8")
+    return _SHA256(normalized_bytes).hexdigest(), len(normalized_bytes)
+
+
+@lru_cache(maxsize=8192)
+def _record_source_id(path_text: str) -> str:
+    return _SHA256(os.fsencode(path_text)).hexdigest()[:16]
 
 
 def _failure_id(reason: str, name: str) -> str:
@@ -1745,9 +1795,11 @@ def _quality_summary(
         validation_rows,
     )
     quality_controls = ingest_receipt.get("quality_control_summary", {})
-    source_record_count = float(quality_controls.get("source_record_count", 0) or 0)
-    exact_dedup_count = float(quality_controls.get("exact_dedup_count", 0) or 0)
-    fuzzy_dedup_count = float(quality_controls.get("fuzzy_dedup_count", 0) or 0)
+    quality_controls_get = quality_controls.get
+    source_record_count = float(quality_controls_get("source_record_count", 0) or 0)
+    exact_dedup_count = float(quality_controls_get("exact_dedup_count", 0) or 0)
+    fuzzy_dedup_count = float(quality_controls_get("fuzzy_dedup_count", 0) or 0)
+    pii_mask_count = int(quality_controls_get("pii_mask_count", 0) or 0)
     blocking_reasons = ["failed_generation"] if failed_count else []
     return {
         "schema_version": DATASET_QUALITY_SUMMARY_SCHEMA_VERSION,
@@ -1759,7 +1811,7 @@ def _quality_summary(
         "failed_count": failed_count,
         "train_count": train_count,
         "validation_count": validation_count,
-        "pii_mask_count": int(quality_controls.get("pii_mask_count", 0) or 0),
+        "pii_mask_count": pii_mask_count,
         "dedup_ratio": (exact_dedup_count + fuzzy_dedup_count) / source_record_count if source_record_count else 0,
         "mean_output_length": output_length_total / output_length_count if output_length_count else 0,
         "p95_output_length": p95_output_length,
@@ -1800,11 +1852,10 @@ def _sample_output_length_stats(
     validation_rows: list[dict[str, Any]],
 ) -> tuple[int, int, int]:
     lengths: list[int] = []
-    _append_sample_output_lengths(lengths, train_rows, validation_rows)
+    output_length_total = _append_sample_output_lengths(lengths, train_rows, validation_rows)
     length_count = len(lengths)
     if not length_count:
         return 0, 0, 0
-    output_length_total = sum(lengths)
     lengths.sort()
     index = min(length_count - 1, int(round((length_count - 1) * 0.95)))
     return length_count, output_length_total, lengths[index]
@@ -1814,42 +1865,100 @@ def _append_sample_output_lengths(
     lengths: list[int],
     train_rows: list[dict[str, Any]],
     validation_rows: list[dict[str, Any]],
-) -> None:
-    _append_rows_output_lengths(lengths, train_rows)
-    _append_rows_output_lengths(lengths, validation_rows)
+) -> int:
+    return _append_rows_output_lengths(lengths, train_rows) + _append_rows_output_lengths(
+        lengths,
+        validation_rows,
+    )
 
 
 def _append_rows_output_lengths(
     lengths: list[int],
     rows: list[dict[str, Any]],
-) -> None:
+) -> int:
     append = lengths.append
     len_ = len
     str_ = str
+    dict_ = dict
     missing = _MISSING
+    output_length_total = 0
+    try:
+        first_row = rows[0]
+    except IndexError:
+        return 0
+    if first_row.get("completion", missing) is not missing:
+        for row in rows:
+            try:
+                completion = row["completion"]
+            except KeyError:
+                messages = row.get("messages", [])
+                if not isinstance(messages, list):
+                    append(0)
+                    continue
+                if len_(messages) == 2:
+                    message_0, message_1 = messages
+                    if type(message_0) is dict_ and type(message_1) is dict_:
+                        content_0 = message_0.get("content", "")
+                        content_1 = message_1.get("content", "")
+                        if type(content_0) is str_ and type(content_1) is str_:
+                            total = len_(content_0) + len_(content_1)
+                            append(total)
+                            output_length_total += total
+                            continue
+                total = 0
+                for item in messages:
+                    if type(item) is dict_:
+                        content = item.get("content", "")
+                    else:
+                        try:
+                            content = item.get("content", "")
+                        except AttributeError:
+                            continue
+                    if type(content) is str_:
+                        total += len_(content)
+                    else:
+                        total += len_(str_(content))
+                append(total)
+                output_length_total += total
+            else:
+                if type(completion) is str_:
+                    length = len_(completion)
+                else:
+                    length = len_(str_(completion))
+                append(length)
+                output_length_total += length
+        return output_length_total
     for row in rows:
-        completion = row.get("completion", missing)
-        if completion is missing:
-            messages = row.get("messages", [])
-            if not isinstance(messages, list):
-                append(0)
-                continue
-            total = 0
-            for item in messages:
+        messages = row.get("messages", [])
+        if not isinstance(messages, list):
+            append(0)
+            continue
+        if len_(messages) == 2:
+            message_0, message_1 = messages
+            if type(message_0) is dict_ and type(message_1) is dict_:
+                content_0 = message_0.get("content", "")
+                content_1 = message_1.get("content", "")
+                if type(content_0) is str_ and type(content_1) is str_:
+                    total = len_(content_0) + len_(content_1)
+                    append(total)
+                    output_length_total += total
+                    continue
+        total = 0
+        for item in messages:
+            if type(item) is dict_:
+                content = item.get("content", "")
+            else:
                 try:
                     content = item.get("content", "")
                 except AttributeError:
                     continue
-                if type(content) is str:
-                    total += len_(content)
-                else:
-                    total += len_(str_(content))
-            append(total)
-        else:
-            if type(completion) is str:
-                append(len_(completion))
+            if type(content) is str_:
+                total += len_(content)
             else:
-                append(len_(str_(completion)))
+                total += len_(str_(content))
+        append(total)
+        output_length_total += total
+    return output_length_total
 
 
 def _p95(values: list[int]) -> int:

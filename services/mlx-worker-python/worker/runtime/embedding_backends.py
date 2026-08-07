@@ -13,6 +13,20 @@ _UNPACK_DIGEST_UINT32 = struct.Struct("<8I").unpack
 _DIGEST_UINT32_SCALE = 2.0 / 0xFFFFFFFF
 
 
+def _sum_squares_8(values: list[float]) -> float:
+    value0, value1, value2, value3, value4, value5, value6, value7 = values
+    return (
+        value0 * value0
+        + value1 * value1
+        + value2 * value2
+        + value3 * value3
+        + value4 * value4
+        + value5 * value5
+        + value6 * value6
+        + value7 * value7
+    )
+
+
 @dataclass(frozen=True)
 class EmbeddingBackendDescriptor:
     backend_id: str
@@ -55,19 +69,37 @@ class DeterministicEmbeddingBackend:
         _sha256=_SHA256,
         _sqrt=_SQRT,
         _round=_ROUND,
+        _sum_squares=_sum_squares_8,
     ) -> list[float]:
+        if not dimensions:
+            return []
+        if dimensions < 0:
+            return []
         base_values = [
             raw * _DIGEST_UINT32_SCALE - 1.0
             for raw in _UNPACK_DIGEST_UINT32(_sha256(seed_text.encode("utf-8")).digest())
         ]
         if dimensions == 8:
-            l2_norm = _sqrt(sum(value * value for value in base_values))
+            l2_norm = _sqrt(_sum_squares(base_values))
             if l2_norm == 0.0:
                 return [0.0] * 8
             inverse_l2_norm = 1.0 / l2_norm
-            for index, value in enumerate(base_values):
-                base_values[index] = _round(value * inverse_l2_norm, 6)
+            base_values[0] = _round(base_values[0] * inverse_l2_norm, 6)
+            base_values[1] = _round(base_values[1] * inverse_l2_norm, 6)
+            base_values[2] = _round(base_values[2] * inverse_l2_norm, 6)
+            base_values[3] = _round(base_values[3] * inverse_l2_norm, 6)
+            base_values[4] = _round(base_values[4] * inverse_l2_norm, 6)
+            base_values[5] = _round(base_values[5] * inverse_l2_norm, 6)
+            base_values[6] = _round(base_values[6] * inverse_l2_norm, 6)
+            base_values[7] = _round(base_values[7] * inverse_l2_norm, 6)
             return base_values
+        if dimensions == 1:
+            value = base_values[0]
+            if value > 0.0:
+                return [1.0]
+            if value < 0.0:
+                return [-1.0]
+            return [0.0]
         return self._project_digest_expanded(base_values, dimensions)
 
     def _project_digest_expanded(
@@ -79,7 +111,7 @@ class DeterministicEmbeddingBackend:
         _round=_ROUND,
     ) -> list[float]:
         full_repeats, remainder = divmod(dimensions, 8)
-        squared_sum = sum(value * value for value in base_values) * full_repeats
+        squared_sum = _sum_squares_8(base_values) * full_repeats
         if remainder == 1:
             value = base_values[0]
             squared_sum += value * value
@@ -216,12 +248,25 @@ class MXBAIEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
         )
 
 
-def resolve_embedding_backend(backend_id: str) -> DeterministicEmbeddingBackend:
+def legacy_embedding_backend_error_message(backend_id: str) -> str:
+    return (
+        f"Legacy embedding backend {backend_id} is no longer executable; "
+        "use deterministic-fixture-v1 for development fixtures or an explicit mlx-* artifact backend."
+    )
+
+
+def resolve_embedding_backend(
+    backend_id: str,
+    family_id: str = "",
+) -> DeterministicEmbeddingBackend:
     normalized = backend_id.strip().lower()
-    if normalized == "" or normalized == "bert-v1":
-        return BERTEmbeddingBackend()
-    if normalized == "xlmr-v1":
-        return XLMREmbeddingBackend()
+    normalized_family = family_id.strip().lower()
+    if normalized == "deterministic-fixture-v1":
+        return XLMREmbeddingBackend() if normalized_family == "xlmr" else BERTEmbeddingBackend()
+    if normalized in {"bert-v1", "xlmr-v1"}:
+        raise ValueError(legacy_embedding_backend_error_message(backend_id))
+    if normalized == "":
+        raise ValueError("Embedding backend must be explicit.")
     raise ValueError(f"Unsupported embedding backend: {backend_id}")
 
 

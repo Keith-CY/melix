@@ -17,9 +17,10 @@ sequences in continuous batching. We patch:
   MTP-head forward at the bonus position (accept) or confirmed position
   (reject), refilling the queue from the verify outputs.
 
-- ``GenerationBatch.extend`` / ``filter`` — drop MTP state whenever continuous
-  batching reshapes ownership. MTP state belongs to one uid in one singleton
-  timeline; it must not survive standard batched decoding.
+- ``GenerationBatch.extend`` / ``filter`` — preserve MTP state only while the
+  same uid remains a singleton timeline. ``extend`` reconciles to a standard
+  resumable cache then drops state before multi-row decode; ``filter`` keeps
+  state when it filters back to the same singleton uid and drops otherwise.
 
 The throughput math (greedy, accept rate p):
   - Cost per *cycle*: 1× backbone (2-token verify) + 1× MTP head ≈ 1.15
@@ -77,6 +78,14 @@ from typing import Any, Deque, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 _PATCHED = False
+
+_BATCH_STATE_POLICY_RECEIPT = {
+    "batch_shape": "singleton_only",
+    "batch_state_policy": "singleton_timeline_safe",
+    "batch_filter_policy": "preserve_when_singleton_uid_matches",
+    "batch_extend_policy": "reconcile_then_drop",
+    "batch_multi_row_policy": "multi_row_decode_unsupported",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +167,11 @@ def apply() -> bool:
     GenerationBatch._melix_mtp_patched = True
     _PATCHED = True
     return True
+
+
+def batch_state_policy_receipt() -> dict[str, str]:
+    """Return the batch-state contract implemented by this patch."""
+    return dict(_BATCH_STATE_POLICY_RECEIPT)
 
 
 def _model_has_mtp_module(model: Any) -> bool:

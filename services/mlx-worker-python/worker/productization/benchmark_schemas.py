@@ -4,6 +4,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 import json
 
+from worker.productization.effective_policy_evidence import (
+    effective_policy_evidence_from_receipt,
+    empty_effective_policy_evidence,
+)
 from worker.productization.evaluation_schemas import (
     EvaluationJob,
     EvaluationResult,
@@ -398,6 +402,9 @@ class ServingBenchmarkRequestRow:
     adapter_set_hash: str = ""
     adapter_activation_mode: str = ""
     created_at_unix_ms: int = 0
+    effective_policy_evidence: dict[str, object] = field(
+        default_factory=empty_effective_policy_evidence
+    )
     trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -452,6 +459,7 @@ class ServingBenchmarkRequestRow:
             "adapter_activation_mode": self.adapter_activation_mode,
             "created_at_unix_ms": self.created_at_unix_ms,
         }
+        payload.update(self.effective_policy_evidence)
         append_trajectory_provenance(payload, self.trajectory_provenance)
         return payload
 
@@ -737,6 +745,12 @@ class BenchmarkMatrixRequestRow:
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    feature_guardrail_requested_num_draft_tokens: int = 0
+    feature_guardrail_effective_num_draft_tokens: int = 0
+    feature_guardrail_resource_fanout_estimate: float = 0.0
+    feature_guardrail_requested_cache_budget_bytes: int = 0
+    feature_guardrail_effective_cache_budget_bytes: int = 0
+    feature_guardrail_reason: str = ""
     tool_call_count: int = 0
     tool_latency_ms: float = 0.0
     observation_bytes: int = 0
@@ -746,6 +760,9 @@ class BenchmarkMatrixRequestRow:
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
     agentic_tool_metrics: dict[str, float] | None = None
+    effective_policy_evidence: dict[str, object] = field(
+        default_factory=empty_effective_policy_evidence
+    )
     trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -795,6 +812,12 @@ class BenchmarkMatrixRequestRow:
             "dflash_block_size": self.dflash_block_size,
             "dflash_rollback_count": self.dflash_rollback_count,
             "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
+            "feature_guardrail_requested_num_draft_tokens": self.feature_guardrail_requested_num_draft_tokens,
+            "feature_guardrail_effective_num_draft_tokens": self.feature_guardrail_effective_num_draft_tokens,
+            "feature_guardrail_resource_fanout_estimate": self.feature_guardrail_resource_fanout_estimate,
+            "feature_guardrail_requested_cache_budget_bytes": self.feature_guardrail_requested_cache_budget_bytes,
+            "feature_guardrail_effective_cache_budget_bytes": self.feature_guardrail_effective_cache_budget_bytes,
+            "feature_guardrail_reason": self.feature_guardrail_reason,
             "tool_call_count": self.tool_call_count,
             "tool_latency_ms": self.tool_latency_ms,
             "observation_bytes": self.observation_bytes,
@@ -802,6 +825,7 @@ class BenchmarkMatrixRequestRow:
             "turn_count": self.turn_count,
             "created_at_unix_ms": self.created_at_unix_ms,
         }
+        payload.update(self.effective_policy_evidence)
         _append_agentic_tool_evidence(
             payload,
             registry=self.agentic_tool_registry,
@@ -1009,6 +1033,7 @@ def build_serving_benchmark_request_row(
     adapter_set_hash: str = "",
     adapter_activation_mode: str = "",
     agentic_tool_metrics: dict[str, float] | None = None,
+    effective_policy_receipt: dict[str, object] | None = None,
     created_at_unix_ms: int = 0,
     trajectory_provenance: dict[str, object] | None = None,
 ) -> ServingBenchmarkRequestRow:
@@ -1081,6 +1106,9 @@ def build_serving_benchmark_request_row(
         adapter_set_hash=adapter_set_hash,
         adapter_activation_mode=adapter_activation_mode,
         created_at_unix_ms=created_at_unix_ms,
+        effective_policy_evidence=effective_policy_evidence_from_receipt(
+            effective_policy_receipt
+        ),
         trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
@@ -1347,6 +1375,12 @@ def build_benchmark_matrix_request_row(
     dflash_block_size: int = 0,
     dflash_rollback_count: int = 0,
     dflash_target_hidden_layers: int = 0,
+    feature_guardrail_requested_num_draft_tokens: int = 0,
+    feature_guardrail_effective_num_draft_tokens: int = 0,
+    feature_guardrail_resource_fanout_estimate: float = 0.0,
+    feature_guardrail_requested_cache_budget_bytes: int = 0,
+    feature_guardrail_effective_cache_budget_bytes: int = 0,
+    feature_guardrail_reason: str = "",
     tool_call_count: int = 0,
     tool_latency_ms: float = 0.0,
     observation_bytes: int = 0,
@@ -1356,6 +1390,7 @@ def build_benchmark_matrix_request_row(
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
     agentic_tool_metrics: dict[str, float] | None = None,
+    effective_policy_receipt: dict[str, object] | None = None,
     trajectory_provenance: dict[str, object] | None = None,
 ) -> BenchmarkMatrixRequestRow:
     agentic_fields = _derived_agentic_benchmark_fields(
@@ -1413,6 +1448,12 @@ def build_benchmark_matrix_request_row(
         dflash_block_size=dflash_block_size,
         dflash_rollback_count=dflash_rollback_count,
         dflash_target_hidden_layers=dflash_target_hidden_layers,
+        feature_guardrail_requested_num_draft_tokens=feature_guardrail_requested_num_draft_tokens,
+        feature_guardrail_effective_num_draft_tokens=feature_guardrail_effective_num_draft_tokens,
+        feature_guardrail_resource_fanout_estimate=feature_guardrail_resource_fanout_estimate,
+        feature_guardrail_requested_cache_budget_bytes=feature_guardrail_requested_cache_budget_bytes,
+        feature_guardrail_effective_cache_budget_bytes=feature_guardrail_effective_cache_budget_bytes,
+        feature_guardrail_reason=feature_guardrail_reason,
         tool_call_count=int(agentic_fields["tool_call_count"]),
         tool_latency_ms=float(agentic_fields["tool_latency_ms"]),
         observation_bytes=int(agentic_fields["observation_bytes"]),
@@ -1422,6 +1463,9 @@ def build_benchmark_matrix_request_row(
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
         agentic_tool_metrics=dict(agentic_tool_metrics or {}),
+        effective_policy_evidence=effective_policy_evidence_from_receipt(
+            effective_policy_receipt
+        ),
         trajectory_provenance=dict(trajectory_provenance or {}),
     )
 

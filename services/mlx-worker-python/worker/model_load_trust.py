@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import open as _OPEN
 from dataclasses import dataclass
 from functools import lru_cache
 import json
@@ -22,7 +23,17 @@ BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST = "custom_loader_requires_trust_remote
 CONFIG_JSON_DETECTION = (False, CONFIG_JSON_SOURCE)
 CONFIG_JSON_ABSENT_DETECTION = (False, CONFIG_JSON_ABSENT_SOURCE)
 CONFIG_JSON_AUTO_MAP_DETECTION = (True, CONFIG_JSON_AUTO_MAP_SOURCE)
+MODEL_LOAD_TRUST_DEFAULT_SAFE = common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE
+MODEL_LOAD_TRUST_TRUST_REMOTE_CODE = common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE
+MODEL_LOAD_TRUST_NOT_APPLICABLE = common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE
+MODEL_LOAD_TRUST_POLICY = common_pb2.ModelLoadTrustPolicy
+WORKER_ROUTE_CLASS_UNSPECIFIED = common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
+WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY = common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
 _JSON_LOADS = json.loads
+_OS_STAT = os.stat
+_OS_SCANDIR = os.scandir
+_STAT_ISREG = stat.S_ISREG
+_STAT_ISDIR = stat.S_ISDIR
 EXECUTABLE_MODEL_FILE_PREFIXES = (
     "configuration",
     "feature_extraction",
@@ -34,18 +45,19 @@ EXECUTABLE_MODEL_FILE_PREFIXES = (
 )
 VALID_REQUESTED_TRUST_MODES = frozenset(
     {
-        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
-        common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
+        MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        MODEL_LOAD_TRUST_TRUST_REMOTE_CODE,
     }
 )
 TRUST_APPLICABLE_TEXT_LOADERS = frozenset({"mlx_lm", "mlx_lm_unavailable"})
 TRUST_APPLICABLE_TEXT_LOADERS_COMMON = frozenset({"mlx-lm", "mlx_lm", "mlx_lm_unavailable"})
+CANONICAL_MLX_LM_LOADER = "mlx-lm"
 TRUST_APPLICABLE_VLM_LOADERS = frozenset({"mlx_vlm", "python_vlm", "mlx_vlm_unavailable"})
 TRUST_APPLICABLE_VLM_LOADERS_COMMON = frozenset(
     {"mlx-vlm", "mlx_vlm", "python_vlm", "mlx_vlm_unavailable"}
 )
 ROUTE_CLASS_BY_RUNTIME_KIND = {
-    "text": common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
+    "text": WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
     "vlm": common_pb2.WORKER_ROUTE_PYTHON_VLM,
     "ocr": common_pb2.WORKER_ROUTE_PYTHON_OCR,
     "embedding": common_pb2.WORKER_ROUTE_PYTHON_EMBEDDING,
@@ -96,21 +108,31 @@ def resolve_model_load_trust_policy(
     if not _is_trust_applicable(runtime_kind, loader_family, runtime_name, runtime):
         return _not_applicable_policy(requested_mode, route_class, loader_family)
 
-    policy = common_pb2.ModelLoadTrustPolicy()
+    resolved_policy_source = policy_source
+    if request_policy is not None:
+        resolved_policy_source = _non_empty(
+            getattr(request_policy, "policy_source", ""),
+            policy_source,
+        )
+    custom_loader_required, detection_source = _detect_custom_loader_requirement(model_spec)
+    if custom_loader_required and requested_mode != MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
+        raise ModelLoadTrustRejection(
+            _custom_loader_rejection_policy(
+                requested_mode,
+                resolved_policy_source,
+                route_class,
+                loader_family,
+                detection_source,
+            )
+        )
+    policy = MODEL_LOAD_TRUST_POLICY()
     policy.requested_mode = requested_mode
-    policy.policy_source = _non_empty(
-        getattr(request_policy, "policy_source", "") if request_policy is not None else "",
-        policy_source,
-    )
+    policy.policy_source = resolved_policy_source
     policy.route_class = route_class
     policy.loader_family = loader_family
     policy.effective_mode = requested_mode
-    custom_loader_required, detection_source = _detect_custom_loader_requirement(model_spec)
     policy.custom_loader_required = custom_loader_required
     policy.custom_loader_detection_source = detection_source
-    if custom_loader_required and requested_mode != common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
-        policy.block_reason = BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST
-        raise ModelLoadTrustRejection(policy)
     return policy
 
 
@@ -127,8 +149,8 @@ def default_not_applicable_load_trust_policy(
     if _is_trust_applicable(runtime_kind, runtime_name, runtime_name, runtime):
         return None
     return _not_applicable_policy(
-        common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE,
-        common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
+        MODEL_LOAD_TRUST_DEFAULT_SAFE,
+        WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY,
         runtime_name,
     )
 
@@ -141,7 +163,7 @@ def _not_applicable_policy(
 ) -> common_pb2.ModelLoadTrustPolicy:
     return common_pb2.ModelLoadTrustPolicy(
         requested_mode=requested_mode,
-        effective_mode=common_pb2.MODEL_LOAD_TRUST_NOT_APPLICABLE,
+        effective_mode=MODEL_LOAD_TRUST_NOT_APPLICABLE,
         policy_source=NOT_APPLICABLE_SOURCE,
         custom_loader_detection_source=NOT_APPLICABLE_SOURCE,
         route_class=route_class,
@@ -150,9 +172,49 @@ def _not_applicable_policy(
 
 
 def load_kwargs_for_policy(policy: common_pb2.ModelLoadTrustPolicy) -> dict[str, Any]:
-    if policy.effective_mode != common_pb2.MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
+    if policy.effective_mode != MODEL_LOAD_TRUST_TRUST_REMOTE_CODE:
         return {}
     return {"trust_remote_code": True}
+
+
+def _custom_loader_rejection_policy(
+    requested_mode: int,
+    policy_source: str,
+    route_class: int,
+    loader_family: str,
+    detection_source: str,
+) -> common_pb2.ModelLoadTrustPolicy:
+    policy = MODEL_LOAD_TRUST_POLICY()
+    policy.CopyFrom(
+        _custom_loader_rejection_policy_template(
+            requested_mode,
+            policy_source,
+            route_class,
+            loader_family,
+            detection_source,
+        )
+    )
+    return policy
+
+
+@lru_cache(maxsize=128)
+def _custom_loader_rejection_policy_template(
+    requested_mode: int,
+    policy_source: str,
+    route_class: int,
+    loader_family: str,
+    detection_source: str,
+) -> common_pb2.ModelLoadTrustPolicy:
+    return MODEL_LOAD_TRUST_POLICY(
+        requested_mode=requested_mode,
+        effective_mode=requested_mode,
+        policy_source=policy_source,
+        custom_loader_required=True,
+        custom_loader_detection_source=detection_source,
+        block_reason=BLOCK_REASON_CUSTOM_LOADER_REQUIRES_TRUST,
+        route_class=route_class,
+        loader_family=loader_family,
+    )
 
 
 def _requested_mode(
@@ -167,7 +229,7 @@ def _requested_mode(
         and model_spec.settings.load_trust_mode in valid_requested_modes
     ):
         return model_spec.settings.load_trust_mode, MODEL_SETTINGS_SOURCE
-    return common_pb2.MODEL_LOAD_TRUST_DEFAULT_SAFE, DEFAULT_SAFE_SOURCE
+    return MODEL_LOAD_TRUST_DEFAULT_SAFE, DEFAULT_SAFE_SOURCE
 
 
 def _route_class(
@@ -175,11 +237,13 @@ def _route_class(
     request_policy: common_pb2.ModelLoadTrustPolicy | None,
     runtime_kind: str,
 ) -> int:
-    if request_policy is not None and request_policy.route_class != common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED:
+    if request_policy is not None and request_policy.route_class != WORKER_ROUTE_CLASS_UNSPECIFIED:
         return request_policy.route_class
-    if model_spec.route_class != common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED:
+    if model_spec.route_class != WORKER_ROUTE_CLASS_UNSPECIFIED:
         return model_spec.route_class
-    return ROUTE_CLASS_BY_RUNTIME_KIND.get(runtime_kind, common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED)
+    if runtime_kind == "text":
+        return WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
+    return ROUTE_CLASS_BY_RUNTIME_KIND.get(runtime_kind, WORKER_ROUTE_CLASS_UNSPECIFIED)
 
 
 def _loader_family(
@@ -189,19 +253,18 @@ def _loader_family(
     *,
     runtime_name: str,
 ) -> str:
-    requested_family = (
-        str(getattr(request_policy, "loader_family", "") or "").strip()
-        if request_policy is not None
-        else ""
-    )
-    if requested_family:
-        return requested_family
+    if request_policy is not None:
+        requested_family = str(
+            getattr(request_policy, "loader_family", "") or ""
+        ).strip()
+        if requested_family:
+            return requested_family
+    if runtime_kind == "text":
+        return runtime_name or "mlx-lm"
     if runtime_kind == "vlm":
         return model_spec.ext.get("melix.vlm.backend_id", "").strip() or str(
             runtime_name or "mlx_vlm"
         )
-    if runtime_kind == "text":
-        return runtime_name or "mlx-lm"
     return runtime_name or runtime_kind
 
 
@@ -218,6 +281,11 @@ def _is_trust_applicable(
         return bool(supports_trust_policy)
     if runtime_kind == "text":
         if (
+            loader_family == CANONICAL_MLX_LM_LOADER
+            or runtime_name == CANONICAL_MLX_LM_LOADER
+        ):
+            return True
+        if (
             loader_family in TRUST_APPLICABLE_TEXT_LOADERS_COMMON
             or runtime_name in TRUST_APPLICABLE_TEXT_LOADERS_COMMON
         ):
@@ -230,21 +298,24 @@ def _is_trust_applicable(
             or runtime_name in TRUST_APPLICABLE_VLM_LOADERS_COMMON
         ):
             return True
+    else:
+        return False
     normalized_runtime_name = runtime_name.strip().lower().replace("-", "_")
     family = loader_family.strip().lower().replace("-", "_")
     if runtime_kind == "text":
         return family in TRUST_APPLICABLE_TEXT_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_TEXT_LOADERS
-    if runtime_kind == "vlm":
-        if normalized_runtime_name.startswith("deterministic"):
-            return False
-        return family in TRUST_APPLICABLE_VLM_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_VLM_LOADERS
-    return False
+    if normalized_runtime_name.startswith("deterministic"):
+        return False
+    return family in TRUST_APPLICABLE_VLM_LOADERS or normalized_runtime_name in TRUST_APPLICABLE_VLM_LOADERS
 
 
 def _runtime_name(runtime: Any) -> str:
     if runtime is None:
         return ""
-    runtime_name = getattr(runtime, "runtime_name", "")
+    try:
+        runtime_name = runtime.runtime_name
+    except AttributeError:
+        return ""
     if type(runtime_name) is str:
         return runtime_name
     if not runtime_name:
@@ -258,10 +329,10 @@ def _detect_custom_loader_requirement(model_spec: common_pb2.ModelSpec) -> tuple
     if config_path is not None:
         config_path_text, stat_path = config_path
         try:
-            config_stat = os.stat(stat_path)
+            config_stat = _OS_STAT(stat_path)
         except OSError:
             config_stat = None
-        if config_stat is not None and stat.S_ISREG(config_stat.st_mode):
+        if config_stat is not None and _STAT_ISREG(config_stat.st_mode):
             config_detection = _detect_custom_loader_requirement_for_stat(
                 config_path_text,
                 config_stat.st_mtime_ns,
@@ -280,26 +351,47 @@ def _detect_executable_model_files(model_spec: common_pb2.ModelSpec) -> tuple[st
     if not model_path:
         return ()
     if model_path[0] == "~":
-        scan_path: str | os.PathLike[str] = Path(model_path).expanduser()
+        scan_path = str(Path(model_path).expanduser())
     else:
         scan_path = model_path
+    try:
+        directory_stat = _OS_STAT(scan_path)
+    except OSError:
+        return ()
+    if not _STAT_ISDIR(directory_stat.st_mode):
+        return ()
+    return _detect_executable_model_files_for_stat(
+        scan_path,
+        directory_stat.st_mtime_ns,
+        directory_stat.st_size,
+    )
+
+
+@lru_cache(maxsize=128)
+def _detect_executable_model_files_for_stat(
+    scan_path: str,
+    mtime_ns: int,
+    size: int,
+) -> tuple[str, ...]:
+    _ = (mtime_ns, size)
     is_executable_model_file_entry = _is_executable_model_file_entry
     try:
-        with os.scandir(scan_path) as entries:
-            return tuple(
-                sorted(
-                    entry.name
-                    for entry in entries
-                    if is_executable_model_file_entry(entry)
-                )
-            )
+        with _OS_SCANDIR(scan_path) as entries:
+            executable_file_names: list[str] = []
+            append_name = executable_file_names.append
+            for entry in entries:
+                if is_executable_model_file_entry(entry):
+                    append_name(entry.name)
+            if len(executable_file_names) > 1:
+                executable_file_names.sort()
+            return tuple(executable_file_names)
     except OSError:
         return ()
 
 
 def _is_executable_model_file_entry(entry: os.DirEntry[str]) -> bool:
     name = entry.name
-    if not name.endswith(".py"):
+    if len(name) <= 3 or name[-3:] != ".py":
         return False
     if not name.startswith(EXECUTABLE_MODEL_FILE_PREFIXES):
         return False
@@ -309,6 +401,7 @@ def _is_executable_model_file_entry(entry: os.DirEntry[str]) -> bool:
         return False
 
 
+@lru_cache(maxsize=128)
 def _model_files_detection_source(file_names: tuple[str, ...]) -> str:
     return "model_files:" + ",".join(file_names)
 
@@ -331,8 +424,8 @@ def _read_model_config(model_spec: common_pb2.ModelSpec) -> dict[str, Any] | Non
         return None
     config_path_text, stat_path = config_path
     try:
-        config_stat = os.stat(stat_path)
-        if not stat.S_ISREG(config_stat.st_mode):
+        config_stat = _OS_STAT(stat_path)
+        if not _STAT_ISREG(config_stat.st_mode):
             return None
     except OSError:
         return None
@@ -391,7 +484,7 @@ def _read_model_config_for_stat(
     _ = (mtime_ns, size)
     loads = _JSON_LOADS
     try:
-        with open(config_path, "rb") as handle:
+        with _OPEN(config_path, "rb") as handle:
             payload = loads(handle.read())
     except (OSError, json.JSONDecodeError):
         return None

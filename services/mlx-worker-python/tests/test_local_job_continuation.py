@@ -365,6 +365,29 @@ def test_store_claim_followup_marks_completed_job_in_progress_once(tmp_path: Pat
     assert store.load_record("job-7") == claimed.record
 
 
+def test_claim_local_job_followup_uses_direct_record_copy_for_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_replace(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("claim path should avoid dataclasses.replace overhead")
+
+    monkeypatch.setattr(local_job_continuation_module, "replace", fail_replace)
+
+    claimed = local_job_continuation_module.claim_local_job_followup(
+        _record(
+            status="completed",
+            exit_status=0,
+            success_marker_path="/workspace/.runtime/jobs/job-7.success",
+        ),
+        followup_session_id=" followup-session-7 ",
+    )
+
+    assert claimed.record.followup_status == "in_progress"
+    assert claimed.record.followup_session_id == "followup-session-7"
+    assert claimed.record.status == "completed"
+    assert claimed.receipt["reason"] == "followup_claimed"
+
+
 def test_store_claim_followup_emits_redacted_background_prompt_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -824,10 +847,15 @@ def test_project_local_job_session_followup_uses_narrow_receipt_copies(
     assert projection_summary["details"]["coords"] is not (
         claim_summary["details"]["coords"]
     )
+    assert projection_summary["details"]["coords"][1] is not (
+        claim_summary["details"]["coords"][1]
+    )
     projection_summary["summary"] = "Downstream mutation."
     projection_summary["details"]["items"][0]["name"] = "mutated"
+    projection_summary["details"]["coords"][1]["y"] = "mutated"
     assert claim_summary["summary"] == "Redacted completion summary."
     assert claim_summary["details"]["items"][0]["name"] == "artifact"
+    assert claim_summary["details"]["coords"][1]["y"] == "z"
     assert projection.untrusted_context_receipts is not (
         projection.claim.prompt_context.untrusted_context_receipts
     )
@@ -848,17 +876,167 @@ def test_project_local_job_session_followup_copy_preserves_json_scalars_by_value
     }
 
     copied = local_job_continuation_module._copy_json_like_value(
-        {"summary": scalar_payload, "items": [scalar_payload]}
+        {
+            "summary": scalar_payload,
+            "items": [scalar_payload],
+            "triple": ("a", scalar_payload, 3),
+            "quad": ("phase", scalar_payload, 4, True),
+            "quint": ("phase", scalar_payload, 4, True, None),
+            "sext": ("phase", scalar_payload, 4, True, None, "done"),
+            "sept": ("phase", scalar_payload, 4, True, None, "done", 9.5),
+            "oct": ("phase", scalar_payload, 4, True, None, "done", 9.5, "tail"),
+            "nine": (
+                "phase",
+                scalar_payload,
+                4,
+                True,
+                None,
+                "done",
+                9.5,
+                "tail",
+                "end",
+            ),
+            "ten": (
+                "phase",
+                scalar_payload,
+                4,
+                True,
+                None,
+                "done",
+                9.5,
+                "tail",
+                "end",
+                "receipt",
+            ),
+            "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
+        }
     )
 
-    assert copied == {"summary": scalar_payload, "items": [scalar_payload]}
+    assert copied == {
+        "summary": scalar_payload,
+        "items": [scalar_payload],
+        "triple": ("a", scalar_payload, 3),
+        "quad": ("phase", scalar_payload, 4, True),
+        "quint": ("phase", scalar_payload, 4, True, None),
+        "sext": ("phase", scalar_payload, 4, True, None, "done"),
+        "sept": ("phase", scalar_payload, 4, True, None, "done", 9.5),
+        "oct": ("phase", scalar_payload, 4, True, None, "done", 9.5, "tail"),
+        "nine": (
+            "phase",
+            scalar_payload,
+            4,
+            True,
+            None,
+            "done",
+            9.5,
+            "tail",
+            "end",
+        ),
+        "ten": (
+            "phase",
+            scalar_payload,
+            4,
+            True,
+            None,
+            "done",
+            9.5,
+            "tail",
+            "end",
+            "receipt",
+        ),
+        "mixed": ["leaf", {"nested": [scalar_payload]}, ("tuple-leaf",)],
+    }
     assert copied is not scalar_payload
     assert copied["summary"] is not scalar_payload
     assert copied["items"] is not scalar_payload
     assert copied["items"][0] is not scalar_payload
+    assert copied["triple"][1] is not scalar_payload
+    assert copied["quad"][1] is not scalar_payload
+    assert copied["quint"][1] is not scalar_payload
+    assert copied["sext"][1] is not scalar_payload
+    assert copied["sept"][1] is not scalar_payload
+    assert copied["oct"][1] is not scalar_payload
+    assert copied["nine"][1] is not scalar_payload
+    assert copied["ten"][1] is not scalar_payload
     assert copied["summary"]["text"] is scalar_text
+    assert copied["triple"][0] == "a"
+    assert copied["triple"][2] == 3
+    assert copied["quad"][0] == "phase"
+    assert copied["quad"][2:] == (4, True)
+    assert copied["quint"][0] == "phase"
+    assert copied["quint"][2:] == (4, True, None)
+    assert copied["sext"][0] == "phase"
+    assert copied["sext"][2:] == (4, True, None, "done")
+    assert copied["sept"][0] == "phase"
+    assert copied["sept"][2:] == (4, True, None, "done", 9.5)
+    assert copied["oct"][0] == "phase"
+    assert copied["oct"][2:] == (4, True, None, "done", 9.5, "tail")
+    assert copied["nine"][0] == "phase"
+    assert copied["nine"][2:] == (4, True, None, "done", 9.5, "tail", "end")
+    assert copied["ten"][0] == "phase"
+    assert copied["ten"][2:] == (4, True, None, "done", 9.5, "tail", "end", "receipt")
     copied["summary"]["text"] = "downstream mutation"
     assert scalar_payload["text"] == scalar_text
+
+
+def test_copy_json_like_value_exact_scalar_tuple_avoids_recursive_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = local_job_continuation_module._copy_json_like_value
+    dispatch_count = 0
+
+    def counted_copy(value: object) -> object:
+        nonlocal dispatch_count
+        dispatch_count += 1
+        return original(value)
+
+    monkeypatch.setattr(local_job_continuation_module, "_copy_json_like_value", counted_copy)
+
+    copied = counted_copy(("status", 7, True))
+    copied_pair = counted_copy(("id", None))
+    copied_quad = counted_copy(("phase", 7, True, None))
+    copied_quint = counted_copy(("phase", 7, True, None, "done"))
+    copied_sext = counted_copy(("phase", 7, True, None, "done", 9.5))
+    copied_sept = counted_copy(("phase", 7, True, None, "done", 9.5, "tail"))
+    copied_oct = counted_copy(("phase", 7, True, None, "done", 9.5, "tail", "end"))
+    copied_nine = counted_copy(
+        ("phase", 7, True, None, "done", 9.5, "tail", "end", "receipt")
+    )
+    copied_ten = counted_copy(
+        ("phase", 7, True, None, "done", 9.5, "tail", "end", "receipt", "final")
+    )
+
+    assert copied == ("status", 7, True)
+    assert copied_pair == ("id", None)
+    assert copied_quad == ("phase", 7, True, None)
+    assert copied_quint == ("phase", 7, True, None, "done")
+    assert copied_sext == ("phase", 7, True, None, "done", 9.5)
+    assert copied_sept == ("phase", 7, True, None, "done", 9.5, "tail")
+    assert copied_oct == ("phase", 7, True, None, "done", 9.5, "tail", "end")
+    assert copied_nine == (
+        "phase",
+        7,
+        True,
+        None,
+        "done",
+        9.5,
+        "tail",
+        "end",
+        "receipt",
+    )
+    assert copied_ten == (
+        "phase",
+        7,
+        True,
+        None,
+        "done",
+        9.5,
+        "tail",
+        "end",
+        "receipt",
+        "final",
+    )
+    assert dispatch_count == 9
 
 
 class _CopyDict(dict):
@@ -1355,6 +1533,46 @@ def test_store_scan_followup_candidates_reconciles_and_filters_ready_records(
     assert refusal_projection_store.load_record("projection-refusal") == refusal_ready
 
 
+def test_store_scan_followup_candidates_reuses_reconciliation_evidence_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence_checks = 0
+    original_has_completion_evidence = local_job_continuation_module._has_completion_evidence
+
+    def counting_has_completion_evidence(
+        record: LocalJobContinuationRecord,
+        live_evidence: LocalJobLiveEvidence | None = None,
+    ) -> bool:
+        nonlocal evidence_checks
+        evidence_checks += 1
+        return original_has_completion_evidence(record, live_evidence)
+
+    monkeypatch.setattr(
+        local_job_continuation_module,
+        "_has_completion_evidence",
+        counting_has_completion_evidence,
+    )
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(_record(job_id="live-done", status="completed", exit_status=0))
+
+    scan = store.scan_followup_candidates(
+        live_evidence_by_job_id={
+            "live-done": LocalJobLiveEvidence(
+                session_id="session-7",
+                active=False,
+                progress_excerpt="done",
+                artifact_paths=("/workspace/out/live-done.json",),
+            ),
+        }
+    )
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["live-done"]
+    assert scan.receipts[0]["reason"] == "followup_candidate_ready"
+    assert scan.receipts[0]["completion_evidence_available"] is True
+    assert evidence_checks == 1
+
+
 def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1411,6 +1629,89 @@ def test_store_scan_followup_candidates_uses_single_scandir_without_path_glob(
         "b-ready",
     ]
     assert scandir_calls == [os.fspath(tmp_path)]
+
+
+def test_store_scan_followup_candidates_uses_scanned_entry_path_without_rejoin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    def fail_rejoin(job_id: str) -> str:  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"scan_followup_candidates() should reuse the scanned path for {job_id}"
+        )
+
+    monkeypatch.setattr(store, "_record_path_text", fail_rejoin)
+
+    scan = store.scan_followup_candidates()
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["ready"]
+
+
+def test_store_scan_followup_candidates_tolerates_scanned_path_deleted_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    missing_path = tmp_path / "ready.json"
+
+    class MissingEntry:
+        name = "ready.json"
+        path = os.fspath(missing_path)
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            assert follow_symlinks is False
+            return True
+
+    monkeypatch.setattr(
+        local_job_continuation_module.os,
+        "scandir",
+        lambda path: iter((MissingEntry(),)),
+    )
+
+    scan = store.scan_followup_candidates()
+
+    assert scan.candidates == ()
+    assert scan.receipts == ()
+
+
+def test_store_scan_followup_candidates_skips_live_evidence_lookup_when_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    store.save_record(
+        _record(
+            job_id="ready",
+            status="completed",
+            exit_status=0,
+            artifact_paths=("/workspace/out/ready.json",),
+        )
+    )
+
+    def fail_missing_live_evidence(job_id: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"scan_followup_candidates() should pass None directly without fallback lookup for {job_id}"
+        )
+
+    monkeypatch.setattr(
+        local_job_continuation_module,
+        "_missing_live_evidence",
+        fail_missing_live_evidence,
+    )
+
+    scan = store.scan_followup_candidates()
+
+    assert [candidate.record.job_id for candidate in scan.candidates] == ["ready"]
 
 
 def test_store_scan_followup_candidates_filters_suffix_before_file_stat(

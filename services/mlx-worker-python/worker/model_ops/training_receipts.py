@@ -477,7 +477,7 @@ def dataset_files_resolved_receipt(
     dataset: Any,
     normalized_snapshot: Any,
 ) -> dict[str, str]:
-    return {
+    receipt = {
         "source_manifest_path": str(dataset.package.manifest_path),
         "source_samples_path": str(dataset.package.samples_path),
         "source_valid_path": _path_if_file(dataset.package.package_path / "valid.jsonl"),
@@ -489,6 +489,9 @@ def dataset_files_resolved_receipt(
             else ""
         ),
     }
+    if normalized_snapshot.test_path is not None:
+        receipt["normalized_test_path"] = str(normalized_snapshot.test_path)
+    return receipt
 
 
 def _path_if_file(path: Path) -> str:

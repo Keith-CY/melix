@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+from builtins import open as _OPEN
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -23,6 +24,7 @@ CRASH_PATTERNS = (
     "abort trap",
 )
 _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
+_ASCII_WHITESPACE_FLAGS = tuple(chr(value).isspace() for value in range(128))
 _ORD = ord
 _VERSION_KEY = b"version"
 _VERSION_CANONICAL_PREFIX = b'version = "'
@@ -30,6 +32,7 @@ _QUOTE_BYTE = 34
 _EQUALS_BYTE = 61
 _PRODUCT_VERSION_CACHE: dict[str, tuple[int, int, str]] = {}
 _PRODUCT_VERSION_PATH_CACHE: dict[str, Path] = {}
+_PRODUCT_VERSION_CACHE_KEY_CACHE: dict[str, str] = {}
 _UPDATE_CHANNEL_CACHE: dict[str, tuple[int, int, str, str]] = {}
 
 
@@ -80,8 +83,14 @@ def read_product_version(repo_root: str | Path) -> str:
     if pyproject_path is None:
         pyproject_path = root / "pyproject.toml"
         _PRODUCT_VERSION_PATH_CACHE[root_text] = pyproject_path
+        cache_key = str(pyproject_path)
+        _PRODUCT_VERSION_CACHE_KEY_CACHE[root_text] = cache_key
+    else:
+        cache_key = _PRODUCT_VERSION_CACHE_KEY_CACHE.get(root_text)
+        if cache_key is None:
+            cache_key = str(pyproject_path)
+            _PRODUCT_VERSION_CACHE_KEY_CACHE[root_text] = cache_key
     stat_result = pyproject_path.stat()
-    cache_key = str(pyproject_path)
     cached = _PRODUCT_VERSION_CACHE.get(cache_key)
     if cached is not None:
         cached_mtime_ns, cached_size, cached_version = cached
@@ -171,19 +180,19 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         else Path(channel_path).expanduser().resolve()
     )
     stat_result = resolved_channel_path.stat()
+    stat_mtime_ns = stat_result.st_mtime_ns
+    stat_size = stat_result.st_size
     channel_path_text = str(resolved_channel_path)
     stat_cache_key = (channel_path_text, installed_version)
     stat_cached = _UPDATE_CHECK_RESULT_STAT_CACHE.get(stat_cache_key)
     if stat_cached is not None:
         cached_mtime_ns, cached_size, cached_result = stat_cached
-        if (
-            cached_mtime_ns == stat_result.st_mtime_ns
-            and cached_size == stat_result.st_size
-        ):
+        if cached_mtime_ns == stat_mtime_ns and cached_size == stat_size:
             return cached_result
     latest_version, channel = _read_update_channel_version(
         resolved_channel_path,
-        stat_result=stat_result,
+        stat_mtime_ns=stat_mtime_ns,
+        stat_size=stat_size,
         cache_key=channel_path_text,
     )
     cache_key = (channel_path_text, installed_version, latest_version, channel)
@@ -201,8 +210,8 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
             )
             _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
             _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
-                stat_result.st_mtime_ns,
-                stat_result.st_size,
+                stat_mtime_ns,
+                stat_size,
                 result,
             )
             return result
@@ -217,8 +226,8 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         )
         _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
         _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
-            stat_result.st_mtime_ns,
-            stat_result.st_size,
+            stat_mtime_ns,
+            stat_size,
             result,
         )
         return result
@@ -233,8 +242,8 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
     )
     _UPDATE_CHECK_RESULT_CACHE[cache_key] = result
     _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
-        stat_result.st_mtime_ns,
-        stat_result.st_size,
+        stat_mtime_ns,
+        stat_size,
         result,
     )
     return result
@@ -243,20 +252,21 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
 def _read_update_channel_version(
     channel_path: Path,
     *,
-    stat_result: Any,
+    stat_mtime_ns: int,
+    stat_size: int,
     cache_key: str,
 ) -> tuple[str, str]:
     cached = _UPDATE_CHANNEL_CACHE.get(cache_key)
     if cached is not None:
         cached_mtime_ns, cached_size, cached_latest_version, cached_channel = cached
-        if cached_mtime_ns == stat_result.st_mtime_ns and cached_size == stat_result.st_size:
+        if cached_mtime_ns == stat_mtime_ns and cached_size == stat_size:
             return cached_latest_version, cached_channel
     payload = json.loads(channel_path.read_bytes())
     latest_version = str(payload.get("latest_version", "")).strip()
     channel = str(payload.get("channel", "stable")).strip() or "stable"
     _UPDATE_CHANNEL_CACHE[cache_key] = (
-        stat_result.st_mtime_ns,
-        stat_result.st_size,
+        stat_mtime_ns,
+        stat_size,
         latest_version,
         channel,
     )
@@ -267,23 +277,45 @@ def _read_update_channel_version(
 def compare_versions(left: str, right: str) -> int:
     if left == right:
         return 0
+    ord_ = _ORD
+    ascii_whitespace_flags = _ASCII_WHITESPACE_FLAGS
     left_length = len(left)
     right_length = len(right)
-    if left_length == right_length + 1 and left[0] == "v" and left.startswith(right, 1):
-        return 0
-    if right_length == left_length + 1 and right[0] == "v" and right.startswith(left, 1):
-        return 0
-    if (
-        left
-        and right
-        and not left[0].isspace()
-        and not left[-1].isspace()
-        and not right[0].isspace()
-        and not right[-1].isspace()
-    ):
-        left_index = 1 if left[0] == "v" else 0
-        right_index = 1 if right[0] == "v" else 0
-        return _compare_normalized_version_parts(left, right, left_index, right_index)
+    if left and right:
+        left_start_code = ord_(left[0])
+        right_start_code = ord_(right[0])
+        if left_length == right_length + 1 and left_start_code == 118 and left.startswith(right, 1):
+            return 0
+        if right_length == left_length + 1 and right_start_code == 118 and right.startswith(left, 1):
+            return 0
+        left_end_code = ord_(left[-1])
+        right_end_code = ord_(right[-1])
+        left_boundary_clean = (
+            left_start_code < 128
+            and left_end_code < 128
+            and not ascii_whitespace_flags[left_start_code]
+            and not ascii_whitespace_flags[left_end_code]
+        ) or (
+            left_start_code >= 128
+            and left_end_code >= 128
+            and not left[0].isspace()
+            and not left[-1].isspace()
+        )
+        right_boundary_clean = (
+            right_start_code < 128
+            and right_end_code < 128
+            and not ascii_whitespace_flags[right_start_code]
+            and not ascii_whitespace_flags[right_end_code]
+        ) or (
+            right_start_code >= 128
+            and right_end_code >= 128
+            and not right[0].isspace()
+            and not right[-1].isspace()
+        )
+        if left_boundary_clean and right_boundary_clean:
+            left_index = 1 if left[0] == "v" else 0
+            right_index = 1 if right[0] == "v" else 0
+            return _compare_normalized_version_parts(left, right, left_index, right_index)
 
     left_cleaned = left.strip()
     right_cleaned = right.strip()
@@ -307,7 +339,46 @@ def compare_versions(left: str, right: str) -> int:
 
 
 def normalized_version_parts(value: str) -> list[int]:
-    return list(_iter_normalized_version_parts(value)) or [0]
+    value_length = len(value)
+    index = 0
+    while index < value_length and value[index].isspace():
+        index += 1
+    end = value_length
+    while end > index and value[end - 1].isspace():
+        end -= 1
+    if index < end and value[index] == "v":
+        index += 1
+
+    parts: list[int] = []
+    current_value = 0
+    digit_seen = False
+    digit_prefix_active = True
+    part_has_chars = False
+    ord_ = _ORD
+
+    while index < end:
+        character_code = ord_(value[index])
+        index += 1
+        if character_code == 43 or character_code == 45:
+            break
+        if character_code == 46:
+            if part_has_chars:
+                parts.append(current_value if digit_seen else 0)
+            current_value = 0
+            digit_seen = False
+            digit_prefix_active = True
+            part_has_chars = False
+            continue
+        part_has_chars = True
+        if digit_prefix_active and 48 <= character_code <= 57:
+            current_value = current_value * 10 + (character_code - 48)
+            digit_seen = True
+        else:
+            digit_prefix_active = False
+
+    if part_has_chars:
+        parts.append(current_value if digit_seen else 0)
+    return parts or [0]
 
 
 def _compare_normalized_version_parts(
@@ -472,9 +543,34 @@ def classify_startup_failure(
         classification = ""
 
     if not classification:
+        control_plane_stderr_path = manifest.get("control_plane_stderr_path")
+        control_plane_stdout_path = manifest.get("control_plane_stdout_path")
+        python_worker_stderr_path = manifest.get("python_worker_stderr_path")
+        swift_text_worker_stderr_path = manifest.get("swift_text_worker_stderr_path")
+        python_worker_stdout_path = manifest.get("python_worker_stdout_path")
+        swift_text_worker_stdout_path = manifest.get("swift_text_worker_stdout_path")
+
+        if not (
+            control_plane_stderr_path
+            or control_plane_stdout_path
+            or python_worker_stderr_path
+            or swift_text_worker_stderr_path
+            or python_worker_stdout_path
+            or swift_text_worker_stdout_path
+        ):
+            return StartupFailureReport(
+                classification="startup_hang",
+                summary=f"Melix startup timed out before {ready_probe_url} became ready.",
+                detail="Inspect the startup logs and ready probe path to determine whether the services hung or never launched.",
+                http_port=http_port,
+                ready_probe_url=ready_probe_url,
+                primary_log_path=primary_log_path,
+                log_excerpt=error_text,
+            )
+
         control_plane_excerpt = _log_excerpt(
-            manifest.get("control_plane_stderr_path"),
-            manifest.get("control_plane_stdout_path"),
+            control_plane_stderr_path,
+            control_plane_stdout_path,
         )
 
         if control_plane_excerpt:
@@ -504,10 +600,10 @@ def classify_startup_failure(
             classification = "control_plane_crash"
         else:
             worker_excerpt_value = _log_excerpt(
-                manifest.get("python_worker_stderr_path"),
-                manifest.get("swift_text_worker_stderr_path"),
-                manifest.get("python_worker_stdout_path"),
-                manifest.get("swift_text_worker_stdout_path"),
+                python_worker_stderr_path,
+                swift_text_worker_stderr_path,
+                python_worker_stdout_path,
+                swift_text_worker_stdout_path,
             )
             worker_crash = bool(worker_excerpt_value) and _contains_any(
                 worker_excerpt_value.lower(), CRASH_PATTERNS
@@ -569,7 +665,8 @@ def _log_excerpt(*paths: object) -> str:
     for path in paths:
         if not path:
             continue
-        resolved = Path(str(path)).expanduser()
+        path_text = str(path)
+        resolved = Path(path_text) if path_text[:1] != "~" else Path(path_text).expanduser()
         try:
             excerpt = _read_last_nonempty_line(resolved)
         except OSError:
@@ -584,7 +681,7 @@ def _log_excerpt(*paths: object) -> str:
 
 
 def _read_last_nonempty_line(path: Path, *, chunk_size: int = 8192) -> str:
-    with path.open("rb") as handle:
+    with _OPEN(path, "rb") as handle:
         handle.seek(0, 2)
         line_start, payload_end = _seek_last_nonempty_line_bounds(handle, chunk_size=chunk_size)
         if payload_end == 0:
@@ -592,6 +689,10 @@ def _read_last_nonempty_line(path: Path, *, chunk_size: int = 8192) -> str:
         handle.seek(line_start)
         payload = handle.read(payload_end - line_start)
     return payload.decode("utf-8", errors="replace")
+
+
+def _right_stripped_chunk_length(chunk: bytes) -> int:
+    return 0 if chunk.isspace() else len(chunk.rstrip(_BYTE_WHITESPACE))
 
 
 def _seek_last_nonempty_line_bounds(handle: Any, *, chunk_size: int) -> tuple[int, int]:
@@ -603,7 +704,7 @@ def _seek_last_nonempty_line_bounds(handle: Any, *, chunk_size: int) -> tuple[in
         handle.seek(start)
         chunk = handle.read(read_size)
         if payload_end == 0:
-            search_end = len(chunk.rstrip(_BYTE_WHITESPACE))
+            search_end = _right_stripped_chunk_length(chunk)
             if search_end == 0:
                 position = start
                 continue

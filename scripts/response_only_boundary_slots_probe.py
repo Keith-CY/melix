@@ -32,6 +32,7 @@ def _build_boundaries(count: int) -> tuple[ResponseOnlyBoundary, ...]:
 def _measure(boundary_count: int, sample_count: int) -> dict[str, float]:
     construction_elapsed_samples: list[float] = []
     aggregation_elapsed_samples: list[float] = []
+    aggregation_no_limit_elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     instance_dict_samples: list[float] = []
     checksum = 0
@@ -50,6 +51,13 @@ def _measure(boundary_count: int, sample_count: int) -> dict[str, float]:
         aggregation_started = time.perf_counter()
         aggregate = aggregate_response_only_boundaries(boundaries, max_seq_length=192)
         aggregation_elapsed_samples.append((time.perf_counter() - aggregation_started) * 1000.0)
+        no_limit_aggregation_started = time.perf_counter()
+        no_limit_aggregate = aggregate_response_only_boundaries(
+            boundaries, max_seq_length=None
+        )
+        aggregation_no_limit_elapsed_samples.append(
+            (time.perf_counter() - no_limit_aggregation_started) * 1000.0
+        )
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
@@ -59,11 +67,15 @@ def _measure(boundary_count: int, sample_count: int) -> dict[str, float]:
             + aggregate.boundary_min
             + aggregate.boundary_max
             + aggregate.trainable_response_token_count
+            + no_limit_aggregate.trainable_response_token_count
         )
 
     return {
         "construction_elapsed_ms_mean": statistics.fmean(construction_elapsed_samples),
         "aggregation_elapsed_ms_mean": statistics.fmean(aggregation_elapsed_samples),
+        "aggregation_no_limit_elapsed_ms_mean": statistics.fmean(
+            aggregation_no_limit_elapsed_samples
+        ),
         "peak_bytes_mean": statistics.fmean(peak_samples),
         "instance_dict_count_mean": statistics.fmean(instance_dict_samples),
         "boundary_count": float(boundary_count),

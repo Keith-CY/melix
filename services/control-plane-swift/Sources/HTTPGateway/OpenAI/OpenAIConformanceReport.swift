@@ -12,19 +12,40 @@ public struct OpenAIConformanceRow: Codable, Sendable, Equatable {
     public let expectedBehavior: String
     public let observedStatus: OpenAIConformanceObservedStatus
     public let observedReason: String
+    public let modelFamily: String?
+    public let parserMode: String?
+    public let tagDialect: String?
+    public let requestedParser: String?
+    public let resolvedParser: String?
+    public let parserFallbackMode: String?
+    public let parserRefusalReason: String?
 
     public init(
         field: String,
         route: String,
         expectedBehavior: String,
         observedStatus: OpenAIConformanceObservedStatus,
-        observedReason: String
+        observedReason: String,
+        modelFamily: String? = nil,
+        parserMode: String? = nil,
+        tagDialect: String? = nil,
+        requestedParser: String? = nil,
+        resolvedParser: String? = nil,
+        parserFallbackMode: String? = nil,
+        parserRefusalReason: String? = nil
     ) {
         self.field = field
         self.route = route
         self.expectedBehavior = expectedBehavior
         self.observedStatus = observedStatus
         self.observedReason = observedReason
+        self.modelFamily = modelFamily
+        self.parserMode = parserMode
+        self.tagDialect = tagDialect
+        self.requestedParser = requestedParser
+        self.resolvedParser = resolvedParser
+        self.parserFallbackMode = parserFallbackMode
+        self.parserRefusalReason = parserRefusalReason
     }
 
     enum CodingKeys: String, CodingKey {
@@ -33,6 +54,13 @@ public struct OpenAIConformanceRow: Codable, Sendable, Equatable {
         case expectedBehavior = "expected_behavior"
         case observedStatus = "observed_status"
         case observedReason = "observed_reason"
+        case modelFamily = "model_family"
+        case parserMode = "parser_mode"
+        case tagDialect = "tag_dialect"
+        case requestedParser = "requested_parser"
+        case resolvedParser = "resolved_parser"
+        case parserFallbackMode = "parser_fallback_mode"
+        case parserRefusalReason = "parser_refusal_reason"
     }
 }
 

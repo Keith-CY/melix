@@ -1,23 +1,39 @@
 from __future__ import annotations
 
 from io import BytesIO
+import os
 from pathlib import Path
 from unittest.mock import Mock
 import wave
 
 import pytest
 
-from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, maintenance_pb2, runtime_pb2
+from packages.protocol.python.worker.v1 import (
+    common_pb2,
+    inference_pb2,
+    maintenance_pb2,
+    runtime_pb2,
+)
 
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.engine.speech_core import SpeechCore
-from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
+from backend_identity_support import (
+    WorkerInferenceService,
+    WorkerRuntimeService,
+    bind_backend_identity,
+)
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.runtime.audio_preprocessing import AudioPreprocessError, prepare_audio_input
+from worker.runtime.audio_preprocessing import (
+    AudioPreprocessError,
+    _basename_from_path,
+    prepare_audio_input,
+)
 from worker.runtime.audio_runtime_protocols import SpeechResult, SpeechStreamFrame
 from worker.runtime.deterministic_speech_runtime import DeterministicSpeechRuntime
-from worker.runtime.deterministic_transcription_runtime import DeterministicTranscriptionRuntime
+from worker.runtime.deterministic_transcription_runtime import (
+    DeterministicTranscriptionRuntime,
+)
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 
 
@@ -66,11 +82,15 @@ def build_services(**registry_kwargs):
     )
     runtime_service = WorkerRuntimeService(registry)
     inference_service = WorkerInferenceService(registry)
-    maintenance_core = MaintenanceCore(registry, jobs_root=Path(".runtime/test-model-ops"))
+    maintenance_core = MaintenanceCore(
+        registry, jobs_root=Path(".runtime/test-model-ops")
+    )
     return runtime_service, inference_service, maintenance_core
 
 
-def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec) -> str:
+def load_model(
+    runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpec
+) -> str:
     response = runtime_service.LoadModel(
         runtime_pb2.LoadModelRequest(model=model),
         context=None,
@@ -81,23 +101,28 @@ def load_model(runtime_service: WorkerRuntimeService, model: common_pb2.ModelSpe
 
 def test_transcribe_returns_text_from_inline_audio_bytes() -> None:
     runtime_service, inference_service, maintenance_core = build_services()
-    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_transcription_model())
+    model_handle = load_model(
+        runtime_service, WorkerModelCatalog.dev_transcription_model()
+    )
 
     response = inference_service.Transcribe(
-        inference_pb2.TranscribeRequest(
-            id=common_pb2.RequestIdentity(request_id="transcribe-inline"),
-            model_handle=model_handle,
-            audio_bytes=b"hello deterministic audio",
-            format="wav",
-            task="transcribe",
-            audio=common_pb2.MediaMetadata(
-                media_type=common_pb2.MEDIA_TYPE_AUDIO,
-                source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
-                mime_type="audio/wav",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.TranscribeRequest(
+                id=common_pb2.RequestIdentity(request_id="transcribe-inline"),
+                model_handle=model_handle,
+                audio_bytes=b"hello deterministic audio",
                 format="wav",
-                filename="inline.wav",
+                task="transcribe",
+                audio=common_pb2.MediaMetadata(
+                    media_type=common_pb2.MEDIA_TYPE_AUDIO,
+                    source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                    mime_type="audio/wav",
+                    format="wav",
+                    filename="inline.wav",
+                ),
+                language="en",
             ),
-            language="en",
         ),
         context=None,
     )
@@ -116,23 +141,28 @@ def test_transcribe_returns_text_from_inline_audio_bytes() -> None:
 
 def test_transcribe_reads_audio_from_file_uri(tmp_path: Path) -> None:
     runtime_service, inference_service, _ = build_services()
-    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_transcription_model())
+    model_handle = load_model(
+        runtime_service, WorkerModelCatalog.dev_transcription_model()
+    )
     audio_path = tmp_path / "sample.wav"
     audio_path.write_bytes(b"audio file transcript")
 
     response = inference_service.Transcribe(
-        inference_pb2.TranscribeRequest(
-            id=common_pb2.RequestIdentity(request_id="transcribe-uri"),
-            model_handle=model_handle,
-            audio_uri=audio_path.as_uri(),
-            format="wav",
-            task="transcribe",
-            audio=common_pb2.MediaMetadata(
-                media_type=common_pb2.MEDIA_TYPE_AUDIO,
-                source_kind=common_pb2.MEDIA_SOURCE_URI,
-                mime_type="audio/wav",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.TranscribeRequest(
+                id=common_pb2.RequestIdentity(request_id="transcribe-uri"),
+                model_handle=model_handle,
+                audio_uri=audio_path.as_uri(),
                 format="wav",
-                filename=audio_path.name,
+                task="transcribe",
+                audio=common_pb2.MediaMetadata(
+                    media_type=common_pb2.MEDIA_TYPE_AUDIO,
+                    source_kind=common_pb2.MEDIA_SOURCE_URI,
+                    mime_type="audio/wav",
+                    format="wav",
+                    filename=audio_path.name,
+                ),
             ),
         ),
         context=None,
@@ -148,13 +178,16 @@ def test_speak_returns_audio_bytes_and_format() -> None:
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_speech_model())
 
     response = inference_service.Speak(
-        inference_pb2.SpeakRequest(
-            id=common_pb2.RequestIdentity(request_id="speak-1"),
-            model_handle=model_handle,
-            input="hello speech",
-            voice="alloy",
-            format="wav",
-            instructions="neutral",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="speak-1"),
+                model_handle=model_handle,
+                input="hello speech",
+                voice="alloy",
+                format="wav",
+                instructions="neutral",
+            ),
         ),
         context=None,
     )
@@ -176,20 +209,25 @@ def test_speak_stream_returns_progressive_wav_and_runtime_streaming_metrics() ->
 
     events = list(
         inference_service.SpeakStream(
-            inference_pb2.SpeakRequest(
-                id=common_pb2.RequestIdentity(request_id="speak-stream-1"),
-                model_handle=model_handle,
-                input="hello streamed audio",
-                voice="alloy",
-                format="wav",
-                streaming_enabled=True,
-                stream_interval_ms=25,
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.SpeakRequest(
+                    id=common_pb2.RequestIdentity(request_id="speak-stream-1"),
+                    model_handle=model_handle,
+                    input="hello streamed audio",
+                    voice="alloy",
+                    format="wav",
+                    streaming_enabled=True,
+                    stream_interval_ms=25,
+                ),
             ),
             context=None,
         )
     )
     payload = b"".join(event.audio_bytes for event in events if event.audio_bytes)
-    stats = runtime_service.GetRuntimeStats(runtime_pb2.GetRuntimeStatsRequest(), context=None).stats
+    stats = runtime_service.GetRuntimeStats(
+        runtime_pb2.GetRuntimeStatsRequest(), context=None
+    ).stats
 
     assert [event.kind for event in events] == [
         inference_pb2.SPEAK_STREAM_EVENT_KIND_ENVELOPE,
@@ -216,7 +254,9 @@ def test_speak_stream_returns_progressive_wav_and_runtime_streaming_metrics() ->
     assert stats.last_audio_output_bytes == len(payload)
 
 
-def test_audio_preprocessing_accepts_plain_local_paths_and_fills_metadata(tmp_path: Path) -> None:
+def test_audio_preprocessing_accepts_plain_local_paths_and_fills_metadata(
+    tmp_path: Path,
+) -> None:
     audio_path = tmp_path / "sample.raw"
     audio_path.write_bytes(b"path based audio")
 
@@ -249,6 +289,27 @@ def test_audio_preprocessing_prepared_input_uses_slots(tmp_path: Path) -> None:
     assert prepared.decoded_text() == "slot optimized audio"
 
 
+def test_audio_preprocessing_file_uri_fast_path_skips_urlparse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"fast path audio")
+    urlparse_spy = Mock(
+        side_effect=AssertionError("file:/// URI should not call urlparse")
+    )
+
+    monkeypatch.setattr("worker.runtime.audio_preprocessing.urlparse", urlparse_spy)
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), format="wav"),
+        read_uri_bytes=False,
+    )
+
+    assert prepared.local_path == str(audio_path)
+    assert prepared.preprocess_input_bytes == len(b"fast path audio")
+    assert urlparse_spy.call_count == 0
+
+
 def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -256,15 +317,15 @@ def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     audio_path.write_bytes(b"zero copy audio")
     stat_calls = 0
     exists_spy = Mock(return_value=True)
-    original_stat = Path.stat
+    original_os_stat = os.stat
 
-    def counted_stat(self: Path):
+    def counted_os_stat(path, *args, **kwargs):
         nonlocal stat_calls
-        if self == audio_path:
+        if path == os.fspath(audio_path):
             stat_calls += 1
-        return original_stat(self)
+        return original_os_stat(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "stat", counted_stat)
+    monkeypatch.setattr(os, "stat", counted_os_stat)
     monkeypatch.setattr(Path, "exists", exists_spy)
 
     prepared = prepare_audio_input(
@@ -280,17 +341,116 @@ def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     assert stat_calls == 1
 
 
-def test_audio_preprocessing_rejects_missing_and_unsupported_inputs(tmp_path: Path) -> None:
+def test_audio_preprocessing_local_uri_reads_request_fields_once(
+    tmp_path: Path,
+) -> None:
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"field access audio")
+
+    class CountingRequest:
+        format = "wav"
+        audio = None
+        audio_bytes_calls = 0
+        audio_uri_calls = 0
+
+        @property
+        def audio_bytes(self) -> bytes:
+            self.audio_bytes_calls += 1
+            return b""
+
+        @property
+        def audio_uri(self) -> str:
+            self.audio_uri_calls += 1
+            return audio_path.as_uri()
+
+    request = CountingRequest()
+
+    prepared = prepare_audio_input(request, read_uri_bytes=False)
+
+    assert prepared.local_path == str(audio_path)
+    assert prepared.reference == audio_path.as_uri()
+    assert request.audio_bytes_calls == 1
+    assert request.audio_uri_calls == 1
+
+
+def test_audio_preprocessing_derives_uri_suffix_without_splitext(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "sample.raw"
+    audio_path.write_bytes(b"suffix fast path")
+
+    splitext_spy = Mock(
+        side_effect=AssertionError("format suffix should use rfind fast path")
+    )
+    monkeypatch.setattr(os.path, "splitext", splitext_spy)
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri()),
+        read_uri_bytes=False,
+    )
+
+    assert prepared.format == "raw"
+    assert prepared.filename == "sample.raw"
+    assert prepared.preprocess_input_bytes == len(b"suffix fast path")
+    assert splitext_spy.call_count == 0
+
+    hidden_path = tmp_path / ".hidden"
+    hidden_path.write_bytes(b"hidden audio")
+    hidden_prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=hidden_path.as_uri()),
+        read_uri_bytes=False,
+    )
+    assert hidden_prepared.format == "wav"
+
+    trailing_dot_path = tmp_path / "sample."
+    trailing_dot_path.write_bytes(b"trailing dot audio")
+    trailing_dot_prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=trailing_dot_path.as_uri()),
+        read_uri_bytes=False,
+    )
+    assert trailing_dot_prepared.format == "wav"
+
+
+def test_audio_preprocessing_derives_filename_without_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "nested" / "sample.wav"
+    audio_path.parent.mkdir()
+    audio_path.write_bytes(b"filename fast path")
+
+    basename_spy = Mock(
+        side_effect=AssertionError("filename should use rfind fast path")
+    )
+    monkeypatch.setattr(os.path, "basename", basename_spy)
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=audio_path.as_uri(), format="wav"),
+        read_uri_bytes=False,
+    )
+
+    assert prepared.filename == "sample.wav"
+    assert prepared.preprocess_input_bytes == len(b"filename fast path")
+    assert basename_spy.call_count == 0
+    assert _basename_from_path("sample.wav") == "sample.wav"
+
+
+def test_audio_preprocessing_rejects_missing_and_unsupported_inputs(
+    tmp_path: Path,
+) -> None:
     missing_path = tmp_path / "missing.wav"
 
     with pytest.raises(AudioPreprocessError, match="No audio input provided"):
         prepare_audio_input(inference_pb2.TranscribeRequest())
 
     with pytest.raises(AudioPreprocessError, match="Missing local audio input"):
-        prepare_audio_input(inference_pb2.TranscribeRequest(audio_uri=str(missing_path)))
+        prepare_audio_input(
+            inference_pb2.TranscribeRequest(audio_uri=str(missing_path))
+        )
 
     with pytest.raises(AudioPreprocessError, match="Unsupported audio URI scheme"):
-        prepare_audio_input(inference_pb2.TranscribeRequest(audio_uri="https://example.com/audio.wav"))
+        prepare_audio_input(
+            inference_pb2.TranscribeRequest(audio_uri="https://example.com/audio.wav")
+        )
 
 
 def test_transcribe_and_speak_reject_wrong_loaded_model_kinds() -> None:
@@ -298,37 +458,50 @@ def test_transcribe_and_speak_reject_wrong_loaded_model_kinds() -> None:
     text_model_handle = load_model(runtime_service, WorkerModelCatalog.dev_text_model())
 
     transcribe = inference_service.Transcribe(
-        inference_pb2.TranscribeRequest(
-            id=common_pb2.RequestIdentity(request_id="wrong-transcribe"),
-            model_handle=text_model_handle,
-            audio_bytes=b"hello",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.TranscribeRequest(
+                id=common_pb2.RequestIdentity(request_id="wrong-transcribe"),
+                model_handle=text_model_handle,
+                audio_bytes=b"hello",
+            ),
         ),
         context=None,
     )
     speak = inference_service.Speak(
-        inference_pb2.SpeakRequest(
-            id=common_pb2.RequestIdentity(request_id="wrong-speak"),
-            model_handle=text_model_handle,
-            input="hello",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="wrong-speak"),
+                model_handle=text_model_handle,
+                input="hello",
+            ),
         ),
         context=None,
     )
     speak_stream = list(
         inference_service.SpeakStream(
-            inference_pb2.SpeakRequest(
-                id=common_pb2.RequestIdentity(request_id="wrong-speak-stream"),
-                model_handle=text_model_handle,
-                input="hello",
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.SpeakRequest(
+                    id=common_pb2.RequestIdentity(request_id="wrong-speak-stream"),
+                    model_handle=text_model_handle,
+                    input="hello",
+                ),
             ),
             context=None,
         )
     )
     missing_stream = list(
         inference_service.SpeakStream(
-            inference_pb2.SpeakRequest(
-                id=common_pb2.RequestIdentity(request_id="missing-speak-stream"),
-                model_handle="missing",
-                input="hello",
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.SpeakRequest(
+                    id=common_pb2.RequestIdentity(request_id="missing-speak-stream"),
+                    model_handle="missing",
+                    input="hello",
+                ),
+                source_handle=text_model_handle,
             ),
             context=None,
         )
@@ -337,19 +510,24 @@ def test_transcribe_and_speak_reject_wrong_loaded_model_kinds() -> None:
     assert transcribe.error.code == "invalid_argument"
     assert speak.error.code == "invalid_argument"
     assert speak_stream[0].error.code == "invalid_argument"
-    assert missing_stream[0].error.code == "not_found"
+    assert missing_stream[0].error.code == "model_identity_mismatch"
 
 
 def test_speak_stream_maps_unimplemented_runtime_errors_and_unknown_frames() -> None:
-    runtime_service, inference_service, _ = build_services(speech_runtime=LegacySpeechRuntime())
+    runtime_service, inference_service, _ = build_services(
+        speech_runtime=LegacySpeechRuntime()
+    )
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_speech_model())
 
     events = list(
         inference_service.SpeakStream(
-            inference_pb2.SpeakRequest(
-                id=common_pb2.RequestIdentity(request_id="legacy-speak-stream"),
-                model_handle=model_handle,
-                input="hello",
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.SpeakRequest(
+                    id=common_pb2.RequestIdentity(request_id="legacy-speak-stream"),
+                    model_handle=model_handle,
+                    input="hello",
+                ),
             ),
             context=None,
         )
@@ -362,15 +540,20 @@ def test_speak_stream_maps_unimplemented_runtime_errors_and_unknown_frames() -> 
 
 
 def test_speak_stream_maps_runtime_exceptions() -> None:
-    runtime_service, inference_service, _ = build_services(speech_runtime=FailingSpeechStreamRuntime())
+    runtime_service, inference_service, _ = build_services(
+        speech_runtime=FailingSpeechStreamRuntime()
+    )
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_speech_model())
 
     events = list(
         inference_service.SpeakStream(
-            inference_pb2.SpeakRequest(
-                id=common_pb2.RequestIdentity(request_id="failing-speak-stream"),
-                model_handle=model_handle,
-                input="hello",
+            bind_backend_identity(
+                inference_service,
+                inference_pb2.SpeakRequest(
+                    id=common_pb2.RequestIdentity(request_id="failing-speak-stream"),
+                    model_handle=model_handle,
+                    input="hello",
+                ),
             ),
             context=None,
         )
@@ -387,10 +570,13 @@ def test_speak_stream_propagates_exceptions_after_audio_is_committed() -> None:
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_speech_model())
 
     stream = inference_service.SpeakStream(
-        inference_pb2.SpeakRequest(
-            id=common_pb2.RequestIdentity(request_id="failing-mid-stream"),
-            model_handle=model_handle,
-            input="hello",
+        bind_backend_identity(
+            inference_service,
+            inference_pb2.SpeakRequest(
+                id=common_pb2.RequestIdentity(request_id="failing-mid-stream"),
+                model_handle=model_handle,
+                input="hello",
+            ),
         ),
         context=None,
     )
@@ -411,7 +597,9 @@ def test_deterministic_audio_runtimes_expose_probe_snapshots() -> None:
     transcription_probe = transcription_runtime.last_probe_snapshot()
 
     speech_runtime = DeterministicSpeechRuntime()
-    speech = speech_runtime.speak({}, inference_pb2.SpeakRequest(input="hello", voice="", format=""))
+    speech = speech_runtime.speak(
+        {}, inference_pb2.SpeakRequest(input="hello", voice="", format="")
+    )
     speech_probe = speech_runtime.last_probe_snapshot()
 
     assert transcript.text == "<silence>"
@@ -424,7 +612,9 @@ def test_deterministic_audio_runtimes_expose_probe_snapshots() -> None:
     assert speech_probe.speech_latency_ms > 0.0
 
 
-def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries() -> None:
+def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries() -> (
+    None
+):
     catalog = WorkerModelCatalog(
         environment={
             "MELIX_MLX_AUDIO_WHISPER_MODEL_PATH": "mlx-community/whisper-large-v3-turbo-asr-fp16",
@@ -443,11 +633,20 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
 
     assert deterministic_transcription is not None
     assert deterministic_transcription.ext["melix.audio.backend_id"] == "deterministic"
-    assert deterministic_transcription.ext["melix.audio.family_id"] == "deterministic-transcription"
+    assert (
+        deterministic_transcription.ext["melix.audio.family_id"]
+        == "deterministic-transcription"
+    )
     assert deterministic_transcription.ext["melix.audio.install_profile"] == ""
     assert deterministic_transcription.ext["melix.audio.languages"] == "und"
-    assert deterministic_transcription.ext["melix.capability.supported_modalities"] == "audio,text"
-    assert deterministic_transcription.ext["melix.capability.supported_tasks"] == "transcribe"
+    assert (
+        deterministic_transcription.ext["melix.capability.supported_modalities"]
+        == "audio,text"
+    )
+    assert (
+        deterministic_transcription.ext["melix.capability.supported_tasks"]
+        == "transcribe"
+    )
 
     assert deterministic_speech is not None
     assert deterministic_speech.ext["melix.audio.backend_id"] == "deterministic"
@@ -486,11 +685,17 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     assert kokoro.ext["melix.audio.capability"] == "tts"
     assert kokoro.ext["melix.audio.setup_role"] == "recommended"
     assert kokoro.ext["melix.audio.setup_priority"] == "0"
-    assert kokoro.ext["melix.audio.voice_catalog_summary"] == "Named English voices exposed by the Kokoro speaker catalog."
+    assert (
+        kokoro.ext["melix.audio.voice_catalog_summary"]
+        == "Named English voices exposed by the Kokoro speaker catalog."
+    )
     assert kokoro.ext["melix.audio.voice_locales"] == "en"
     assert kokoro.ext["melix.audio.default_locale"] == "en"
     assert kokoro.ext["melix.audio.packaged_default_locale"] == "en"
-    assert kokoro.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default"
+    assert (
+        kokoro.ext["melix.audio.locale_policy"]
+        == "request>model_default>packaged_default"
+    )
 
     assert qwen3_tts is not None
     assert qwen3_tts.model_kind == "speech"
@@ -511,4 +716,7 @@ def test_audio_catalog_models_expose_backend_metadata_and_real_backend_entries()
     assert qwen3_tts.ext["melix.audio.voice_locales"] == "zh,en"
     assert qwen3_tts.ext["melix.audio.default_locale"] == "zh"
     assert qwen3_tts.ext["melix.audio.packaged_default_locale"] == "zh"
-    assert qwen3_tts.ext["melix.audio.locale_policy"] == "request>model_default>packaged_default"
+    assert (
+        qwen3_tts.ext["melix.audio.locale_policy"]
+        == "request>model_default>packaged_default"
+    )

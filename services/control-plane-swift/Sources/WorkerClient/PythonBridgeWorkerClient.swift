@@ -14,6 +14,7 @@ public enum BridgeCommandKind: String, Sendable {
     case loadModel = "load-model"
     case unloadModel = "unload-model"
     case getRuntimeStats = "get-runtime-stats"
+    case listLoadedModels = "list-loaded-models"
     case getCacheStats = "get-cache-stats"
     case generate = "generate"
     case prefill = "prefill"
@@ -78,6 +79,11 @@ public protocol PythonWorkerRPCRunning: Sendable {
         socketPath: String,
         request: Melix_Worker_V1_GetRuntimeStatsRequest
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse
+
+    func listLoadedModels(
+        socketPath: String,
+        request: Melix_Worker_V1_ListLoadedModelsRequest
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse
 
     func cacheStats(
         socketPath: String,
@@ -210,6 +216,8 @@ public struct PythonBridgeWorkerClient:
     NonTextInferenceWorkerClientProtocol,
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol,
+    LoadedModelsIntrospectingWorkerClientProtocol,
+    BackendHealthIdentifyingWorkerClientProtocol,
     ModelOperationsWorkerClientProtocol,
     StreamingExportResultsWorkerClientProtocol,
     Sendable
@@ -252,25 +260,24 @@ public struct PythonBridgeWorkerClient:
     }
 
     public func canDispatchRequests() async -> Bool {
+        (try? await backendHealthIdentity()) != nil
+    }
+
+    public func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
         var request = Melix_Worker_V1_HandshakeRequest()
         request.protocolVersion = "melix.worker.v1"
         request.workerID = "control-plane"
         request.controlplaneInstanceID = "melix-control-plane"
 
-        do {
-            switch transport {
-            case .bridge:
-                _ = try await sendUnary(
-                    kind: .handshake,
-                    request: request,
-                    as: Melix_Worker_V1_HandshakeResponse.self
-                )
-            case .rpc(let runner):
-                _ = try await runner.handshake(socketPath: socketPath, request: request)
-            }
-            return true
-        } catch {
-            return false
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .handshake,
+                request: request,
+                as: Melix_Worker_V1_HandshakeResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.handshake(socketPath: socketPath, request: request)
         }
     }
 
@@ -357,6 +364,20 @@ public struct PythonBridgeWorkerClient:
             )
         case .rpc(let runner):
             return try await runner.runtimeStats(socketPath: socketPath, request: request)
+        }
+    }
+
+    public func listLoadedModels() async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        let request = Melix_Worker_V1_ListLoadedModelsRequest()
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .listLoadedModels,
+                request: request,
+                as: Melix_Worker_V1_ListLoadedModelsResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.listLoadedModels(socketPath: socketPath, request: request)
         }
     }
 
@@ -708,10 +729,13 @@ public enum BootstrapWorkerPreparation {
     ]
     private static let embeddingExtKeys = [
         "embedding_backend_id",
+        "embedding_execution_kind",
         "embedding_family_id",
         "embedding_pooling_mode",
         "embedding_normalization",
         "embedding_dimensions",
+        "embedding_vector_kind",
+        "embedding_input_modalities",
     ]
     private static let rerankExtKeys = [
         "rerank_backend_id",
@@ -783,6 +807,7 @@ public enum BootstrapWorkerPreparation {
         "melix.generation_config.source",
         "melix.generation_config.temperature",
         "melix.generation_config.top_p",
+        "melix.generation_config.top_k",
         "melix.generation_config.max_tokens",
         "melix.generation_config.do_sample",
     ]
@@ -829,6 +854,8 @@ public enum BootstrapWorkerPreparation {
         } else if let generic = genericVLMModel(from: summary) {
             baseSpec = generic
         } else if let generic = genericImageModel(from: summary) {
+            baseSpec = generic
+        } else if let generic = genericEmbeddingModel(from: summary) {
             baseSpec = generic
         } else if let generic = genericTextModel(from: summary) {
             baseSpec = generic
@@ -890,8 +917,37 @@ public enum BootstrapWorkerPreparation {
         }
         applyContextOverride(from: summary, to: &spec)
         applySettingsOverride(from: summary, to: &spec)
+        spec.routeClass = Melix_Worker_V1_WorkerRouteClass(
+            rawValue: summary.routeClass.rawValue
+        ) ?? .unspecified
         spec.requestRoutes = summary.requestRoutes.map(workerRouteDeclaration(from:))
         return spec
+    }
+
+    private static func genericEmbeddingModel(
+        from summary: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Worker_V1_ModelSpec? {
+        guard summary.kind == "embedding" else {
+            return nil
+        }
+        let modelPath = summary.settings.ext["melix.model_path"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !modelPath.isEmpty else {
+            return nil
+        }
+
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = summary.modelID
+        model.modelPath = modelPath
+        model.modelKind = "embedding"
+        model.revision = summary.settings.ext["melix.model_revision"] ?? "registry"
+        model.tokenizerHash = summary.settings.ext["melix.tokenizer_hash"] ?? ""
+        model.quantProfileID = summary.quantProfileID
+        model.parserMode = summary.settings.ext["melix.parser_mode"] ?? "text"
+        model.reasoningMode = "off"
+        model.maxContext = summary.maxContext
+        model.ext.merge(summary.settings.ext) { _, new in new }
+        return model
     }
 
     private static func genericTextModel(
@@ -1147,10 +1203,16 @@ public enum BootstrapWorkerPreparation {
         modelCatalog: ModelCatalog,
         memoryBudgetBytes: UInt64 = 0
     ) async throws -> Bool {
-        try await preloadModel(
+        let textModel = await catalogAwareModelSpec(
+            for: "melix-dev-text",
+            modelCatalog: modelCatalog,
+            fallback: devTextModel()
+        )
+        return try await preloadModel(
             workerClient: workerClient,
             modelCatalog: modelCatalog,
-            model: devTextModel(),
+            model: textModel,
+            route: .swiftText,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -1169,6 +1231,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: embeddingModel,
+            route: .pythonEmbedding,
             memoryBudgetBytes: memoryBudgetBytes
         )
         let rerankModel = await catalogAwareModelSpec(
@@ -1180,6 +1243,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: rerankModel,
+            route: .pythonRerank,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -1203,6 +1267,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: ocrModel,
+            route: .pythonOCR,
             memoryBudgetBytes: memoryBudgetBytes
         )
         let vlmModel = await catalogAwareModelSpec(
@@ -1214,6 +1279,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: vlmModel,
+            route: .pythonVLM,
             memoryBudgetBytes: memoryBudgetBytes
         )
         let transcriptionModel = await catalogAwareModelSpec(
@@ -1225,6 +1291,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: transcriptionModel,
+            route: .pythonTranscription,
             memoryBudgetBytes: memoryBudgetBytes
         )
         let speechModel = await catalogAwareModelSpec(
@@ -1236,6 +1303,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: speechModel,
+            route: .pythonSpeech,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -1259,6 +1327,7 @@ public enum BootstrapWorkerPreparation {
             workerClient: workerClient,
             modelCatalog: modelCatalog,
             model: imageModel,
+            route: .pythonImage,
             memoryBudgetBytes: memoryBudgetBytes
         )
     }
@@ -1268,9 +1337,24 @@ public enum BootstrapWorkerPreparation {
         workerClient: any WorkerRoutingClient,
         modelCatalog: ModelCatalog,
         model: Melix_Worker_V1_ModelSpec,
+        route: WorkerRouteKind,
         memoryBudgetBytes: UInt64
     ) async throws -> Bool {
-        _ = await modelCatalog.beginLoad(id: model.modelID)
+        guard let route = preloadRouteKind(for: model, workerRoute: route),
+              let healthClient = workerClient as? any BackendHealthIdentifyingWorkerClientProtocol,
+              let health = try? await healthClient.backendHealthIdentity() else {
+            return false
+        }
+        let workerInstanceID = health.workerInstanceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !workerInstanceID.isEmpty,
+              let reservation = await modelCatalog.beginBackendRouteLoad(
+                id: model.modelID,
+                routeKind: route,
+                workerInstanceID: workerInstanceID,
+                reason: "bootstrap_preload"
+              ) else {
+            return false
+        }
         var request = Melix_Worker_V1_LoadModelRequest()
         request.model = model
         request.memoryBudgetBytes = memoryBudgetBytes
@@ -1278,6 +1362,7 @@ public enum BootstrapWorkerPreparation {
         request.warmupAfterLoad = false
         request.diskStreamingMode = model.settings.diskStreamingMode
         request.loadTrust = bootstrapLoadTrustPolicy(for: model)
+        request.backendIdentity = reservation.identity
 
         let response = try await workerClient.loadModel(request: request)
         guard response.ok, !response.modelHandle.isEmpty else {
@@ -1290,7 +1375,9 @@ public enum BootstrapWorkerPreparation {
                 loadTrust: ModelLoadTrustPolicyResolver.receiptForLoadFailure(
                     response: response,
                     fallback: fallback
-                )
+                ),
+                routeKind: route,
+                expectedRouteGeneration: reservation.generation
             )
             return false
         }
@@ -1299,16 +1386,59 @@ public enum BootstrapWorkerPreparation {
             from: request.loadTrust,
             fallback: Melix_Controlplane_V1_ModelLoadTrustPolicy()
         )
-        _ = await modelCatalog.recordLoadSucceeded(
+        guard await modelCatalog.recordLoadSucceeded(
             id: request.model.modelID,
             dispatchHandle: response.modelHandle,
             pinRequested: request.pinOnLoad,
             workerResidency: response.hasResidency ? response.residency : nil,
             loadTrust: response.hasLoadTrust
                 ? ModelLoadTrustPolicyResolver.controlPlanePolicy(from: response.loadTrust, fallback: fallback)
-                : fallback
-        )
+                : fallback,
+            routeKind: route,
+            expectedRouteGeneration: reservation.generation,
+            workerInstanceID: reservation.workerInstanceID
+        ) != nil else {
+            var unload = Melix_Worker_V1_UnloadModelRequest()
+            unload.modelHandle = response.modelHandle
+            unload.expectedBackendIdentity = reservation.identity
+            _ = try? await workerClient.unloadModel(request: unload)
+            return false
+        }
         return true
+    }
+
+    private static func preloadRouteKind(
+        for model: Melix_Worker_V1_ModelSpec,
+        workerRoute: WorkerRouteKind
+    ) -> WorkerRouteKind? {
+        model.requestRoutes.contains { preloadDeclaration($0, supports: workerRoute) }
+            ? workerRoute
+            : nil
+    }
+
+    private static func preloadDeclaration(
+        _ declaration: Melix_Worker_V1_RequestRouteDeclaration,
+        supports route: WorkerRouteKind
+    ) -> Bool {
+        switch route {
+        case .swiftText, .pythonCompatibility:
+            declaration.workerFamily == .text && declaration.task == .generateText
+        case .pythonEmbedding:
+            declaration.workerFamily == .retrieval && declaration.task == .embedText
+        case .pythonRerank:
+            declaration.workerFamily == .retrieval && declaration.task == .rerankText
+        case .pythonOCR, .pythonVLM, .swiftVision:
+            declaration.workerFamily == .vision && declaration.task == .generateMultimodal
+        case .pythonTranscription:
+            declaration.workerFamily == .audio && declaration.task == .transcribeAudio
+        case .pythonSpeech:
+            declaration.workerFamily == .audio && declaration.task == .speakText
+        case .pythonImage:
+            declaration.workerFamily == .image
+                && (declaration.task == .imageGenerate || declaration.task == .imageEdit)
+        case .pythonModelOperations:
+            false
+        }
     }
 
     private static func bootstrapLoadTrustPolicy(
@@ -1370,7 +1500,8 @@ public enum BootstrapWorkerPreparation {
         model.parserMode = "text"
         model.reasoningMode = "off"
         model.maxContext = 8192
-        model.ext["embedding_backend_id"] = "bert-v1"
+        model.ext["embedding_backend_id"] = "deterministic-fixture-v1"
+        model.ext["embedding_execution_kind"] = "fixture"
         model.ext["embedding_family_id"] = "bert"
         model.ext["embedding_pooling_mode"] = "cls"
         model.ext["embedding_normalization"] = "l2"
@@ -1853,6 +1984,15 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
     ) async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
         try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _, _ in
             try await runtimeClient.getRuntimeStats(request)
+        }
+    }
+
+    public func listLoadedModels(
+        socketPath: String,
+        request: Melix_Worker_V1_ListLoadedModelsRequest
+    ) async throws -> Melix_Worker_V1_ListLoadedModelsResponse {
+        try await withRPCClients(socketPath: socketPath) { runtimeClient, _, _, _ in
+            try await runtimeClient.listLoadedModels(request)
         }
     }
 

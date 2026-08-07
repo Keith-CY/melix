@@ -767,15 +767,72 @@ when the runner can observe them:
 - `dflash_rollback_count`
 - `dflash_target_hidden_layers`
 
+Benchmark matrix request rows must also preserve feature-composition guardrail
+diagnostic fields when the runner can observe them:
+
+- `feature_guardrail_requested_num_draft_tokens`
+- `feature_guardrail_effective_num_draft_tokens`
+- `feature_guardrail_resource_fanout_estimate`
+- `feature_guardrail_requested_cache_budget_bytes`
+- `feature_guardrail_effective_cache_budget_bytes`
+- `feature_guardrail_reason`
+
 The fields are phase-localization aids. Missing or zero values do not invalidate older persisted
 artifacts, but new runners should populate them so operators can distinguish dataset
 materialization, prompt rendering, prefill, decode, runtime-cache, speculative decode, DFlash, and
-failure-stage regressions.
+feature-composition guardrail decisions, and failure-stage regressions.
+
+The numeric feature-composition guardrail fields are policy receipts, not
+performance direction metrics. Evaluation reports aggregate them as diagnostic
+means with neutral direction. `feature_guardrail_reason` is preserved in matrix
+request exports but is not aggregated as a numeric metric. When
+`feature_guardrail_effective_cache_budget_bytes` is lower than
+`feature_guardrail_requested_cache_budget_bytes`, it reflects the per-request
+worker cache budget applied by the guardrail.
 
 Swift export decoders may default missing additive numeric and boolean probes to `0` or `false`
 when reading legacy artifacts. Consumers must treat those defaults as compatibility sentinels
 unless the producing runner version is known to emit the probe field; they are not proof that the
 phase completed in zero milliseconds or that a boolean probe was explicitly observed as false.
+
+### Effective Policy Evidence Fields
+
+Text-generation benchmark request rows, benchmark matrix request rows, and
+persisted evaluation sample rows must preserve the effective text policy receipt
+when the runner can observe `melix.text_effective_policy_receipt.v1`.
+
+The row-level JSONL and CSV evidence fields are:
+
+- `effective_policy_schema`
+- `effective_config_hash`
+- `sampling_temperature`
+- `sampling_temperature_source`
+- `sampling_top_p`
+- `sampling_top_p_source`
+- `sampling_max_tokens`
+- `sampling_max_tokens_source`
+- `sampling_policy_lookup_status`
+- `sampling_policy_canonical_model`
+- `sampling_policy_matched_alias`
+- `sampling_policy_source_url`
+- `sampling_request_override_applied`
+- `recommended_sampling_required`
+- `sampling_seed`
+- `sampling_seed_source`
+- `chat_template_source`
+- `chat_template_effective_kwargs_hash`
+- `chat_template_request_override_applied`
+- `chat_template_forced_override_applied`
+- `policy_reasoning_mode`
+- `policy_reasoning_source`
+
+The fields are request-local policy receipts, not performance metrics. They
+identify the effective sampling, chat-template, and reasoning policy applied to
+that row so benchmark and evaluation exports can be audited without joining
+against runtime logs or hidden registry state. Missing policy evidence must
+serialize as empty strings, `0`, or `false` according to the field type; those
+defaults are compatibility sentinels and are not proof that Melix intentionally
+applied an empty policy.
 
 ### Summary Metrics
 
@@ -879,6 +936,7 @@ Each request-level phase row must include:
 - `observation_bytes`
 - `fatal_rate`
 - `turn_count`
+- the effective policy evidence fields
 - `compare_target_kind`
 - `base_model_id`
 - `adapter_manifest_path`
@@ -1178,11 +1236,18 @@ Each completed matrix request row must persist:
 - `dflash_block_size`
 - `dflash_rollback_count`
 - `dflash_target_hidden_layers`
+- `feature_guardrail_requested_num_draft_tokens`
+- `feature_guardrail_effective_num_draft_tokens`
+- `feature_guardrail_resource_fanout_estimate`
+- `feature_guardrail_requested_cache_budget_bytes`
+- `feature_guardrail_effective_cache_budget_bytes`
+- `feature_guardrail_reason`
 - `tool_call_count`
 - `tool_latency_ms`
 - `observation_bytes`
 - `fatal_rate`
 - `turn_count`
+- the effective policy evidence fields
 - `created_at_unix_ms`
 
 The agentic tool-turn fields are derived from the shared agentic tool runtime
@@ -1350,6 +1415,9 @@ The current Melix runtime enforces these shipped control semantics:
 - compare jobs must reuse the same seeded row order and the same few-shot plan across the base and
   target runs.
 - `seed` is also threaded into worker `SamplingConfig.seed` for runtimes that honor sampling seeds.
+- persisted sample rows must include the effective policy evidence fields when
+  the runner can observe them, and must use the shared missing-evidence
+  sentinels when the receipt is unavailable.
 - `scoring_mode` selects a real scorer implementation, not only a stored label:
   - `multiple_choice_accuracy`
   - `exact_match`
@@ -1991,6 +2059,9 @@ Report semantics:
   metrics, plus speculative acceptance and accepted-token metrics
 - runtime metadata from job parameters is rendered as metadata rows; matching values are `ok`, and
   differing non-numeric values are `not_comparable`
+- feature-composition guardrail request metrics are rendered as neutral
+  diagnostic rows; they explain policy decisions and must not be treated as
+  performance regressions or improvements by themselves
 - repeated-run group rows with overlapping baseline and candidate 95 percent
   confidence intervals are inconclusive and must be rendered as informational
   rather than warning or improvement rows, even when the raw delta exceeds the

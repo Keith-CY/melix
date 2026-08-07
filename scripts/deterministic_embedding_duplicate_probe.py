@@ -5,7 +5,9 @@ import statistics
 import sys
 import time
 import tracemalloc
+from collections.abc import Sequence
 from pathlib import Path
+from typing import overload
 
 repo_root = Path.cwd()
 sys.path.insert(0, str(repo_root))
@@ -58,6 +60,26 @@ class CountingEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
         return backend.embed_text(text, dimensions)
 
 
+class SliceCountingInputs(Sequence[str]):
+    def __init__(self, values: list[str]) -> None:
+        self._values = values
+        self.slice_count = 0
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[str]: ...
+
+    def __getitem__(self, index: int | slice) -> str | list[str]:
+        if isinstance(index, slice):
+            self.slice_count += 1  # pragma: no cover - regression-only branch
+        return self._values[index]
+
+
 def assert_cycle_detection_contract() -> None:
     no_repeat = [f"unique-{index}" for index in range(1024)]
     uneven_repeat = (
@@ -80,7 +102,7 @@ def assert_cycle_detection_contract() -> None:
 
 
 def _measure_inputs(
-    inputs: list[str],
+    inputs: Sequence[str],
     *,
     dimensions: int,
     sample_count: int,
@@ -119,6 +141,29 @@ def _measure_inputs(
     )
 
 
+def _measure_sequence_cycle_detection(
+    inputs: list[str],
+    *,
+    sample_count: int,
+) -> tuple[float, float]:
+    elapsed_samples: list[float] = []
+    slice_samples: list[float] = []
+    expected_cycle_length = len(set(inputs))
+
+    for _ in range(sample_count):
+        sequence_inputs = SliceCountingInputs(inputs)
+        started = time.perf_counter()
+        cycle_length = _repeated_input_cycle_length(sequence_inputs)
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        slice_samples.append(float(sequence_inputs.slice_count))
+        if cycle_length != expected_cycle_length:
+            raise AssertionError(  # pragma: no cover - contract guard
+                f"unexpected sequence cycle length: {cycle_length} != {expected_cycle_length}"
+            )
+
+    return statistics.fmean(elapsed_samples), statistics.fmean(slice_samples)
+
+
 def run_probe() -> dict[str, float]:
     assert_cycle_detection_contract()
     dimensions = 32
@@ -144,6 +189,10 @@ def run_probe() -> dict[str, float]:
         sample_count=sample_count,
     )
 
+    sequence_cycle_elapsed_mean, sequence_cycle_slices_mean = (
+        _measure_sequence_cycle_detection(inputs, sample_count=sample_count)
+    )
+
     runtime = DeterministicEmbeddingRuntime(dimensions=dimensions)
     backend = CountingEmbeddingBackend()
     loaded_model = {
@@ -167,6 +216,11 @@ def run_probe() -> dict[str, float]:
         "unique_input_count": float(expected_unique_count),
         "checksum": round(checksum, 6),
         "single_cycle_checksum": round(single_cycle_checksum, 6),
+        "sequence_cycle_detection_elapsed_ms_mean": round(
+            sequence_cycle_elapsed_mean,
+            6,
+        ),
+        "sequence_cycle_detection_slices_mean": round(sequence_cycle_slices_mean, 6),
     }
 
 

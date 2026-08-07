@@ -515,11 +515,39 @@ public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Send
     public let dflashBlockSize: Int
     public let dflashRollbackCount: Int
     public let dflashTargetHiddenLayers: Int
+    public let featureGuardrailRequestedNumDraftTokens: Int
+    public let featureGuardrailEffectiveNumDraftTokens: Int
+    public let featureGuardrailResourceFanoutEstimate: Double
+    public let featureGuardrailRequestedCacheBudgetBytes: UInt64
+    public let featureGuardrailEffectiveCacheBudgetBytes: UInt64
+    public let featureGuardrailReason: String
     public let toolCallCount: Int
     public let toolLatencyMS: Double
     public let observationBytes: UInt64
     public let fatalRate: Double
     public let turnCount: Int
+    public let effectivePolicySchema: String
+    public let effectiveConfigHash: String
+    public let samplingTemperature: Double
+    public let samplingTemperatureSource: String
+    public let samplingTopP: Double
+    public let samplingTopPSource: String
+    public let samplingMaxTokens: Int
+    public let samplingMaxTokensSource: String
+    public let samplingPolicyLookupStatus: String
+    public let samplingPolicyCanonicalModel: String
+    public let samplingPolicyMatchedAlias: String
+    public let samplingPolicySourceURL: String
+    public let samplingRequestOverrideApplied: Bool
+    public let recommendedSamplingRequired: Bool
+    public let samplingSeed: Int
+    public let samplingSeedSource: String
+    public let chatTemplateSource: String
+    public let chatTemplateEffectiveKwargsHash: String
+    public let chatTemplateRequestOverrideApplied: Bool
+    public let chatTemplateForcedOverrideApplied: Bool
+    public let policyReasoningMode: String
+    public let policyReasoningSource: String
     public let createdAtUnixMS: Int64
 
     enum CodingKeys: String, CodingKey {
@@ -569,11 +597,39 @@ public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Send
         case dflashBlockSize = "dflash_block_size"
         case dflashRollbackCount = "dflash_rollback_count"
         case dflashTargetHiddenLayers = "dflash_target_hidden_layers"
+        case featureGuardrailRequestedNumDraftTokens = "feature_guardrail_requested_num_draft_tokens"
+        case featureGuardrailEffectiveNumDraftTokens = "feature_guardrail_effective_num_draft_tokens"
+        case featureGuardrailResourceFanoutEstimate = "feature_guardrail_resource_fanout_estimate"
+        case featureGuardrailRequestedCacheBudgetBytes = "feature_guardrail_requested_cache_budget_bytes"
+        case featureGuardrailEffectiveCacheBudgetBytes = "feature_guardrail_effective_cache_budget_bytes"
+        case featureGuardrailReason = "feature_guardrail_reason"
         case toolCallCount = "tool_call_count"
         case toolLatencyMS = "tool_latency_ms"
         case observationBytes = "observation_bytes"
         case fatalRate = "fatal_rate"
         case turnCount = "turn_count"
+        case effectivePolicySchema = "effective_policy_schema"
+        case effectiveConfigHash = "effective_config_hash"
+        case samplingTemperature = "sampling_temperature"
+        case samplingTemperatureSource = "sampling_temperature_source"
+        case samplingTopP = "sampling_top_p"
+        case samplingTopPSource = "sampling_top_p_source"
+        case samplingMaxTokens = "sampling_max_tokens"
+        case samplingMaxTokensSource = "sampling_max_tokens_source"
+        case samplingPolicyLookupStatus = "sampling_policy_lookup_status"
+        case samplingPolicyCanonicalModel = "sampling_policy_canonical_model"
+        case samplingPolicyMatchedAlias = "sampling_policy_matched_alias"
+        case samplingPolicySourceURL = "sampling_policy_source_url"
+        case samplingRequestOverrideApplied = "sampling_request_override_applied"
+        case recommendedSamplingRequired = "recommended_sampling_required"
+        case samplingSeed = "sampling_seed"
+        case samplingSeedSource = "sampling_seed_source"
+        case chatTemplateSource = "chat_template_source"
+        case chatTemplateEffectiveKwargsHash = "chat_template_effective_kwargs_hash"
+        case chatTemplateRequestOverrideApplied = "chat_template_request_override_applied"
+        case chatTemplateForcedOverrideApplied = "chat_template_forced_override_applied"
+        case policyReasoningMode = "policy_reasoning_mode"
+        case policyReasoningSource = "policy_reasoning_source"
         case createdAtUnixMS = "created_at_unix_ms"
     }
 
@@ -625,11 +681,54 @@ public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Send
         dflashBlockSize = try container.decodeIfPresent(Int.self, forKey: .dflashBlockSize) ?? 0
         dflashRollbackCount = try container.decodeIfPresent(Int.self, forKey: .dflashRollbackCount) ?? 0
         dflashTargetHiddenLayers = try container.decodeIfPresent(Int.self, forKey: .dflashTargetHiddenLayers) ?? 0
+        featureGuardrailRequestedNumDraftTokens = try container.decodeIfPresent(
+            Int.self,
+            forKey: .featureGuardrailRequestedNumDraftTokens
+        ) ?? 0
+        featureGuardrailEffectiveNumDraftTokens = try container.decodeIfPresent(
+            Int.self,
+            forKey: .featureGuardrailEffectiveNumDraftTokens
+        ) ?? 0
+        featureGuardrailResourceFanoutEstimate = try container.decodeIfPresent(
+            Double.self,
+            forKey: .featureGuardrailResourceFanoutEstimate
+        ) ?? 0
+        featureGuardrailRequestedCacheBudgetBytes = try container.decodeIfPresent(
+            UInt64.self,
+            forKey: .featureGuardrailRequestedCacheBudgetBytes
+        ) ?? 0
+        featureGuardrailEffectiveCacheBudgetBytes = try container.decodeIfPresent(
+            UInt64.self,
+            forKey: .featureGuardrailEffectiveCacheBudgetBytes
+        ) ?? 0
+        featureGuardrailReason = try container.decodeIfPresent(String.self, forKey: .featureGuardrailReason) ?? ""
         toolCallCount = try container.decodeIfPresent(Int.self, forKey: .toolCallCount) ?? 0
         toolLatencyMS = try container.decodeIfPresent(Double.self, forKey: .toolLatencyMS) ?? 0
         observationBytes = try container.decodeIfPresent(UInt64.self, forKey: .observationBytes) ?? 0
         fatalRate = try container.decodeIfPresent(Double.self, forKey: .fatalRate) ?? 0
         turnCount = try container.decodeIfPresent(Int.self, forKey: .turnCount) ?? 0
+        effectivePolicySchema = try container.decodeIfPresent(String.self, forKey: .effectivePolicySchema) ?? ""
+        effectiveConfigHash = try container.decodeIfPresent(String.self, forKey: .effectiveConfigHash) ?? ""
+        samplingTemperature = try container.decodeIfPresent(Double.self, forKey: .samplingTemperature) ?? 0
+        samplingTemperatureSource = try container.decodeIfPresent(String.self, forKey: .samplingTemperatureSource) ?? ""
+        samplingTopP = try container.decodeIfPresent(Double.self, forKey: .samplingTopP) ?? 0
+        samplingTopPSource = try container.decodeIfPresent(String.self, forKey: .samplingTopPSource) ?? ""
+        samplingMaxTokens = try container.decodeIfPresent(Int.self, forKey: .samplingMaxTokens) ?? 0
+        samplingMaxTokensSource = try container.decodeIfPresent(String.self, forKey: .samplingMaxTokensSource) ?? ""
+        samplingPolicyLookupStatus = try container.decodeIfPresent(String.self, forKey: .samplingPolicyLookupStatus) ?? ""
+        samplingPolicyCanonicalModel = try container.decodeIfPresent(String.self, forKey: .samplingPolicyCanonicalModel) ?? ""
+        samplingPolicyMatchedAlias = try container.decodeIfPresent(String.self, forKey: .samplingPolicyMatchedAlias) ?? ""
+        samplingPolicySourceURL = try container.decodeIfPresent(String.self, forKey: .samplingPolicySourceURL) ?? ""
+        samplingRequestOverrideApplied = try container.decodeIfPresent(Bool.self, forKey: .samplingRequestOverrideApplied) ?? false
+        recommendedSamplingRequired = try container.decodeIfPresent(Bool.self, forKey: .recommendedSamplingRequired) ?? false
+        samplingSeed = try container.decodeIfPresent(Int.self, forKey: .samplingSeed) ?? 0
+        samplingSeedSource = try container.decodeIfPresent(String.self, forKey: .samplingSeedSource) ?? ""
+        chatTemplateSource = try container.decodeIfPresent(String.self, forKey: .chatTemplateSource) ?? ""
+        chatTemplateEffectiveKwargsHash = try container.decodeIfPresent(String.self, forKey: .chatTemplateEffectiveKwargsHash) ?? ""
+        chatTemplateRequestOverrideApplied = try container.decodeIfPresent(Bool.self, forKey: .chatTemplateRequestOverrideApplied) ?? false
+        chatTemplateForcedOverrideApplied = try container.decodeIfPresent(Bool.self, forKey: .chatTemplateForcedOverrideApplied) ?? false
+        policyReasoningMode = try container.decodeIfPresent(String.self, forKey: .policyReasoningMode) ?? ""
+        policyReasoningSource = try container.decodeIfPresent(String.self, forKey: .policyReasoningSource) ?? ""
         createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
     }
 }
@@ -800,6 +899,28 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
     public let rawResponseChars: Int
     public let extractedResultChars: Int
     public let failureStage: String
+    public let effectivePolicySchema: String
+    public let effectiveConfigHash: String
+    public let samplingTemperature: Double
+    public let samplingTemperatureSource: String
+    public let samplingTopP: Double
+    public let samplingTopPSource: String
+    public let samplingMaxTokens: Int
+    public let samplingMaxTokensSource: String
+    public let samplingPolicyLookupStatus: String
+    public let samplingPolicyCanonicalModel: String
+    public let samplingPolicyMatchedAlias: String
+    public let samplingPolicySourceURL: String
+    public let samplingRequestOverrideApplied: Bool
+    public let recommendedSamplingRequired: Bool
+    public let samplingSeed: Int
+    public let samplingSeedSource: String
+    public let chatTemplateSource: String
+    public let chatTemplateEffectiveKwargsHash: String
+    public let chatTemplateRequestOverrideApplied: Bool
+    public let chatTemplateForcedOverrideApplied: Bool
+    public let policyReasoningMode: String
+    public let policyReasoningSource: String
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -844,6 +965,28 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         case rawResponseChars = "raw_response_chars"
         case extractedResultChars = "extracted_result_chars"
         case failureStage = "failure_stage"
+        case effectivePolicySchema = "effective_policy_schema"
+        case effectiveConfigHash = "effective_config_hash"
+        case samplingTemperature = "sampling_temperature"
+        case samplingTemperatureSource = "sampling_temperature_source"
+        case samplingTopP = "sampling_top_p"
+        case samplingTopPSource = "sampling_top_p_source"
+        case samplingMaxTokens = "sampling_max_tokens"
+        case samplingMaxTokensSource = "sampling_max_tokens_source"
+        case samplingPolicyLookupStatus = "sampling_policy_lookup_status"
+        case samplingPolicyCanonicalModel = "sampling_policy_canonical_model"
+        case samplingPolicyMatchedAlias = "sampling_policy_matched_alias"
+        case samplingPolicySourceURL = "sampling_policy_source_url"
+        case samplingRequestOverrideApplied = "sampling_request_override_applied"
+        case recommendedSamplingRequired = "recommended_sampling_required"
+        case samplingSeed = "sampling_seed"
+        case samplingSeedSource = "sampling_seed_source"
+        case chatTemplateSource = "chat_template_source"
+        case chatTemplateEffectiveKwargsHash = "chat_template_effective_kwargs_hash"
+        case chatTemplateRequestOverrideApplied = "chat_template_request_override_applied"
+        case chatTemplateForcedOverrideApplied = "chat_template_forced_override_applied"
+        case policyReasoningMode = "policy_reasoning_mode"
+        case policyReasoningSource = "policy_reasoning_source"
     }
 
     public init(from decoder: Decoder) throws {
@@ -900,6 +1043,28 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         rawResponseChars = try container.decodeIfPresent(Int.self, forKey: .rawResponseChars) ?? rawResponse.count
         extractedResultChars = try container.decodeIfPresent(Int.self, forKey: .extractedResultChars) ?? extractedResult.count
         failureStage = try container.decodeIfPresent(String.self, forKey: .failureStage) ?? ""
+        effectivePolicySchema = try container.decodeIfPresent(String.self, forKey: .effectivePolicySchema) ?? ""
+        effectiveConfigHash = try container.decodeIfPresent(String.self, forKey: .effectiveConfigHash) ?? ""
+        samplingTemperature = try container.decodeIfPresent(Double.self, forKey: .samplingTemperature) ?? 0
+        samplingTemperatureSource = try container.decodeIfPresent(String.self, forKey: .samplingTemperatureSource) ?? ""
+        samplingTopP = try container.decodeIfPresent(Double.self, forKey: .samplingTopP) ?? 0
+        samplingTopPSource = try container.decodeIfPresent(String.self, forKey: .samplingTopPSource) ?? ""
+        samplingMaxTokens = try container.decodeIfPresent(Int.self, forKey: .samplingMaxTokens) ?? 0
+        samplingMaxTokensSource = try container.decodeIfPresent(String.self, forKey: .samplingMaxTokensSource) ?? ""
+        samplingPolicyLookupStatus = try container.decodeIfPresent(String.self, forKey: .samplingPolicyLookupStatus) ?? ""
+        samplingPolicyCanonicalModel = try container.decodeIfPresent(String.self, forKey: .samplingPolicyCanonicalModel) ?? ""
+        samplingPolicyMatchedAlias = try container.decodeIfPresent(String.self, forKey: .samplingPolicyMatchedAlias) ?? ""
+        samplingPolicySourceURL = try container.decodeIfPresent(String.self, forKey: .samplingPolicySourceURL) ?? ""
+        samplingRequestOverrideApplied = try container.decodeIfPresent(Bool.self, forKey: .samplingRequestOverrideApplied) ?? false
+        recommendedSamplingRequired = try container.decodeIfPresent(Bool.self, forKey: .recommendedSamplingRequired) ?? false
+        samplingSeed = try container.decodeIfPresent(Int.self, forKey: .samplingSeed) ?? 0
+        samplingSeedSource = try container.decodeIfPresent(String.self, forKey: .samplingSeedSource) ?? ""
+        chatTemplateSource = try container.decodeIfPresent(String.self, forKey: .chatTemplateSource) ?? ""
+        chatTemplateEffectiveKwargsHash = try container.decodeIfPresent(String.self, forKey: .chatTemplateEffectiveKwargsHash) ?? ""
+        chatTemplateRequestOverrideApplied = try container.decodeIfPresent(Bool.self, forKey: .chatTemplateRequestOverrideApplied) ?? false
+        chatTemplateForcedOverrideApplied = try container.decodeIfPresent(Bool.self, forKey: .chatTemplateForcedOverrideApplied) ?? false
+        policyReasoningMode = try container.decodeIfPresent(String.self, forKey: .policyReasoningMode) ?? ""
+        policyReasoningSource = try container.decodeIfPresent(String.self, forKey: .policyReasoningSource) ?? ""
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -945,6 +1110,28 @@ public struct ControlPlaneEvaluationSampleRecord: Codable, Equatable, Sendable {
         try container.encode(rawResponseChars, forKey: .rawResponseChars)
         try container.encode(extractedResultChars, forKey: .extractedResultChars)
         try container.encode(failureStage, forKey: .failureStage)
+        try container.encode(effectivePolicySchema, forKey: .effectivePolicySchema)
+        try container.encode(effectiveConfigHash, forKey: .effectiveConfigHash)
+        try container.encode(samplingTemperature, forKey: .samplingTemperature)
+        try container.encode(samplingTemperatureSource, forKey: .samplingTemperatureSource)
+        try container.encode(samplingTopP, forKey: .samplingTopP)
+        try container.encode(samplingTopPSource, forKey: .samplingTopPSource)
+        try container.encode(samplingMaxTokens, forKey: .samplingMaxTokens)
+        try container.encode(samplingMaxTokensSource, forKey: .samplingMaxTokensSource)
+        try container.encode(samplingPolicyLookupStatus, forKey: .samplingPolicyLookupStatus)
+        try container.encode(samplingPolicyCanonicalModel, forKey: .samplingPolicyCanonicalModel)
+        try container.encode(samplingPolicyMatchedAlias, forKey: .samplingPolicyMatchedAlias)
+        try container.encode(samplingPolicySourceURL, forKey: .samplingPolicySourceURL)
+        try container.encode(samplingRequestOverrideApplied, forKey: .samplingRequestOverrideApplied)
+        try container.encode(recommendedSamplingRequired, forKey: .recommendedSamplingRequired)
+        try container.encode(samplingSeed, forKey: .samplingSeed)
+        try container.encode(samplingSeedSource, forKey: .samplingSeedSource)
+        try container.encode(chatTemplateSource, forKey: .chatTemplateSource)
+        try container.encode(chatTemplateEffectiveKwargsHash, forKey: .chatTemplateEffectiveKwargsHash)
+        try container.encode(chatTemplateRequestOverrideApplied, forKey: .chatTemplateRequestOverrideApplied)
+        try container.encode(chatTemplateForcedOverrideApplied, forKey: .chatTemplateForcedOverrideApplied)
+        try container.encode(policyReasoningMode, forKey: .policyReasoningMode)
+        try container.encode(policyReasoningSource, forKey: .policyReasoningSource)
     }
 }
 
@@ -1797,12 +1984,12 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func benchmarkMatrixRequestsCSV(jobID: String? = nil) -> String {
         let rows = benchmarkMatrixRequestRows(jobID: jobID)
-        let header = "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms"
+        let header = "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,feature_guardrail_requested_num_draft_tokens,feature_guardrail_effective_num_draft_tokens,feature_guardrail_resource_fanout_estimate,feature_guardrail_requested_cache_budget_bytes,feature_guardrail_effective_cache_budget_bytes,feature_guardrail_reason,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms,effective_policy_schema,effective_config_hash,sampling_temperature,sampling_temperature_source,sampling_top_p,sampling_top_p_source,sampling_max_tokens,sampling_max_tokens_source,sampling_policy_lookup_status,sampling_policy_canonical_model,sampling_policy_matched_alias,sampling_policy_source_url,sampling_request_override_applied,recommended_sampling_required,sampling_seed,sampling_seed_source,chat_template_source,chat_template_effective_kwargs_hash,chat_template_request_override_applied,chat_template_forced_override_applied,policy_reasoning_mode,policy_reasoning_source"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
         let body = rows.map { row in
-            let fields: [String] = [
+            let baseFields: [String] = [
                 row.jobID,
                 row.cellID,
                 row.taskKind,
@@ -1845,10 +2032,18 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 String(row.speculativeDraftModelConfigured),
                 String(row.speculativeDraftProposeMS),
                 String(row.speculativeTargetVerifyMS),
+            ]
+            let featureFields: [String] = [
                 String(row.dflashEnabled),
                 String(row.dflashBlockSize),
                 String(row.dflashRollbackCount),
                 String(row.dflashTargetHiddenLayers),
+                String(row.featureGuardrailRequestedNumDraftTokens),
+                String(row.featureGuardrailEffectiveNumDraftTokens),
+                String(row.featureGuardrailResourceFanoutEstimate),
+                String(row.featureGuardrailRequestedCacheBudgetBytes),
+                String(row.featureGuardrailEffectiveCacheBudgetBytes),
+                row.featureGuardrailReason,
                 String(row.toolCallCount),
                 String(row.toolLatencyMS),
                 String(row.observationBytes),
@@ -1856,6 +2051,33 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 String(row.turnCount),
                 String(row.createdAtUnixMS),
             ]
+            var samplingPolicyFields: [String] = []
+            samplingPolicyFields.reserveCapacity(16)
+            samplingPolicyFields.append(row.effectivePolicySchema)
+            samplingPolicyFields.append(row.effectiveConfigHash)
+            samplingPolicyFields.append(String(row.samplingTemperature))
+            samplingPolicyFields.append(row.samplingTemperatureSource)
+            samplingPolicyFields.append(String(row.samplingTopP))
+            samplingPolicyFields.append(row.samplingTopPSource)
+            samplingPolicyFields.append(String(row.samplingMaxTokens))
+            samplingPolicyFields.append(row.samplingMaxTokensSource)
+            samplingPolicyFields.append(row.samplingPolicyLookupStatus)
+            samplingPolicyFields.append(row.samplingPolicyCanonicalModel)
+            samplingPolicyFields.append(row.samplingPolicyMatchedAlias)
+            samplingPolicyFields.append(row.samplingPolicySourceURL)
+            samplingPolicyFields.append(String(row.samplingRequestOverrideApplied))
+            samplingPolicyFields.append(String(row.recommendedSamplingRequired))
+            samplingPolicyFields.append(String(row.samplingSeed))
+            samplingPolicyFields.append(row.samplingSeedSource)
+            var templatePolicyFields: [String] = []
+            templatePolicyFields.reserveCapacity(6)
+            templatePolicyFields.append(row.chatTemplateSource)
+            templatePolicyFields.append(row.chatTemplateEffectiveKwargsHash)
+            templatePolicyFields.append(String(row.chatTemplateRequestOverrideApplied))
+            templatePolicyFields.append(String(row.chatTemplateForcedOverrideApplied))
+            templatePolicyFields.append(row.policyReasoningMode)
+            templatePolicyFields.append(row.policyReasoningSource)
+            let fields = baseFields + featureFields + samplingPolicyFields + templatePolicyFields
             return fields.map(Self.csvField).joined(separator: ",")
         }
         return ([header] + body).joined(separator: "\n") + "\n"
@@ -1980,12 +2202,12 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func evaluationSamplesCSV(jobID: String? = nil) -> String {
         let rows = evaluationSampleRows(jobID: jobID)
-        let header = "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label,sample_render_ms,inference_ms,extraction_ms,validation_ms,scoring_ms,raw_response_chars,extracted_result_chars,failure_stage"
+        let header = "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label,sample_render_ms,inference_ms,extraction_ms,validation_ms,scoring_ms,raw_response_chars,extracted_result_chars,failure_stage,effective_policy_schema,effective_config_hash,sampling_temperature,sampling_temperature_source,sampling_top_p,sampling_top_p_source,sampling_max_tokens,sampling_max_tokens_source,sampling_policy_lookup_status,sampling_policy_canonical_model,sampling_policy_matched_alias,sampling_policy_source_url,sampling_request_override_applied,recommended_sampling_required,sampling_seed,sampling_seed_source,chat_template_source,chat_template_effective_kwargs_hash,chat_template_request_override_applied,chat_template_forced_override_applied,policy_reasoning_mode,policy_reasoning_source"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
         let body = rows.map { row in
-            [
+            let sampleFields: [String] = [
                 row.jobID,
                 row.suiteID,
                 row.sampleID,
@@ -2021,6 +2243,33 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 String(row.extractedResultChars),
                 row.failureStage,
             ]
+            var samplingPolicyFields: [String] = []
+            samplingPolicyFields.reserveCapacity(16)
+            samplingPolicyFields.append(row.effectivePolicySchema)
+            samplingPolicyFields.append(row.effectiveConfigHash)
+            samplingPolicyFields.append(String(row.samplingTemperature))
+            samplingPolicyFields.append(row.samplingTemperatureSource)
+            samplingPolicyFields.append(String(row.samplingTopP))
+            samplingPolicyFields.append(row.samplingTopPSource)
+            samplingPolicyFields.append(String(row.samplingMaxTokens))
+            samplingPolicyFields.append(row.samplingMaxTokensSource)
+            samplingPolicyFields.append(row.samplingPolicyLookupStatus)
+            samplingPolicyFields.append(row.samplingPolicyCanonicalModel)
+            samplingPolicyFields.append(row.samplingPolicyMatchedAlias)
+            samplingPolicyFields.append(row.samplingPolicySourceURL)
+            samplingPolicyFields.append(String(row.samplingRequestOverrideApplied))
+            samplingPolicyFields.append(String(row.recommendedSamplingRequired))
+            samplingPolicyFields.append(String(row.samplingSeed))
+            samplingPolicyFields.append(row.samplingSeedSource)
+            var templatePolicyFields: [String] = []
+            templatePolicyFields.reserveCapacity(6)
+            templatePolicyFields.append(row.chatTemplateSource)
+            templatePolicyFields.append(row.chatTemplateEffectiveKwargsHash)
+            templatePolicyFields.append(String(row.chatTemplateRequestOverrideApplied))
+            templatePolicyFields.append(String(row.chatTemplateForcedOverrideApplied))
+            templatePolicyFields.append(row.policyReasoningMode)
+            templatePolicyFields.append(row.policyReasoningSource)
+            return (sampleFields + samplingPolicyFields + templatePolicyFields)
             .map(Self.csvField)
             .joined(separator: ",")
         }

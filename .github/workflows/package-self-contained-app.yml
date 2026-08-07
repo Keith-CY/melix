@@ -19,12 +19,26 @@ on:
       - labeled
     paths:
       - ".github/workflows/package-self-contained-app.yml"
+      - "Makefile"
+      - "Package.swift"
+      - "Package.resolved"
+      - "Sources/**"
       - "apps/macos-menubar/**"
       - "packages/protocol/**"
+      - "pyproject.toml"
+      - "scripts/ci_progress.sh"
+      - "scripts/compute_build_metadata.py"
+      - "scripts/dev_up.py"
+      - "scripts/finalize_macos_release_candidate.py"
+      - "scripts/m8_packaging_target_smoke.py"
+      - "scripts/macos_release_candidate.py"
+      - "scripts/macos_self_signed_identity.py"
       - "scripts/package_macos_menubar_app.py"
+      - "scripts/validate_macos_release_tag.py"
       - "services/control-plane-swift/**"
       - "services/mlx-text-worker-swift/**"
       - "services/mlx-worker-python/**"
+      - "uv.lock"
   push:
     branches:
       - main
@@ -33,12 +47,26 @@ on:
       - "v*"
     paths:
       - ".github/workflows/package-self-contained-app.yml"
+      - "Makefile"
+      - "Package.swift"
+      - "Package.resolved"
+      - "Sources/**"
       - "apps/macos-menubar/**"
       - "packages/protocol/**"
+      - "pyproject.toml"
+      - "scripts/ci_progress.sh"
+      - "scripts/compute_build_metadata.py"
+      - "scripts/dev_up.py"
+      - "scripts/finalize_macos_release_candidate.py"
+      - "scripts/m8_packaging_target_smoke.py"
+      - "scripts/macos_release_candidate.py"
+      - "scripts/macos_self_signed_identity.py"
       - "scripts/package_macos_menubar_app.py"
+      - "scripts/validate_macos_release_tag.py"
       - "services/control-plane-swift/**"
       - "services/mlx-text-worker-swift/**"
       - "services/mlx-worker-python/**"
+      - "uv.lock"
 
 permissions:
   actions: read
@@ -50,6 +78,118 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
 
 jobs:
+  self-signed-keychain-smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Generate disposable code-signing identity
+        run: |
+          set -euo pipefail
+          umask 077
+          config="$RUNNER_TEMP/melix-test-certificate.cnf"
+          printf '%s\n' \
+            '[req]' \
+            'distinguished_name=dn' \
+            'prompt=no' \
+            'x509_extensions=codesign' \
+            '[dn]' \
+            'CN=Melix GitHub Release Signing' \
+            '[codesign]' \
+            'basicConstraints=critical,CA:TRUE' \
+            'keyUsage=critical,digitalSignature,keyCertSign' \
+            'extendedKeyUsage=codeSigning' \
+            'subjectKeyIdentifier=hash' \
+            'authorityKeyIdentifier=keyid:always' \
+            > "$config"
+          openssl req -x509 -newkey rsa:3072 -nodes -days 1 \
+            -config "$config" \
+            -keyout "$RUNNER_TEMP/melix-test.key" \
+            -out "$RUNNER_TEMP/melix-test.pem"
+          test_password="$(openssl rand -hex 24)"
+          if openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'; then
+            legacy_argument='-legacy'
+          else
+            legacy_argument=''
+          fi
+          openssl pkcs12 -export $legacy_argument \
+            -inkey "$RUNNER_TEMP/melix-test.key" \
+            -in "$RUNNER_TEMP/melix-test.pem" \
+            -name 'Melix GitHub Release Signing' \
+            -passout "pass:$test_password" \
+            -out "$RUNNER_TEMP/melix-test.p12"
+          {
+            printf 'TEST_P12_BASE64=%s\n' "$(base64 < "$RUNNER_TEMP/melix-test.p12" | tr -d '\n')"
+            printf 'TEST_P12_PASSWORD=%s\n' "$test_password"
+            printf 'TEST_CERTIFICATE_SHA256=%s\n' "$(openssl x509 -in "$RUNNER_TEMP/melix-test.pem" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':')"
+            printf 'TEST_CERTIFICATE_SHA1=%s\n' "$(openssl x509 -in "$RUNNER_TEMP/melix-test.pem" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')"
+          } >> "$GITHUB_ENV"
+          rm -f "$config" "$RUNNER_TEMP/melix-test.key" "$RUNNER_TEMP/melix-test.pem" "$RUNNER_TEMP/melix-test.p12"
+
+      - name: Exercise isolated keychain import and hardened-runtime signing
+        run: |
+          set -euo pipefail
+          python3 scripts/macos_self_signed_identity.py prepare \
+            --p12 "$RUNNER_TEMP/melix-smoke-signing.p12" \
+            --p12-base64-env TEST_P12_BASE64 \
+            --password-env TEST_P12_PASSWORD \
+            --expected-sha256 "$TEST_CERTIFICATE_SHA256" \
+            --expected-sha1 "$TEST_CERTIFICATE_SHA1" \
+            --keychain "$RUNNER_TEMP/melix-smoke-signing.keychain-db" \
+            --public-certificate "$RUNNER_TEMP/melix-smoke-signing.pem" \
+            --sentinel "$RUNNER_TEMP/melix-smoke-signing-sentinel" \
+            --state "$RUNNER_TEMP/melix-smoke-signing-state.json" \
+            --cleanup-report "$RUNNER_TEMP/melix-smoke-signing-cleanup.json"
+
+      - name: Prove keychain restoration and material cleanup
+        if: always()
+        run: |
+          set -euo pipefail
+          state="$RUNNER_TEMP/melix-smoke-signing-state.json"
+          report="$RUNNER_TEMP/melix-smoke-signing-cleanup.json"
+          if [ -f "$state" ]; then
+            python3 scripts/macos_self_signed_identity.py cleanup --state "$state" --report "$report"
+          fi
+          REPORT="$report" python3 -c 'import json, os, pathlib; report=json.loads(pathlib.Path(os.environ["REPORT"]).read_text()); assert report.get("cleanup_confirmed") is True, report'
+
+  validate-release-tag:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.validate.outputs.source_sha }}
+      tag_name: ${{ steps.validate.outputs.tag_name }}
+      version: ${{ steps.validate.outputs.version }}
+
+    steps:
+      - name: Checkout release tag with complete history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch current origin main release boundary
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Validate stable release tag before protected environment
+        id: validate
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_macos_release_tag.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --tag "$GITHUB_REF_NAME" \
+            --source-sha "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/release-tag-receipt.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Upload validated release tag receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: melix-release-tag-receipt-${{ github.sha }}
+          path: ${{ runner.temp }}/release-tag-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
   detect-main-update:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -140,13 +280,17 @@ jobs:
   package-app:
     needs:
       - detect-main-update
+      - validate-release-tag
     if: |
       always() &&
       (github.event_name != 'schedule' || needs.detect-main-update.outputs.should_package == 'true') &&
-      (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app'))
+      (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app')) &&
+      (github.ref_type != 'tag' || needs.validate-release-tag.result == 'success')
     runs-on: macos-15
     outputs:
       artifact_name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
+      archive_name: ${{ steps.package-names.outputs.archive_name }}
+      candidate_artifact_name: ${{ steps.package-names.outputs.candidate_artifact_name }}
 
     steps:
       - name: Checkout manual package source
@@ -172,7 +316,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
 
       - name: Restore Python dependency cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .uv-cache
           key: ${{ runner.os }}-uv-package-${{ hashFiles('uv.lock', 'pyproject.toml', 'services/mlx-worker-python/pyproject.toml') }}
@@ -181,7 +325,7 @@ jobs:
             ${{ runner.os }}-uv-
 
       - name: Restore Swift build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             .swift-home
@@ -202,6 +346,9 @@ jobs:
 
       - name: Build CLI executable
         run: bash scripts/ci_progress.sh "Package app CLI build" swift build -c release --product melix --disable-automatic-resolution
+
+      - name: Build control plane executable
+        run: bash scripts/ci_progress.sh "Package app control plane build" swift build -c release --package-path services/control-plane-swift --product melix-control-plane --disable-automatic-resolution
 
       - name: Build Swift text worker
         run: bash scripts/ci_progress.sh "Package app Swift text worker build" swift build -c release --package-path services/mlx-text-worker-swift --disable-automatic-resolution
@@ -232,6 +379,23 @@ jobs:
             UV_MANAGED_PYTHON=1 \
             UV_PYTHON="$PACKAGE_PYTHON" \
             uv sync --project services/mlx-worker-python --extra mlx --no-dev --frozen
+          SWIFT_MLX_METAL_VERSION="$(
+            env PYTHONPATH="$GITHUB_WORKSPACE" "$PACKAGE_PYTHON" -c \
+              'from pathlib import Path; from scripts.dev_up import compatible_mlx_metal_versions_for_swift_mlx; versions = compatible_mlx_metal_versions_for_swift_mlx(Path.cwd()); assert versions, "Swift MLX compatible metallib version is unavailable"; print(versions[0])'
+          )"
+          SWIFT_MLX_METAL_ROOT="$RUNNER_TEMP/swift-mlx-metal"
+          bash scripts/ci_progress.sh "Package app Swift MLX metallib" \
+            env UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
+            uv pip install --target "$SWIFT_MLX_METAL_ROOT" \
+            --python "$PACKAGE_PYTHON" \
+            --no-deps \
+            "mlx-metal==$SWIFT_MLX_METAL_VERSION"
+          SWIFT_MLX_METALLIB_PATH="$SWIFT_MLX_METAL_ROOT/mlx/lib/mlx.metallib"
+          if [ ! -f "$SWIFT_MLX_METALLIB_PATH" ]; then
+            printf 'fatal: matching Swift MLX metallib not found at %s\n' "$SWIFT_MLX_METALLIB_PATH" >&2
+            exit 1
+          fi
+          printf 'SWIFT_MLX_METALLIB_PATH=%s\n' "$SWIFT_MLX_METALLIB_PATH" >> "$GITHUB_ENV"
 
       - name: Compute build metadata
         id: compute-build-metadata
@@ -269,35 +433,174 @@ jobs:
             --github-output "$GITHUB_OUTPUT" \
             --json
 
+      - name: Compute independent archive names
+        id: package-names
+        run: |
+          set -euo pipefail
+          artifact_name="${{ steps.compute-build-metadata.outputs.artifact_name }}"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            printf 'archive_name=%s-release-candidate.zip\n' "$artifact_name" >> "$GITHUB_OUTPUT"
+            printf 'candidate_artifact_name=%s-release-candidate\n' "$artifact_name" >> "$GITHUB_OUTPUT"
+          else
+            printf 'archive_name=%s.zip\n' "$artifact_name" >> "$GITHUB_OUTPUT"
+            printf 'candidate_artifact_name=\n' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Package self-contained Melix.app
         id: package-app
+        env:
+          IS_RELEASE_CANDIDATE: ${{ github.event_name == 'push' && github.ref_type == 'tag' && 'true' || 'false' }}
+          PACKAGE_ARCHIVE_NAME: ${{ steps.package-names.outputs.archive_name }}
         run: |
+          set -euo pipefail
           : "${PACKAGE_PYTHON:?PACKAGE_PYTHON must be exported by Prepare packaging Python runtime}"
           PACKAGE_VENV_PYTHON="$GITHUB_WORKSPACE/.venv-package/bin/python"
           PYTHON_RUNTIME_ROOT="$("$PACKAGE_PYTHON" -c 'import sys; print(sys.base_prefix)')"
           PYTHON_SITE_PACKAGES="$("$PACKAGE_VENV_PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+          bundle_id="io.melix.menubar.preview"
+          packaging_target_id="macos_app_bundle_preview"
+          if [ "$IS_RELEASE_CANDIDATE" = "true" ]; then
+            bundle_id="io.melix.menubar.release-candidate"
+            packaging_target_id="macos_app_bundle_github_release_candidate"
+          fi
           bash scripts/ci_progress.sh "Package app bundle assembly" \
             env PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
             "$PACKAGE_VENV_PYTHON" scripts/package_macos_menubar_app.py \
             --repo-root "$GITHUB_WORKSPACE" \
             --output-path "$RUNNER_TEMP/Melix.app" \
-            --archive-path "$RUNNER_TEMP/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip" \
+            --archive-path "$RUNNER_TEMP/$PACKAGE_ARCHIVE_NAME" \
             --python-runtime-root "$PYTHON_RUNTIME_ROOT" \
             --python-site-packages-path "$PYTHON_SITE_PACKAGES" \
+            --swift-mlx-metallib-path "$SWIFT_MLX_METALLIB_PATH" \
             --version "${{ steps.compute-build-metadata.outputs.version }}" \
+            --bundle-id "$bundle_id" \
+            --packaging-target-id "$packaging_target_id" \
             --json
+
+      - name: Verify packaged Melix.app launch
+        env:
+          MELIX_HOME: ${{ runner.temp }}/melix-package-smoke-home
+          MELIX_RUNTIME_DIR: ${{ runner.temp }}/melix-package-smoke-runtime
+          MELIX_HTTP_PORT: "12437"
+          MELIX_SERVICE_INSTANCE_NAME: package-smoke
+          MELIX_MENU_BAR_PRESENTATION_MODE: dock-and-tray
+        run: |
+          set -euo pipefail
+          app_pid=""
+          stdout_log="$RUNNER_TEMP/melix-package-smoke.stdout.log"
+          stderr_log="$RUNNER_TEMP/melix-package-smoke.stderr.log"
+          cleanup() {
+            if [ -n "$app_pid" ] && kill -0 "$app_pid" 2>/dev/null; then
+              kill -TERM "$app_pid" 2>/dev/null || true
+              wait "$app_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          "$RUNNER_TEMP/Melix.app/Contents/MacOS/Melix" >"$stdout_log" 2>"$stderr_log" &
+          app_pid="$!"
+          health_url="http://127.0.0.1:$MELIX_HTTP_PORT/health"
+          healthy="false"
+          for _ in {1..300}; do
+            if curl --fail --silent --show-error "$health_url" >/dev/null 2>&1; then
+              healthy="true"
+              break
+            fi
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          if [ "$healthy" != "true" ]; then
+            printf 'Packaged Melix.app did not reach %s\n' "$health_url" >&2
+            cat "$stdout_log" >&2
+            cat "$stderr_log" >&2
+            exit 1
+          fi
+          for _ in {1..50}; do
+            if [ -s "$MELIX_RUNTIME_DIR/active-runtime.json" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          test -s "$MELIX_RUNTIME_DIR/active-runtime.json"
+          runtime_descriptor_receipt="$RUNNER_TEMP/melix-package-smoke-active-runtime.json"
+          cp "$MELIX_RUNTIME_DIR/active-runtime.json" "$runtime_descriptor_receipt"
+
+          if kill -0 "$app_pid" 2>/dev/null; then
+            kill -TERM "$app_pid"
+          fi
+          wait "$app_pid" 2>/dev/null || true
+          app_pid=""
+          RUNTIME_DESCRIPTOR="$runtime_descriptor_receipt" python3 - <<'PY'
+          import json
+          import os
+          import time
+          from pathlib import Path
+
+          descriptor = Path(os.environ["RUNTIME_DESCRIPTOR"])
+          payload = json.loads(descriptor.read_text(encoding="utf-8"))
+          process_id_fields = (
+              "app_process_id",
+              "control_plane_process_id",
+              "python_worker_process_id",
+              "swift_text_worker_process_id",
+          )
+          deadline = time.monotonic() + 5.0
+          while True:
+              alive = []
+              for field in process_id_fields:
+                  process_id = int(payload[field])
+                  try:
+                      os.kill(process_id, 0)
+                  except ProcessLookupError:
+                      continue
+                  alive.append(f"{field}={process_id}")
+              if not alive:
+                  break
+              if time.monotonic() >= deadline:
+                  raise SystemExit(
+                      "Packaged Melix.app left processes running: " + ", ".join(alive)
+                  )
+              time.sleep(0.1)
+          descriptor.unlink()
+          PY
+
+      - name: Create release candidate receipt
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          set -euo pipefail
+          python3 scripts/macos_release_candidate.py create \
+            --app "$RUNNER_TEMP/Melix.app" \
+            --archive "$RUNNER_TEMP/${{ steps.package-names.outputs.archive_name }}" \
+            --tag "${{ needs.validate-release-tag.outputs.tag_name }}" \
+            --source-sha "${{ needs.validate-release-tag.outputs.source_sha }}" \
+            --output "$RUNNER_TEMP/release-candidate-receipt.json"
 
       - name: Upload app artifact
         id: upload-app-artifact
+        if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
-          path: ${{ runner.temp }}/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip
+          path: ${{ runner.temp }}/${{ steps.package-names.outputs.archive_name }}
           if-no-files-found: error
           retention-days: 14
 
+      - name: Upload isolated release candidate
+        id: upload-release-candidate
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package-names.outputs.candidate_artifact_name }}
+          path: |
+            ${{ runner.temp }}/${{ steps.package-names.outputs.archive_name }}
+            ${{ runner.temp }}/release-candidate-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Publish app artifact download summary
-        if: github.event_name != 'pull_request' && success()
+        if: github.event_name != 'pull_request' && github.ref_type != 'tag' && success()
         uses: actions/github-script@v9
         env:
           ARTIFACT_NAME: ${{ steps.compute-build-metadata.outputs.artifact_name }}
@@ -329,6 +632,39 @@ jobs:
                 `- Workflow run: ${runUrl}`,
                 '',
                 '> GitHub authentication may be required to download workflow artifacts.',
+                '',
+              ].join('\n');
+              fs.appendFileSync(summaryPath, body, 'utf8');
+            }
+
+      - name: Publish isolated release candidate summary
+        if: github.event_name == 'push' && github.ref_type == 'tag' && success()
+        uses: actions/github-script@v9
+        env:
+          CANDIDATE_ARTIFACT_NAME: ${{ steps.package-names.outputs.candidate_artifact_name }}
+          CANDIDATE_ARTIFACT_URL: ${{ steps.upload-release-candidate.outputs.artifact-url }}
+        with:
+          script: |
+            const fs = require('fs');
+            const candidateArtifactName = process.env.CANDIDATE_ARTIFACT_NAME;
+            const candidateArtifactUrl = process.env.CANDIDATE_ARTIFACT_URL;
+            if (!candidateArtifactName || !candidateArtifactUrl) {
+              core.setFailed('Candidate artifact name or URL is unavailable.');
+              return;
+            }
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+            if (!summaryPath) {
+              core.warning('GITHUB_STEP_SUMMARY is not set; skipping candidate summary.');
+            } else {
+              const body = [
+                '## Protected finalizer input: Melix release candidate',
+                '',
+                `- Candidate artifact: **${candidateArtifactName}**`,
+                `- Candidate artifact link: ${candidateArtifactUrl}`,
+                `- Workflow run: ${runUrl}`,
+                '',
+                '> Do not install or distribute this artifact. It is untrusted input for the protected release finalizer.',
                 '',
               ].join('\n');
               fs.appendFileSync(summaryPath, body, 'utf8');
@@ -389,31 +725,242 @@ jobs:
               });
             }
 
-  attach-release-artifact:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: package-app
-    runs-on: ubuntu-latest
+  publish-signed-release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs:
+      - validate-release-tag
+      - package-app
+    runs-on: macos-15
+    environment: github-release
+    concurrency:
+      group: melix-protected-github-release
+      cancel-in-progress: false
     permissions:
       contents: write
 
     steps:
-      - name: Download packaged app artifact
+      - name: Checkout validated release source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate-release-tag.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Fetch and revalidate protected release boundary
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          python3 scripts/validate_macos_release_tag.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --tag "${{ needs.validate-release-tag.outputs.tag_name }}" \
+            --source-sha "${{ needs.validate-release-tag.outputs.source_sha }}" \
+            --output "$RUNNER_TEMP/protected-release-tag-receipt.json"
+
+      - name: Download original release tag receipt
         uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.package-app.outputs.artifact_name }}
-          path: ${{ runner.temp }}
+          name: melix-release-tag-receipt-${{ needs.validate-release-tag.outputs.source_sha }}
+          path: ${{ runner.temp }}/validated-tag
 
-      - name: Attach app to GitHub Release
+      - name: Download isolated release candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.package-app.outputs.candidate_artifact_name }}
+          path: ${{ runner.temp }}/release-candidate
+
+      - name: Revalidate candidate receipt before protected inputs
+        run: |
+          set -euo pipefail
+          cmp \
+            "$RUNNER_TEMP/validated-tag/release-tag-receipt.json" \
+            "$RUNNER_TEMP/protected-release-tag-receipt.json"
+          candidate_archive="$RUNNER_TEMP/release-candidate/${{ needs.package-app.outputs.archive_name }}"
+          candidate_receipt="$RUNNER_TEMP/release-candidate/release-candidate-receipt.json"
+          extraction_root="$RUNNER_TEMP/release-candidate-extracted"
+          mkdir -p "$extraction_root"
+          ditto -x -k "$candidate_archive" "$extraction_root"
+          python3 scripts/macos_release_candidate.py verify \
+            --receipt "$candidate_receipt" \
+            --app "$extraction_root/Melix.app" \
+            --archive "$candidate_archive" \
+            --tag "${{ needs.validate-release-tag.outputs.tag_name }}" \
+            --source-sha "${{ needs.validate-release-tag.outputs.source_sha }}"
+
+      - name: Validate protected public release pins
+        env:
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_EDDSA_PUBLIC_KEY }}
+          EXPECTED_CERTIFICATE_SHA256: ${{ vars.MELIX_SIGNING_CERTIFICATE_SHA256 }}
+          EXPECTED_CERTIFICATE_SHA1: ${{ vars.MELIX_SIGNING_CERTIFICATE_SHA1 }}
+        run: |
+          set -euo pipefail
+          python3 -c 'import base64, os; key=base64.b64decode(os.environ["SPARKLE_PUBLIC_KEY"], validate=True); assert len(key) == 32, "protected Sparkle public key must decode to 32 bytes"'
+          python3 -c 'import os, re; assert re.fullmatch(r"[0-9A-Fa-f]{64}", os.environ["EXPECTED_CERTIFICATE_SHA256"]), "protected certificate SHA-256 pin is invalid"; assert re.fullmatch(r"[0-9A-Fa-f]{40}", os.environ["EXPECTED_CERTIFICATE_SHA1"]), "protected certificate SHA-1 pin is invalid"'
+
+      - name: Resolve pinned Sparkle release tools
+        run: swift package resolve --package-path apps/macos-menubar
+
+      - name: Prepare pinned release identity in isolated keychain
+        id: release-identity
+        env:
+          SIGNING_CERTIFICATE_P12: ${{ secrets.MELIX_SIGNING_CERTIFICATE_P12 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MELIX_SIGNING_CERTIFICATE_PASSWORD }}
+          EXPECTED_CERTIFICATE_SHA256: ${{ vars.MELIX_SIGNING_CERTIFICATE_SHA256 }}
+          EXPECTED_CERTIFICATE_SHA1: ${{ vars.MELIX_SIGNING_CERTIFICATE_SHA1 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 scripts/macos_self_signed_identity.py prepare \
+            --p12 "$RUNNER_TEMP/melix-release-signing.p12" \
+            --p12-base64-env SIGNING_CERTIFICATE_P12 \
+            --password-env SIGNING_CERTIFICATE_PASSWORD \
+            --expected-sha256 "$EXPECTED_CERTIFICATE_SHA256" \
+            --expected-sha1 "$EXPECTED_CERTIFICATE_SHA1" \
+            --keychain "$RUNNER_TEMP/melix-release-signing.keychain-db" \
+            --public-certificate "$RUNNER_TEMP/melix-release-signing.pem" \
+            --sentinel "$RUNNER_TEMP/melix-release-signing-sentinel" \
+            --state "$RUNNER_TEMP/melix-release-signing-state.json" \
+            --cleanup-report "$RUNNER_TEMP/melix-release-signing-cleanup.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Finalize and sign stable release archive
+        env:
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_EDDSA_PUBLIC_KEY }}
+          EXPECTED_CERTIFICATE_SHA256: ${{ vars.MELIX_SIGNING_CERTIFICATE_SHA256 }}
+          EXPECTED_CERTIFICATE_SHA1: ${{ vars.MELIX_SIGNING_CERTIFICATE_SHA1 }}
+        run: |
+          set -euo pipefail
+          python3 scripts/finalize_macos_release_candidate.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --app "$RUNNER_TEMP/release-candidate-extracted/Melix.app" \
+            --candidate-archive "$RUNNER_TEMP/release-candidate/${{ needs.package-app.outputs.archive_name }}" \
+            --candidate-receipt "$RUNNER_TEMP/release-candidate/release-candidate-receipt.json" \
+            --tag "${{ needs.validate-release-tag.outputs.tag_name }}" \
+            --source-sha "${{ needs.validate-release-tag.outputs.source_sha }}" \
+            --sparkle-public-key "$SPARKLE_PUBLIC_KEY" \
+            --codesign-identity "${{ steps.release-identity.outputs.certificate_sha1 }}" \
+            --codesign-keychain "${{ steps.release-identity.outputs.keychain_path }}" \
+            --expected-certificate-sha256 "$EXPECTED_CERTIFICATE_SHA256" \
+            --expected-certificate-sha1 "$EXPECTED_CERTIFICATE_SHA1" \
+            --archive "$RUNNER_TEMP/${{ needs.package-app.outputs.artifact_name }}.zip"
+
+      - name: Generate and verify signed update feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_EDDSA_PUBLIC_KEY }}
+          EXPECTED_TAG: ${{ needs.validate-release-tag.outputs.tag_name }}
+          EXPECTED_VERSION: ${{ needs.validate-release-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          private_key_bytes="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | /usr/bin/base64 -D | wc -c | tr -d ' ')"
+          test "$private_key_bytes" = "32"
+          derived_public_key="$({ printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x70\x04\x22\x04\x20'; printf '%s' "$SPARKLE_PRIVATE_KEY" | /usr/bin/base64 -D; } | openssl pkey -inform DER -pubout -outform DER 2>/dev/null | tail -c 32 | /usr/bin/base64)"
+          test "$derived_public_key" = "$SPARKLE_PUBLIC_KEY"
+
+          sparkle_bin="$GITHUB_WORKSPACE/apps/macos-menubar/.build/artifacts/sparkle/Sparkle/bin"
+          release_directory="$RUNNER_TEMP/signed-update-release"
+          archive_name="${{ needs.package-app.outputs.artifact_name }}.zip"
+          release_url="https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate-release-tag.outputs.tag_name }}"
+          mkdir -p "$release_directory"
+          cp "$RUNNER_TEMP/$archive_name" "$release_directory/$archive_name"
+          test -x "$sparkle_bin/generate_appcast"
+          test -x "$sparkle_bin/sign_update"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_bin/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/${{ needs.validate-release-tag.outputs.tag_name }}/" \
+            --full-release-notes-url "$release_url" \
+            --link "$release_url" \
+            --maximum-versions 1 \
+            --maximum-deltas 0 \
+            "$release_directory"
+          appcast_path="$release_directory/appcast.xml"
+          xmllint --noout "$appcast_path"
+          appcast_version="$(xmllint --xpath 'string(//*[local-name()="item"]/*[local-name()="version"])' "$appcast_path")"
+          appcast_short_version="$(xmllint --xpath 'string(//*[local-name()="item"]/*[local-name()="shortVersionString"])' "$appcast_path")"
+          minimum_system_version="$(xmllint --xpath 'string(//*[local-name()="item"]/*[local-name()="minimumSystemVersion"])' "$appcast_path")"
+          test "$EXPECTED_TAG" = "v$EXPECTED_VERSION"
+          test "$appcast_version" = "$EXPECTED_VERSION"
+          test "$appcast_short_version" = "$EXPECTED_VERSION"
+          test "$minimum_system_version" = "15.0"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_bin/sign_update" --ed-key-file - --verify "$appcast_path"
+          archive_signature="$(xmllint --xpath 'string(//*[local-name()="enclosure"]/@*[local-name()="edSignature"])' "$appcast_path")"
+          test -n "$archive_signature"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_bin/sign_update" \
+            --ed-key-file - --verify "$release_directory/$archive_name" "$archive_signature"
+
+      - name: Restore keychain search list and remove signing material
+        id: release-cleanup
+        if: always()
+        run: |
+          set -euo pipefail
+          state="$RUNNER_TEMP/melix-release-signing-state.json"
+          report="$RUNNER_TEMP/melix-release-signing-cleanup.json"
+          if [ -f "$state" ]; then
+            python3 scripts/macos_self_signed_identity.py cleanup --state "$state" --report "$report"
+          fi
+          REPORT="$report" python3 -c 'import json, os, pathlib; report=json.loads(pathlib.Path(os.environ["REPORT"]).read_text()); assert report.get("cleanup_confirmed") is True, report'
+          test ! -e "$RUNNER_TEMP/melix-release-signing.keychain-db"
+          test ! -e "$RUNNER_TEMP/melix-release-signing.p12"
+          test ! -e "$RUNNER_TEMP/melix-release-signing.pem"
+          test ! -e "$RUNNER_TEMP/melix-release-signing-sentinel"
+          printf 'cleanup_confirmed=true\n' >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate monotonic release immediately before publishing
+        if: steps.release-cleanup.outputs.cleanup_confirmed == 'true'
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          python3 scripts/validate_macos_release_tag.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --tag "${{ needs.validate-release-tag.outputs.tag_name }}" \
+            --source-sha "${{ needs.validate-release-tag.outputs.source_sha }}" \
+            --output "$RUNNER_TEMP/pre-publish-release-tag-receipt.json"
+
+      - name: Publish only the cleanup-confirmed stable release
+        if: steps.release-cleanup.outputs.cleanup_confirmed == 'true'
         uses: softprops/action-gh-release@da05d552573ad5aba039eaff05c3d0a71e06a66f # v2
         with:
-          files: ${{ runner.temp }}/${{ needs.package-app.outputs.artifact_name }}.zip
+          files: |
+            ${{ runner.temp }}/signed-update-release/${{ needs.package-app.outputs.artifact_name }}.zip
+            ${{ runner.temp }}/signed-update-release/appcast.xml
           # Tag pushes are the release source of truth for this workflow, so generated notes own the body.
           generate_release_notes: true
+          make_latest: true
+
+      - name: Verify published release remains the latest signed appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_TAG: ${{ needs.validate-release-tag.outputs.tag_name }}
+          EXPECTED_VERSION: ${{ needs.validate-release-tag.outputs.version }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_ARCHIVE_NAME: ${{ needs.package-app.outputs.artifact_name }}.zip
+        run: |
+          set -euo pipefail
+          latest_tag="$(gh api "repos/$RELEASE_REPOSITORY/releases/latest" --jq .tag_name)"
+          test "$latest_tag" = "$EXPECTED_TAG"
+          test "$EXPECTED_TAG" = "v$EXPECTED_VERSION"
+
+          verification_directory="$RUNNER_TEMP/published-release-verification"
+          mkdir -p "$verification_directory"
+          gh release download "$EXPECTED_TAG" \
+            --repo "$RELEASE_REPOSITORY" \
+            --pattern appcast.xml \
+            --dir "$verification_directory" \
+            --clobber
+          published_appcast="$verification_directory/appcast.xml"
+          xmllint --noout "$published_appcast"
+          appcast_version="$(xmllint --xpath 'string(//*[local-name()="item"]/*[local-name()="version"])' "$published_appcast")"
+          appcast_short_version="$(xmllint --xpath 'string(//*[local-name()="item"]/*[local-name()="shortVersionString"])' "$published_appcast")"
+          minimum_system_version="$(xmllint --xpath 'string(//*[local-name()="item"]/*[local-name()="minimumSystemVersion"])' "$published_appcast")"
+          enclosure_url="$(xmllint --xpath 'string(//*[local-name()="enclosure"]/@url)' "$published_appcast")"
+          test "$appcast_version" = "$EXPECTED_VERSION"
+          test "$appcast_short_version" = "$EXPECTED_VERSION"
+          test "$minimum_system_version" = "15.0"
+          test "$enclosure_url" = "https://github.com/$RELEASE_REPOSITORY/releases/download/$EXPECTED_TAG/$RELEASE_ARCHIVE_NAME"
 
       - name: Trigger release distribution workflows
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag_name }}
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_ARCHIVE_NAME: ${{ needs.package-app.outputs.artifact_name }}.zip
         run: |

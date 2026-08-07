@@ -155,6 +155,10 @@ def build_adapter_provenance_manifest(
                 adapter_manifest.get("trainer_dataset_validation_sample_count"),
                 adapter_manifest.get("validation_sample_count"),
             ),
+            "test_sample_count": _int_value(
+                adapter_manifest.get("heldout_test_sample_count"),
+                adapter_manifest.get("trainer_dataset_test_sample_count"),
+            ),
             "source_manifest_path": _str_value(adapter_manifest.get("dataset_source_manifest_path")),
             "normalized_manifest_path": _str_value(adapter_manifest.get("normalized_dataset_manifest_path")),
         },
@@ -237,6 +241,11 @@ def build_adapter_provenance_manifest(
                 adapter_manifest.get("training.learning_rate_final"),
             ),
             "completion_loss": _float_value(adapter_manifest.get("completion_loss")),
+            "heldout_test_loss": _float_value(adapter_manifest.get("heldout_test_loss")),
+            "heldout_test_perplexity": _float_value(adapter_manifest.get("heldout_test_perplexity")),
+            "heldout_test_sample_count": _int_value(
+                adapter_manifest.get("heldout_test_sample_count")
+            ),
             "round_trip_passed": bool(adapter_manifest.get("round_trip_passed", False)),
             "grad_norm": _float_value(adapter_manifest.get("grad_norm")),
         },

@@ -37,8 +37,17 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/lora_reward_summary_probe.py
 ```
 
+## 2026-07-18 follow-up slice: percentile helper and length reuse
+
+This follow-up Python-only slice keeps the same registered
+`lora-reward-summary-candidate-minmax` probe and remains limited to
+`_reward_summary(...)`. The helper now binds `_percentile_value(...)` once before
+constructing the summary and reuses the score list length after the in-place
+sort. This preserves reward summary semantics while reducing repeated helper and
+length lookups in the registered large-candidate workload.
+
 ## Acceptance Criteria
 
 - Focused tests pass.
 - Changed-scope coverage is at least 95%.
-- Registered probe shows fewer `sorted_calls_mean` and no elapsed regression.
+- Registered probe keeps `sorted_calls_mean == 0` and shows no elapsed regression.

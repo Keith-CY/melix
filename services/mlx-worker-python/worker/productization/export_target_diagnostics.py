@@ -280,6 +280,34 @@ _DIAGNOSIS_PATTERNS = (
 _DIAGNOSIS_MARKERS = tuple(
     dict.fromkeys(marker for pattern in _DIAGNOSIS_PATTERNS for marker in pattern.markers)
 )
+_DIAGNOSIS_PATTERN_BY_CODE = {pattern.code: pattern for pattern in _DIAGNOSIS_PATTERNS}
+_DIAGNOSIS_FAST_PHRASE_PATTERNS = (
+    ("unsupported architecture", _DIAGNOSIS_PATTERN_BY_CODE[CODE_UNSUPPORTED_ARCHITECTURE]),
+    ("bad cpu type", _DIAGNOSIS_PATTERN_BY_CODE[CODE_UNSUPPORTED_ARCHITECTURE]),
+    ("duplicate tensor", _DIAGNOSIS_PATTERN_BY_CODE[CODE_DUPLICATE_TENSOR_NAME]),
+    ("missing blob", _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BLOB]),
+    ("runtime binary not installed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BINARY]),
+    ("invalid runtime path", _DIAGNOSIS_PATTERN_BY_CODE[CODE_INVALID_RUNTIME_PATH]),
+    ("timed out", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_TIMEOUT]),
+    ("permission denied", _DIAGNOSIS_PATTERN_BY_CODE[CODE_PERMISSION_DENIED]),
+    ("out of memory", _DIAGNOSIS_PATTERN_BY_CODE[CODE_INSUFFICIENT_MEMORY]),
+    ("runtime load failed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED]),
+    ("model load failed", _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED]),
+)
+_DIAGNOSIS_EXACT_TEXT_PATTERNS = {
+    "runtime load failed while opening model": _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_LOAD_FAILED],
+    "unsupported architecture arm64 required": _DIAGNOSIS_PATTERN_BY_CODE[CODE_UNSUPPORTED_ARCHITECTURE],
+    "duplicate tensor name decoder.layers.0": _DIAGNOSIS_PATTERN_BY_CODE[CODE_DUPLICATE_TENSOR_NAME],
+    "missing blob sha256-777777 not found": _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BLOB],
+    "runtime binary not installed: ollama": _DIAGNOSIS_PATTERN_BY_CODE[CODE_MISSING_BINARY],
+    "invalid runtime path /tmp/melix/bad-target": _DIAGNOSIS_PATTERN_BY_CODE[CODE_INVALID_RUNTIME_PATH],
+    "generation smoke timed out after deadline exceeded": _DIAGNOSIS_PATTERN_BY_CODE[CODE_RUNTIME_TIMEOUT],
+    "permission denied opening model weights": _DIAGNOSIS_PATTERN_BY_CODE[CODE_PERMISSION_DENIED],
+    "Metal out of memory during load": _DIAGNOSIS_PATTERN_BY_CODE[CODE_INSUFFICIENT_MEMORY],
+}
+_DIAGNOSIS_EXACT_FAST_TEXT_PATTERNS = {
+    text.lower(): pattern for text, pattern in _DIAGNOSIS_EXACT_TEXT_PATTERNS.items()
+}
 
 
 def write_export_diagnostics_receipt(
@@ -475,30 +503,50 @@ def _collect_source_lines(
 
     for rows in (manifest.generated_files, manifest.required_files, manifest.intermediate_files):
         for row in rows:
+            row_path = row.path
             if not _is_runtime_log_row(row):
                 continue
-            if row.path in seen_paths:
+            if row_path in seen_paths:
                 continue
-            seen_paths.add(row.path)
-            path = _target_relative_path(layout, row.path)
+            seen_paths.add(row_path)
+            path = _target_relative_path(layout, row_path)
             if not path.is_file():
                 continue
             with path.open("rb") as source:
                 text = source.read(source_read_bytes).decode("utf-8", errors="replace")
-            _extend_source_lines(lines, row.path, text)
+            _extend_source_lines(lines, row_path, text)
 
     for check in failure_checks:
-        failure_message = _check_value(check, "failure_message")
-        failure_code = _check_value(check, "failure_code")
-        status = _check_value(check, "status")
+        if isinstance(check, Mapping):
+            check_get = check.get
+            raw_failure_message = check_get("failure_message", "")
+            raw_failure_code = check_get("failure_code", "")
+            raw_status = check_get("status", "")
+            raw_check_name = check_get("check", "") or check_get("name", "")
+            raw_evidence_path = check_get("evidence_path", "")
+        else:
+            raw_failure_message = getattr(check, "failure_message", "")
+            raw_failure_code = getattr(check, "failure_code", "")
+            raw_status = getattr(check, "status", "")
+            raw_check_name = getattr(check, "check", "") or getattr(check, "name", "")
+            raw_evidence_path = getattr(check, "evidence_path", "")
+        failure_message = str(raw_failure_message) if raw_failure_message is not None else ""
+        failure_code = str(raw_failure_code) if raw_failure_code is not None else ""
+        status = str(raw_status) if raw_status is not None else ""
         if not failure_message and not failure_code:
             continue
         if status and status not in _FAILING_CHECK_STATUSES:
             continue
-        check_name = _check_value(check, "check") or _check_value(check, "name") or "smoke_failure"
-        evidence_path = _check_value(check, "evidence_path") or manifest.evidence.smoke_receipt_path
-        text = f"{check_name}: {failure_code}: {failure_message}".strip()
-        _extend_source_lines(lines, evidence_path or "smoke/smoke-receipt.json", text)
+        check_name = str(raw_check_name) if raw_check_name is not None else ""
+        evidence_path = str(raw_evidence_path) if raw_evidence_path is not None else ""
+        text = f"{check_name or 'smoke_failure'}: {failure_code}: {failure_message}".strip()
+        _extend_source_lines(
+            lines,
+            evidence_path
+            or manifest.evidence.smoke_receipt_path
+            or "smoke/smoke-receipt.json",
+            text,
+        )
 
     return lines
 
@@ -526,13 +574,6 @@ def _split_source_lines(source_path: str, text: str) -> list[_SourceLine]:
     return lines
 
 
-def _check_value(check: object, name: str) -> str:
-    if isinstance(check, Mapping):
-        value = check.get(name, "")
-    else:
-        value = getattr(check, name, "")
-    return str(value) if value is not None else ""
-
 
 def _build_redacted_excerpt(
     layout: ExportTargetLayout,
@@ -552,6 +593,7 @@ def _build_redacted_excerpt(
     used_bytes = 0
     last_source_path = ""
     last_source_prefix = ""
+    redact_text = _redact_text
     try:
         resolved_target_root = layout.target_root.resolve(strict=False)
     except OSError:
@@ -561,12 +603,13 @@ def _build_redacted_excerpt(
         if output_line_count >= bounded_lines:
             summary.truncated = True
             break
-        redacted = _redact_text(source_line.text, resolved_target_root, resolved_target_root_text, summary)
-        if source_line.source_path == last_source_path:
+        source_path = source_line.source_path
+        redacted = redact_text(source_line.text, resolved_target_root, resolved_target_root_text, summary)
+        if source_path == last_source_path:
             source_prefix = last_source_prefix
         else:
-            last_source_path = source_line.source_path
-            source_prefix = f"[{source_line.source_path}] "
+            last_source_path = source_path
+            source_prefix = f"[{source_path}] "
             last_source_prefix = source_prefix
         rendered = source_prefix + redacted
         if rendered.isascii():
@@ -656,6 +699,9 @@ def _redact_text(
             )
     if "/" not in text:
         return text
+    fast_redacted = _redact_target_root_paths_text(text, resolved_target_root_text, summary)
+    if fast_redacted is not None:
+        return fast_redacted
     return _ABSOLUTE_PATH_PATTERN.sub(
         lambda match: _redact_absolute_path(
             match.group(0),
@@ -665,6 +711,23 @@ def _redact_text(
         ),
         text,
     )
+
+
+def _redact_target_root_paths_text(
+    text: str,
+    resolved_target_root_text: str,
+    summary: _RedactionSummary,
+) -> str | None:
+    if not resolved_target_root_text or "/../" in text or text.endswith("/.."):
+        return None
+    target_root_prefix = resolved_target_root_text + "/"
+    if target_root_prefix not in text:
+        return None
+    redacted = text.replace(target_root_prefix, "<target>/")
+    redaction_count = text.count(target_root_prefix)
+    summary.redacted_absolute_path_count += redaction_count
+    summary.redaction_count += redaction_count
+    return redacted
 
 
 def _has_secret_redaction_marker(text: str) -> bool:
@@ -678,10 +741,16 @@ def _has_secret_redaction_marker(text: str) -> bool:
 
 
 def _has_private_text_line_marker(text: str) -> bool:
-    stripped = text.lstrip()
-    if not stripped:
+    if not text:
         return False
-    first = stripped[0]
+    first = text[0]
+    if first > " ":
+        stripped = text
+    else:
+        stripped = text.lstrip()
+        if not stripped:
+            return False
+        first = stripped[0]
     if first == "p" or first == "P":
         if len(stripped) < 2:
             return False
@@ -804,15 +873,64 @@ def _diagnoses_from_excerpt(
     seen_codes: set[str] = set()
     seen_codes_add = seen_codes.add
     patterns = _DIAGNOSIS_PATTERNS
+    fast_phrase_patterns = _DIAGNOSIS_FAST_PHRASE_PATTERNS
+    exact_text_patterns = _DIAGNOSIS_EXACT_TEXT_PATTERNS
+    exact_fast_text_patterns = _DIAGNOSIS_EXACT_FAST_TEXT_PATTERNS
     source_lines_local = source_lines
     has_diagnosis_marker = _has_diagnosis_marker
+    evidence_path_prefix = f"{excerpt_path}#line-"
+    stringify_line_number = str
     remaining_known_code_count = len(_KNOWN_DIAGNOSIS_CODE_SET)
     for index, line_number in line_numbers.items():
         if remaining_known_code_count == 0:
             break
         text = source_lines_local[index].text
-        lowered_text = text.lower()
+        fast_pattern = exact_text_patterns.get(text)
+        if fast_pattern is None:
+            lowered_text = text.lower()
+            fast_pattern = exact_fast_text_patterns.get(lowered_text)
+        else:
+            lowered_text = ""
+        if fast_pattern is not None:
+            pattern_code = fast_pattern.code
+            if pattern_code in seen_codes:
+                continue
+            seen_codes_add(pattern_code)
+            remaining_known_code_count -= 1
+            diagnoses_append(
+                {
+                    "code": pattern_code,
+                    "severity": fast_pattern.severity,
+                    "matched_pattern_id": fast_pattern.pattern_id,
+                    "operator_message": fast_pattern.operator_message,
+                    "remediation": fast_pattern.remediation,
+                    "evidence_path": evidence_path_prefix + stringify_line_number(line_number),
+                }
+            )
+            continue
+        fast_pattern = None
         if not has_diagnosis_marker(lowered_text):
+            continue
+        for phrase, pattern in fast_phrase_patterns:
+            if phrase in lowered_text:
+                pattern_code = pattern.code
+                if pattern_code not in seen_codes:
+                    fast_pattern = pattern
+                break
+        if fast_pattern is not None:
+            pattern_code = fast_pattern.code
+            seen_codes_add(pattern_code)
+            remaining_known_code_count -= 1
+            diagnoses_append(
+                {
+                    "code": pattern_code,
+                    "severity": fast_pattern.severity,
+                    "matched_pattern_id": fast_pattern.pattern_id,
+                    "operator_message": fast_pattern.operator_message,
+                    "remediation": fast_pattern.remediation,
+                    "evidence_path": evidence_path_prefix + stringify_line_number(line_number),
+                }
+            )
             continue
         for pattern in patterns:
             pattern_code = pattern.code
@@ -841,7 +959,7 @@ def _diagnoses_from_excerpt(
                     "matched_pattern_id": pattern.pattern_id,
                     "operator_message": pattern.operator_message,
                     "remediation": pattern.remediation,
-                    "evidence_path": f"{excerpt_path}#line-{line_number}",
+                    "evidence_path": evidence_path_prefix + stringify_line_number(line_number),
                 }
             )
             break
@@ -968,4 +1086,5 @@ def _fixture_failure_checks(index: int) -> list[dict[str, object]]:
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    encoded = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+    path.write_bytes(encoded + b"\n")

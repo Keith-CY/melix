@@ -15,6 +15,7 @@ let package = Package(
         .package(path: "../../services/control-plane-swift"),
         .package(path: "../../packages/protocol/swift"),
         .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4"),
     ],
     targets: [
         .executableTarget(
@@ -24,6 +25,7 @@ let package = Package(
                 .product(name: "MelixControlPlaneCore", package: "control-plane-swift"),
                 .product(name: "MelixControlPlaneProtocol", package: "swift"),
                 .product(name: "Markdown", package: "swift-markdown"),
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/AppMain",
             resources: [
@@ -37,6 +39,7 @@ let package = Package(
                 .product(name: "MelixCLICore", package: "melix"),
                 .product(name: "MelixControlPlaneCore", package: "control-plane-swift"),
                 .product(name: "MelixControlPlaneProtocol", package: "swift"),
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Tests/MenuBarTests",
             exclude: ["Fixtures"]

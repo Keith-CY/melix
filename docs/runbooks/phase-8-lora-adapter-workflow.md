@@ -153,6 +153,7 @@ Use the following `ext` keys as the stable operator-facing inputs:
   "batch_size": "4",
   "epochs": "1",
   "hf_valid_split": "test_sft",
+  "test_ratio": "0.1",
   "derived_model_alias": "melix-qwen35-acceptance",
   "release_compare_in_domain_suite_ids": "opensearch_vl_qa,opensearch_vl_grounding",
   "release_compare_guard_suite_ids": "mmlu,gsm8k",
@@ -273,6 +274,30 @@ Expected training behavior:
 - dense-family defaults stay on the family-owned `attention_mlp` baseline, while experimental MoE families default to `attention` unless the operator explicitly opts into expert modules
 - quantized LoRA and QLoRA reject embedding, LM head, and output-projection target modules; keep quantized runs on attention or expert projection targets
 - Melix writes a normalized dataset snapshot under `<jobs_root>/train_lora/<job_id>/`
+- when `test_ratio` is greater than zero, Melix deterministically removes that
+  share of training samples into `normalized_dataset/test.jsonl`; the trainer
+  consumes only `train.jsonl` and optional `valid.jsonl`
+- after adapter audit, Melix evaluates the trained adapter against
+  `test.jsonl`, writes `train_lora.heldout_evaluation.json`, and records
+  `heldout_test_loss`, `heldout_test_perplexity`, and
+  `heldout_test_sample_count` in the adapter manifest, adapter provenance, and
+  experiment run record
+- when `heldout_baseline_compare` is truthy alongside a held-out split, Melix
+  also evaluates the plain base model (no adapter) on the same `test.jsonl`
+  and records `heldout_baseline_loss`, `heldout_baseline_perplexity`,
+  `heldout_loss_delta` (baseline minus adapter loss — positive means the
+  adapter improved on the base model), and `heldout_perplexity_ratio` in the
+  held-out receipt, adapter manifest, and experiment run record; a failed
+  baseline pass records `heldout_baseline_status=failed` without disturbing
+  the adapter's own held-out metrics
+- when no held-out split is requested, Melix still writes a skipped held-out
+  evaluation receipt with reason `test_split_not_requested`
+- if an `agentic_tool_trace` held-out split is selected but all held-out traces
+  drop during SFT formatting, Melix writes a skipped receipt with reason
+  `test_split_empty_after_formatting`
+- held-out evaluation is post-hoc evidence: if the evaluation backend fails
+  after adapter audit, Melix keeps the trained adapter and writes a failed
+  held-out receipt with reason `heldout_evaluation_failed`
 - Melix emits the stages `resolve_source`, `validate_dataset`, `normalize_config`, `prepare_training_data`, `apply_lora`, `train`, `write_adapter`, and `write_manifest`
 - component-scoped multimodal adapter receipts include `multimodal_lora_nan_guard_triggered`,
   `unexpected_frozen_param_count`, `adapter_checkpoint_bytes`, and `adapter_freeze_audit`; any

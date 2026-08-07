@@ -2,7 +2,7 @@
 
 ## Goal
 
-Tighten the deterministic image generation and edit loops by binding loop-invariant helpers once before iterating over image variants. The slice preserves generated payloads, artifact metadata, and probe accounting while avoiding repeated `loaded_model.get("model_id", ...)`, method lookups, and SHA helper lookups in the per-image loop.
+Tighten the deterministic image generation and edit loops by binding loop-invariant helpers once before iterating over image variants. The slice preserves generated payloads, artifact metadata, and probe accounting while avoiding repeated `loaded_model.get("model_id", ...)`, method lookups, SHA helper lookups, and the deterministic delay hook lookup in the per-image loop.
 
 ## Scope
 
@@ -20,6 +20,10 @@ The affected runtime path is already covered by the registered PR-scoped probe `
 - Changed-scope coverage for the touched Python paths remains at or above 95%.
 - The registered `deterministic_image_output_bytes_probe.py` reports neutral-to-improved `elapsed_ms_mean` with `output_byte_scan_calls_mean=0.0`.
 - GitHub Actions PR-scoped performance completes successfully before merge.
+
+## 2026-07-27 follow-up slice
+
+The follow-up slice binds `sleep_if_configured` once as `sleep_image` in both deterministic image generation and edit loops. This keeps the existing per-variant delay semantics but avoids repeated global lookups in multi-image probe workloads. The local Linux probe compares `deterministic-image-output-byte-accounting` before and after this single helper-binding change.
 
 ## Validation boundary
 

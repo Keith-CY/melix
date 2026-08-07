@@ -14,9 +14,12 @@ import time
 from typing import Any
 
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
+from worker.runtime.native_mtp.capability import resolve_native_mtp_capability
+from worker.runtime.native_mtp.preload import apply_native_mtp_preload_decision
 from worker.runtime.prefix_block_store import (
     LCPResult as _LCPResult,
     clone_cache_snapshot as _clone_cache_snapshot,
+    estimate_cache_snapshot_bytes as _estimate_cache_snapshot_bytes,
     get_store as _get_prefix_store,
 )
 from worker.runtime.runtime_utils import (
@@ -24,6 +27,19 @@ from worker.runtime.runtime_utils import (
     estimate_model_weight_resident_bytes as _estimate_model_weight_resident_bytes,
     first_declared_kwarg as _first_declared_kwarg,
     installed_package_version as _installed_package_version,
+)
+from worker.runtime.prompt_lookup import (
+    ENABLED_EXT_KEY as _PROMPT_LOOKUP_ENABLED_EXT_KEY,
+    PromptLookupConfig,
+    PromptLookupDecoder,
+    receipt_fields as _prompt_lookup_receipt_fields,
+)
+from worker.runtime.prompt_lookup_mlx import PromptLookupUnavailable, build_mlx_step
+from worker.runtime.structured_output_constraints import (
+    StructuredOutputConstraintError,
+    build_structured_output_logits_processors,
+    normalize_structured_output_mode,
+    sampler_constraint_requested,
 )
 from worker.runtime.text_family_adapters import resolve_text_family_config
 
@@ -80,6 +96,7 @@ class RuntimeTokenEvent:
     cache_hit_mode: str | None = None
     recovered_prefix_tokens: int | None = None
     cache_fallback_reason: str | None = None
+    cache_hit_tier: str | None = None
 
 
 @dataclass(slots=True)
@@ -195,61 +212,72 @@ _STREAM_STOP_KWARG_NAMES = ("stop", "stop_words", "stop_sequences")
 _SAMPLER_PENALTY_KWARG_NAMES = ("frequency_penalty", "presence_penalty")
 _STOP_CONTRACT_CACHE_FIELD = "_melix.resolved_text_stop_contract_cache"
 _STOP_KWARGS_CACHE_FIELD = "_melix.resolved_text_stop_kwargs_cache"
-_NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
 _NATIVE_MTP_TEXT_BATCH_PREFILL_STEP_SIZE_ENV = "MELIX_TEXT_NATIVE_MTP_PREFILL_STEP_SIZE"
 _NATIVE_MTP_TEXT_BATCH_DEFAULT_PREFILL_STEP_SIZE = 2048
 _NATIVE_MTP_TEXT_ACTIVE_FIELD = "_melix.native_mtp_text_active"
 _NATIVE_MTP_TEXT_BATCH_GENERATOR_FIELD = "_melix.native_mtp_text_batch_generator"
 _NATIVE_MTP_TEXT_BATCH_GENERATOR_CONFIG_FIELD = "_melix.native_mtp_text_batch_generator_config"
 _NATIVE_MTP_TEXT_DETOKENIZER_FIELD = "_melix.native_mtp_text_detokenizer"
+_SESSION_PREFIX_CACHE_DEFAULT_BLOCK_SIZE = 64
+
+
+@dataclass(frozen=True, slots=True)
+class _SessionPrefixCacheContext:
+    session_id: str
+    model_id: str
+    model_revision: str
+    block_size: int
+    cache_memory_budget_bytes: int
+    acceleration_mode: str
+    active_kv_quant_profile: str
+    cache_mode: str
+    force_fallback: bool
 
 
 def _truthy_string(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
-def _load_json_payload(path: Path) -> dict[str, Any]:
+def _positive_ext_int(raw_value: object, *, default: int) -> int:
+    raw = str(raw_value or "").strip()
+    if raw in ("", "0"):
+        return default
     try:
-        payload = json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if value < 1:
+        return default
+    return value
 
 
-def _native_mtp_model_type(config_payload: dict[str, Any]) -> str:
-    text_config = config_payload.get("text_config")
-    if isinstance(text_config, dict):
-        value = text_config.get("model_type") or config_payload.get("model_type")
-    else:
-        value = config_payload.get("model_type")
-    return str(value or "").strip().lower()
-
-
-def _native_mtp_layer_count(config_payload: dict[str, Any]) -> int:
-    candidates: list[Any] = []
-    text_config = config_payload.get("text_config")
-    if isinstance(text_config, dict):
-        candidates.append(text_config.get("mtp_num_hidden_layers"))
-    candidates.append(config_payload.get("mtp_num_hidden_layers"))
-    for value in candidates:
-        try:
-            return max(0, int(value or 0))
-        except (TypeError, ValueError):
-            continue
-    return 0
-
-
-def _native_mtp_weight_presence(model_dir: Path) -> tuple[bool, int]:
-    index_payload = _load_json_payload(model_dir / "model.safetensors.index.json")
-    weight_map = index_payload.get("weight_map")
-    if not isinstance(weight_map, dict):
-        return False, 0
-    count = sum(
-        1
-        for key in weight_map
-        if str(key).startswith("language_model.mtp.") or str(key).startswith("mtp.")
+def _session_prefix_cache_context(
+    execution_ext: dict[str, str] | None,
+) -> _SessionPrefixCacheContext:
+    ext = execution_ext or {}
+    cache_mode = str(ext.get("_melix.cache_mode", "") or "")
+    if not cache_mode or cache_mode in ("0", "CACHE_MODE_UNSPECIFIED"):
+        cache_mode = "CACHE_MODE_TIERED"
+    return _SessionPrefixCacheContext(
+        session_id=str(ext.get("_melix.session_id", "") or ""),
+        model_id=str(ext.get("_melix.model_id", "") or ""),
+        model_revision=str(ext.get("_melix.model_revision", "") or ""),
+        block_size=_positive_ext_int(
+            ext.get("_melix.block_size", ""),
+            default=_SESSION_PREFIX_CACHE_DEFAULT_BLOCK_SIZE,
+        ),
+        cache_memory_budget_bytes=_positive_ext_int(
+            ext.get("_melix.cache_memory_budget_bytes", ""),
+            default=0,
+        ),
+        acceleration_mode=str(ext.get("_melix.acceleration_mode", "") or ""),
+        active_kv_quant_profile=str(ext.get("_melix.active_kv_quant_profile", "") or ""),
+        cache_mode=cache_mode,
+        force_fallback=(
+            _truthy_string(os.environ.get("MELIX_ENABLE_TEST_CACHE_HOOKS"))
+            and str(ext.get("_test.force_cache_fallback", "") or "").lower() in ("1", "true", "yes")
+        ),
     )
-    return count > 0, count
 
 
 def maybe_apply_native_mtp_text_preload_patches(
@@ -257,54 +285,8 @@ def maybe_apply_native_mtp_text_preload_patches(
     *,
     metadata: dict[str, str],
 ) -> dict[str, str]:
-    enabled = _truthy_string(metadata.get(_NATIVE_MTP_ENABLED_EXT_KEY, ""))
-    model_dir = Path(model_path)
-    config_payload = _load_json_payload(model_dir / "config.json")
-    model_type = _native_mtp_model_type(config_payload)
-    mtp_layers = _native_mtp_layer_count(config_payload)
-    compatible = model_type in {"qwen3_5", "qwen3_5_text"} and mtp_layers > 0
-    weights_present, weight_count = _native_mtp_weight_presence(model_dir)
-
-    active = False
-    patch_applied = False
-    reason = "disabled"
-    try:
-        from worker.runtime import native_mtp
-
-        native_mtp.set_mtp_active(False)
-        native_mtp.set_mtp_weight_attachment(False)
-        if compatible:
-            native_mtp.set_mtp_weight_attachment(weights_present)
-            patch_applied = native_mtp.apply_native_mtp_patches()
-            if not patch_applied:
-                reason = "patch_failed"
-            elif not enabled:
-                reason = "disabled"
-            elif not weights_present:
-                reason = "missing_mtp_weights"
-            else:
-                active = True
-                reason = ""
-        elif enabled:
-            reason = "unsupported_model"
-        native_mtp.set_mtp_active(active)
-    except Exception:
-        reason = "patch_error"
-        try:
-            native_mtp.set_mtp_active(False)
-            native_mtp.set_mtp_weight_attachment(False)
-        except Exception:
-            pass
-
-    return {
-        "melix.native_mtp.enabled": "true" if enabled else "false",
-        "melix.native_mtp.compatible": "true" if compatible else "false",
-        "melix.native_mtp.weights_present": "true" if weights_present else "false",
-        "melix.native_mtp.weight_count": str(weight_count),
-        "melix.native_mtp.patch_applied": "true" if patch_applied else "false",
-        "melix.native_mtp.active": "true" if active else "false",
-        "melix.native_mtp.reason": reason,
-    }
+    decision = resolve_native_mtp_capability(model_path, metadata=metadata)
+    return apply_native_mtp_preload_decision(decision, model_path=model_path)
 
 
 def _load_mlx_batch_generator_class():
@@ -391,7 +373,7 @@ def _copyable_native_mtp_text_detokenizer(loaded_model: Any, tokenizer: Any) -> 
     return detokenizer
 
 
-def _native_mtp_prefill_prompt_cache(
+def _prefill_prompt_cache(
     model: Any,
     prompt_tokens: list[int],
     *,
@@ -469,6 +451,9 @@ def _native_mtp_prefill_prompt_cache(
     return prompt_cache, last_token, prefill_tokens
 
 
+_native_mtp_prefill_prompt_cache = _prefill_prompt_cache
+
+
 def _trim_restored_cache(prompt_cache: Any, trim_tokens: int) -> bool:
     """Trim `trim_tokens` from the end of a restored prompt cache.
 
@@ -496,35 +481,7 @@ def _trim_restored_cache(prompt_cache: Any, trim_tokens: int) -> bool:
 
 
 def _estimate_cache_bytes(prompt_cache: Any) -> int:
-    if not isinstance(prompt_cache, list):
-        return 0
-    total = 0
-    for layer_cache in prompt_cache:
-        # Support both .state (older mlx-lm) and .keys/.values (newer KVCache)
-        tensors: list[Any] = []
-        state = getattr(layer_cache, "state", None)
-        if state is not None:
-            if isinstance(state, list | tuple):
-                tensors.extend(state)
-            else:
-                tensors.append(state)
-        else:  # pragma: no cover - newer KVCache interface
-            keys = getattr(layer_cache, "keys", None)
-            values = getattr(layer_cache, "values", None)
-            if keys is not None:
-                tensors.append(keys)
-            if values is not None:
-                tensors.append(values)
-        for tensor in tensors:
-            nbytes = getattr(tensor, "nbytes", None)
-            if nbytes is None:
-                size = getattr(tensor, "size", None)
-                itemsize = getattr(tensor, "itemsize", None)
-                if size is not None and itemsize is not None:
-                    nbytes = int(size) * int(itemsize)
-            if nbytes is not None:
-                total += int(nbytes)
-    return total
+    return _estimate_cache_snapshot_bytes(prompt_cache)
 
 
 def _tokenizer_eos_stop_tokens(tokenizer: Any) -> list[list[int]] | None:
@@ -545,6 +502,56 @@ def _tokenizer_eos_stop_tokens(tokenizer: Any) -> list[list[int]] | None:
             continue
         stop_tokens.append([token_id])
     return stop_tokens or None
+
+
+def _flat_stop_token_ids(stop_tokens: list[list[int]] | None) -> tuple[int, ...]:
+    """Flatten mlx-lm's stop-sequence shape to the single-token ids it contains.
+
+    Prompt lookup stops on single EOS ids; multi-token stop sequences stay the
+    responsibility of the text stop contract applied downstream.
+    """
+    if not stop_tokens:
+        return ()
+    return tuple(sequence[0] for sequence in stop_tokens if len(sequence) == 1)
+
+
+def _is_greedy_sampling(sampling: Any) -> bool:
+    """True when the request provably decodes to the model's plain argmax.
+
+    Prompt lookup verifies drafts against an unmodified `mx.argmax`, so it may
+    only run when the standard path would emit that same argmax. The bar here is
+    deliberately "provable from a documented contract", not "probably equivalent":
+
+    - `temperature <= 0` is the one documented guarantee — mlx-lm's `make_sampler`
+      returns `lambda x: mx.argmax(x, axis=-1)` outright when `temp == 0`.
+    - `top_k == 1` with a non-zero temperature is *also* argmax under the pinned
+      mlx-lm, but only by an argument about the sampler chain's internal ordering
+      (top-k masking runs last, leaving one candidate for `categorical_sampling`).
+      That is upstream-owned ordering, not a contract, so it is excluded rather
+      than relied on.
+    - Any non-zero `frequency_penalty` / `presence_penalty` disqualifies the
+      request. Those never reach the pinned mlx-lm's `make_sampler` (it does not
+      declare them; penalties live in `make_logits_processors`), so today they
+      could not perturb the argmax. But `_sampler_penalty_kwargs` is *runtime
+      detected* from the sampler factory, so an mlx-lm bump that starts accepting
+      them — or an injected factory that does — would silently apply penalties on
+      the standard path while this path stayed unpenalized, breaking the
+      greedy-identity guarantee with no test to catch it. Gating costs only the
+      acceleration of penalized requests.
+    """
+    try:
+        temperature = float(getattr(sampling, "temperature", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if temperature > 0.0:
+        return False
+    for penalty_name in _SAMPLER_PENALTY_KWARG_NAMES:
+        try:
+            if float(getattr(sampling, penalty_name, 0.0) or 0.0) != 0.0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
 
 
 def _mlx_peak_memory_gb(mx: Any) -> float | None:
@@ -998,8 +1005,15 @@ def _declared_kwargs(callable_obj: Any, names: tuple[str, ...]) -> tuple[str, ..
     return tuple(name for name in names if _callable_accepts_kwarg(callable_obj, name))
 
 
+def _prompt_encode_add_special_tokens(tokenizer: Any, prompt: str) -> bool:
+    return getattr(tokenizer, "bos_token", None) is None or not prompt.startswith(
+        str(getattr(tokenizer, "bos_token", "") or "")
+    )
+
+
 class AutoMLXBackend:
     runtime_name = "mlx-unavailable"
+    supports_sampler_constraints = True
 
     def __init__(
         self,
@@ -1007,9 +1021,13 @@ class AutoMLXBackend:
         load_fn=None,
         stream_generate_fn=None,
         sampler_factory=None,
+        prompt_cache_factory=None,
     ) -> None:
         self._stream_stop_kwarg = ""
+        self._stream_accepts_prompt_cache = False
+        self._stream_accepts_logits_processors = False
         self._sampler_penalty_kwargs: tuple[str, ...] = ()
+        self._prompt_cache_factory = prompt_cache_factory
         if load_fn is not None and stream_generate_fn is not None and sampler_factory is not None:
             self._available = True
             self._error = None
@@ -1017,6 +1035,11 @@ class AutoMLXBackend:
             self._stream_generate_fn = stream_generate_fn
             self._sampler_factory = sampler_factory
             self._stream_stop_kwarg = _first_declared_kwarg(stream_generate_fn, _STREAM_STOP_KWARG_NAMES)
+            self._stream_accepts_prompt_cache = _callable_accepts_kwarg(stream_generate_fn, "prompt_cache")
+            self._stream_accepts_logits_processors = _callable_accepts_kwarg(
+                stream_generate_fn,
+                "logits_processors",
+            )
             self._sampler_penalty_kwargs = _declared_kwargs(sampler_factory, _SAMPLER_PENALTY_KWARG_NAMES)
             self.runtime_name = "mlx-lm"
             return
@@ -1049,6 +1072,11 @@ class AutoMLXBackend:
             self._stream_generate_fn = stream_generate
             self._sampler_factory = make_sampler
             self._stream_stop_kwarg = _first_declared_kwarg(stream_generate, _STREAM_STOP_KWARG_NAMES)
+            self._stream_accepts_prompt_cache = _callable_accepts_kwarg(stream_generate, "prompt_cache")
+            self._stream_accepts_logits_processors = _callable_accepts_kwarg(
+                stream_generate,
+                "logits_processors",
+            )
             self._sampler_penalty_kwargs = _declared_kwargs(make_sampler, _SAMPLER_PENALTY_KWARG_NAMES)
 
     def load_model(self, model_spec, *, trust_remote_code: bool = False) -> dict[str, Any]:
@@ -1147,6 +1175,116 @@ class AutoMLXBackend:
         )
         return _parse_reward_score_text(score_text)
 
+    def _maybe_generate_prompt_lookup_tokens(
+        self,
+        loaded_model,
+        prompt: str,
+        *,
+        config: PromptLookupConfig,
+        sampling,
+        max_tokens: int,
+        cancel_event,
+    ) -> Iterable[RuntimeTokenEvent] | None:
+        """Return a prompt-lookup generator, or None to use the standard path.
+
+        Prompt lookup is greedy-only: its acceptance rule reproduces the target
+        model's argmax, which is exactly equal to plain greedy decoding but not
+        to sampled decoding. Preserving a sampled distribution needs the
+        stochastic accept/residual rule, so sampled requests stay on the
+        standard path rather than silently changing their output distribution.
+        """
+        if not _is_greedy_sampling(sampling):
+            return None
+        tokenizer = loaded_model.get("tokenizer") if isinstance(loaded_model, dict) else None
+        if tokenizer is None or not hasattr(tokenizer, "encode"):
+            return None
+        detokenizer = _copyable_native_mtp_text_detokenizer(loaded_model, tokenizer)
+        if detokenizer is None:
+            return None
+        try:
+            step = build_mlx_step(
+                loaded_model["model"],
+                prefill_step_size=_native_mtp_text_prefill_step_size(),
+            )
+        except PromptLookupUnavailable:
+            return None
+        return self._generate_prompt_lookup_tokens(
+            loaded_model,
+            prompt,
+            config=config,
+            step=step,
+            detokenizer=detokenizer,
+            max_tokens=max_tokens,
+            cancel_event=cancel_event,
+        )
+
+    def _generate_prompt_lookup_tokens(
+        self,
+        loaded_model,
+        prompt: str,
+        *,
+        config: PromptLookupConfig,
+        step,
+        detokenizer,
+        max_tokens: int,
+        cancel_event,
+    ) -> Iterable[RuntimeTokenEvent]:
+        tokenizer = loaded_model["tokenizer"]
+        prompt_tokens = list(
+            tokenizer.encode(
+                prompt,
+                add_special_tokens=_prompt_encode_add_special_tokens(tokenizer, prompt),
+            )
+        )
+        if not prompt_tokens:
+            return
+        reset = getattr(detokenizer, "reset", None)
+        if callable(reset):
+            reset()
+
+        decoder = PromptLookupDecoder(config)
+        stop_token_ids = _flat_stop_token_ids(_tokenizer_eos_stop_tokens(tokenizer))
+        started_at = time.perf_counter()
+        cumulative_raw_text = ""
+        completion_tokens = 0
+
+        for emission in decoder.decode(
+            prompt_tokens=prompt_tokens,
+            step_fn=step,
+            max_tokens=max_tokens,
+            stop_token_ids=stop_token_ids,
+            should_stop=cancel_event.is_set,
+        ):
+            for position, token_id in enumerate(emission.tokens):
+                detokenizer.add_token(token_id)
+                completion_tokens += 1
+                is_last = position == len(emission.tokens) - 1
+                finish_reason = emission.finish_reason if is_last else None
+                if finish_reason is not None:
+                    finalize = getattr(detokenizer, "finalize", None)
+                    if callable(finalize):
+                        finalize()
+                text = str(getattr(detokenizer, "last_segment", "") or "")
+                cumulative_raw_text += text
+                if not text and finish_reason is None:
+                    continue
+                terminal_fields: dict[str, Any] = {}
+                if finish_reason is not None:
+                    elapsed = max(time.perf_counter() - started_at, 1e-9)
+                    terminal_fields = {
+                        "generation_tps": completion_tokens / elapsed,
+                        **_prompt_lookup_receipt_fields(decoder.stats, config),
+                    }
+                yield RuntimeTokenEvent(
+                    text=text,
+                    raw_text=cumulative_raw_text,
+                    token_ids=(token_id,),
+                    prompt_tokens=len(prompt_tokens),
+                    completion_tokens=completion_tokens,
+                    finish_reason=finish_reason,
+                    **terminal_fields,
+                )
+
     def generate_tokens(
         self,
         loaded_model,
@@ -1173,6 +1311,14 @@ class AutoMLXBackend:
             execution_ext,
             self._stream_stop_kwarg,
         )
+        structured_logits_processors = (
+            build_structured_output_logits_processors(
+                execution_ext,
+                loaded_model["tokenizer"],
+            )
+            if sampler_constraint_requested(execution_ext)
+            else []
+        )
 
         if loaded_model.get(_NATIVE_MTP_TEXT_ACTIVE_FIELD) is True:
             yield from self._generate_native_mtp_batch_tokens(
@@ -1182,79 +1328,360 @@ class AutoMLXBackend:
                 max_tokens=max_tokens,
                 cancel_event=cancel_event,
                 execution_ext=execution_ext,
+                logits_processors=structured_logits_processors,
             )
             return
 
-        cumulative_raw_text = ""
-        for response in self._stream_generate_fn(
-            loaded_model["model"],
-            loaded_model["tokenizer"],
-            prompt,
-            max_tokens=max_tokens,
-            sampler=sampler,
-            **stream_kwargs,
-        ):
-            if cancel_event.is_set():
-                return
-            text = getattr(response, "text", "")
-            finish_reason = getattr(response, "finish_reason", None)
-            if not text and finish_reason is None:
-                continue
-            response_raw_text = getattr(response, "raw_text", None)
-            if response_raw_text is None:
-                cumulative_raw_text += str(text or "")
-                raw_text = cumulative_raw_text
-            else:
-                raw_text = response_raw_text
-            yield RuntimeTokenEvent(
-                text=text,
-                raw_text=raw_text,
-                token_ids=_int_tuple(
-                    _first_present(
-                        getattr(response, "token_ids", None),
-                        getattr(response, "tokens", None),
-                        getattr(response, "token", None),
-                        getattr(response, "token_id", None),
-                    )
-                ),
-                token_logprobs=_float_tuple(
-                    _first_present(
-                        getattr(response, "token_logprobs", None),
-                        getattr(response, "logprobs", None),
-                        getattr(response, "logprob", None),
-                    )
-                ),
-                token_bytes=_bytes_value(
-                    _first_present(
-                        getattr(response, "token_bytes", None),
-                        getattr(response, "byte_fallback_bytes", None),
-                    )
-                ),
-                parser_observation=str(getattr(response, "parser_observation", "") or ""),
-                prompt_tokens=getattr(response, "prompt_tokens", None),
-                completion_tokens=getattr(response, "generation_tokens", None),
-                prompt_tps=getattr(response, "prompt_tps", None),
-                generation_tps=getattr(response, "generation_tps", None),
-                peak_memory=getattr(response, "peak_memory", None),
-                finish_reason=finish_reason,
-                speculative_acceptance_rate=getattr(response, "speculative_acceptance_rate", None),
-                speculative_rollback_rate=getattr(response, "speculative_rollback_rate", None),
-                speculative_accepted_tokens=getattr(response, "speculative_accepted_tokens", None),
-                speculative_rejected_tokens=getattr(response, "speculative_rejected_tokens", None),
-                speculative_fallback_count=getattr(response, "speculative_fallback_count", None),
-                speculative_num_draft_tokens=getattr(response, "speculative_num_draft_tokens", None),
-                speculative_draft_model_configured=getattr(
-                    response,
-                    "speculative_draft_model_configured",
-                    None,
-                ),
-                speculative_draft_propose_ms=getattr(response, "speculative_draft_propose_ms", None),
-                speculative_target_verify_ms=getattr(response, "speculative_target_verify_ms", None),
-                dflash_enabled=getattr(response, "dflash_enabled", None),
-                dflash_block_size=getattr(response, "dflash_block_size", None),
-                dflash_rollback_count=getattr(response, "dflash_rollback_count", None),
-                dflash_target_hidden_layers=getattr(response, "dflash_target_hidden_layers", None),
+        # Cheapest possible opt-out for the overwhelmingly common case: one dict
+        # lookup on an absent key before any config resolution runs.
+        if execution_ext and execution_ext.get(_PROMPT_LOOKUP_ENABLED_EXT_KEY):
+            prompt_lookup_config = PromptLookupConfig.from_ext(execution_ext)
+            if prompt_lookup_config.enabled and not structured_logits_processors:
+                prompt_lookup_events = self._maybe_generate_prompt_lookup_tokens(
+                    loaded_model,
+                    prompt,
+                    config=prompt_lookup_config,
+                    sampling=sampling,
+                    max_tokens=max_tokens,
+                    cancel_event=cancel_event,
+                )
+                if prompt_lookup_events is not None:
+                    yield from prompt_lookup_events
+                    return
+
+        if structured_logits_processors and not self._stream_accepts_logits_processors:
+            constraint_kind = str(
+                getattr(structured_logits_processors[0], "constraint_kind", "json_object")
             )
+            raise StructuredOutputConstraintError(
+                "mlx-lm stream_generate cannot accept structured-output logits processors.",
+                details={
+                    "mode": "tool_choice" if constraint_kind.startswith("tool_choice") else constraint_kind,
+                    "enforcement": "sampler",
+                    "reason": "logits_processors_unsupported",
+                },
+            )
+
+        if not execution_ext or not str(execution_ext.get("_melix.session_id", "") or "").strip():
+            cumulative_raw_text = ""
+            if structured_logits_processors:
+                stream_call_kwargs = dict(stream_kwargs)
+                stream_call_kwargs["logits_processors"] = structured_logits_processors
+            else:
+                stream_call_kwargs = stream_kwargs
+            for response in self._stream_generate_fn(
+                loaded_model["model"],
+                loaded_model["tokenizer"],
+                prompt,
+                max_tokens=max_tokens,
+                sampler=sampler,
+                **stream_call_kwargs,
+            ):
+                if cancel_event.is_set():
+                    return
+                text = getattr(response, "text", "")
+                finish_reason = getattr(response, "finish_reason", None)
+                if not text and finish_reason is None:
+                    continue
+                response_raw_text = getattr(response, "raw_text", None)
+                if response_raw_text is None:
+                    cumulative_raw_text += str(text or "")
+                    raw_text = cumulative_raw_text
+                else:
+                    raw_text = response_raw_text
+                yield RuntimeTokenEvent(
+                    text=text,
+                    raw_text=raw_text,
+                    token_ids=_int_tuple(
+                        _first_present(
+                            getattr(response, "token_ids", None),
+                            getattr(response, "tokens", None),
+                            getattr(response, "token", None),
+                            getattr(response, "token_id", None),
+                        )
+                    ),
+                    token_logprobs=_float_tuple(
+                        _first_present(
+                            getattr(response, "token_logprobs", None),
+                            getattr(response, "logprobs", None),
+                            getattr(response, "logprob", None),
+                        )
+                    ),
+                    token_bytes=_bytes_value(
+                        _first_present(
+                            getattr(response, "token_bytes", None),
+                            getattr(response, "byte_fallback_bytes", None),
+                        )
+                    ),
+                    parser_observation=str(getattr(response, "parser_observation", "") or ""),
+                    prompt_tokens=getattr(response, "prompt_tokens", None),
+                    completion_tokens=getattr(response, "generation_tokens", None),
+                    prompt_tps=getattr(response, "prompt_tps", None),
+                    generation_tps=getattr(response, "generation_tps", None),
+                    peak_memory=getattr(response, "peak_memory", None),
+                    finish_reason=finish_reason,
+                    speculative_acceptance_rate=getattr(response, "speculative_acceptance_rate", None),
+                    speculative_rollback_rate=getattr(response, "speculative_rollback_rate", None),
+                    speculative_accepted_tokens=getattr(response, "speculative_accepted_tokens", None),
+                    speculative_rejected_tokens=getattr(response, "speculative_rejected_tokens", None),
+                    speculative_fallback_count=getattr(response, "speculative_fallback_count", None),
+                    speculative_num_draft_tokens=getattr(response, "speculative_num_draft_tokens", None),
+                    speculative_draft_model_configured=getattr(
+                        response,
+                        "speculative_draft_model_configured",
+                        None,
+                    ),
+                    speculative_draft_propose_ms=getattr(response, "speculative_draft_propose_ms", None),
+                    speculative_target_verify_ms=getattr(response, "speculative_target_verify_ms", None),
+                    dflash_enabled=getattr(response, "dflash_enabled", None),
+                    dflash_block_size=getattr(response, "dflash_block_size", None),
+                    dflash_rollback_count=getattr(response, "dflash_rollback_count", None),
+                    dflash_target_hidden_layers=getattr(response, "dflash_target_hidden_layers", None),
+                    cache_hit_mode=None,
+                    recovered_prefix_tokens=None,
+                    cache_fallback_reason=None,
+                )
+            return
+
+        cumulative_raw_text = ""
+        stream_prompt: str | list[int] = prompt
+        if structured_logits_processors:
+            stream_call_kwargs = dict(stream_kwargs)
+            stream_call_kwargs["logits_processors"] = structured_logits_processors
+        else:
+            stream_call_kwargs = stream_kwargs
+        _standard_prefix_store: Any = None
+        _standard_lcp_entry_to_release: Any = None
+        _standard_cache_hit_mode: str | None = None
+        _standard_recovered_prefix_tokens: int | None = None
+        _standard_cache_fallback_reason: str | None = None
+        _standard_cache_hit_tier: str | None = None
+        _standard_cache_context: _SessionPrefixCacheContext | None = None
+        _standard_prompt_tokens: list[int] | None = None
+        _standard_prompt_cache: Any = None
+        _standard_stored = False
+
+        try:
+            _execution_ext = execution_ext or {}
+            _session_id = str(_execution_ext.get("_melix.session_id", "") or "").strip()
+            if _session_id and not self._stream_accepts_prompt_cache:
+                _standard_cache_hit_mode = "none"
+                _standard_recovered_prefix_tokens = 0
+                _standard_cache_fallback_reason = "prompt_cache_unsupported"
+            elif _session_id:
+                _cache_context = _session_prefix_cache_context(_execution_ext)
+                _tokenizer = loaded_model["tokenizer"]
+                if not hasattr(_tokenizer, "encode"):
+                    _standard_cache_hit_mode = "none"
+                    _standard_recovered_prefix_tokens = 0
+                    _standard_cache_fallback_reason = "tokenizer_encode_unavailable"
+                else:
+                    add_special_tokens = getattr(_tokenizer, "bos_token", None) is None or not prompt.startswith(
+                        str(getattr(_tokenizer, "bos_token", "") or "")
+                    )
+                    prompt_tokens = list(_tokenizer.encode(prompt, add_special_tokens=add_special_tokens))
+                    if prompt_tokens:
+                        _standard_prefix_store = _get_prefix_store()
+                        _lcp = _standard_prefix_store.find_lcp(
+                            prompt_tokens,
+                            _cache_context.model_id,
+                            _cache_context.model_revision,
+                            _cache_context.block_size,
+                            acceleration_mode=_cache_context.acceleration_mode,
+                            kv_quant_profile=_cache_context.active_kv_quant_profile,
+                            force_fallback=_cache_context.force_fallback,
+                        )
+                        _standard_lcp_entry_to_release = _lcp.entry if _lcp is not None else None
+                        _use_lcp = (
+                            _lcp is not None
+                            and _lcp.mode != "none"
+                            and _lcp.entry is not None
+                            and _lcp.entry.cache_snapshot is not None
+                        )
+                        _restore_failed = False
+                        _restored = None
+                        if _use_lcp:
+                            assert _lcp is not None and _lcp.entry is not None
+                            _restored = _clone_cache_snapshot(_lcp.entry.cache_snapshot)
+                            _trim_tokens = len(_lcp.entry.token_ids) - _lcp.recovered_prefix_tokens
+                            _restore_token_count = _lcp.recovered_prefix_tokens
+                            if not _lcp.suffix_token_ids and prompt_tokens:
+                                _trim_tokens += 1
+                                _restore_token_count = max(0, _restore_token_count - 1)
+                            _trim_ok = True
+                            if _restored is not None and _trim_tokens > 0:
+                                _trim_ok = _trim_restored_cache(_restored, _trim_tokens)
+                            if _restored is None or not _trim_ok:
+                                _restore_failed = True
+                                _use_lcp = False
+                                _restored = None
+                                _entry = _standard_lcp_entry_to_release
+                                _standard_lcp_entry_to_release = None
+                                if _entry is not None:
+                                    _standard_prefix_store.release(_entry)
+
+                        if _use_lcp:
+                            prompt_cache, last_token, _cached_tokens = _prefill_prompt_cache(
+                                loaded_model["model"],
+                                prompt_tokens,
+                                prefill_step_size=_native_mtp_text_prefill_step_size(),
+                                stream=None,
+                                restore_cache=_restored,
+                                restore_token_count=_restore_token_count,
+                            )
+                            _standard_cache_hit_mode = _lcp.mode
+                            _standard_recovered_prefix_tokens = _restore_token_count
+                            _standard_cache_fallback_reason = _lcp.fallback_reason
+                            _standard_cache_hit_tier = _lcp.tier or None
+                        else:
+                            prompt_cache, last_token, _cached_tokens = _prefill_prompt_cache(
+                                loaded_model["model"],
+                                prompt_tokens,
+                                prefill_step_size=_native_mtp_text_prefill_step_size(),
+                                stream=None,
+                            )
+                            _standard_cache_hit_mode = "none"
+                            _standard_recovered_prefix_tokens = 0
+                            _standard_cache_hit_tier = None
+                            if _restore_failed:
+                                _standard_cache_fallback_reason = "cache_restore_failed"
+                            elif _lcp is not None:
+                                _standard_cache_fallback_reason = _lcp.fallback_reason
+                            else:
+                                _standard_cache_fallback_reason = "no_reusable_prefix"
+
+                        stream_prompt = last_token
+                        stream_call_kwargs["prompt_cache"] = prompt_cache
+                        _standard_cache_context = _cache_context
+                        _standard_prompt_tokens = list(prompt_tokens)
+                        _standard_prompt_cache = prompt_cache
+                    else:
+                        _standard_cache_hit_mode = "none"
+                        _standard_recovered_prefix_tokens = 0
+                        _standard_cache_fallback_reason = "empty_prompt"
+
+            for response in self._stream_generate_fn(
+                loaded_model["model"],
+                loaded_model["tokenizer"],
+                stream_prompt,
+                max_tokens=max_tokens,
+                sampler=sampler,
+                **stream_call_kwargs,
+            ):
+                if cancel_event.is_set():
+                    return
+                if (
+                    not _standard_stored
+                    and _standard_prefix_store is not None
+                    and _standard_cache_context is not None
+                    and _standard_prompt_tokens is not None
+                    and _standard_prompt_cache is not None
+                ):
+                    _standard_stored = True
+                    _snapshot = _clone_cache_snapshot(_standard_prompt_cache)
+                    if _snapshot is not None:
+                        _snapshot_bytes = _estimate_cache_bytes(_standard_prompt_cache)
+                        if (
+                            _standard_cache_context.cache_memory_budget_bytes <= 0
+                            or _snapshot_bytes <= _standard_cache_context.cache_memory_budget_bytes
+                        ):
+                            _standard_prefix_store.put(
+                                session_id=_standard_cache_context.session_id,
+                                token_ids=list(_standard_prompt_tokens),
+                                cache_snapshot=_snapshot,
+                                cache_mode=_standard_cache_context.cache_mode,
+                                model_id=_standard_cache_context.model_id,
+                                model_revision=_standard_cache_context.model_revision,
+                                block_size=_standard_cache_context.block_size,
+                                total_bytes=_snapshot_bytes,
+                                acceleration_mode=_standard_cache_context.acceleration_mode,
+                                kv_quant_profile=_standard_cache_context.active_kv_quant_profile,
+                            )
+                text = getattr(response, "text", "")
+                finish_reason = getattr(response, "finish_reason", None)
+                if not text and finish_reason is None:
+                    continue
+                response_raw_text = getattr(response, "raw_text", None)
+                if response_raw_text is None:
+                    cumulative_raw_text += str(text or "")
+                    raw_text = cumulative_raw_text
+                else:
+                    raw_text = response_raw_text
+                if finish_reason is not None:
+                    _event_cache_hit_mode = _standard_cache_hit_mode
+                    _event_recovered_prefix_tokens = _standard_recovered_prefix_tokens
+                    _event_cache_fallback_reason = _standard_cache_fallback_reason
+                    _event_cache_hit_tier = _standard_cache_hit_tier
+                else:
+                    _event_cache_hit_mode = None
+                    _event_recovered_prefix_tokens = None
+                    _event_cache_fallback_reason = None
+                    _event_cache_hit_tier = None
+                _event_prompt_tokens = getattr(response, "prompt_tokens", None)
+                if _standard_prompt_tokens is not None:
+                    _event_prompt_tokens = len(_standard_prompt_tokens)
+                yield RuntimeTokenEvent(
+                    text=text,
+                    raw_text=raw_text,
+                    token_ids=_int_tuple(
+                        _first_present(
+                            getattr(response, "token_ids", None),
+                            getattr(response, "tokens", None),
+                            getattr(response, "token", None),
+                            getattr(response, "token_id", None),
+                        )
+                    ),
+                    token_logprobs=_float_tuple(
+                        _first_present(
+                            getattr(response, "token_logprobs", None),
+                            getattr(response, "logprobs", None),
+                            getattr(response, "logprob", None),
+                        )
+                    ),
+                    token_bytes=_bytes_value(
+                        _first_present(
+                            getattr(response, "token_bytes", None),
+                            getattr(response, "byte_fallback_bytes", None),
+                        )
+                    ),
+                    parser_observation=str(getattr(response, "parser_observation", "") or ""),
+                    prompt_tokens=_event_prompt_tokens,
+                    completion_tokens=getattr(response, "generation_tokens", None),
+                    prompt_tps=getattr(response, "prompt_tps", None),
+                    generation_tps=getattr(response, "generation_tps", None),
+                    peak_memory=getattr(response, "peak_memory", None),
+                    finish_reason=finish_reason,
+                    speculative_acceptance_rate=getattr(response, "speculative_acceptance_rate", None),
+                    speculative_rollback_rate=getattr(response, "speculative_rollback_rate", None),
+                    speculative_accepted_tokens=getattr(response, "speculative_accepted_tokens", None),
+                    speculative_rejected_tokens=getattr(response, "speculative_rejected_tokens", None),
+                    speculative_fallback_count=getattr(response, "speculative_fallback_count", None),
+                    speculative_num_draft_tokens=getattr(response, "speculative_num_draft_tokens", None),
+                    speculative_draft_model_configured=getattr(
+                        response,
+                        "speculative_draft_model_configured",
+                        None,
+                    ),
+                    speculative_draft_propose_ms=getattr(response, "speculative_draft_propose_ms", None),
+                    speculative_target_verify_ms=getattr(response, "speculative_target_verify_ms", None),
+                    dflash_enabled=getattr(response, "dflash_enabled", None),
+                    dflash_block_size=getattr(response, "dflash_block_size", None),
+                    dflash_rollback_count=getattr(response, "dflash_rollback_count", None),
+                    dflash_target_hidden_layers=getattr(response, "dflash_target_hidden_layers", None),
+                    cache_hit_mode=_event_cache_hit_mode,
+                    recovered_prefix_tokens=_event_recovered_prefix_tokens,
+                    cache_fallback_reason=_event_cache_fallback_reason,
+                    cache_hit_tier=_event_cache_hit_tier,
+                )
+        finally:
+            if _standard_lcp_entry_to_release is not None and _standard_prefix_store is not None:
+                try:
+                    _standard_prefix_store.release(_standard_lcp_entry_to_release)
+                except Exception:
+                    pass
+                _standard_lcp_entry_to_release = None
+            if _standard_prefix_store is not None:
+                _standard_prefix_store.flush_deferred_clear()
 
     def _generate_native_mtp_batch_tokens(
         self,
@@ -1265,6 +1692,7 @@ class AutoMLXBackend:
         max_tokens: int,
         cancel_event,
         execution_ext: dict[str, str] | None = None,
+        logits_processors: list[Any] | None = None,
     ) -> Iterable[RuntimeTokenEvent]:
         try:
             import mlx.core as mx
@@ -1288,9 +1716,7 @@ class AutoMLXBackend:
             tokenizer = TokenizerWrapper(tokenizer)
             loaded_model["tokenizer"] = tokenizer
 
-        add_special_tokens = getattr(tokenizer, "bos_token", None) is None or not prompt.startswith(
-            str(getattr(tokenizer, "bos_token", "") or "")
-        )
+        add_special_tokens = _prompt_encode_add_special_tokens(tokenizer, prompt)
         encode_started_at = time.perf_counter()
         prompt_tokens = list(tokenizer.encode(prompt, add_special_tokens=add_special_tokens))
         prompt_encode_ms = (time.perf_counter() - encode_started_at) * 1000.0
@@ -1304,47 +1730,19 @@ class AutoMLXBackend:
         if callable(reset):
             reset()
 
-        _ext = execution_ext or {}
-        _session_id = str(_ext.get("_melix.session_id", "") or "")
-        _model_id = str(_ext.get("_melix.model_id", "") or "")
-        _model_revision = str(_ext.get("_melix.model_revision", "") or "")
-        _DEFAULT_BLOCK_SIZE = 64
-        # An unset proto field arrives as "0"; treat "0"/"" as "use the default"
-        # rather than letting max(1, int("0")) collapse to a degenerate 1-token block.
-        _raw_block_size = str(_ext.get("_melix.block_size", "") or "").strip()
-        if _raw_block_size in ("", "0"):
-            _block_size = _DEFAULT_BLOCK_SIZE
-        else:
-            try:
-                _block_size = int(_raw_block_size)
-            except (ValueError, TypeError):
-                _block_size = _DEFAULT_BLOCK_SIZE
-            if _block_size < 1:
-                _block_size = _DEFAULT_BLOCK_SIZE
-        _acceleration_mode = str(_ext.get("_melix.acceleration_mode", "") or "")
-        # Cache mode flows from the request; unspecified ("", "0") stores as a
-        # standard tiered cache. A rotating value is preserved so find_lcp's
-        # rotating-exclusion gate can reject the stored entry on the next turn.
-        _cache_mode = str(_ext.get("_melix.cache_mode", "") or "")
-        if not _cache_mode or _cache_mode in ("0", "CACHE_MODE_UNSPECIFIED"):
-            _cache_mode = "CACHE_MODE_TIERED"
-        # Debug-only fallback hook: never honored from a live request unless the
-        # operator has explicitly enabled test cache hooks for the process.
-        _force_fallback = (
-            _truthy_string(os.environ.get("MELIX_ENABLE_TEST_CACHE_HOOKS"))
-            and _ext.get("_test.force_cache_fallback", "").lower() in ("1", "true", "yes")
-        )
+        _cache_context = _session_prefix_cache_context(execution_ext)
         _prefix_store = _get_prefix_store()
 
         _lcp: _LCPResult | None = None
-        if _session_id:
+        if _cache_context.session_id:
             _lcp = _prefix_store.find_lcp(
                 prompt_tokens,
-                _model_id,
-                _model_revision,
-                _block_size,
-                acceleration_mode=_acceleration_mode,
-                force_fallback=_force_fallback,
+                _cache_context.model_id,
+                _cache_context.model_revision,
+                _cache_context.block_size,
+                acceleration_mode=_cache_context.acceleration_mode,
+                kv_quant_profile=_cache_context.active_kv_quant_profile,
+                force_fallback=_cache_context.force_fallback,
             )
 
         # find_lcp may have acquired an active ref on the matched entry; track it
@@ -1422,30 +1820,56 @@ class AutoMLXBackend:
 
             prefill_ms = (time.perf_counter() - prefill_started_at) * 1000.0
 
-            if _session_id:
+            if _cache_context.session_id:
                 # Always update store with the full prompt_tokens so multi-turn
                 # conversations accumulate context even after an LCP warm hit.
                 _snapshot = _clone_cache_snapshot(prompt_cache)
                 if _snapshot is not None:
-                    _prefix_store.put(
-                        session_id=_session_id,
-                        token_ids=list(prompt_tokens),
-                        cache_snapshot=_snapshot,
-                        cache_mode=_cache_mode,
-                        model_id=_model_id,
-                        model_revision=_model_revision,
-                        block_size=_block_size,
-                        total_bytes=_estimate_cache_bytes(prompt_cache),
-                        acceleration_mode=_acceleration_mode,
-                    )
+                    _snapshot_bytes = _estimate_cache_bytes(prompt_cache)
+                    if (
+                        _cache_context.cache_memory_budget_bytes <= 0
+                        or _snapshot_bytes <= _cache_context.cache_memory_budget_bytes
+                    ):
+                        _prefix_store.put(
+                            session_id=_cache_context.session_id,
+                            token_ids=list(prompt_tokens),
+                            cache_snapshot=_snapshot,
+                            cache_mode=_cache_context.cache_mode,
+                            model_id=_cache_context.model_id,
+                            model_revision=_cache_context.model_revision,
+                            block_size=_cache_context.block_size,
+                            total_bytes=_snapshot_bytes,
+                            acceleration_mode=_cache_context.acceleration_mode,
+                            kv_quant_profile=_cache_context.active_kv_quant_profile,
+                        )
 
             batch_insert_started_at = time.perf_counter()
+            insert_kwargs: dict[str, Any] = {}
+            if logits_processors:
+                if not _callable_accepts_kwarg(batch_generator.insert, "logits_processors"):
+                    constraint_kind = str(
+                        getattr(logits_processors[0], "constraint_kind", "json_object")
+                    )
+                    raise StructuredOutputConstraintError(
+                        "mlx-lm BatchGenerator cannot accept structured-output logits processors.",
+                        details={
+                            "mode": (
+                                "tool_choice"
+                                if constraint_kind.startswith("tool_choice")
+                                else constraint_kind
+                            ),
+                            "enforcement": "sampler",
+                            "reason": "logits_processors_unsupported",
+                        },
+                    )
+                insert_kwargs["logits_processors"] = [logits_processors]
             inserted = batch_generator.insert(
                 [last_token],
                 max_tokens=[max_tokens],
                 caches=[prompt_cache],
                 all_tokens=[cached_tokens],
                 samplers=[sampler],
+                **insert_kwargs,
             )
             batch_insert_ms = (time.perf_counter() - batch_insert_started_at) * 1000.0
             insert_ms = (time.perf_counter() - insert_started_at) * 1000.0
@@ -1484,10 +1908,12 @@ class AutoMLXBackend:
                         _cache_hit_mode = _lcp.mode if _lcp is not None else "none"
                         _recovered_prefix_tokens = _lcp.recovered_prefix_tokens if _lcp is not None else 0
                         _cache_fallback_reason = _lcp.fallback_reason if _lcp is not None else "no_session_id"
+                        _cache_hit_tier = (_lcp.tier or None) if _lcp is not None else None
                     else:
                         _cache_hit_mode = None
                         _recovered_prefix_tokens = None
                         _cache_fallback_reason = None
+                        _cache_hit_tier = None
                     yield RuntimeTokenEvent(
                         text=text,
                         raw_text=cumulative_raw_text,
@@ -1529,6 +1955,7 @@ class AutoMLXBackend:
                         cache_hit_mode=_cache_hit_mode,
                         recovered_prefix_tokens=_recovered_prefix_tokens,
                         cache_fallback_reason=_cache_fallback_reason,
+                        cache_hit_tier=_cache_hit_tier,
                     )
                     if finish_reason is not None:
                         return
@@ -1721,6 +2148,7 @@ class MLXTextRuntime:
         cancel_event,
         execution_ext: dict[str, str] | None = None,
     ):
+        self._ensure_sampler_constraint_capability(execution_ext)
         stop_contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
         if self._executor is None:
             item_iterable = self._backend_generate_tokens(
@@ -1759,6 +2187,31 @@ class MLXTextRuntime:
             close = getattr(item_iterable, "close", None)
             if callable(close):
                 close()
+
+    def _ensure_sampler_constraint_capability(
+        self,
+        execution_ext: dict[str, str] | None,
+    ) -> None:
+        if not sampler_constraint_requested(execution_ext):
+            return
+        if bool(getattr(self._backend, "supports_sampler_constraints", False)):
+            return
+        from worker.runtime.tool_wire_constraints import tool_constraint_requested
+
+        mode = (
+            "tool_choice"
+            if tool_constraint_requested(execution_ext)
+            else normalize_structured_output_mode(execution_ext)
+        )
+        raise StructuredOutputConstraintError(
+            "Text runtime backend cannot enforce the requested sampler constraint.",
+            details={
+                "mode": mode,
+                "enforcement": "sampler",
+                "reason": "backend_sampler_constraints_unsupported",
+                "backend": self.runtime_name,
+            },
+        )
 
     def _backend_generate_tokens(
         self,

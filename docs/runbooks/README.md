@@ -14,6 +14,7 @@ A runbook should let a new contributor or agent diagnose and recover a known cla
 
 Current runbooks:
 
+- `agent-tool-guardrail-diagnostics.md`
 - `agent-ui-walkthrough.md`
 - `benchmark-matrix-evaluation-and-lora.md`
 - `desktop-polish.md`
@@ -40,3 +41,4 @@ Current runbooks:
 - `phase-8-lora-adapter-workflow.md`
 - `phase-8-release-gates.md`
 - `phase-8-product-acceptance.md`
+- `github-release-app-updates.md`

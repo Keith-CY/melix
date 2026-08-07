@@ -40,6 +40,8 @@ PIPE_CALL_RE = re.compile(
     r"^\s*call:(?P<name>[A-Za-z0-9_.:/-]+)\s*(?P<args>\{.*\}|\(\s*\))\s*$",
     re.DOTALL,
 )
+XML_PARAMETER_FUNCTION_OPEN_RE = re.compile(r"^<function=(?P<name>[A-Za-z0-9_.:/-]+)>")
+XML_PARAMETER_OPEN_RE = re.compile(r"<parameter=(?P<name>[A-Za-z0-9_.:/-]+)>")
 
 _TOOL_NAME_ALIASES = {
     "browse": "visit",
@@ -293,6 +295,9 @@ def parse_pipe_tool_body(body: str) -> dict[str, object] | None:
 def parse_xml_tool_body(body: str) -> dict[str, object] | None:
     if not body.startswith("<"):
         return None
+    parameter_payload = parse_xml_parameter_tool_body(body)
+    if parameter_payload is not None:
+        return parameter_payload
     xml_body = body
     if body.startswith("<name") or body.startswith("<tool_name"):
         xml_body = f"<tool_call>{body}</tool_call>"
@@ -320,6 +325,45 @@ def parse_xml_tool_body(body: str) -> dict[str, object] | None:
             return parse_tool_body(root.text)
         return {"name": name, "arguments": parse_xml_arguments(arguments_text)}
     return None
+
+
+def parse_xml_parameter_tool_body(body: str) -> dict[str, object] | None:
+    stripped = body.strip()
+    if stripped.startswith("<tool_call>") and stripped.endswith("</tool_call>"):
+        stripped = stripped[len("<tool_call>") : -len("</tool_call>")].strip()
+    function_match = XML_PARAMETER_FUNCTION_OPEN_RE.match(stripped)
+    if function_match is None:
+        return None
+    name = function_match.group("name")
+    index = function_match.end()
+    arguments: dict[str, object] = {}
+    decoder = json.JSONDecoder()
+    while True:
+        while index < len(stripped) and stripped[index].isspace():
+            index += 1
+        if stripped.startswith("</function>", index):
+            index += len("</function>")
+            return {"name": name, "arguments": arguments} if not stripped[index:].strip() else None
+        parameter_match = XML_PARAMETER_OPEN_RE.match(stripped, index)
+        if parameter_match is None:
+            return None
+        parameter_name = parameter_match.group("name")
+        if parameter_name in arguments:
+            return None
+        value_start = parameter_match.end()
+        while value_start < len(stripped) and stripped[value_start].isspace():
+            value_start += 1
+        try:
+            value, value_end = decoder.raw_decode(stripped, value_start)
+        except json.JSONDecodeError:
+            return None
+        index = value_end
+        while index < len(stripped) and stripped[index].isspace():
+            index += 1
+        if not stripped.startswith("</parameter>", index):
+            return None
+        arguments[parameter_name] = value
+        index += len("</parameter>")
 
 
 def parse_function_tool_body(body: str) -> dict[str, object] | None:

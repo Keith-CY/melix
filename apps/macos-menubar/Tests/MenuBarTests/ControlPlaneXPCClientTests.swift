@@ -1591,7 +1591,7 @@ private actor StreamingExecuteControlPlaneService: ControlPlaneExecuting {
     }
 }
 
-private actor XPCScriptedChatWorkerClient: WorkerRoutingClient {
+private actor XPCScriptedChatWorkerClient: WorkerRoutingClient, BackendHealthIdentifyingWorkerClientProtocol {
     private let events: [Melix_Worker_V1_ExecuteEvent]
 
     init(events: [Melix_Worker_V1_ExecuteEvent]) {
@@ -1600,6 +1600,13 @@ private actor XPCScriptedChatWorkerClient: WorkerRoutingClient {
 
     func canDispatchRequests() async -> Bool {
         true
+    }
+
+    func backendHealthIdentity() async throws -> Melix_Worker_V1_HandshakeResponse {
+        var response = Melix_Worker_V1_HandshakeResponse()
+        response.workerFamily = .text
+        response.workerInstanceID = "xpc-scripted-text-worker"
+        return response
     }
 
     func generate(

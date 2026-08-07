@@ -224,7 +224,10 @@ def _cleanup_training_failure_exception(exc: BaseException) -> dict[str, str]:
 def _retained_tensor_bytes_after_failure() -> int:
     try:
         import mlx.core as mx
-    except ModuleNotFoundError:
+    except ImportError:
+        # Covers both a missing package (ModuleNotFoundError) and an installed
+        # package whose native library fails to load (plain ImportError, e.g.
+        # libmlx.so on non-Metal hosts) — failure cleanup must never raise.
         return 0
     try:
         if hasattr(mx, "metal") and hasattr(mx.metal, "get_active_memory"):
