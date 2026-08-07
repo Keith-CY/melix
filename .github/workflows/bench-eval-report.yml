@@ -42,6 +42,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: head
 
+      - name: Select Melix Swift toolchain
+        uses: ./head/.github/actions/setup-melix-swift-toolchain
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"

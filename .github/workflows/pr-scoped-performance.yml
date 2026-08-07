@@ -114,6 +114,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: head
 
+      - name: Select Melix Swift toolchain
+        if: runner.os == 'macOS'
+        uses: ./head/.github/actions/setup-melix-swift-toolchain
+
       - name: Expose the exact base commit to head coverage gates
         run: |
           set -euo pipefail
