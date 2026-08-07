@@ -1,6 +1,6 @@
 # Melix Current Status
 
-_Last updated: 2026-07-31_
+_Last updated: 2026-08-04_
 
 ---
 
@@ -44,6 +44,21 @@ The original Phase 0–8 productization roadmap is **complete**. The codebase is
 - Fixture-backed agentic tool evidence can be reused across SFT trace replay,
   RL alignment trace rows, benchmark request rows, and evaluation sample JSONL
   artifacts
+
+### Embeddings Under Acceptance
+- An explicit local artifact-backed MLX implementation exists for the supported
+  absolute-position encoder subset of BERT and XLM-R artifacts.
+- Targeted tests cover single-forward batching, supported pooling, optional L2
+  normalization, snapshot-bound model/tokenizer identity, repeated source-path
+  ABA swaps, strict Sentence Transformers pipelines, tokenizer shape gates,
+  typed refusal, and worker load/request receipts.
+- Deterministic digest projection is restricted to the explicitly named
+  `deterministic-fixture-v1` development and test backend; legacy family-shaped
+  backend IDs are rejected.
+- This path is not yet production-shipped. Repository-wide Swift, Python, and
+  integration gates pass for the implementation, while pinned
+  production-checkpoint parity and the 20% measured-residency gate remain
+  required acceptance evidence.
 
 ### Native macOS App
 - Menubar status and quick access

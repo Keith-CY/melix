@@ -56,6 +56,7 @@ from worker.registry import (
 )
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError, AudioProcessorValidationError
 from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
+from worker.runtime.artifact_embedding_runtime import ArtifactEmbeddingError
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.deterministic_rerank_runtime import DeterministicRerankRuntime
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
@@ -193,6 +194,11 @@ class WorkerRuntimeService(runtime_pb2_grpc.RuntimeServiceServicer):
                     message=str(exc),
                     details=exc.details,
                 ),
+            )
+        except ArtifactEmbeddingError as exc:
+            return runtime_pb2.LoadModelResponse(
+                ok=False,
+                error=common_pb2.ErrorStatus(code=exc.code, message=str(exc)),
             )
         except Exception as exc:
             is_real_audio_backend = (

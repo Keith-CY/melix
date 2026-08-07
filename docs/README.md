@@ -36,6 +36,7 @@ Step-by-step operating procedures for specific workflows. Use these when you nee
 | [Agent UI Walkthrough](runbooks/agent-ui-walkthrough.md) | Browser-based walkthrough workflow for substantial UI/UX changes before App implementation |
 | [Local Stack](runbooks/phase-1-local-stack.md) | Runtime layout, environment exports, and alternate startup modes |
 | [Local Job Remediation](runbooks/local-job-remediation.md) | Log-driven local job diagnoses, bounded retry decisions, and operator-safe remediation receipts |
+| [Agent Tool Guardrail Diagnostics](runbooks/agent-tool-guardrail-diagnostics.md) | Deterministic live-loop fixtures, sanitized events, retry counters, and terminal-failure evidence |
 | [Benchmark, Matrix & LoRA](runbooks/benchmark-matrix-evaluation-and-lora.md) | Full operator guide: benchmarking, matrix runs, evaluation, and LoRA fine-tuning |
 | [Workflow Recipes And URI Inspection](runbooks/workflow-recipes.md) | Built-in workflow recipes, URI inspection, planning, and pipeline-backed apply |
 | [LoRA Adapter Workflow](runbooks/phase-8-lora-adapter-workflow.md) | Training, activating, publishing, and removing LoRA adapters |
@@ -81,6 +82,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 | [Remote Provider Desktop Chat](plans/2026-07-31-remote-provider-desktop-chat.md) | Native Chat binding, readiness, credential safety, packaging policy, and real-App acceptance for local and remote Provider targets |
 | [Remote Provider Generation Control Parity](plans/2026-07-31-remote-provider-generation-control-parity.md) | Direct Remote Provider passthrough for reasoning, sampling, and token-limit controls across the control plane and CLI |
 | [GitHub Release App Updates](plans/2026-08-01-github-release-app-updates.md) | Sparkle integration, independent EdDSA signing, packaging, release workflow, UI, and acceptance boundaries |
+| [Packaged App Launch And CI Reliability](plans/2026-08-03-packaged-app-launch-and-ci-reliability.md) | Hardened-runtime dynamic-code loading, Bash 3.2 package workflow portability, runtime launch acceptance, and scheduled Swift test synchronization |
 | [Gemma 4 Cross-Surface Chat Routing Repair](plans/2026-07-18-gemma4-cross-surface-chat-routing.md) | Shared Gemma 4 text companion resolution and real CLI, HTTP, and macOS Chat acceptance |
 | [Runtime-Aware Export And Serving Verification Plan](plans/2026-06-21-runtime-aware-export-and-serving-verification.md) | M3 export target manifests, layout, retention, post-export smoke policy, diagnostics, waiver semantics, and serving evidence |
 | [Export Artifact Layout And Retention Policy](plans/2026-06-24-export-artifact-layout-retention.md) | Runtime export target layout, retention reports, cleanup dry-run/apply behavior, and byte-accounting metrics |

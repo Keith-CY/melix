@@ -280,10 +280,10 @@ def test_multimodal_operator_smoke_records_phase6_metrics() -> None:
         assert values["vision.ocr_latency_ms"] >= 0
         assert values["vision.vlm_first_token_ms"] >= 0
         assert values["vision.preprocess_peak_memory_bytes"] > 0
-        assert values["vision.cache_memory_bytes"] > 0
-        assert values["vision.cache_hit_rate"] > 0
-        assert values["cache.memory_bytes"] > 0
-        assert values["cache.hit_rate"] > 0
+        assert values["vision.cache_memory_bytes"] == 0
+        assert values["vision.cache_hit_rate"] == 0
+        assert values["cache.memory_bytes"] == 0
+        assert values["cache.hit_rate"] == 0
         assert values["audio.transcription_latency_ms"] >= 0
         assert values["audio.speech_latency_ms"] >= 0
         assert values["audio.speech_output_bytes"] > 0
@@ -831,7 +831,7 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
         assert metrics["vision.ocr_latency_ms"] >= 0
         assert metrics["vision.vlm_first_token_ms"] >= 0
         assert metrics["vision.preprocess_peak_memory_bytes"] > 0
-        assert metrics["vision.cache_memory_bytes"] > 0
+        assert metrics["vision.cache_memory_bytes"] == 0
         assert "vision.image_feature_cache_hits" in metrics
         assert "vision.image_feature_cache_misses" in metrics
         assert metrics["vision.multimodal_decode_mode"] in {

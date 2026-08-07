@@ -1533,6 +1533,36 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.derived_from_model_id"] == "melix-dev-text")
     }
 
+    @Test("bootstrap worker preparation builds generic artifact embedding specs")
+    func bootstrapWorkerPreparationBuildsGenericArtifactEmbeddingSpecs() throws {
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "local-artifact-bert"
+        summary.kind = "embedding"
+        summary.maxContext = 512
+        summary.quantProfileID = "f16"
+        summary.routeClass = .workerRoutePythonEmbedding
+        summary.settings.ext["melix.model_path"] = "/tmp/models/local-artifact-bert"
+        summary.settings.ext["melix.model_revision"] = "sha256:model"
+        summary.settings.ext["melix.tokenizer_hash"] = "sha256:tokenizer"
+        summary.settings.ext["embedding_backend_id"] = "mlx-bert-v1"
+        summary.settings.ext["embedding_execution_kind"] = "artifact"
+        summary.settings.ext["embedding_dimensions"] = "768"
+        summary.settings.ext["embedding_vector_kind"] = "single_dense"
+        summary.settings.ext["embedding_input_modalities"] = "text"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelID == "local-artifact-bert")
+        #expect(spec.modelPath == "/tmp/models/local-artifact-bert")
+        #expect(spec.modelKind == "embedding")
+        #expect(spec.maxContext == 512)
+        #expect(spec.routeClass == .workerRoutePythonEmbedding)
+        #expect(spec.ext["embedding_backend_id"] == "mlx-bert-v1")
+        #expect(spec.ext["embedding_execution_kind"] == "artifact")
+        #expect(spec.ext["embedding_vector_kind"] == "single_dense")
+        #expect(spec.ext["embedding_input_modalities"] == "text")
+    }
+
     @Test("bootstrap worker preparation infers generic VLM context from nested text config")
     func bootstrapWorkerPreparationInfersGenericVLMContextFromNestedTextConfig() throws {
         let modelDirectory = try makeModelConfigDirectory(
@@ -1779,7 +1809,7 @@ struct PythonBridgeWorkerClientTests {
     @Test("bootstrap worker preparation carries embedding family metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesEmbeddingFamilyMetadataIntoWorkerModelSpecs() throws {
         var summary = ModelCatalog.devEmbeddingModel()
-        summary.settings.ext["embedding_backend_id"] = "bert-v1"
+        summary.settings.ext["embedding_backend_id"] = "deterministic-fixture-v1"
         summary.settings.ext["embedding_family_id"] = "mxbai-embed"
         summary.settings.ext["embedding_pooling_mode"] = "mean"
         summary.settings.ext["embedding_normalization"] = "l2"
@@ -1794,7 +1824,7 @@ struct PythonBridgeWorkerClientTests {
         let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
 
         #expect(spec.modelID == "melix-dev-embed")
-        #expect(spec.ext["embedding_backend_id"] == "bert-v1")
+        #expect(spec.ext["embedding_backend_id"] == "deterministic-fixture-v1")
         #expect(spec.ext["embedding_family_id"] == "mxbai-embed")
         #expect(spec.ext["embedding_pooling_mode"] == "mean")
         #expect(spec.ext["embedding_normalization"] == "l2")

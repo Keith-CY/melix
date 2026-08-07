@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -74,6 +76,31 @@ def _write_model_config(variant_dir: Path, payload: dict[str, object]) -> None:
 def _write_weight_index(variant_dir: Path, payload: dict[str, object]) -> None:
     variant_dir.mkdir(parents=True, exist_ok=True)
     (variant_dir / "model.safetensors.index.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def test_catalog_import_does_not_load_artifact_embedding_execution_runtime() -> None:
+    command = """
+import json
+import sys
+
+import worker.model_registry.catalog
+
+blocked = {
+    "worker.runtime.artifact_embedding_runtime",
+    "worker.runtime.mlx_executor",
+}
+print(json.dumps(sorted(blocked.intersection(sys.modules))))
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", command],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == []
 
 
 def _write_processor_config(variant_dir: Path, payload: dict[str, object]) -> None:
@@ -2259,7 +2286,7 @@ def test_dev_models_honor_configured_text_embedding_and_rerank_overrides() -> No
     assert text_model.ext["text_family_id"] == "llama"
     assert text_model.ext["melix.capability.route_kind"] == "python_text"
     assert embedding_model.ext["embedding_family_id"] == "xlmr"
-    assert embedding_model.ext["embedding_backend_id"] == "xlmr-v1"
+    assert embedding_model.ext["embedding_backend_id"] == "deterministic-fixture-v1"
     assert rerank_model.ext["rerank_yes_no_labels"] == "affirmative,negative"
 
 
