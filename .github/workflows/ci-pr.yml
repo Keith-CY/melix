@@ -75,7 +75,7 @@ jobs:
     if: needs.ci-scope.outputs.proto_should_run == 'true'
     needs:
       - ci-scope
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
 
     steps:
@@ -122,7 +122,7 @@ jobs:
     needs:
       - ci-scope
     name: swift-tests (${{ matrix.shard }})
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -249,7 +249,7 @@ jobs:
     if: needs.ci-scope.outputs.integration_should_run == 'true'
     needs:
       - ci-scope
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
 
     steps:

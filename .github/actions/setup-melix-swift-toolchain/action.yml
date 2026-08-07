@@ -9,7 +9,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Select Xcode 26.3 and verify Swift 6.3
+    - name: Select Xcode 26.5 and verify Swift 6.3
       id: select
       shell: bash
       run: |
@@ -20,7 +20,7 @@ runs:
           exit 1
         fi
 
-        xcode_version="26.3"
+        xcode_version="26.5"
         swift_version_prefix="6.3"
         developer_dir="/Applications/Xcode_${xcode_version}.app/Contents/Developer"
 
@@ -39,7 +39,7 @@ runs:
         fi
 
         printf 'DEVELOPER_DIR=%s\n' "$developer_dir" >> "$GITHUB_ENV"
-        printf 'cache_key=xcode-26-3-swift-6-3\n' >> "$GITHUB_OUTPUT"
+        printf 'cache_key=xcode-26-5-swift-6-3\n' >> "$GITHUB_OUTPUT"
 
         {
           printf '### Melix Swift toolchain\n\n'

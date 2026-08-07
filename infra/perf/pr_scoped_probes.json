@@ -2382,7 +2382,7 @@
   {
     "id": "backend-model-identity-boundary",
     "name": "Backend model identity request boundary",
-    "runner": "macos-15",
+    "runner": "macos-26",
     "watch_globs": [
       "packages/protocol/schema/worker/v1/common.proto",
       "packages/protocol/schema/worker/v1/inference.proto",
@@ -3506,7 +3506,7 @@
   {
     "id": "swift-cli-json-envelope-encoding",
     "name": "Swift CLI JSON envelope encoding",
-    "runner": "macos-15",
+    "runner": "macos-26",
     "watch_globs": [
       "Sources/MelixCLICore/MelixCLIJSON.swift",
       "tests/MelixCLITests/MelixCLIRunnerTests.swift"
@@ -6748,7 +6748,7 @@
     "id": "paged-kv-cache-ownership-memory",
     "name": "Paged KV cache ownership and paired memory",
     "description": "Verify real shared-block and request-private tensor ownership, post-prefill contiguous fallback, changed-line coverage, and the same-load paired memory acceptance artifact.",
-    "runner": "macos-15",
+    "runner": "macos-26",
     "watch_globs": [
       "services/mlx-text-worker-swift/Sources/Core/Runtime/PagedKVCache.swift",
       "services/mlx-text-worker-swift/Sources/Core/Runtime/SwiftMLXBackend.swift",
@@ -6909,7 +6909,7 @@
     "id": "same-cohort-batching-probe-evidence",
     "name": "Same-cohort batching probe evidence",
     "description": "Run the deterministic same-cohort Swift batching probe and expose separate admission cohort, worker decode batch, and model eval batch evidence as flat numeric metrics; scheduler_to_worker_batch_delta is the non-negative admission-to-worker execution gap.",
-    "runner": "macos-15",
+    "runner": "macos-26",
     "watch_globs": [
       "scripts/same_cohort_batching_probe.py",
       "tests/test_same_cohort_batching_probe.py",
@@ -7819,7 +7819,7 @@
   {
     "id": "artifact-embedding-batch",
     "name": "Artifact embedding one-forward batch throughput",
-    "runner": "macos-15",
+    "runner": "macos-26",
     "watch_globs": [
       "services/mlx-worker-python/worker/runtime/artifact_embedding_contract.py",
       "services/mlx-worker-python/worker/runtime/artifact_embedding_runtime.py",

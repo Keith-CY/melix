@@ -286,7 +286,7 @@ jobs:
       (github.event_name != 'schedule' || needs.detect-main-update.outputs.should_package == 'true') &&
       (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app')) &&
       (github.ref_type != 'tag' || needs.validate-release-tag.result == 'success')
-    runs-on: macos-15
+    runs-on: macos-26
     outputs:
       artifact_name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
       archive_name: ${{ steps.package-names.outputs.archive_name }}
@@ -734,7 +734,7 @@ jobs:
     needs:
       - validate-release-tag
       - package-app
-    runs-on: macos-15
+    runs-on: macos-26
     environment: github-release
     concurrency:
       group: melix-protected-github-release
