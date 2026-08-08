@@ -39,6 +39,10 @@ This slice is Python-only and is locally verifiable on Linux with focused pytest
 
 This follow-up keeps the same registered `dev-up-mlx-metal-dist-info-scandir` probe and narrows the change to `read_mlx_metal_dist_info_version()`. The scan loop binds the `mlx_metal-` prefix, `.dist-info` suffix, their lengths, and each `entry.name` once before the match/fallback checks. This reduces repeated attribute lookups and literal-length work while preserving metadata-first version resolution and directory-name fallback behavior.
 
+## Incremental Slice: Common Site-packages Ancestor First
+
+This follow-up keeps the registered `dev-up-mlx-metal-dist-info-scandir` probe and narrows the change to the common wheel layout `.../site-packages/mlx/lib/mlx.metallib`. The resolver now checks the site-packages ancestor first for that layout, avoiding extra scans of the nested `mlx/lib` and `mlx` directories when the sibling `mlx_metal-*.dist-info` directory is present. If the common-layout lookup does not find a version, the resolver falls back to the existing ancestor walk so non-standard layouts remain supported.
+
 ## Verification Commands
 
 ```text

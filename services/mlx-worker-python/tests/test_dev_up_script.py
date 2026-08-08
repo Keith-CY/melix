@@ -830,6 +830,26 @@ def test_read_mlx_metal_dist_info_version_ignores_empty_dist_info_version(tmp_pa
     assert dev_up.read_mlx_metal_dist_info_version(metallib_path) is None
 
 
+def test_read_mlx_metal_dist_info_version_checks_common_site_packages_first(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    site_packages = tmp_path / "site-packages"
+    metallib_path = write_mlx_metal_fixture(site_packages, "0.31.1")
+    scanned: list[Path] = []
+    original_scandir = dev_up.os.scandir
+
+    def tracked_scandir(path: Path):
+        scanned.append(Path(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(dev_up.os, "scandir", tracked_scandir)
+
+    assert dev_up.read_mlx_metal_dist_info_version(metallib_path) == "0.31.1"
+    assert scanned == [site_packages]
+
+
 def test_read_mlx_metal_dist_info_version_falls_back_when_metadata_read_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

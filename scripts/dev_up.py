@@ -490,45 +490,87 @@ def _read_dist_info_metadata_version(metadata_path: Path) -> str | None:
     return None
 
 
+def _read_mlx_metal_dist_info_version_from_ancestor(
+    ancestor: Path,
+    *,
+    dist_info_prefix: str,
+    dist_info_suffix: str,
+    dist_info_prefix_length: int,
+    dist_info_suffix_length: int,
+) -> str | None:
+    fallback_version: str | None = None
+    with os.scandir(ancestor) as entries:
+        for entry in entries:
+            entry_name = entry.name
+            if entry_name[:1] != "m":
+                continue
+            if not (
+                entry_name.startswith(dist_info_prefix)
+                and entry_name.endswith(dist_info_suffix)
+                and entry.is_dir(follow_symlinks=False)
+            ):
+                continue
+
+            metadata_path = Path(entry.path) / "METADATA"
+            try:
+                version = _read_dist_info_metadata_version(metadata_path)
+            except OSError:
+                version = None
+            if version is not None:
+                return version
+
+            if fallback_version is None:
+                fallback_candidate = entry_name[
+                    dist_info_prefix_length:-dist_info_suffix_length
+                ]
+                if fallback_candidate:
+                    fallback_version = fallback_candidate
+    return fallback_version
+
+
+def _common_mlx_metal_site_packages_ancestor(resolved_metallib_path: Path) -> Path | None:
+    parts = resolved_metallib_path.parts
+    if len(parts) >= 4 and parts[-3:] == ("mlx", "lib", "mlx.metallib"):
+        return resolved_metallib_path.parents[2]
+    return None
+
+
 def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
     dist_info_prefix = "mlx_metal-"
     dist_info_suffix = ".dist-info"
     dist_info_prefix_length = len(dist_info_prefix)
     dist_info_suffix_length = len(dist_info_suffix)
-    for ancestor in metallib_path.resolve().parents:
-        fallback_version: str | None = None
+    resolved_metallib_path = metallib_path.resolve()
+    common_site_packages = _common_mlx_metal_site_packages_ancestor(resolved_metallib_path)
+    if common_site_packages is not None:
         try:
-            with os.scandir(ancestor) as entries:
-                for entry in entries:
-                    entry_name = entry.name
-                    if entry_name[:1] != "m":
-                        continue
-                    if not (
-                        entry_name.startswith(dist_info_prefix)
-                        and entry_name.endswith(dist_info_suffix)
-                        and entry.is_dir(follow_symlinks=False)
-                    ):
-                        continue
+            version = _read_mlx_metal_dist_info_version_from_ancestor(
+                common_site_packages,
+                dist_info_prefix=dist_info_prefix,
+                dist_info_suffix=dist_info_suffix,
+                dist_info_prefix_length=dist_info_prefix_length,
+                dist_info_suffix_length=dist_info_suffix_length,
+            )
+        except OSError:
+            version = None
+        if version is not None:
+            return version
 
-                    metadata_path = Path(entry.path) / "METADATA"
-                    try:
-                        version = _read_dist_info_metadata_version(metadata_path)
-                    except OSError:
-                        version = None
-                    if version is not None:
-                        return version
-
-                    if fallback_version is None:
-                        fallback_candidate = entry_name[
-                            dist_info_prefix_length:-dist_info_suffix_length
-                        ]
-                        if fallback_candidate:
-                            fallback_version = fallback_candidate
+    for ancestor in resolved_metallib_path.parents:
+        if ancestor == common_site_packages:
+            continue
+        try:
+            version = _read_mlx_metal_dist_info_version_from_ancestor(
+                ancestor,
+                dist_info_prefix=dist_info_prefix,
+                dist_info_suffix=dist_info_suffix,
+                dist_info_prefix_length=dist_info_prefix_length,
+                dist_info_suffix_length=dist_info_suffix_length,
+            )
         except OSError:
             continue
-
-        if fallback_version is not None:
-            return fallback_version
+        if version is not None:
+            return version
     return None
 
 
