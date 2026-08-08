@@ -1608,13 +1608,33 @@ def _artifact_embedding_module_paths(
             return None
         return pooling_path, normalize_path
 
-    pooling_paths = tuple(sorted(model_dir.glob("*_Pooling/config.json")))
-    normalize_paths = tuple(sorted(model_dir.glob("*_Normalize/config.json")))
-    if any(
-        not _artifact_embedding_regular_file(model_dir, path)
-        for path in (*pooling_paths, *normalize_paths)
-    ):
+    pooling_paths: list[Path] = []
+    normalize_paths: list[Path] = []
+    try:
+        with os.scandir(os.fspath(model_dir)) as entries:
+            for entry in entries:
+                entry_name = entry.name
+                if not (
+                    entry_name.endswith("_Pooling")
+                    or entry_name.endswith("_Normalize")
+                ):
+                    continue
+                try:
+                    if not entry.is_dir():
+                        continue
+                except OSError:
+                    return None
+                config_path = Path(entry.path) / "config.json"
+                if not _artifact_embedding_regular_file(model_dir, config_path):
+                    return None
+                if entry_name.endswith("_Pooling"):
+                    pooling_paths.append(config_path)
+                else:
+                    normalize_paths.append(config_path)
+    except OSError:
         return None
+    pooling_paths.sort()
+    normalize_paths.sort()
     if len(pooling_paths) != 1 or len(normalize_paths) > 1:
         return None
     return pooling_paths[0], normalize_paths[0] if normalize_paths else None

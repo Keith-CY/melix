@@ -185,6 +185,79 @@ def test_catalog_resolves_explicit_and_fallback_sentence_transformer_modules(
     assert model_catalog._artifact_embedding_module_paths(tmp_path) is None
 
 
+def test_catalog_fallback_sentence_transformer_modules_uses_single_scandir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pooling_path = _write_pooling(tmp_path)
+    normalize_path = tmp_path / "2_Normalize" / "config.json"
+    normalize_path.parent.mkdir()
+    _write_json(normalize_path, {})
+    (tmp_path / "ignore_Pooling.txt").write_text("not a directory", encoding="utf-8")
+
+    original_scandir = model_catalog.os.scandir
+    scandir_calls = 0
+
+    def counted_scandir(path: str):
+        nonlocal scandir_calls
+        if path == str(tmp_path):
+            scandir_calls += 1
+        return original_scandir(path)
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        if self == tmp_path:
+            raise AssertionError(
+                f"fallback sentence-transformer module discovery should use os.scandir, not Path.glob({pattern!r})"
+            )
+        return []
+
+    monkeypatch.setattr(model_catalog.os, "scandir", counted_scandir)
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert model_catalog._artifact_embedding_module_paths(tmp_path) == (
+        pooling_path,
+        normalize_path,
+    )
+    assert scandir_calls == 1
+
+
+def test_catalog_fallback_sentence_transformer_modules_rejects_bad_scandir_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bad_pooling_dir = tmp_path / "1_Pooling"
+    bad_pooling_dir.mkdir()
+    (tmp_path / "2_Normalize").write_text("not a directory", encoding="utf-8")
+    assert model_catalog._artifact_embedding_module_paths(tmp_path) is None
+
+    original_scandir = model_catalog.os.scandir
+
+    def raise_scandir(path: str):
+        if path == str(tmp_path):
+            raise OSError("scan failed")
+        return original_scandir(path)
+
+    monkeypatch.setattr(model_catalog.os, "scandir", raise_scandir)
+    assert model_catalog._artifact_embedding_module_paths(tmp_path) is None
+
+    class RaisingDirEntry:
+        name = "2_Normalize"
+        path = str(tmp_path / "2_Normalize")
+
+        def is_dir(self) -> bool:
+            raise OSError("stat failed")
+
+    class FakeScandir:
+        def __enter__(self):
+            return iter((RaisingDirEntry(),))
+
+        def __exit__(self, exc_type, exc, traceback) -> bool:
+            return False
+
+    monkeypatch.setattr(model_catalog.os, "scandir", lambda _path: FakeScandir())
+    assert model_catalog._artifact_embedding_module_paths(tmp_path) is None
+
+
 def test_catalog_regular_file_guard_rejects_escape_missing_and_directory(
     tmp_path: Path,
 ) -> None:
