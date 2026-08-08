@@ -500,8 +500,10 @@ def _iter_limited_preview_dataset_files(directory: Path, *, limit: int) -> Itera
     emitted = 0
     previous_name = ""
     make_path = Path
+    first_records = _first_supported_scan_entry_records
+    iter_limited = _iter_limited_preview_dataset_files
     while emitted < limit:
-        next_entries = _first_supported_scan_entry_records(
+        next_entries = first_records(
             directory,
             after=previous_name,
             limit=limit - emitted,
@@ -512,7 +514,7 @@ def _iter_limited_preview_dataset_files(directory: Path, *, limit: int) -> Itera
             previous_name = name
             entry_path = make_path(path)
             if is_directory:
-                for nested_path in _iter_limited_preview_dataset_files(entry_path, limit=limit - emitted):
+                for nested_path in iter_limited(entry_path, limit=limit - emitted):
                     yield nested_path
                     emitted += 1
                     if emitted >= limit:
