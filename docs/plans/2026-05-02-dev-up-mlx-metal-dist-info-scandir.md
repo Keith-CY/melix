@@ -43,6 +43,10 @@ This follow-up keeps the same registered `dev-up-mlx-metal-dist-info-scandir` pr
 
 This follow-up keeps the registered `dev-up-mlx-metal-dist-info-scandir` probe and narrows the change to the common wheel layout `.../site-packages/mlx/lib/mlx.metallib`. The resolver now checks the site-packages ancestor first for that layout, avoiding extra scans of the nested `mlx/lib` and `mlx` directories when the sibling `mlx_metal-*.dist-info` directory is present. If the common-layout lookup does not find a version, the resolver falls back to the existing ancestor walk so non-standard layouts remain supported.
 
+## Incremental Slice: Metadata Hit Stat Elision
+
+This follow-up keeps the registered `dev-up-mlx-metal-dist-info-scandir` probe and narrows the change to `_read_mlx_metal_dist_info_version_from_ancestor()`. Matching `mlx_metal-*.dist-info` entries now attempt the streamed `METADATA` read before calling `DirEntry.is_dir()`. Normal installed-wheel layouts with a valid metadata version avoid an extra directory stat, while missing/unreadable metadata still validates directory-ness before using the directory-name fallback.
+
 ## Verification Commands
 
 ```text

@@ -507,7 +507,6 @@ def _read_mlx_metal_dist_info_version_from_ancestor(
             if not (
                 entry_name.startswith(dist_info_prefix)
                 and entry_name.endswith(dist_info_suffix)
-                and entry.is_dir(follow_symlinks=False)
             ):
                 continue
 
@@ -519,7 +518,7 @@ def _read_mlx_metal_dist_info_version_from_ancestor(
             if version is not None:
                 return version
 
-            if fallback_version is None:
+            if fallback_version is None and entry.is_dir(follow_symlinks=False):
                 fallback_candidate = entry_name[
                     dist_info_prefix_length:-dist_info_suffix_length
                 ]
