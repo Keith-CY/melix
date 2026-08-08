@@ -31,3 +31,11 @@ M9 policy workload.
 Run the registered focused test command, changed-scope coverage command, and
 registered probe locally on Linux before opening the PR. CI remains the source
 of truth for the PR-scoped registered probe report.
+
+## 2026-08-08 Follow-up Slice
+
+This follow-up keeps the same `_evaluate_section_metrics_with_counts` scope and
+registered `release-gates-m9-failure-count-single-pass` probe. It defers the
+`max` threshold lookup until after the `min` threshold branch has completed,
+preserving the existing behavior for rules that define both bounds while keeping
+the common M9 min-only workload on the lower-overhead path for longer.
