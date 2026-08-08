@@ -850,6 +850,34 @@ def test_read_mlx_metal_dist_info_version_checks_common_site_packages_first(
     assert scanned == [site_packages]
 
 
+def test_read_mlx_metal_dist_info_version_skips_is_dir_when_metadata_has_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dev_up = load_dev_up_module()
+    site_packages = tmp_path / "site-packages"
+    metallib_path = write_mlx_metal_fixture(site_packages, "0.31.1")
+    dist_info_path = site_packages / "mlx_metal-0.31.1.dist-info"
+
+    class FakeEntry:
+        name = dist_info_path.name
+        path = os.fspath(dist_info_path)
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:  # pragma: no cover - regression sentinel
+            raise AssertionError("metadata hits should not stat dist-info directories")
+
+    class FakeScandir:
+        def __enter__(self):
+            return iter((FakeEntry(),))
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+    monkeypatch.setattr(dev_up.os, "scandir", lambda path: FakeScandir())
+
+    assert dev_up.read_mlx_metal_dist_info_version(metallib_path) == "0.31.1"
+
+
 def test_read_mlx_metal_dist_info_version_falls_back_when_metadata_read_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
