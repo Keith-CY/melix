@@ -19,6 +19,8 @@ _IMAGE_MIME_TYPES = {
     "webp": "image/webp",
 }
 _SUPPORTED_IMAGE_FORMATS = frozenset((*_IMAGE_MIME_TYPES, "jpg"))
+_ASCII_NEWLINE = b"\n"
+_ASCII_VARIANT_TOKENS = tuple(str(index).encode("ascii") for index in range(256))
 
 
 class ImageGenerationCancelled(RuntimeError):
@@ -93,7 +95,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
                 raise ImageGenerationCancelled("Image generation was canceled.")
 
             sleep_image("image")
-            payload = render_payload_header + str(index).encode("ascii") + b"\n"
+            payload = render_payload_header + _ascii_variant_token(index) + _ASCII_NEWLINE
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_started = monotonic()
             artifact_path.write_bytes(payload)
@@ -249,7 +251,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
                 raise ImageGenerationCancelled("Image edit was canceled.")
 
             sleep_image("image")
-            payload = render_edit_payload_prefix + str(index).encode("ascii") + render_edit_payload_suffix
+            payload = render_edit_payload_prefix + _ascii_variant_token(index) + render_edit_payload_suffix
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_publish_ms += write_bytes(artifact_path, payload, monotonic=monotonic)
             payload_byte_length = len(payload)
@@ -482,3 +484,9 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
             f"MASK_SHA={mask_digest}\n"
         ).encode("utf-8")
         return b"\x89PNG\r\n\x1a\n" + payload
+
+
+def _ascii_variant_token(index: int) -> bytes:
+    if 0 <= index < len(_ASCII_VARIANT_TOKENS):
+        return _ASCII_VARIANT_TOKENS[index]
+    return str(index).encode("ascii")
