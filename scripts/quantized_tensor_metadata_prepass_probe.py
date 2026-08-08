@@ -273,6 +273,12 @@ def run_probe() -> dict[str, float]:
     if metadata_decision_count != materialized_decision_count:
         raise SystemExit("metadata quantized decisions differ from materialized weights")
 
+    cache_clear = getattr(_native_multimodal_high_precision_module, "cache_clear", None)
+    if cache_clear is not None:
+        cache_clear()
+    for prefix in high_precision_prefixes:
+        _native_multimodal_high_precision_module(prefix)
+
     high_precision_ms, high_precision_peaks, high_precision_decision_count = _measure(
         lambda: sum(
             int(_native_multimodal_high_precision_module(prefix))
