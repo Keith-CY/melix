@@ -15,6 +15,13 @@ mode values return the cached default policy before string and enum type checks.
 This preserves the existing fallback/default semantics while reducing overhead
 on the no-op probe-policy path used when a caller passes an absent mode value.
 
+## 2026-08-08 follow-up: minimal-default direct return
+
+The follow-up slice keeps the top-level `None` guard and adds the same
+minimal-default singleton shortcut used by the empty-string fast path. This avoids
+a default-mode dictionary lookup for the common `ProbePolicy.from_value(None)`
+call while preserving non-minimal default-mode fallback semantics.
+
 ## Verification
 
 - Run the registered focused probe-policy tests.
