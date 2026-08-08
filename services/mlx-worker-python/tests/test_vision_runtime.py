@@ -412,6 +412,13 @@ def test_ocr_single_image_token_count_reuses_same_request_cache(
     )
     runtime = DeterministicOCRRuntime()
 
+    assert DeterministicOCRRuntime.__slots__ == (
+        "_last_probe",
+        "_last_single_prompt_input_bytes",
+        "_last_single_prompt_request",
+        "_last_single_prompt_text",
+        "_last_single_prompt_token_count",
+    )
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
 
