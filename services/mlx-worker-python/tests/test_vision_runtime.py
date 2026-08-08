@@ -1316,6 +1316,33 @@ def test_vision_family_prompt_token_count_matches_split_semantics() -> None:
     )
 
 
+def test_vision_family_prompt_token_count_avoids_split_list_materialization() -> None:
+    class SplitTrackingPrompt(str):
+        split_calls = 0
+
+        def split(  # pragma: no cover - regression guard only
+            self, sep: str | None = None, maxsplit: SupportsIndex = -1
+        ) -> list[str]:
+            type(self).split_calls += 1
+            return super().split(sep, maxsplit)
+
+    SplitTrackingPrompt.split_calls = 0
+    prompt_text = SplitTrackingPrompt("  alpha beta\tgamma\n\nΔelta  ")
+    family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
+    request = PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+    )
+
+    assert family_config.prompt_token_count(request) == 4 + family_config.prompt_token_bias
+    assert SplitTrackingPrompt.split_calls == 0
+
+
 def test_vision_family_prompt_token_count_reuses_cached_prompt_scan() -> None:
     vision_family_adapters_module._whitespace_token_count.cache_clear()
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
