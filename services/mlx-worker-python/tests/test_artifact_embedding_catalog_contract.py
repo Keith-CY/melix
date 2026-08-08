@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -385,6 +386,67 @@ def test_catalog_requires_loader_compatible_embedding_files(
         )
         is None
     )
+
+
+def test_catalog_embedding_weight_paths_use_single_scandir_without_path_glob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _embedding_config()
+    _write_embedding_files(tmp_path, config)
+    _write_pooling(tmp_path)
+    _write_json(tmp_path / "modules.json", _modules())
+    (tmp_path / "notes.safetensors.txt").write_text("ignored", encoding="utf-8")
+
+    original_scandir = model_catalog.os.scandir
+    scandir_calls = 0
+
+    def counted_scandir(path: str):
+        nonlocal scandir_calls
+        if path == os.fspath(tmp_path):
+            scandir_calls += 1
+        return original_scandir(path)
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        if self == tmp_path:
+            raise AssertionError(
+                f"artifact embedding weight discovery should use os.scandir, not Path.glob({pattern!r})"
+            )
+        return []
+
+    monkeypatch.setattr(model_catalog.os, "scandir", counted_scandir)
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert model_catalog._artifact_embedding_metadata(
+        tmp_path,
+        config,
+        json_cache={},
+    ) is not None
+    assert scandir_calls == 1
+
+
+def test_catalog_embedding_weight_paths_treat_scandir_error_as_missing_weights(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _embedding_config()
+    _write_embedding_files(tmp_path, config)
+    _write_pooling(tmp_path)
+
+    original_scandir = model_catalog.os.scandir
+
+    def raise_scandir(path: str):
+        if path == os.fspath(tmp_path):
+            raise OSError("scan failed")
+        return original_scandir(path)
+
+    monkeypatch.setattr(model_catalog.os, "scandir", raise_scandir)
+
+    assert model_catalog._artifact_embedding_metadata(
+        tmp_path,
+        config,
+        json_cache={},
+    ) is None
 
 
 @pytest.mark.parametrize(

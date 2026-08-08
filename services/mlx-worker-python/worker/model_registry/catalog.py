@@ -1656,6 +1656,19 @@ def _artifact_embedding_regular_file(model_dir: Path, path: Path) -> bool:
         return False
 
 
+def _artifact_embedding_weight_paths(model_dir: Path) -> tuple[Path, ...]:
+    weight_paths: list[Path] = []
+    try:
+        with os.scandir(os.fspath(model_dir)) as entries:
+            for entry in entries:
+                if entry.name.endswith(".safetensors"):
+                    weight_paths.append(Path(entry.path))
+    except OSError:
+        return ()
+    weight_paths.sort()
+    return tuple(weight_paths)
+
+
 def _artifact_embedding_metadata(
     model_dir: Path,
     config_payload: Mapping[str, object] | None,
@@ -1696,7 +1709,7 @@ def _artifact_embedding_metadata(
     if input_modalities != {"text"} or vector_kind != "single_dense":
         return None
 
-    weight_paths = tuple(sorted(model_dir.glob("*.safetensors")))
+    weight_paths = _artifact_embedding_weight_paths(model_dir)
     tokenizer_paths = tuple(
         path
         for filename in _ARTIFACT_EMBEDDING_TOKENIZER_FILENAMES
