@@ -720,6 +720,7 @@ def test_list_records_and_transition_do_not_observe_mutated_returned_parameters(
     persisted = json.loads((queue_root / "queue-1.json").read_text(encoding="utf-8"))
 
     assert first_read[0].parameters == {"sample_size": "32", "batch_factor": "4"}
+    assert first_read[0].parameters is not second_read[0].parameters
     assert second_read[0].parameters == {"sample_size": "32"}
     assert transitioned.parameters == {"sample_size": "32"}
     assert persisted["parameters"] == {"sample_size": "32"}
