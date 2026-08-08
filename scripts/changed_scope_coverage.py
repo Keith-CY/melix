@@ -96,7 +96,6 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
     header_prefix_len = len(header_prefix)
     header_separator_len = len(header_separator)
     hunk_new_range_marker = b" +"
-    parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit_bytes
     bytes_find = bytes.find
     bytes_startswith = bytes.startswith
     ascii_backslash = _ASCII_BACKSLASH
@@ -104,6 +103,10 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
     ascii_minus = _ASCII_MINUS
     ascii_at = _ASCII_AT
     ascii_lower_d = _ASCII_LOWER_D
+    ascii_zero = _ASCII_ZERO
+    ascii_nine = _ASCII_NINE
+    ascii_comma = _ASCII_COMMA
+    ascii_space = _ASCII_SPACE
     add_changed_line = None
     new_line: int | None = None
     diff_bytes = diff_text if isinstance(diff_text, bytes) else diff_text.encode()
@@ -126,7 +129,23 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
             if new_range_index < 0:
                 new_line = None
                 continue
-            new_line = parse_hunk_new_start_from_digit(line, new_range_index + 2)
+            digit_index = new_range_index + 2
+            parsed_new_line = 0
+            index = digit_index
+            line_length = len(line)
+            while index < line_length:
+                character_code = line[index]
+                if ascii_zero <= character_code <= ascii_nine:
+                    parsed_new_line = parsed_new_line * 10 + (character_code - ascii_zero)
+                    index += 1
+                    continue
+                if character_code == ascii_comma or character_code == ascii_space:
+                    new_line = parsed_new_line if index > digit_index else None
+                    break
+                new_line = None
+                break
+            else:
+                new_line = None
             continue
         if add_changed_line is None or new_line is None:
             continue
