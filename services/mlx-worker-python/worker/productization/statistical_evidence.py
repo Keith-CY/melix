@@ -266,13 +266,16 @@ def _interval_payload(
     iterations: int | None = None,
     seed: int | None = None,
 ) -> dict[str, object]:
+    rounded = _rounded
+    rounded_lower = rounded(lower_bound)
+    rounded_upper = rounded(upper_bound)
     payload = {
         "method": method,
         "confidence_level": float(confidence_level),
-        "lower_bound": _rounded(lower_bound),
-        "upper_bound": _rounded(upper_bound),
+        "lower_bound": rounded_lower,
+        "upper_bound": rounded_upper,
     }
-    payload["crosses_zero"] = payload["lower_bound"] <= 0.0 <= payload["upper_bound"]
+    payload["crosses_zero"] = rounded_lower <= 0.0 <= rounded_upper
     if iterations is not None:
         payload["iterations"] = iterations
     if seed is not None:
