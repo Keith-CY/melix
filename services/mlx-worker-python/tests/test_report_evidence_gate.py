@@ -421,6 +421,14 @@ def test_report_evidence_gate_target_field_preserves_stringified_presence() -> N
     )
 
 
+def test_report_evidence_gate_has_text_exact_string_fast_path_preserves_whitespace_semantics() -> None:
+    assert report_evidence_gate_module._has_text("adapter-a")
+    assert report_evidence_gate_module._has_text(" adapter-a")
+    assert report_evidence_gate_module._has_text("adapter-a ")
+    assert not report_evidence_gate_module._has_text("")
+    assert not report_evidence_gate_module._has_text("   ")
+
+
 def test_report_evidence_gate_target_field_preserves_string_subclass_strip() -> None:
     class BlankWhenStripped(str):
         def strip(self, chars: str | None = None) -> str:  # pragma: no cover - regression guard

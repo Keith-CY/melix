@@ -271,6 +271,8 @@ def _release_matrix_rows(
 
 def _has_text(value: object) -> bool:
     """True when a target field carries non-whitespace text."""
+    if type(value) is str:
+        return bool(value) and not value.isspace()
     text = value if isinstance(value, str) else str(value)
     return bool(text.strip())
 
