@@ -3433,6 +3433,17 @@
         "key": "module_path_scandir_calls_mean",
         "unit": "calls",
         "direction": "informational"
+      },
+      {
+        "key": "artifact_weight_glob_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "artifact_weight_scandir_calls_mean",
+        "unit": "calls",
+        "direction": "informational"
       }
     ]
   },
