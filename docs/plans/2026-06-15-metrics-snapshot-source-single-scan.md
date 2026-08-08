@@ -107,6 +107,15 @@ source names are now mapped to compact integer indexes before the directory scan
 so the per-entry path updates use list indexing instead of repeated source-name
 dictionary get/set operations.
 
+## 2026-08-08 follow-up slice: reuse DirEntry stat for type and mtime
+
+This Python-only follow-up keeps the same registered
+`melix-metrics-snapshot-runtime-scandir` probe and narrows to the matching-entry
+metadata path in `discover_latest_metrics_paths(...)`. Runtime metrics discovery
+now calls `DirEntry.stat()` once for matching candidates and reuses that stat
+result for both regular-file validation and mtime comparison instead of calling
+`DirEntry.is_file()` and `DirEntry.stat()` separately.
+
 The behavior contract remains unchanged: exact, prefix/suffix, empty-prefix, and
 multi-wildcard runtime pattern matches still select the newest regular file per
 source; configured sources still bypass runtime scanning; and only the final

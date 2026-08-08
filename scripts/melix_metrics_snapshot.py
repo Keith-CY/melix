@@ -6,6 +6,7 @@ import argparse
 import fnmatch
 import json
 import os
+import stat
 import sys
 import time
 from dataclasses import dataclass
@@ -147,9 +148,10 @@ def discover_latest_metrics_paths(runtime_dir: Path | None, source_names: tuple[
                             matched_source_indexes.append(source_index)
                 if matched_source_index is None:
                     continue
-                if not entry.is_file():
+                entry_stat = entry.stat()
+                if not stat.S_ISREG(entry_stat.st_mode):
                     continue
-                mtime = entry.stat().st_mtime
+                mtime = entry_stat.st_mtime
                 if matched_source_indexes is None:
                     latest_mtime = latest_mtimes[matched_source_index]
                     if latest_mtime is None or mtime > latest_mtime:
