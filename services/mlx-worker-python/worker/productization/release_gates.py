@@ -2208,7 +2208,6 @@ def _evaluate_section_metrics_with_counts(
             continue
         numeric = float_(value)
         minimum = rule.get("min")
-        maximum = rule.get("max")
         if minimum is not None:
             minimum_float = float_(minimum)
             if numeric < minimum_float:
@@ -2216,6 +2215,7 @@ def _evaluate_section_metrics_with_counts(
                     f"{prefix}{name}={numeric:.2f} fell below minimum {minimum_float:.2f}"
                 )
                 failed_threshold_count += 1
+        maximum = rule.get("max")
         if maximum is not None:
             maximum_float = float_(maximum)
             if numeric > maximum_float:
