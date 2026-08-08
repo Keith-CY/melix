@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -247,6 +248,7 @@ def native_multimodal_quantization_preserves_precision(
     )
 
 
+@lru_cache(maxsize=4096)
 def _native_multimodal_high_precision_module(prefix: str) -> bool:
     if (
         "vision" not in prefix
