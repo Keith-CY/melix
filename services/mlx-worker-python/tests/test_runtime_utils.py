@@ -46,7 +46,12 @@ def test_callable_kwarg_signature_caches_structured_lookup(monkeypatch: pytest.M
     assert capabilities.accepts_var_keyword is False
     assert signature_calls == 1
 
+    accepts_cache = runtime_utils._callable_accepts_kwarg_cached.cache_info()
+    assert accepts_cache.misses == 2
+    assert accepts_cache.hits == 1
+
     runtime_utils.clear_callable_kwarg_signature_cache()
+    assert runtime_utils._callable_accepts_kwarg_cached.cache_info().currsize == 0
 
 
 def test_callable_cache_target_fast_paths_plain_functions() -> None:

@@ -16,11 +16,12 @@ Inline the `CallableKwargSignature` membership checks used by
 lookup remains unchanged; the hot path avoids an additional bound method call on
 every keyword acceptance check.
 
-This follow-up slice keeps the same registered probe and narrows the cached
-plain-function path further by passing the `skip_first_parameter` flag
-positionally instead of as a keyword-only argument. It also binds
-`inspect.Parameter` kind constants locally while constructing uncached signatures
-so cold cache fills do not repeat module-attribute lookups.
+This follow-up slice keeps the same registered probe and caches the final
+`callable_accepts_kwarg` boolean result per normalized callable target and
+keyword. The signature cache still owns introspection, while repeated hot-path
+acceptance checks avoid re-reading the cached signature object and doing the
+same membership test for keywords that were already observed. Clearing the
+signature cache also clears the derived acceptance-result cache.
 
 ## Verification Plan
 
