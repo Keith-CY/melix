@@ -429,6 +429,8 @@ def _probe_phase_duration_key(row: dict[str, object]) -> float:
     from the top five rather than ranking last with the other unusable values.
     """
     duration = row.get("duration_ms")
+    if type(duration) is float:
+        return duration
     if isinstance(duration, bool) or not isinstance(duration, (float, int, str)):
         return 0.0
     return float(duration or 0.0)
