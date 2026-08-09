@@ -37,6 +37,16 @@ before the rarer lowercase/mixed-case alternatives. Behavior remains unchanged
 for all four case combinations; the slice only reduces average failed membership
 scans before the direct size-hint parser runs on common README metadata.
 
+## 2026-08 exact card-label span follow-up
+
+This follow-up Python-only slice stays within
+`worker.model_ops.hub_catalog._direct_card_size_hint_from_text()` and the same
+registered `hub-catalog-size-hint-regex-precompile` probe. Exact `MODEL SIZE:`
+/ `MODEL SIZE|` / `Model size: ` card metadata labels now parse the numeric span
+in the original string instead of slicing the tail and re-entering the generic
+substring parser. Behavior remains unchanged for exact labels and the generic
+fallback remains in place for less common label shapes.
+
 ## Implementation plan
 
 1. Keep the regex fallback and the direct uppercase pipe marker path intact.
@@ -46,6 +56,8 @@ scans before the direct size-hint parser runs on common README metadata.
 4. Run the registered focused tests, changed-scope coverage, and local registered
    probe on Linux.
 5. Use GitHub Actions PR-scoped performance as the merge gate.
+6. For the 2026-08 follow-up, add a regression test proving exact card labels use
+   span parsing without calling the substring parser.
 
 ## Success criteria
 
