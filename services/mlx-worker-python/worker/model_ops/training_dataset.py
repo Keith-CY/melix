@@ -40,6 +40,10 @@ _CHAT_MEDIA_TOKEN_HINT_FIELDS = (
     "video_token_count",
     "audio_token_count",
 )
+_CANONICAL_SAMPLE_JSON_ENCODE = json.JSONEncoder(
+    sort_keys=True,
+    ensure_ascii=False,
+).encode
 
 HFDatasetFetcher = Callable[[str, dict[str, str]], dict[str, Any]]
 
@@ -2624,12 +2628,10 @@ def _canonical_sample_key(sample: dict[str, Any]) -> str:
 def _canonical_sample_digest(
     sample: dict[str, Any],
     *,
-    _json_dumps=json.dumps,
+    _json_encode=_CANONICAL_SAMPLE_JSON_ENCODE,
     _sha256=hashlib.sha256,
 ) -> bytes:
-    return _sha256(
-        _json_dumps(sample, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).digest()
+    return _sha256(_json_encode(sample).encode("utf-8")).digest()
 
 
 def _whitespace_token_count(text: str) -> int:
