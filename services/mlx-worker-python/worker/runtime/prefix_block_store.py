@@ -437,13 +437,9 @@ class ColdPrefixStore:
 
 
 def _tensor_nbytes(tensor: Any, get_attr: Any = getattr) -> Any:
-    try:
-        nbytes = tensor.nbytes
-    except AttributeError:
-        pass
-    else:
-        if nbytes is not None:
-            return nbytes
+    nbytes = get_attr(tensor, "nbytes", None)
+    if nbytes is not None:
+        return nbytes
     size = get_attr(tensor, "size", None)
     if size is None:
         return 0
