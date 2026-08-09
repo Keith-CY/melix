@@ -100,3 +100,19 @@ semantics for `.safetensors`, `.npz`, `.bin`, and `.gguf` names.
 
 Validation remains the focused runtime-utils pytest selection, changed-scope
 coverage, and the local and CI `runtime-utils-top-level-weight-streaming` probe.
+
+## 2026-08-09 indexed JSON bytes slice
+
+This follow-up Python slice keeps the same registered runtime resident-byte
+probe and narrows only `_indexed_safetensors_shard_bytes(...)`. Indexed
+`model.safetensors.index.json` payloads are now fed to `json.loads(...)` from
+`Path.read_bytes()` instead of decoding through `Path.read_text(...)` first, and
+the indexed shard loop reuses local bindings for the duplicate set insertion,
+relative-path join, path separator, and weight-size helper. Missing-index
+preflight, malformed JSON fallback, duplicate shard suppression,
+relative/absolute shard resolution, and flat-bundle scanning semantics remain
+unchanged.
+
+Validation remains the focused runtime-utils pytest selection, changed-scope
+coverage, and the local plus CI `runtime-utils-top-level-weight-streaming` probe;
+the indexed metrics are the primary performance signal for this slice.
