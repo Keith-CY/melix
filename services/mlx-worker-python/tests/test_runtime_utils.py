@@ -383,6 +383,48 @@ def test_indexed_safetensors_shard_bytes_strips_legacy_shard_whitespace(tmp_path
     assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"legacy-whitespace")
 
 
+def test_indexed_safetensors_shard_bytes_uses_os_stat_and_tolerates_errors(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = bundle / "model-00001-of-00001.safetensors"
+    shard.write_bytes(b"weights")
+    missing = "model-missing.safetensors"
+    notes = "notes.txt"
+    (bundle / notes).write_text("ignored", encoding="utf-8")
+    (bundle / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "layers.0.weight": shard.name,
+                    "layers.missing.weight": missing,
+                    "layers.notes.weight": notes,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_os_stat = runtime_utils.os.stat
+    stat_paths: list[str] = []
+
+    index_path = str(bundle / "model.safetensors.index.json")
+
+    def tracked_os_stat(path: str | os.PathLike[str], *args: Any, **kwargs: Any):
+        path_text = os.fspath(path)
+        if path_text != index_path:
+            stat_paths.append(path_text)
+        if path_text.endswith(missing):
+            raise OSError("missing indexed shard")
+        return original_os_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(runtime_utils.os, "stat", tracked_os_stat)
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"weights")
+    assert stat_paths == [str(shard), str(bundle / missing)]
+
+
 def test_estimate_model_weight_resident_bytes_skips_expanduser_for_plain_paths(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
