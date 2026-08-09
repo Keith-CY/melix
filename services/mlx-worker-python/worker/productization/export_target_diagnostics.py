@@ -968,7 +968,12 @@ def _diagnoses_from_excerpt(
 
 def _has_diagnosis_marker(lowered_text: str) -> bool:
     return (
-        "arch" in lowered_text
+        "runtime load" in lowered_text
+        or "load failed" in lowered_text
+        or "failed to load" in lowered_text
+        or "model load" in lowered_text
+        or "error loading" in lowered_text
+        or "arch" in lowered_text
         or "cpu type" in lowered_text
         or "arm64" in lowered_text
         or "duplicate" in lowered_text
@@ -995,11 +1000,6 @@ def _has_diagnosis_marker(lowered_text: str) -> bool:
         or "eacces" in lowered_text
         or "memory" in lowered_text
         or "oom" in lowered_text
-        or "failed to load" in lowered_text
-        or "model load" in lowered_text
-        or "runtime load" in lowered_text
-        or "error loading" in lowered_text
-        or "load failed" in lowered_text
     )
 
 

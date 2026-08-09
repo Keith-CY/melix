@@ -144,6 +144,10 @@ def test_export_target_diagnostics_target_path_fast_path_skips_absolute_path_reg
     assert summary.redaction_count == 1
 
 
+def test_export_target_diagnostics_marker_prefilter_matches_runtime_load_phrase() -> None:
+    assert _has_diagnosis_marker("late duplicate runtime load failed marker") is True
+
+
 @pytest.mark.parametrize(
     ("expected_code", "log_line"),
     [
