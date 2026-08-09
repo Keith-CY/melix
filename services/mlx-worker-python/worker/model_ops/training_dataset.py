@@ -2621,8 +2621,15 @@ def _canonical_sample_key(sample: dict[str, Any]) -> str:
     return json.dumps(sample, sort_keys=True, ensure_ascii=False)
 
 
-def _canonical_sample_digest(sample: dict[str, Any]) -> bytes:
-    return hashlib.sha256(_canonical_sample_key(sample).encode("utf-8")).digest()
+def _canonical_sample_digest(
+    sample: dict[str, Any],
+    *,
+    _json_dumps=json.dumps,
+    _sha256=hashlib.sha256,
+) -> bytes:
+    return _sha256(
+        _json_dumps(sample, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).digest()
 
 
 def _whitespace_token_count(text: str) -> int:
