@@ -44,6 +44,12 @@ This follow-up Python-only slice keeps the same `services/mlx-worker-python/work
 
 Expected metrics are neutral-to-lower `executable_elapsed_ms_mean` in `scripts/model_load_config_json_bytes_probe.py`; config auto-map metrics and rejection counts must remain unchanged.
 
+## 2026-08-09 Executable Prefix Start Character Follow-up
+
+This follow-up Python-only slice keeps the same `services/mlx-worker-python/worker/model_load_trust.py` boundary and the registered `model-load-config-json-bytes` probe. The executable-model fallback scan now checks the first filename character against the known executable-prefix start-character set before calling `startswith(...)` on the full prefix tuple. This preserves the existing `.py` suffix, executable prefix, no-symlink file check, and sorted detection-source behavior while avoiding prefix tuple checks for common non-executable Python sidecars such as adapter helpers. The probe workload now includes non-executable `.py` sidecars so the registered base-vs-head report validates this branch directly.
+
+Expected metrics are neutral-to-lower `executable_elapsed_ms_mean` in `scripts/model_load_config_json_bytes_probe.py`; config auto-map metrics and rejection counts must remain unchanged.
+
 ## Verification Plan
 
 Run locally on Linux before PR:
