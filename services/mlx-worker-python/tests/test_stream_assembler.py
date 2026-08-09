@@ -36,6 +36,24 @@ def test_pipe_channel_name_caches_repeated_headers() -> None:
     RequestStreamAssembler._pipe_channel_name.cache_clear()
 
 
+def test_pipe_channel_name_scans_first_token_without_split() -> None:
+    RequestStreamAssembler._pipe_channel_name.cache_clear()
+
+    class SplitTrackingHeader(str):
+        split_calls = 0
+
+        def split(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.split_calls += 1
+            return super().split(*args, **kwargs)
+
+    header = SplitTrackingHeader("  Analysis metadata that should stay un-split")
+
+    assert RequestStreamAssembler._pipe_channel_name(header) == "analysis"
+    assert SplitTrackingHeader.split_calls == 0
+
+    RequestStreamAssembler._pipe_channel_name.cache_clear()
+
+
 def test_token_count_compression_reuses_cached_weight_shape() -> None:
     stream_assembler._cached_compress_delta_token_counts.cache_clear()
     weights = [
