@@ -85,6 +85,8 @@ def build_category_breakdown(
     string_type = str
     value_type = type
     is_instance = isinstance
+    labels_are_sorted = True
+    previous_category_label: str | None = None
     for row in rows:
         try:
             raw_category_label = row["category_label"]
@@ -101,6 +103,12 @@ def build_category_breakdown(
         try:
             totals = category_totals[category_label]
         except KeyError:
+            if (
+                previous_category_label is not None
+                and category_label < previous_category_label
+            ):
+                labels_are_sorted = False
+            previous_category_label = category_label
             totals = [0, 0, 0]
             category_totals[category_label] = totals
         totals[0] += 1
@@ -117,7 +125,10 @@ def build_category_breakdown(
 
     breakdown: dict[str, dict[str, object]] = {}
     rounded = _rounded
-    for category_label, totals in sorted(category_totals.items()):
+    sorted_totals = (
+        category_totals.items() if labels_are_sorted else sorted(category_totals.items())
+    )
+    for category_label, totals in sorted_totals:
         sample_size, base_correct, target_correct = totals
         inverse_sample_size = 1.0 / sample_size
         base_accuracy = rounded(base_correct * inverse_sample_size)
