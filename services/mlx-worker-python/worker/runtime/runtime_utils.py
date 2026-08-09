@@ -181,7 +181,7 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
     try:
         if not index_path.is_file():
             return 0
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload = json.loads(index_path.read_bytes())
     except (OSError, json.JSONDecodeError):
         return 0
     weight_map = payload.get("weight_map")
@@ -189,16 +189,20 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
         return 0
     total = 0
     seen: set[str] = set()
+    seen_add = seen.add
+    os_sep = os.sep
+    weight_file_size = _weight_file_size
+    model_dir_joinpath = model_dir.joinpath
     for raw_shard in weight_map.values():
         shard_name = str(raw_shard or "").strip()
         if not shard_name or shard_name in seen:
             continue
-        seen.add(shard_name)
-        if shard_name[0] == os.sep:
+        seen_add(shard_name)
+        if shard_name[0] == os_sep:
             shard_path = Path(shard_name)
         else:
-            shard_path = model_dir / shard_name
-        total += _weight_file_size(shard_path)
+            shard_path = model_dir_joinpath(shard_name)
+        total += weight_file_size(shard_path)
     return total
 
 

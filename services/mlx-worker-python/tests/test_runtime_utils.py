@@ -309,6 +309,45 @@ def test_indexed_safetensors_shard_bytes_joins_relative_names_without_path_round
     assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"weights")
 
 
+def test_indexed_safetensors_shard_bytes_reads_index_as_bytes(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = bundle / "model-00001-of-00001.safetensors"
+    shard.write_bytes(b"weights")
+    index_path = bundle / "model.safetensors.index.json"
+    index_path.write_text(
+        json.dumps({"weight_map": {"layers.0.weight": shard.name}}),
+        encoding="utf-8",
+    )
+    original_read_bytes = runtime_utils.Path.read_bytes
+
+    def fail_read_text(
+        self: Path,
+        *args: Any,
+        **kwargs: Any,
+    ) -> str:  # pragma: no cover - regression guard must stay uncalled
+        if self == index_path:
+            raise AssertionError("safetensors index should be read as bytes")
+        return Path.read_text(self, *args, **kwargs)
+
+    read_bytes_calls = 0
+
+    def tracked_read_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        nonlocal read_bytes_calls
+        if self == index_path:
+            read_bytes_calls += 1
+        return original_read_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(runtime_utils.Path, "read_text", fail_read_text)
+    monkeypatch.setattr(runtime_utils.Path, "read_bytes", tracked_read_bytes)
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"weights")
+    assert read_bytes_calls == 1
+
+
 def test_indexed_safetensors_shard_bytes_preserves_absolute_shard_paths(tmp_path) -> None:
     bundle = tmp_path / "indexed-model"
     bundle.mkdir()
