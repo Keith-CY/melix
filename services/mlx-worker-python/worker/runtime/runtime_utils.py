@@ -191,18 +191,26 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
     seen: set[str] = set()
     seen_add = seen.add
     os_sep = os.sep
-    weight_file_size = _weight_file_size
-    model_dir_joinpath = model_dir.joinpath
+    model_dir_path = os.fspath(model_dir)
+    is_model_weight_filename = _is_model_weight_filename
+    is_regular_file_mode = stat.S_ISREG
+    os_path_join = os.path.join
+    os_stat = os.stat
     for raw_shard in weight_map.values():
         shard_name = str(raw_shard or "").strip()
-        if not shard_name or shard_name in seen:
+        if not shard_name or shard_name in seen or not is_model_weight_filename(shard_name):
             continue
         seen_add(shard_name)
         if shard_name[0] == os_sep:
-            shard_path = Path(shard_name)
+            shard_path = shard_name
         else:
-            shard_path = model_dir_joinpath(shard_name)
-        total += weight_file_size(shard_path)
+            shard_path = os_path_join(model_dir_path, shard_name)
+        try:
+            stat_result = os_stat(shard_path)
+            if is_regular_file_mode(stat_result.st_mode):
+                total += stat_result.st_size
+        except OSError:
+            continue
     return total
 
 
