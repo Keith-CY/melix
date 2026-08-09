@@ -1253,7 +1253,7 @@ def _keyword_hint_matches(
 
 
 def _keyword_boundary_text(text: str) -> str:
-    return f" {text.translate(_KEYWORD_BOUNDARY_TRANSLATION)} "
+    return " " + text.translate(_KEYWORD_BOUNDARY_TRANSLATION) + " "
 
 
 def _compile_keyword_hint_rules(
