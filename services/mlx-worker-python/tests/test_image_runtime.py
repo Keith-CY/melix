@@ -272,6 +272,14 @@ def test_image_generation_and_edit_bind_model_id_once_per_loop(tmp_path: Path) -
     assert CountingLoadedModel.get_calls == 1
 
 
+def test_image_variant_ascii_token_reuses_small_index_cache() -> None:
+    cached_token = image_runtime._ascii_variant_token(42)
+
+    assert cached_token == b"42"
+    assert image_runtime._ascii_variant_token(42) is cached_token
+    assert image_runtime._ascii_variant_token(300) == b"300"
+
+
 def test_image_write_bytes_uses_default_monotonic_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

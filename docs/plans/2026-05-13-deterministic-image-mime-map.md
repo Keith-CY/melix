@@ -1,10 +1,12 @@
-# Deterministic image MIME map reuse
+# Deterministic image hot-loop constant reuse
 
 ## Scope
 
-This Python-only performance slice is limited to `services/mlx-worker-python/worker/runtime/deterministic_image_generation_runtime.py`.
+This Python-only performance plan covers small hot-loop constant reuse slices in `services/mlx-worker-python/worker/runtime/deterministic_image_generation_runtime.py`.
 
 The deterministic image runtime resolves MIME types for each generated or edited image job. The previous helper rebuilt the same literal mapping every time `_mime_type_for_format()` was called. This slice hoists that stable mapping to a module-level constant so repeated image generation/edit paths reuse one dictionary while preserving the existing supported format contract.
+
+The 2026-08-08 variant-token slice keeps the same generated/edit payload bytes but caches ASCII encodings for the common small variant indexes used by deterministic image jobs. This removes repeated `str(index).encode("ascii")` work inside the generate/edit image loops while preserving the fallback for larger image counts.
 
 ## Registered probe
 
