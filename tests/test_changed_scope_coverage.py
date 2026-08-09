@@ -761,6 +761,13 @@ def test_measurable_non_comment_lines_skips_blanks_comments_and_out_of_range(
     ) == [1, 3, 6, 7, 9]
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [2]) == []
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, [1, 5]) == [1]
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [9, 9, 12]) == [9, 9]
+    dense_targets_with_out_of_range = list(range(1, 65)) + [99]
+    assert changed_scope_coverage._measurable_non_comment_lines(
+        source_path,
+        dense_targets_with_out_of_range,
+    ) == [1, 3, 6, 7, 9]
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, []) == []
 
 
 def test_measurable_non_comment_lines_singleton_classifies_comment_and_indented_code(
