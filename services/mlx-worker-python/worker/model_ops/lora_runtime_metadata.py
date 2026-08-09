@@ -40,6 +40,7 @@ _PROCESSOR_RESUME_FILENAMES = (
 )
 
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
+_ASCII_LOWER_ALNUM = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
 ADAPTER_RUNTIME_EXT_KEY_MAP: tuple[tuple[str, str], ...] = (
@@ -450,22 +451,17 @@ def _contains_quantized_kind_token(value: str, kind: str) -> bool:
     start = 0
     kind_length = len(kind)
     value_length = len(value)
+    ascii_lower_alnum = _ASCII_LOWER_ALNUM
     while True:
         index = value.find(kind, start)
         if index < 0:
             return False
         end = index + kind_length
-        if index == 0:
-            left_boundary = True
-        else:
-            char = value[index - 1]
-            left_boundary = not ("a" <= char <= "z" or "0" <= char <= "9")
-        if left_boundary:
-            if end == value_length:
-                return True
-            char = value[end]
-            if not ("a" <= char <= "z" or "0" <= char <= "9"):
-                return True
+        if (
+            (index == 0 or value[index - 1] not in ascii_lower_alnum)
+            and (end == value_length or value[end] not in ascii_lower_alnum)
+        ):
+            return True
         start = index + 1
 
 

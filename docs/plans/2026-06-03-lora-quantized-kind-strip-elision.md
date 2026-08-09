@@ -27,6 +27,10 @@ This follow-up keeps the same Python-only boundary and registered `lora-aux-modu
 
 This follow-up stays inside the same parser and registered probe. `_quantized_kind_from_text()` keeps the fixed quantized-kind priority order but unrolls the tiny candidate set to avoid tuple iteration overhead on every LoRA metadata parse. `_contains_quantized_kind_token()` now evaluates the ASCII alphanumeric boundary checks inline after each `str.find()` hit, avoiding helper dispatch in the inner scan loop while preserving the existing direct-substring gate and delimiter semantics. The change keeps the case where an early embedded false-positive token such as `badq4` is skipped and a later delimited `q4` token is accepted.
 
+### 2026-08-09 boundary table follow-up
+
+This follow-up remains limited to `_contains_quantized_kind_token()` and the same registered `lora-aux-modules-scandir` probe. The parser now binds a module-level ASCII lowercase-alphanumeric boundary table once per scan and uses direct one-character membership tests for both token edges. This removes the repeated Python range-comparison chains from the inner false-positive scan loop while preserving the existing delimiter semantics for lowercase, uppercase-after-normalization, whitespace, hyphen, underscore, and non-ASCII boundaries.
+
 ## Verification plan
 
 Run the registered focused tests, changed-scope coverage command, and the registered local probe on Linux before opening the PR. For the ASCII boundary follow-up, compare the registered probe against `origin/main` locally; the PR-scoped performance workflow remains the merge gate for the registered probe result in CI.
