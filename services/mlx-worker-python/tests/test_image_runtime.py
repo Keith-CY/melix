@@ -485,6 +485,67 @@ def test_image_edit_builds_static_payload_frame_once_per_loop(tmp_path: Path) ->
     assert all(b"PROMPT=add stars\n" in payload for payload in edited.images)
 
 
+def test_image_edit_inlines_generated_artifact_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DeterministicImageGenerationRuntime()
+    helper_calls = 0
+    original_helper = DeterministicImageGenerationRuntime._artifact_metadata
+
+    def counted_helper(cls, **kwargs):
+        nonlocal helper_calls
+        helper_calls += 1
+        return original_helper(**kwargs)
+
+    monkeypatch.setattr(
+        DeterministicImageGenerationRuntime,
+        "_artifact_metadata",
+        classmethod(counted_helper),
+    )
+
+    edited = runtime.edit_image(
+        {"model_id": "melix-dev-image"},
+        inference_pb2.ImageEditRequest(
+            prompt="add stars",
+            image=b"SOURCE_IMAGE",
+            mask=b"MASK_IMAGE",
+            size="128x128",
+            response_format="png",
+            n=4,
+            source_artifact_id="source-artifact-1",
+        ),
+        job_id="image-edit-inline-output-artifacts",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert helper_calls == 2
+    assert len(edited.artifacts) == 6
+    generated_artifacts = edited.artifacts[2:]
+    assert [artifact.variant_index for artifact in generated_artifacts] == [0, 1, 2, 3]
+    assert all(
+        artifact.role == common_pb2.IMAGE_ARTIFACT_GENERATED
+        for artifact in generated_artifacts
+    )
+    assert all(
+        artifact.byte_length == len(payload)
+        for artifact, payload in zip(generated_artifacts, edited.images, strict=True)
+    )
+    assert all(
+        artifact.sha256 == hashlib.sha256(payload).hexdigest()
+        for artifact, payload in zip(generated_artifacts, edited.images, strict=True)
+    )
+    assert all(
+        artifact.parent_artifact_id == "source-artifact-1"
+        for artifact in generated_artifacts
+    )
+    assert all(
+        artifact.ext["melix.image.edit_mode"] == "edit"
+        for artifact in generated_artifacts
+    )
+
+
 def test_image_artifact_metadata_reuses_supplied_payload_byte_length(
     tmp_path: Path,
 ) -> None:
