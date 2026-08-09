@@ -579,7 +579,15 @@ def test_classify_startup_failure_plain_log_path_skips_expanduser(
             f"plain startup log path should not expanduser: {self}"
         )
 
+    seen_paths: list[object] = []
+    original_read = startup_signals_module._read_last_nonempty_line
+
+    def tracked_read(path: str | Path, *, chunk_size: int = 8192) -> str:
+        seen_paths.append(path)
+        return original_read(path, chunk_size=chunk_size)
+
     monkeypatch.setattr(Path, "expanduser", fail_expanduser)
+    monkeypatch.setattr(startup_signals_module, "_read_last_nonempty_line", tracked_read)
 
     report = classify_startup_failure(
         {
@@ -592,6 +600,7 @@ def test_classify_startup_failure_plain_log_path_skips_expanduser(
 
     assert report.classification == "control_plane_crash"
     assert report.log_excerpt == "fatal error: boot failed"
+    assert seen_paths == [str(control_plane_stderr)]
 
 
 def test_startup_failure_report_uses_slots_without_changing_dict_payload(tmp_path: Path) -> None:
@@ -778,9 +787,9 @@ def test_classify_startup_failure_skips_worker_logs_for_host_port_conflict(
     worker_stderr.write_text("Traceback: worker should not be inspected\n", encoding="utf-8")
     read_paths: list[str] = []
 
-    def tracked_read(path: Path, *, chunk_size: int = 8192) -> str:
-        read_paths.append(path.name)
-        if path == worker_stderr:
+    def tracked_read(path: str | Path, *, chunk_size: int = 8192) -> str:
+        read_paths.append(Path(path).name)
+        if str(path) == str(worker_stderr):
             raise AssertionError("worker log should not be read for host port conflicts")
         return _read_last_nonempty_line(path, chunk_size=chunk_size)
 
@@ -838,9 +847,9 @@ def test_classify_startup_failure_skips_worker_logs_for_control_plane_crash(
     worker_stderr.write_text("Traceback: worker should not be inspected\n", encoding="utf-8")
     read_paths: list[str] = []
 
-    def tracked_read(path: Path, *, chunk_size: int = 8192) -> str:
-        read_paths.append(path.name)
-        if path == worker_stderr:
+    def tracked_read(path: str | Path, *, chunk_size: int = 8192) -> str:
+        read_paths.append(Path(path).name)
+        if str(path) == str(worker_stderr):
             raise AssertionError("worker log should not be read for control-plane crashes")
         return _read_last_nonempty_line(path, chunk_size=chunk_size)
 

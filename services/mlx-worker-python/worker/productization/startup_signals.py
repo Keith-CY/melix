@@ -666,7 +666,7 @@ def _log_excerpt(*paths: object) -> str:
         if not path:
             continue
         path_text = str(path)
-        resolved = Path(path_text) if path_text[:1] != "~" else Path(path_text).expanduser()
+        resolved = path_text if path_text[:1] != "~" else Path(path_text).expanduser()
         try:
             excerpt = _read_last_nonempty_line(resolved)
         except OSError:
@@ -680,7 +680,7 @@ def _log_excerpt(*paths: object) -> str:
     return combined_excerpt
 
 
-def _read_last_nonempty_line(path: Path, *, chunk_size: int = 8192) -> str:
+def _read_last_nonempty_line(path: str | Path, *, chunk_size: int = 8192) -> str:
     with _OPEN(path, "rb") as handle:
         handle.seek(0, 2)
         line_start, payload_end = _seek_last_nonempty_line_bounds(handle, chunk_size=chunk_size)

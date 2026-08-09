@@ -29,3 +29,13 @@ The probe already includes focused `test_command`, `coverage_command`, and `prob
 - Focused startup-signals tests pass.
 - Changed-scope coverage for the touched Python/test/probe scope remains above the repository threshold.
 - The registered `startup-signals-lazy-worker-log-excerpts` probe reports stable or improved classification timings without changing log read/path-exists counters.
+
+## 2026-08-09 follow-up: plain string log opener
+
+This follow-up keeps the same `_log_excerpt()` scope and registered probe. Plain
+non-tilde manifest log paths are already known not to require user expansion, so
+`_log_excerpt()` now passes those strings directly to the tail reader instead of
+allocating a `Path` wrapper before `open()`. Tilde-prefixed paths still use the
+existing `Path(...).expanduser()` behavior, and `_read_last_nonempty_line()`
+accepts either `str` or `Path` because Python's file opener supports both path
+representations.
