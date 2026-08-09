@@ -39,3 +39,17 @@ Run locally on Linux:
 Expected behavior is unchanged artifact metadata, payload bytes, output-byte
 accounting, and cancellation semantics. Expected performance is neutral-to-lower
 `elapsed_ms_mean`; `output_byte_scan_calls_mean` must remain `0.0`.
+
+## Follow-up Slice: Generated Edit Artifact Metadata Fast Path
+
+This follow-up keeps the same registered probe and narrows the edit output loop
+only. Source and mask lineage artifacts still use the shared metadata helper,
+but generated edit artifacts now mirror the image generation path and construct
+`ImageArtifactMetadata` directly from already-known loop locals. The slice avoids
+one helper dispatch plus keyword payload setup per generated edit artifact while
+preserving SHA-256, byte-length, lineage `ext`, parent artifact, and storage URI
+semantics.
+
+Additional local verification keeps the registered probe as the performance gate
+and adds a regression asserting that helper dispatch remains limited to source
+and mask artifacts for a multi-output edit request.
