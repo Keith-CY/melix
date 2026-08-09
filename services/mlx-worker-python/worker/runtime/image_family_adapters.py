@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ImageFamilyDescriptor:
     family_id: str
     default_backend_id: str
@@ -14,14 +14,14 @@ class ImageFamilyDescriptor:
     default_workflow_role: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ImageFamilyDetection:
     family_id: str
     source: str
     task_kind: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResolvedImageFamilyConfig:
     family_id: str
     backend_id: str
