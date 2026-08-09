@@ -43,6 +43,9 @@ EXECUTABLE_MODEL_FILE_PREFIXES = (
     "processing",
     "tokenization",
 )
+EXECUTABLE_MODEL_FILE_PREFIX_START_CHARS = frozenset(
+    prefix[0] for prefix in EXECUTABLE_MODEL_FILE_PREFIXES
+)
 VALID_REQUESTED_TRUST_MODES = frozenset(
     {
         MODEL_LOAD_TRUST_DEFAULT_SAFE,
@@ -392,6 +395,8 @@ def _detect_executable_model_files_for_stat(
 def _is_executable_model_file_entry(entry: os.DirEntry[str]) -> bool:
     name = entry.name
     if len(name) <= 3 or name[-3:] != ".py":
+        return False
+    if name[0] not in EXECUTABLE_MODEL_FILE_PREFIX_START_CHARS:
         return False
     if not name.startswith(EXECUTABLE_MODEL_FILE_PREFIXES):
         return False
