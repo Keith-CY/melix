@@ -257,6 +257,18 @@ def _release_matrix_rows(
             if role in matrix:
                 evidence_by_role.setdefault(role, set()).update(evidence_ids)
 
+    if not evidence_by_role:
+        return [
+            {
+                "role": role,
+                "required": bool(rule.get("required", True)),
+                "present": False,
+                "evidence_ids": [],
+                "description": str(rule.get("description", "")),
+            }
+            for role, rule in matrix.items()
+        ]
+
     return [
         {
             "role": role,

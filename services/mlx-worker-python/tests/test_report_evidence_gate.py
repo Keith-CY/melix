@@ -647,6 +647,36 @@ def test_report_evidence_gate_release_matrix_ignores_invalid_cached_roles() -> N
     ]
 
 
+def test_report_evidence_gate_release_matrix_fast_paths_empty_evidence() -> None:
+    rows = report_evidence_gate_module._release_matrix_rows(
+        [
+            {"release_matrix_roles": ["unknown"], "source_evidence_ids": ["ignored"]},
+            {"release_matrix_roles": ["serving"], "source_evidence_ids": []},
+        ],
+        {
+            "serving": {"description": "serving evidence"},
+            "adapter": {"required": False, "description": "adapter evidence"},
+        },
+    )
+
+    assert rows == [
+        {
+            "role": "serving",
+            "required": True,
+            "present": False,
+            "evidence_ids": [],
+            "description": "serving evidence",
+        },
+        {
+            "role": "adapter",
+            "required": False,
+            "present": False,
+            "evidence_ids": [],
+            "description": "adapter evidence",
+        },
+    ]
+
+
 def test_report_evidence_gate_reports_blocking_metrics_and_probe_phase(tmp_path: Path) -> None:
     report_path = _write_report(
         tmp_path,
