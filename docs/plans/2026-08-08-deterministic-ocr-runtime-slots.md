@@ -18,6 +18,11 @@ reads on fixed subclass slot descriptors.
 
 ## Verification
 
+The slot-layout assertion lives in
+`services/mlx-worker-python/tests/test_deterministic_ocr_runtime.py` so the
+shared vision-runtime test module does not force unrelated VLM/vision-family
+registered probes to cover deterministic OCR-only assertions.
+
 - Run the registered focused deterministic OCR test command.
 - Run the registered changed-scope coverage command for the deterministic OCR
   token-count scope.
