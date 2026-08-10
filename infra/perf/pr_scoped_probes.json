@@ -434,7 +434,8 @@
       "services/mlx-worker-python/worker/runtime/runtime_utils.py",
       "services/mlx-worker-python/tests/test_runtime_utils.py",
       "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
-      "scripts/runtime_utils_package_version_probe.py"
+      "scripts/runtime_utils_package_version_probe.py",
+      "docs/plans/2026-08-10-runtime-utils-package-version-cache-binding.md"
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_runtime_utils.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_runtime_utils_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_runtime_utils_package_version_probe_script_emits_metrics",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_runtime_utils.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_runtime_utils_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_runtime_utils_package_version_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/runtime_utils.py services/mlx-worker-python/tests/test_runtime_utils.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/runtime_utils_package_version_probe.py",
