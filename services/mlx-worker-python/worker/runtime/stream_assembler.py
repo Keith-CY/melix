@@ -8,12 +8,11 @@ import logging
 import re
 
 from worker.runtime import tool_call_rescue
+from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
 
 logger = logging.getLogger(__name__)
 _UTF8_INCREMENTAL_DECODER = codecs.getincrementaldecoder("utf-8")
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
-def _whitespace_token_count(text: str) -> int:
-    return len(text.split())
 
 
 def _marker_prefix_suffixes(marker: str) -> tuple[str, ...]:
