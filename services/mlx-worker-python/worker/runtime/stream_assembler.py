@@ -1423,8 +1423,7 @@ class RequestStreamAssembler:
         return adjusted
 
     def _recover_unclosed_reasoning_body(self, body: str) -> tuple[str, str]:
-        stripped = body.strip()
-        if not stripped:
+        if not body or body.isspace():
             return "", ""
         for marker in ("\n\n", "\r\n\r\n"):
             if marker in body:

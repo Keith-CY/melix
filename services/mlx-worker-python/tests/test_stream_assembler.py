@@ -75,6 +75,22 @@ def test_legacy_pipe_hidden_channel_body_avoids_strip_copy() -> None:
     assert RequestStreamAssembler._legacy_pipe_channel_header_body("final visible", "final") is None
 
 
+def test_unclosed_reasoning_recovery_avoids_strip_copy_for_content_without_markers() -> None:
+    class StripTrackingBody(str):
+        strip_calls = 0
+
+        def strip(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.strip_calls += 1
+            return super().strip(*args, **kwargs)
+
+    body = StripTrackingBody("reasoning payload " * 64)
+    assembler = RequestStreamAssembler("req-unclosed-recovery", True, "", "")
+
+    assert assembler._recover_unclosed_reasoning_body(body) == ("", "")
+    assert StripTrackingBody.strip_calls == 0
+    assert assembler._recover_unclosed_reasoning_body(" \t\n") == ("", "")
+
+
 def test_token_count_compression_reuses_cached_weight_shape() -> None:
     stream_assembler._cached_compress_delta_token_counts.cache_clear()
     weights = [
