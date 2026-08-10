@@ -22,3 +22,11 @@ The affected path is covered by the registered PR-scoped probe `local-job-follow
 - Focused local-job continuation tests pass.
 - Changed-scope coverage remains at least 95 percent for the touched scope.
 - The registered probe shows lower or non-regressing `elapsed_ms_mean` while keeping `scandir_calls_mean`, `path_glob_calls_mean`, and `path_exists_calls_mean` unchanged.
+
+## 2026-08-10 JSON loads binding follow-up
+
+The next slice keeps the same registered `local-job-followup-scan-scandir` probe
+and only narrows per-record JSON decode dispatch in `load_record()` and the
+scanned-record fast path. Both paths bind `json.loads` at module import time so
+large follow-up scans avoid repeated nested module attribute lookups while
+preserving the same bytes input, exception behavior, and record validation.
