@@ -346,11 +346,13 @@ def _rule_matches_report(
         )
         if matches_any_metric:
             return bool(metrics)
+        prefixes_get = prefixes_by_initial.get
         for metric in metrics:
-            metric_value = str(metric.get("metric", ""))
+            metric_raw_value = metric.get("metric", "")
+            metric_value = metric_raw_value if type(metric_raw_value) is str else str(metric_raw_value)
             if not metric_value:
                 continue
-            candidates = prefixes_by_initial.get(metric_value[0])
+            candidates = prefixes_get(metric_value[0])
             if candidates is not None and metric_value.startswith(candidates):
                 return True
 
