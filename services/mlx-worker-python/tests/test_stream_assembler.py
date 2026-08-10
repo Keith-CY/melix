@@ -1193,6 +1193,33 @@ def test_delta_token_annotation_uses_ascii_count_fast_path(monkeypatch) -> None:
     assert calls == ["visible plain text", "hidden reasoning text"]
 
 
+def test_delta_token_annotation_accumulates_weights_once(monkeypatch) -> None:
+    calls = 0
+    original_estimate = RequestStreamAssembler._estimated_delta_token_count
+
+    def counted_estimate(delta: AssemblyDelta) -> int:
+        nonlocal calls
+        calls += 1
+        return original_estimate(delta)
+
+    monkeypatch.setattr(
+        RequestStreamAssembler,
+        "_estimated_delta_token_count",
+        staticmethod(counted_estimate),
+    )
+    assembler = RequestStreamAssembler("req-delta-weight-single-pass", True, "", "qwen")
+    deltas = [
+        AssemblyDelta(content_text="visible plain text"),
+        AssemblyDelta(reasoning_text="hidden reasoning text"),
+        AssemblyDelta(tool_call=AssembledToolCall("call-weight", "search", "{}", 1, "qwen")),
+    ]
+
+    annotated = assembler._annotate_token_counts(deltas, 7)
+
+    assert [delta.token_count for delta in annotated] == [3, 3, 1]
+    assert calls == len(deltas)
+
+
 def test_token_byte_delta_decodes_complete_ascii_without_incremental_decoder(monkeypatch) -> None:
     assembler = RequestStreamAssembler(
         request_id="req-token-byte-fast-path",
