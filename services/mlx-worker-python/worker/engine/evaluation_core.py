@@ -4134,6 +4134,10 @@ class EvaluationCore:
 
     @staticmethod
     def _normalized_answer(value: str) -> str:
+        if len(value) == 1:
+            if value.isalpha():
+                return value.upper()
+
         if len(value) > 1 and value.isascii():
             first_char = value[0]
             last_char = value[-1]
