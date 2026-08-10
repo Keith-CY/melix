@@ -2694,10 +2694,14 @@ def _collect_evaluation_sample_probe_metrics(
 ) -> None:
     aggregates_by_suite_and_key: dict[tuple[str, str], _NumericAggregate] = {}
     failure_stage_counts: dict[tuple[str, str], int] = {}
+    evaluation_sample_probe_keys = _EVALUATION_SAMPLE_PROBE_KEY_SET
+    agentic_tool_metric_keys = _AGENTIC_TOOL_METRIC_KEYS
+    float_or_none = _float_or_none
+    update_numeric_aggregate = _update_numeric_aggregate
     for row in _dict_rows(rows):
         suite_id = str(row.get("suite_id", "")).strip() or "suite"
         for key, raw_value in row.items():
-            if key not in _EVALUATION_SAMPLE_PROBE_KEY_SET:
+            if key not in evaluation_sample_probe_keys:
                 continue
             raw_value_type = type(raw_value)
             if raw_value_type is float:
@@ -2705,10 +2709,10 @@ def _collect_evaluation_sample_probe_metrics(
             elif raw_value_type is int or raw_value_type is bool:
                 value = float(raw_value)
             else:
-                value = _float_or_none(raw_value)
+                value = float_or_none(raw_value)
             if value is not None:
                 aggregate_key = (suite_id, key)
-                aggregates_by_suite_and_key[aggregate_key] = _update_numeric_aggregate(
+                aggregates_by_suite_and_key[aggregate_key] = update_numeric_aggregate(
                     aggregates_by_suite_and_key.get(aggregate_key),
                     value,
                 )
@@ -2719,11 +2723,12 @@ def _collect_evaluation_sample_probe_metrics(
             )
         raw_tool_metrics = row.get("agentic_tool_metrics")
         if isinstance(raw_tool_metrics, dict):
-            for key in _AGENTIC_TOOL_METRIC_KEYS:
-                value = _float_or_none(raw_tool_metrics.get(key))
+            raw_tool_metrics_get = raw_tool_metrics.get
+            for key in agentic_tool_metric_keys:
+                value = float_or_none(raw_tool_metrics_get(key))
                 if value is not None:
                     aggregate_key = (suite_id, key)
-                    aggregates_by_suite_and_key[aggregate_key] = _update_numeric_aggregate(
+                    aggregates_by_suite_and_key[aggregate_key] = update_numeric_aggregate(
                         aggregates_by_suite_and_key.get(aggregate_key),
                         value,
                     )
