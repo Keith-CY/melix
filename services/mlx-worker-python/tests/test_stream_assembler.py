@@ -115,6 +115,18 @@ def test_unclosed_reasoning_recovery_avoids_strip_copy_for_content_without_marke
     assert assembler._recover_unclosed_reasoning_body(" \t\n") == ("", "")
 
 
+def test_unclosed_reasoning_candidate_index_uses_earliest_marker() -> None:
+    assert RequestStreamAssembler._unclosed_reasoning_candidate_index(
+        "hidden\nFinal: visible\n\nignored",
+    ) == len("hidden")
+    assert RequestStreamAssembler._unclosed_reasoning_candidate_index(
+        "\n\nvisible immediately",
+    ) == 0
+    assert RequestStreamAssembler._unclosed_reasoning_candidate_index(
+        "hidden only without visible tail",
+    ) == -1
+
+
 def test_token_count_compression_reuses_cached_weight_shape() -> None:
     stream_assembler._cached_compress_delta_token_counts.cache_clear()
     weights = [
