@@ -729,6 +729,35 @@ def test_project_retrieval_contexts_inlines_source_numeric_ids_without_regex(
     assert projection.untrusted_context_receipts[0]["segment_id"] == "search:result-7"
 
 
+def test_project_retrieval_store_records_inlines_source_numeric_ids_without_regex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RegexGuard:
+        def fullmatch(self, value: str) -> object:  # pragma: no cover - regression guard
+            raise AssertionError(f"store source numeric fast path should skip regex for {value}")
+
+    monkeypatch.setattr(untrusted_context_module, "_PUBLIC_SOURCE_ID_RE", RegexGuard())
+
+    projection = project_retrieval_store_records(
+        [
+            {
+                "context_kind": "retrieved_document",
+                "source_id": "source:7",
+                "payload": {"title": "Local note"},
+                "owner_scope_checked": True,
+                "segment_id": "search:result-7",
+                "source_field": "retrieved_document_7",
+                "reason": "retrieved document result is prompt data",
+                "corrective_action": "keep retrieved documents in user-role context",
+            }
+        ]
+    )
+
+    assert projection.refusal_receipts == []
+    assert projection.untrusted_context_receipts[0]["source_id"] == "source:7"
+    assert projection.untrusted_context_receipts[0]["segment_id"] == "search:result-7"
+
+
 def test_project_retrieval_contexts_falls_back_for_source_prefixed_public_text_ids() -> None:
     projection = project_retrieval_contexts(
         [

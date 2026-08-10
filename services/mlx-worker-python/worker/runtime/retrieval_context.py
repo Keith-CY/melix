@@ -319,6 +319,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
     type_of = type
     public_source_prefix = _PUBLIC_SOURCE_PREFIX
     public_source_prefix_length = _PUBLIC_SOURCE_PREFIX_LENGTH
+    startswith_text = str.startswith
 
     mapping_type = Mapping
     for record in records:
@@ -397,7 +398,7 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     and normalized_reason
                     and normalized_corrective_action
                 ):
-                    if normalized_source_id[:public_source_prefix_length] == public_source_prefix:
+                    if startswith_text(normalized_source_id, public_source_prefix):
                         source_suffix = normalized_source_id[public_source_prefix_length:]
                         source_is_public = (
                             source_suffix.isdigit() and len(normalized_source_id) <= 96

@@ -41,6 +41,13 @@ the projection loops. The hot paths still return fresh shallow copies of
 admission/refusal receipts, while avoiding repeated bound-method lookup for each
 receipt copy.
 
+This follow-up narrows the exact-`dict` store-record public-source fast path.
+`project_retrieval_store_records()` now binds `str.startswith` once and uses it
+for the `source:<digits>` prefix check before falling back to the shared public
+source-id validator. Behavior stays unchanged for numeric public source IDs,
+non-numeric `source:` IDs, and non-public source IDs; the registered probe's
+store-record sub-metric measures the effect.
+
 ## Verification Plan
 
 Run the registered focused test command, changed-scope coverage command, and registered probe command locally on Linux before opening the PR. The PR-scoped performance workflow remains the authoritative CI validation source after push.
