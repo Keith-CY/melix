@@ -133,3 +133,36 @@ Local 2026-07-20 probe decision for this redaction-loop binding slice:
 - Post-change `peak_bytes_mean`: `203278.8`, `203712.0`, `204345.2` bytes; mean `203778.66666666666` bytes (`+2873.600000000006` bytes, within the registered 5% warning boundary).
 
 Decision: accepted because the registered end-to-end elapsed metric and the targeted path-redaction submetric improved over three local Linux probe runs, behavior is covered by 100% changed-scope coverage, and the peak-memory movement remains within the registered warning boundary.
+
+## 2026-08-10 follow-up: target-root redaction split reuse
+
+This Python-only follow-up stays inside the same
+`runtime-export-diagnostic-parser` registered probe and narrows to
+`_redact_target_root_paths_text(...)`. Target-root path redaction previously
+checked membership, then performed a replacement, then counted the same prefix
+again. This slice splits on the target-root prefix once, reuses the resulting
+part count for redaction metrics, and joins the parts with the same `<target>/`
+replacement. Behavior is unchanged for lines without target-root paths, lines
+with multiple target-root paths, and parent-traversal paths that must fall back
+to the absolute-path regex.
+
+Validation remains the registered focused pytest selection, changed-scope
+coverage, and the registered local/CI probe for runtime export diagnostic
+parsing.
+
+Local 2026-08-10 probe decision for this target-root redaction split slice:
+
+- Standalone baseline `elapsed_ms_mean`: `2707.743741478771` ms.
+- Standalone post-change `elapsed_ms_mean`: `2612.1939291246235` ms (`-95.54981235414743` ms, `1.0366x` faster).
+- Standalone baseline `path_redaction_elapsed_ms_mean`: `11.78682316094637` ms.
+- Standalone post-change `path_redaction_elapsed_ms_mean`: `9.408793412148952` ms (`-2.378029748797417` ms, `1.2527x` faster).
+- Standalone baseline `peak_bytes_mean`: `196668.4` bytes.
+- Standalone post-change `peak_bytes_mean`: `199389.8` bytes (`+2721.4000000000233` bytes, within the registered 5% warning boundary).
+- Registered paired run (`scripts/pr_scoped_performance_run.py`) base/head `path_redaction_elapsed_ms_mean`: `11.229079123586416` / `9.552992414683104` ms (`-1.6760867089033126` ms, `1.1755x` faster).
+- Registered paired run base/head `elapsed_ms_mean`: `2535.3955826722085` / `2609.632309153676` ms (`+74.23672648146749` ms, within the registered 5% warning boundary).
+- Registered paired run base/head `peak_bytes_mean`: `197160.8` / `202310.8` bytes (`+5150.0` bytes, within the registered 5% warning boundary).
+
+Decision: accepted for PR because the targeted path-redaction submetric improved
+in both standalone and registered paired local Linux probes, the multiple-prefix
+behavior is covered by the focused regression test, and end-to-end elapsed and
+peak-memory movement remained within registered warning boundaries.
