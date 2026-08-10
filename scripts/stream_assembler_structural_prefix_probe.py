@@ -52,11 +52,13 @@ def main() -> None:
     legacy_pipe_body_elapsed_samples: list[float] = []
     unclosed_reasoning_elapsed_samples: list[float] = []
     unclosed_candidate_elapsed_samples: list[float] = []
+    unclosed_marker_suffix_elapsed_samples: list[float] = []
     long_literal_empty_hits = 0
     close_marker_hits = 0
     legacy_pipe_body_hits = 0
     unclosed_reasoning_hits = 0
     unclosed_candidate_hits = 0
+    unclosed_marker_suffix_empty_hits = 0
     legacy_pipe_header = "analysis " + ("reasoning payload " * 64)
     unclosed_reasoning_body = "  " + ("reasoning payload " * 64) + "\n\n  visible answer  "
 
@@ -132,6 +134,16 @@ def main() -> None:
                 unclosed_candidate_hits += 1
         unclosed_candidate_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
+        started = time.perf_counter()
+        for _index in range(iterations):
+            if not RequestStreamAssembler._longest_unclosed_reasoning_marker_prefix_suffix(
+                "reasoning payload without pending marker " * 64,
+            ):
+                unclosed_marker_suffix_empty_hits += 1
+        unclosed_marker_suffix_elapsed_samples.append(
+            (time.perf_counter() - started) * 1000.0
+        )
+
     expected_hits = iterations * sample_count
     if held_suffix_hits != expected_hits:
         raise RuntimeError(
@@ -168,6 +180,11 @@ def main() -> None:
         raise RuntimeError(
             "unexpected unclosed reasoning candidate hits: "
             f"{unclosed_candidate_hits} != {expected_hits}"
+        )
+    if unclosed_marker_suffix_empty_hits != expected_hits:  # pragma: no cover - probe safety guard
+        raise RuntimeError(
+            "unexpected unclosed reasoning marker-suffix empty hits: "
+            f"{unclosed_marker_suffix_empty_hits} != {expected_hits}"
         )
 
     print(
@@ -220,6 +237,14 @@ def main() -> None:
                     min(unclosed_candidate_elapsed_samples),
                     6,
                 ),
+                "unclosed_reasoning_marker_suffix_elapsed_ms_mean": round(
+                    statistics.fmean(unclosed_marker_suffix_elapsed_samples),
+                    6,
+                ),
+                "unclosed_reasoning_marker_suffix_elapsed_ms_min": round(
+                    min(unclosed_marker_suffix_elapsed_samples),
+                    6,
+                ),
                 "peak_bytes_mean": round(statistics.fmean(peak_samples), 3),
                 "iteration_count": float(iterations),
                 "sample_count": float(sample_count),
@@ -230,6 +255,9 @@ def main() -> None:
                 "legacy_pipe_body_hits": float(legacy_pipe_body_hits),
                 "unclosed_reasoning_hits": float(unclosed_reasoning_hits),
                 "unclosed_reasoning_candidate_hits": float(unclosed_candidate_hits),
+                "unclosed_reasoning_marker_suffix_empty_hits": float(
+                    unclosed_marker_suffix_empty_hits
+                ),
                 "prefix_identity_hits": float(prefix_identity_hits),
             },
             sort_keys=True,

@@ -4516,6 +4516,7 @@ def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
     assert metrics["legacy_pipe_body_hits"] == 3.0
     assert metrics["unclosed_reasoning_hits"] == 3.0
     assert metrics["unclosed_reasoning_candidate_hits"] == 3.0
+    assert metrics["unclosed_reasoning_marker_suffix_empty_hits"] == 3.0
     assert metrics["prefix_identity_hits"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["partial_suffix_elapsed_ms_mean"] >= 0
@@ -4524,6 +4525,7 @@ def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
     assert metrics["legacy_pipe_body_elapsed_ms_mean"] >= 0
     assert metrics["unclosed_reasoning_recovery_elapsed_ms_mean"] >= 0
     assert metrics["unclosed_reasoning_candidate_elapsed_ms_mean"] >= 0
+    assert metrics["unclosed_reasoning_marker_suffix_elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
 

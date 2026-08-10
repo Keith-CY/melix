@@ -355,6 +355,9 @@ class RequestStreamAssembler:
         "\n\n",
         *_VISIBLE_TAIL_MARKERS,
     )
+    _UNCLOSED_REASONING_RECOVERY_MARKER_PREFIX_MAX_CHARS = max(
+        map(len, _UNCLOSED_REASONING_RECOVERY_MARKERS)
+    ) - 1
     # A malformed reasoning block has no authoritative boundary until EOS. Keep
     # a bounded candidate tail off the public reasoning stream; if it outgrows
     # the bound, commit it to assistant content rather than risk exposing a
@@ -1458,6 +1461,10 @@ class RequestStreamAssembler:
 
     @classmethod
     def _longest_unclosed_reasoning_marker_prefix_suffix(cls, body: str) -> str:
+        maximum_length = cls._UNCLOSED_REASONING_RECOVERY_MARKER_PREFIX_MAX_CHARS
+        tail_start = -maximum_length
+        if body.rfind("\n", tail_start) < 0 and body.rfind("\r", tail_start) < 0:
+            return ""
         held_suffix = ""
         for marker in cls._UNCLOSED_REASONING_RECOVERY_MARKERS:
             candidate = cls._longest_marker_prefix_suffix(body, marker)

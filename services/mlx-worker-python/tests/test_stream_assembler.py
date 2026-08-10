@@ -148,6 +148,39 @@ def test_unclosed_reasoning_candidate_index_uses_earliest_marker() -> None:
     ) == -1
 
 
+def test_unclosed_reasoning_marker_suffix_skips_marker_scan_for_plain_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker_scan_calls = 0
+    original = RequestStreamAssembler._longest_marker_prefix_suffix
+
+    def tracked(text: str, marker: str) -> str:
+        nonlocal marker_scan_calls
+        marker_scan_calls += 1
+        return original(text, marker)
+
+    monkeypatch.setattr(
+        RequestStreamAssembler,
+        "_longest_marker_prefix_suffix",
+        staticmethod(tracked),
+    )
+
+    assert (
+        RequestStreamAssembler._longest_unclosed_reasoning_marker_prefix_suffix(
+            "reasoning payload without newline" * 8,
+        )
+        == ""
+    )
+    assert marker_scan_calls == 0
+    assert (
+        RequestStreamAssembler._longest_unclosed_reasoning_marker_prefix_suffix(
+            "reasoning payload\nFin",
+        )
+        == "\nFin"
+    )
+    assert marker_scan_calls > 0
+
+
 def test_token_count_compression_reuses_cached_weight_shape() -> None:
     stream_assembler._cached_compress_delta_token_counts.cache_clear()
     weights = [
