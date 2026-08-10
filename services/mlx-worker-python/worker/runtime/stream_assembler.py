@@ -1432,9 +1432,10 @@ class RequestStreamAssembler:
         if "\n" not in body and "\r" not in body:
             return "", ""
         for marker in ("\n\n", "\r\n\r\n"):
-            if marker in body:
-                hidden, visible = body.split(marker, 1)
-                return hidden.strip(), visible.strip()
+            marker_index = body.find(marker)
+            if marker_index >= 0:
+                visible_start = marker_index + len(marker)
+                return body[:marker_index].strip(), body[visible_start:].strip()
         # Conservative English section-label fallback for malformed streams.
         # Non-English or alternate labels intentionally fall back to no split
         # rather than leaking hidden reasoning as public assistant content.

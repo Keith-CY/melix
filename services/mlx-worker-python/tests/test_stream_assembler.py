@@ -115,6 +115,27 @@ def test_unclosed_reasoning_recovery_avoids_strip_copy_for_content_without_marke
     assert assembler._recover_unclosed_reasoning_body(" \t\n") == ("", "")
 
 
+def test_unclosed_reasoning_recovery_avoids_split_for_blankline_marker() -> None:
+    class SplitTrackingBody(str):
+        split_calls = 0
+
+        def __getitem__(self, key: Any):
+            return self.__class__(super().__getitem__(key))
+
+        def split(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.split_calls += 1
+            return super().split(*args, **kwargs)
+
+    body = SplitTrackingBody("  hidden reasoning  \n\n  visible answer  ")
+    assembler = RequestStreamAssembler("req-unclosed-split-elision", True, "", "")
+
+    assert assembler._recover_unclosed_reasoning_body(body) == (
+        "hidden reasoning",
+        "visible answer",
+    )
+    assert SplitTrackingBody.split_calls == 0
+
+
 def test_unclosed_reasoning_candidate_index_uses_earliest_marker() -> None:
     assert RequestStreamAssembler._unclosed_reasoning_candidate_index(
         "hidden\nFinal: visible\n\nignored",
