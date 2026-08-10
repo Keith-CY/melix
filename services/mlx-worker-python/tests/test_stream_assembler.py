@@ -1141,6 +1141,7 @@ def test_plain_token_metadata_keeps_fast_path_and_metrics(monkeypatch) -> None:
 
 
 def test_estimated_delta_token_count_matches_split_semantics_without_ascii_allocation() -> None:
+    stream_assembler._whitespace_token_count.cache_clear()
     samples = (
         "plain ascii chunk",
         "single",
@@ -1162,6 +1163,10 @@ def test_estimated_delta_token_count_matches_split_semantics_without_ascii_alloc
     assert RequestStreamAssembler._estimated_delta_token_count(
         AssemblyDelta(reasoning_text="unicode\u2003space")
     ) == 2
+    assert RequestStreamAssembler._estimated_delta_token_count(
+        AssemblyDelta(content_text="plain ascii chunk")
+    ) == 3
+    assert stream_assembler._whitespace_token_count.cache_info().hits >= 1
 
 
 def test_delta_token_annotation_uses_ascii_count_fast_path(monkeypatch) -> None:
