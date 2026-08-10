@@ -40,7 +40,7 @@ _PROCESSOR_RESUME_FILENAMES = (
 )
 
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
-_ASCII_LOWER_ALNUM = "abcdefghijklmnopqrstuvwxyz0123456789"
+_ASCII_LOWER_ALNUM = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
 
 
 ADAPTER_RUNTIME_EXT_KEY_MAP: tuple[tuple[str, str], ...] = (
