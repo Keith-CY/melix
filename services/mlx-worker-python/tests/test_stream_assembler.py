@@ -78,16 +78,22 @@ def test_legacy_pipe_hidden_channel_body_avoids_strip_copy() -> None:
 def test_unclosed_reasoning_recovery_avoids_strip_copy_for_content_without_markers() -> None:
     class StripTrackingBody(str):
         strip_calls = 0
+        find_calls = 0
 
         def strip(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
             self.__class__.strip_calls += 1
             return super().strip(*args, **kwargs)
+
+        def find(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.find_calls += 1
+            return super().find(*args, **kwargs)
 
     body = StripTrackingBody("reasoning payload " * 64)
     assembler = RequestStreamAssembler("req-unclosed-recovery", True, "", "")
 
     assert assembler._recover_unclosed_reasoning_body(body) == ("", "")
     assert StripTrackingBody.strip_calls == 0
+    assert StripTrackingBody.find_calls == 0
     assert assembler._recover_unclosed_reasoning_body(" \t\n") == ("", "")
 
 
