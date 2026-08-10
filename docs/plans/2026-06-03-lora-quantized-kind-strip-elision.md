@@ -41,6 +41,16 @@ probes in both raw and normalized passes. Existing `4bit` before `q4` and `q8`
 before `optiq` precedence is retained, and the focused test covers mixed-token
 inputs so the ordering remains explicit.
 
+### 2026-08-10 boundary membership-table follow-up
+
+This follow-up remains limited to `_contains_quantized_kind_token()` and the same
+registered `lora-aux-modules-scandir` probe. The ASCII lowercase-alphanumeric
+boundary table is now materialized once as a `frozenset`, so the inner false
+positive scan path uses hash membership for both token edges instead of scanning
+the fixed delimiter string. The token semantics stay unchanged for lowercase,
+uppercase-after-normalization, whitespace, hyphen, underscore, and non-ASCII
+boundaries.
+
 ## Verification plan
 
 Run the registered focused tests, changed-scope coverage command, and the registered local probe on Linux before opening the PR. For the ASCII boundary follow-up, compare the registered probe against `origin/main` locally; the PR-scoped performance workflow remains the merge gate for the registered probe result in CI.
