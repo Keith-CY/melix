@@ -58,7 +58,7 @@ def main() -> None:
     unclosed_reasoning_hits = 0
     unclosed_candidate_hits = 0
     legacy_pipe_header = "analysis " + ("reasoning payload " * 64)
-    unclosed_reasoning_body = "reasoning payload " * 64
+    unclosed_reasoning_body = "  " + ("reasoning payload " * 64) + "\n\n  visible answer  "
 
     assembler = _build_assembler()
     long_literal_assembler = _build_long_literal_assembler()
@@ -120,7 +120,7 @@ def main() -> None:
         for _index in range(iterations):
             if recovery_assembler._recover_unclosed_reasoning_body(
                 unclosed_reasoning_body,
-            ) == ("", ""):
+            ) == (("reasoning payload " * 64).strip(), "visible answer"):
                 unclosed_reasoning_hits += 1
         unclosed_reasoning_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
