@@ -75,6 +75,24 @@ def test_legacy_pipe_hidden_channel_body_avoids_strip_copy() -> None:
     assert RequestStreamAssembler._legacy_pipe_channel_header_body("final visible", "final") is None
 
 
+def test_hidden_pipe_channel_deltas_avoids_strip_copy() -> None:
+    class StripTrackingHidden(str):
+        strip_calls = 0
+
+        def strip(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.strip_calls += 1
+            return super().strip(*args, **kwargs)
+
+    assembler = RequestStreamAssembler("req-hidden-content", True, "", "qwen")
+    hidden = StripTrackingHidden("reasoning payload " * 64)
+
+    deltas = assembler._hidden_pipe_channel_deltas(hidden=hidden)
+
+    assert deltas[0].reasoning_text == hidden
+    assert StripTrackingHidden.strip_calls == 0
+    assert assembler._hidden_pipe_channel_deltas(hidden=" \t\n") == []
+
+
 def test_unclosed_reasoning_recovery_avoids_strip_copy_for_content_without_markers() -> None:
     class StripTrackingBody(str):
         strip_calls = 0

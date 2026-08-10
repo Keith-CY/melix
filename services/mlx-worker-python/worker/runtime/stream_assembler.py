@@ -1729,7 +1729,7 @@ class RequestStreamAssembler:
         return []
 
     def _hidden_pipe_channel_deltas(self, hidden: str, visible: str = "") -> list[AssemblyDelta]:
-        hidden_has_content = bool(hidden.strip())
+        hidden_has_content = bool(hidden) and not hidden.isspace()
         if not hidden_has_content:
             self._metrics["empty_thinking_sentinel_count"] += 1
         deltas: list[AssemblyDelta] = []
