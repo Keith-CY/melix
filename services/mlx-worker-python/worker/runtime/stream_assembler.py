@@ -1425,6 +1425,8 @@ class RequestStreamAssembler:
     def _recover_unclosed_reasoning_body(self, body: str) -> tuple[str, str]:
         if not body or body.isspace():
             return "", ""
+        if "\n" not in body and "\r" not in body:
+            return "", ""
         for marker in ("\n\n", "\r\n\r\n"):
             if marker in body:
                 hidden, visible = body.split(marker, 1)
