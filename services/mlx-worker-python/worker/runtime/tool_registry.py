@@ -564,6 +564,7 @@ def preflight_agentic_tool_schema_consistency(
     if catalog is None:
         catalog = agentic_tool_catalog_registry()
     callable_tools = registry.names()
+    callable_tools_list = _COPY_LIST(registry._tool_names_list)
     callable_tool_set = registry._tool_name_set
     catalog_tools = catalog.names()
     catalog_tool_set = catalog._tool_name_set
@@ -591,7 +592,7 @@ def preflight_agentic_tool_schema_consistency(
         "outcome": "consistent" if consistent else "mismatch",
         "source": _safe_tool_affordance_source(source),
         "referenced_tools": list(referenced_tools),
-        "callable_tools": list(callable_tools),
+        "callable_tools": callable_tools_list,
         "missing_tools": list(missing_tools),
         "invalid_affordance_count": invalid_affordance_count,
         "checked_affordance_count": len(affordances),

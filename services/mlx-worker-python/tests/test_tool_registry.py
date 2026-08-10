@@ -169,6 +169,13 @@ def test_tool_schema_consistency_preflight_accepts_viewed_procedure_tool() -> No
     assert decision.missing_tools == ()
     assert decision.receipt["outcome"] == "consistent"
     assert decision.receipt["callable_tools"] == ["local_compute", "visit"]
+    decision.receipt["callable_tools"].append("text_search")
+    next_decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        ({"tool_id": "visit", "source": "viewed_procedure"},),
+        registry=registry,
+        source="viewed_procedure",
+    )
+    assert next_decision.receipt["callable_tools"] == ["local_compute", "visit"]
     assert decision.receipt["allowed_next_step"] == "assemble_prompt"
     assert decision.receipt["corrective_action"] == ""
 
