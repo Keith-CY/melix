@@ -137,16 +137,19 @@ def clear_callable_kwarg_signature_cache() -> None:
 _INSTALLED_PACKAGE_VERSION_CACHE: dict[str, str] = {}
 
 
-def installed_package_version(package_name: str) -> str:
+def installed_package_version(
+    package_name: str,
+    _cache: dict[str, str] = _INSTALLED_PACKAGE_VERSION_CACHE,
+) -> str:
     try:
-        return _INSTALLED_PACKAGE_VERSION_CACHE[package_name]
+        return _cache[package_name]
     except KeyError:
         pass
     try:
         version = importlib.metadata.version(package_name)
     except importlib.metadata.PackageNotFoundError:
         version = ""
-    _INSTALLED_PACKAGE_VERSION_CACHE[package_name] = version
+    _cache[package_name] = version
     return version
 
 
