@@ -36,6 +36,97 @@ def test_pipe_channel_name_caches_repeated_headers() -> None:
     RequestStreamAssembler._pipe_channel_name.cache_clear()
 
 
+def test_pipe_channel_name_scans_first_token_without_split() -> None:
+    RequestStreamAssembler._pipe_channel_name.cache_clear()
+
+    class SplitTrackingHeader(str):
+        split_calls = 0
+
+        def split(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.split_calls += 1
+            return super().split(*args, **kwargs)
+
+    header = SplitTrackingHeader("  Analysis metadata that should stay un-split")
+
+    assert RequestStreamAssembler._pipe_channel_name(header) == "analysis"
+    assert SplitTrackingHeader.split_calls == 0
+
+    RequestStreamAssembler._pipe_channel_name.cache_clear()
+
+
+def test_legacy_pipe_hidden_channel_body_avoids_strip_copy() -> None:
+    class StripTrackingHeader(str):
+        strip_calls = 0
+
+        def __getitem__(self, key: Any):
+            return self.__class__(super().__getitem__(key))
+
+        def strip(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.strip_calls += 1
+            return super().strip(*args, **kwargs)
+
+    header = StripTrackingHeader("analysis " + ("reasoning payload " * 64))
+
+    assert RequestStreamAssembler._legacy_pipe_channel_header_body(header, "analysis") == header[
+        len("analysis") :
+    ]
+    assert StripTrackingHeader.strip_calls == 0
+    assert RequestStreamAssembler._legacy_pipe_channel_header_body("analysis   \t", "analysis") is None
+    assert RequestStreamAssembler._legacy_pipe_channel_header_body("final visible", "final") is None
+
+
+def test_hidden_pipe_channel_deltas_avoids_strip_copy() -> None:
+    class StripTrackingHidden(str):
+        strip_calls = 0
+
+        def strip(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.strip_calls += 1
+            return super().strip(*args, **kwargs)
+
+    assembler = RequestStreamAssembler("req-hidden-content", True, "", "qwen")
+    hidden = StripTrackingHidden("reasoning payload " * 64)
+
+    deltas = assembler._hidden_pipe_channel_deltas(hidden=hidden)
+
+    assert deltas[0].reasoning_text == hidden
+    assert StripTrackingHidden.strip_calls == 0
+    assert assembler._hidden_pipe_channel_deltas(hidden=" \t\n") == []
+
+
+def test_unclosed_reasoning_recovery_avoids_strip_copy_for_content_without_markers() -> None:
+    class StripTrackingBody(str):
+        strip_calls = 0
+        find_calls = 0
+
+        def strip(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.strip_calls += 1
+            return super().strip(*args, **kwargs)
+
+        def find(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.find_calls += 1
+            return super().find(*args, **kwargs)
+
+    body = StripTrackingBody("reasoning payload " * 64)
+    assembler = RequestStreamAssembler("req-unclosed-recovery", True, "", "")
+
+    assert assembler._recover_unclosed_reasoning_body(body) == ("", "")
+    assert StripTrackingBody.strip_calls == 0
+    assert StripTrackingBody.find_calls == 0
+    assert assembler._recover_unclosed_reasoning_body(" \t\n") == ("", "")
+
+
+def test_unclosed_reasoning_candidate_index_uses_earliest_marker() -> None:
+    assert RequestStreamAssembler._unclosed_reasoning_candidate_index(
+        "hidden\nFinal: visible\n\nignored",
+    ) == len("hidden")
+    assert RequestStreamAssembler._unclosed_reasoning_candidate_index(
+        "\n\nvisible immediately",
+    ) == 0
+    assert RequestStreamAssembler._unclosed_reasoning_candidate_index(
+        "hidden only without visible tail",
+    ) == -1
+
+
 def test_token_count_compression_reuses_cached_weight_shape() -> None:
     stream_assembler._cached_compress_delta_token_counts.cache_clear()
     weights = [
@@ -1050,6 +1141,7 @@ def test_plain_token_metadata_keeps_fast_path_and_metrics(monkeypatch) -> None:
 
 
 def test_estimated_delta_token_count_matches_split_semantics_without_ascii_allocation() -> None:
+    stream_assembler._whitespace_token_count.cache_clear()
     samples = (
         "plain ascii chunk",
         "single",
@@ -1071,6 +1163,10 @@ def test_estimated_delta_token_count_matches_split_semantics_without_ascii_alloc
     assert RequestStreamAssembler._estimated_delta_token_count(
         AssemblyDelta(reasoning_text="unicode\u2003space")
     ) == 2
+    assert RequestStreamAssembler._estimated_delta_token_count(
+        AssemblyDelta(content_text="plain ascii chunk")
+    ) == 3
+    assert stream_assembler._whitespace_token_count.cache_info().hits >= 1
 
 
 def test_delta_token_annotation_uses_ascii_count_fast_path(monkeypatch) -> None:

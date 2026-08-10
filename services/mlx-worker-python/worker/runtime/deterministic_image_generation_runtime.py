@@ -19,6 +19,8 @@ _IMAGE_MIME_TYPES = {
     "webp": "image/webp",
 }
 _SUPPORTED_IMAGE_FORMATS = frozenset((*_IMAGE_MIME_TYPES, "jpg"))
+_ASCII_NEWLINE = b"\n"
+_ASCII_VARIANT_TOKENS = tuple(str(index).encode("ascii") for index in range(256))
 
 
 class ImageGenerationCancelled(RuntimeError):
@@ -93,7 +95,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
                 raise ImageGenerationCancelled("Image generation was canceled.")
 
             sleep_image("image")
-            payload = render_payload_header + str(index).encode("ascii") + b"\n"
+            payload = render_payload_header + _ascii_variant_token(index) + _ASCII_NEWLINE
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_started = monotonic()
             artifact_path.write_bytes(payload)
@@ -227,7 +229,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         model_id = str(loaded_model.get("model_id", "image-model"))
         edit_strength = float(request.strength or 0.0)
         write_bytes = self._write_bytes
-        artifact_metadata = self._artifact_metadata
+        sha256_hex = hashlib.sha256
         append_image = images.append
         append_artifact = artifacts.append
         sleep_image = sleep_if_configured
@@ -249,27 +251,28 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
                 raise ImageGenerationCancelled("Image edit was canceled.")
 
             sleep_image("image")
-            payload = render_edit_payload_prefix + str(index).encode("ascii") + render_edit_payload_suffix
+            payload = render_edit_payload_prefix + _ascii_variant_token(index) + render_edit_payload_suffix
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_publish_ms += write_bytes(artifact_path, payload, monotonic=monotonic)
             payload_byte_length = len(payload)
+            digest = sha256_hex(payload).hexdigest()
             append_image(payload)
             total_output_bytes += payload_byte_length
             append_artifact(
-                artifact_metadata(
-                    job_id=job_id,
+                common_pb2.ImageArtifactMetadata(
                     artifact_id=f"{job_id}::artifact-{index}",
+                    job_id=job_id,
                     role=common_pb2.IMAGE_ARTIFACT_GENERATED,
                     mime_type=mime_type,
-                    image_format=image_format,
+                    format=image_format,
                     width=width,
                     height=height,
-                    payload=payload,
-                    payload_byte_length=payload_byte_length,
-                    storage_path=artifact_path,
+                    byte_length=payload_byte_length,
+                    storage_uri=str(artifact_path),
+                    sha256=digest,
                     variant_index=index,
-                    parent_artifact_id=request.source_artifact_id,
                     ext=lineage_ext,
+                    parent_artifact_id=request.source_artifact_id,
                 )
             )
 
@@ -482,3 +485,9 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
             f"MASK_SHA={mask_digest}\n"
         ).encode("utf-8")
         return b"\x89PNG\r\n\x1a\n" + payload
+
+
+def _ascii_variant_token(index: int) -> bytes:
+    if 0 <= index < len(_ASCII_VARIANT_TOKENS):
+        return _ASCII_VARIANT_TOKENS[index]
+    return str(index).encode("ascii")

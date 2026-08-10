@@ -4,7 +4,7 @@ import heapq
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import AbstractSet
+from typing import AbstractSet, cast
 
 from worker.productization.benchmark_evaluation_report import validate_report_payload
 
@@ -34,7 +34,7 @@ DEFAULT_RELEASE_EVIDENCE_MATRIX: dict[str, dict[str, object]] = {
 
 
 def load_report_payload(path: str | Path) -> dict[str, object]:
-    report_path = Path(path)
+    report_path = path if isinstance(path, Path) else Path(path)
     try:
         payload = json.loads(report_path.read_bytes())
     except json.JSONDecodeError as exc:
@@ -257,6 +257,18 @@ def _release_matrix_rows(
             if role in matrix:
                 evidence_by_role.setdefault(role, set()).update(evidence_ids)
 
+    if not evidence_by_role:
+        return [
+            {
+                "role": role,
+                "required": bool(rule.get("required", True)),
+                "present": False,
+                "evidence_ids": [],
+                "description": str(rule.get("description", "")),
+            }
+            for role, rule in matrix.items()
+        ]
+
     return [
         {
             "role": role,
@@ -271,6 +283,8 @@ def _release_matrix_rows(
 
 def _has_text(value: object) -> bool:
     """True when a target field carries non-whitespace text."""
+    if type(value) is str:
+        return bool(value) and not value.isspace()
     text = value if isinstance(value, str) else str(value)
     return bool(text.strip())
 
@@ -332,11 +346,13 @@ def _rule_matches_report(
         )
         if matches_any_metric:
             return bool(metrics)
+        prefixes_get = prefixes_by_initial.get
         for metric in metrics:
-            metric_value = str(metric.get("metric", ""))
+            metric_raw_value = metric.get("metric", "")
+            metric_value = metric_raw_value if type(metric_raw_value) is str else str(metric_raw_value)
             if not metric_value:
                 continue
-            candidates = prefixes_by_initial.get(metric_value[0])
+            candidates = prefixes_get(metric_value[0])
             if candidates is not None and metric_value.startswith(candidates):
                 return True
 
@@ -427,6 +443,8 @@ def _probe_phase_duration_key(row: dict[str, object]) -> float:
     from the top five rather than ranking last with the other unusable values.
     """
     duration = row.get("duration_ms")
+    if type(duration) is float:
+        return duration
     if isinstance(duration, bool) or not isinstance(duration, (float, int, str)):
         return 0.0
     return float(duration or 0.0)
@@ -479,6 +497,12 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
 
 
 def _dict_list(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list):
+    if type(value) is list:
+        for item in value:
+            if not isinstance(item, dict):
+                break
+        else:
+            return cast(list[dict[str, object]], value)
+    elif not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]

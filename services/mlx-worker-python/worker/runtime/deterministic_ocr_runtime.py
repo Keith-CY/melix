@@ -24,6 +24,14 @@ class VisionProbeSnapshot:
 
 
 class DeterministicOCRRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
+    __slots__ = (
+        "_last_probe",
+        "_last_single_prompt_input_bytes",
+        "_last_single_prompt_request",
+        "_last_single_prompt_text",
+        "_last_single_prompt_token_count",
+    )
+
     runtime_name = "deterministic-ocr"
 
     def __init__(self) -> None:

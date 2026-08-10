@@ -913,6 +913,57 @@ def test_trust_policy_single_executable_model_file_skips_sort(
     assert exc_info.value.policy.custom_loader_detection_source == "model_files:configuration_melix_demo.py"
 
 
+def test_trust_policy_executable_model_scan_skips_prefix_check_by_start_char(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NonExecutableStartEntry:
+        name = "adapter_config.py"
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:  # pragma: no cover
+            raise AssertionError("non-executable start chars should not stat entry")
+
+    class ExecutableStartEntry:
+        name = "configuration_melix_demo.py"
+
+        def is_file(self, *, follow_symlinks: bool = True) -> bool:
+            return follow_symlinks is False
+
+    checked_names: list[str] = []
+    original_prefixes = model_load_trust_module.EXECUTABLE_MODEL_FILE_PREFIXES
+
+    class StartswithTrackedName(str):
+        def startswith(self, prefix, *args):  # type: ignore[override]
+            checked_names.append(str(self))
+            return super().startswith(prefix, *args)
+
+    monkeypatch.setattr(
+        NonExecutableStartEntry,
+        "name",
+        StartswithTrackedName("adapter_config.py"),
+    )
+    monkeypatch.setattr(
+        ExecutableStartEntry,
+        "name",
+        StartswithTrackedName("configuration_melix_demo.py"),
+    )
+
+    non_executable = model_load_trust_module._is_executable_model_file_entry(
+        NonExecutableStartEntry()  # type: ignore[arg-type]
+    )
+    executable = model_load_trust_module._is_executable_model_file_entry(
+        ExecutableStartEntry()  # type: ignore[arg-type]
+    )
+
+    assert non_executable is False
+    assert executable is True
+    assert checked_names == ["configuration_melix_demo.py"]
+    assert "c" in model_load_trust_module.EXECUTABLE_MODEL_FILE_PREFIX_START_CHARS
+    assert all(
+        prefix[0] in model_load_trust_module.EXECUTABLE_MODEL_FILE_PREFIX_START_CHARS
+        for prefix in original_prefixes
+    )
+
+
 def test_trust_policy_caches_model_file_detection_source() -> None:
     source_cache = model_load_trust_module._model_files_detection_source
     source_cache.cache_clear()

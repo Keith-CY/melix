@@ -174,6 +174,11 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert stale_agentic_train_path.exists() is False
     assert stale_agentic_valid_path.exists() is False
     assert training_dataset_module.trainer_sample_counts(dataset) == (1, 0)
+    canonical_sample = {"zeta": "雪", "alpha": {"nested": [3, 1, 2]}, "emoji": "🧪"}
+    expected_digest = training_dataset_module.hashlib.sha256(
+        training_dataset_module._canonical_sample_key(canonical_sample).encode("utf-8")
+    ).digest()
+    assert training_dataset_module._canonical_sample_digest(canonical_sample) == expected_digest
 
     degenerate_agentic_samples = [
         {

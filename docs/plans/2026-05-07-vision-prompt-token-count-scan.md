@@ -7,10 +7,20 @@ Reduce memory pressure in vision-family prompt token accounting by replacing `pr
 ## Scope
 
 - `services/mlx-worker-python/worker/runtime/vision_family_adapters.py`
+- `services/mlx-worker-python/worker/runtime/token_counting.py`
 - `services/mlx-worker-python/tests/test_vision_runtime.py`
 - `scripts/vision_family_prompt_token_count_probe.py`
 - `infra/perf/pr_scoped_probes.json`
 - `services/mlx-worker-python/tests/test_pr_scoped_performance.py`
+
+## 2026-08-08 follow-up slice
+
+Move the no-allocation whitespace scan into the shared `whitespace_token_count()`
+helper itself so `ResolvedVisionFamilyConfig.prompt_token_count()` keeps the same
+cached call site while avoiding `str.split()` list materialization on cache
+misses. The regression coverage uses a `str` subclass that tracks `split()` calls
+and asserts the vision-family token path preserves split-compatible whitespace
+semantics without invoking `split()`.
 
 ## Linux-only constraint
 

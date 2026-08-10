@@ -131,6 +131,18 @@ Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
 
+## Follow-up Slice: Scalar Tensor Attribute Lookup Fast Path
+
+The 2026-08-09 follow-up keeps the same registered probe and narrows to scalar
+cache tensor byte extraction. `_tensor_nbytes()` now uses the already-bound
+`getattr` helper for `.nbytes` before falling back to `size * itemsize`, avoiding
+an exception path for fallback or missing tensors while preserving the public
+byte-accounting behavior.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
+
 ## Follow-up Slice: Exact Sequence Type Check
 
 The 2026-07-22 follow-up keeps the same registered probe and narrows to the

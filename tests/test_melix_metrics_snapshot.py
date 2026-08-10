@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 
 
@@ -214,6 +215,35 @@ def test_runtime_dir_discovery_materializes_only_final_latest_path(
 
     assert latest == expected
     assert path_constructor_args == [(str(expected),)]
+
+
+def test_runtime_dir_discovery_reuses_stat_for_file_type_and_mtime(monkeypatch) -> None:
+    class FakeStat:
+        st_mode = stat.S_IFREG | 0o600
+        st_mtime = 123.0
+
+    class FakeEntry:
+        name = "control-plane-metrics-latest.json"
+        path = "/runtime/control-plane-metrics-latest.json"
+
+        def is_file(self) -> bool:  # pragma: no cover - failure-only guard.
+            raise AssertionError("runtime discovery should not call DirEntry.is_file")
+
+        def stat(self):
+            return FakeStat()
+
+    class FakeScandir:
+        def __enter__(self):
+            return iter((FakeEntry(),))
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(snapshot_cli.os, "scandir", lambda path: FakeScandir())
+
+    latest = snapshot_cli.discover_latest_metrics_path(Path("/runtime"), "control_plane")
+
+    assert latest == Path("/runtime/control-plane-metrics-latest.json")
 
 
 def test_resolve_source_paths_discovers_runtime_sources_with_one_scandir(

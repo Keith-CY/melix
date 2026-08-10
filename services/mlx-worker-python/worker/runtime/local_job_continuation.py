@@ -267,8 +267,12 @@ class LocalJobContinuationStore:
         job_id: str,
         path_text: str,
     ) -> LocalJobContinuationRecord | None:
-        safe_job_id = _safe_job_id(job_id)
-        if safe_job_id != job_id or job_id == ".json":
+        if (
+            job_id == ".json"
+            or job_id == "."
+            or job_id == ".."
+            or JOB_ID_PATTERN.fullmatch(job_id) is None
+        ):
             return self.load_record(job_id)
         try:
             with open(path_text, "rb") as record_file:

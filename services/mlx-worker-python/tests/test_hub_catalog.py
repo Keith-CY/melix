@@ -132,6 +132,27 @@ def test_int_helper_preserves_bool_and_int_subclass_semantics() -> None:
     assert _int("3") == 0
 
 
+def test_direct_card_size_hint_exact_label_avoids_substring_parser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.model_ops import hub_catalog
+
+    def fail_substring_parser(text: str) -> int:
+        raise AssertionError(  # pragma: no cover - regression guard
+            f"exact card size labels should parse by span, not substring: {text!r}"
+        )
+
+    hub_catalog._direct_card_size_hint_from_text.cache_clear()
+    monkeypatch.setattr(hub_catalog, "_direct_size_hint_from_text", fail_substring_parser)
+
+    try:
+        assert hub_catalog._direct_card_size_hint_from_text("MODEL SIZE:128 MB") == 128 * 1024 * 1024
+        assert hub_catalog._direct_card_size_hint_from_text("MODEL SIZE|256 kb") == 256 * 1024
+        assert hub_catalog._direct_card_size_hint_from_text("Model size: 2 GB") == 2 * 1024 * 1024 * 1024
+    finally:
+        hub_catalog._direct_card_size_hint_from_text.cache_clear()
+
+
 def test_mlx_library_atom_detection_preserves_mixed_case_without_lowercase_copy() -> None:
     assert _is_mlx_compatible(
         repo_id="plain/model",
@@ -728,7 +749,7 @@ def test_direct_size_hint_fast_paths_cache_repeated_text(monkeypatch: pytest.Mon
             == 12 * MB
         )
 
-    assert direct_calls == ["12 MB"]
+    assert direct_calls == []
 
 
 def test_direct_size_hint_from_line_parses_common_suffix_without_text_slice(

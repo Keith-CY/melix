@@ -421,6 +421,14 @@ def test_report_evidence_gate_target_field_preserves_stringified_presence() -> N
     )
 
 
+def test_report_evidence_gate_has_text_exact_string_fast_path_preserves_whitespace_semantics() -> None:
+    assert report_evidence_gate_module._has_text("adapter-a")
+    assert report_evidence_gate_module._has_text(" adapter-a")
+    assert report_evidence_gate_module._has_text("adapter-a ")
+    assert not report_evidence_gate_module._has_text("")
+    assert not report_evidence_gate_module._has_text("   ")
+
+
 def test_report_evidence_gate_target_field_preserves_string_subclass_strip() -> None:
     class BlankWhenStripped(str):
         def strip(self, chars: str | None = None) -> str:  # pragma: no cover - regression guard
@@ -639,6 +647,36 @@ def test_report_evidence_gate_release_matrix_ignores_invalid_cached_roles() -> N
     ]
 
 
+def test_report_evidence_gate_release_matrix_fast_paths_empty_evidence() -> None:
+    rows = report_evidence_gate_module._release_matrix_rows(
+        [
+            {"release_matrix_roles": ["unknown"], "source_evidence_ids": ["ignored"]},
+            {"release_matrix_roles": ["serving"], "source_evidence_ids": []},
+        ],
+        {
+            "serving": {"description": "serving evidence"},
+            "adapter": {"required": False, "description": "adapter evidence"},
+        },
+    )
+
+    assert rows == [
+        {
+            "role": "serving",
+            "required": True,
+            "present": False,
+            "evidence_ids": [],
+            "description": "serving evidence",
+        },
+        {
+            "role": "adapter",
+            "required": False,
+            "present": False,
+            "evidence_ids": [],
+            "description": "adapter evidence",
+        },
+    ]
+
+
 def test_report_evidence_gate_reports_blocking_metrics_and_probe_phase(tmp_path: Path) -> None:
     report_path = _write_report(
         tmp_path,
@@ -747,6 +785,7 @@ def test_report_evidence_gate_covers_invalid_payload_and_edge_summaries(tmp_path
     assert report_evidence_gate_module._dict_list({"not": "a list"}) == []
     dict_rows = [{"phase": "setup"}, {"phase": "probe"}]
     assert report_evidence_gate_module._dict_list(dict_rows) == dict_rows
+    assert report_evidence_gate_module._dict_list(dict_rows) is dict_rows
     assert report_evidence_gate_module._dict_list([dict_rows[0], "skip", dict_rows[1]]) == dict_rows
 
     class DictRow(dict[str, object]):

@@ -205,16 +205,16 @@ class BenchmarkQueueStore:
     @staticmethod
     def _clone_record(record: BenchmarkQueueRecord) -> BenchmarkQueueRecord:
         return BenchmarkQueueRecord(
-            queue_item_id=record.queue_item_id,
-            job_kind=record.job_kind,
-            model_id=record.model_id,
-            suite_ids=record.suite_ids,
-            parameters=record.parameters.copy(),
-            status=record.status,
-            created_at_unix_ms=record.created_at_unix_ms,
-            updated_at_unix_ms=record.updated_at_unix_ms,
-            started_at_unix_ms=record.started_at_unix_ms,
-            completed_at_unix_ms=record.completed_at_unix_ms,
+            record.queue_item_id,
+            record.job_kind,
+            record.model_id,
+            record.suite_ids,
+            record.parameters.copy(),
+            record.status,
+            record.created_at_unix_ms,
+            record.updated_at_unix_ms,
+            record.started_at_unix_ms,
+            record.completed_at_unix_ms,
         )
 
     @staticmethod

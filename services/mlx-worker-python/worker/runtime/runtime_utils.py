@@ -84,6 +84,16 @@ def _callable_kwarg_signature_cached(
     return _callable_kwarg_signature_uncached(callable_obj, skip_first_parameter)
 
 
+@lru_cache(maxsize=1024)
+def _callable_accepts_kwarg_cached(
+    callable_obj: Any,
+    skip_first_parameter: bool,
+    keyword: str,
+) -> bool:
+    signature = _callable_kwarg_signature_cached(callable_obj, skip_first_parameter)
+    return keyword in signature.keyword_accessible_params or signature.accepts_var_keyword
+
+
 def callable_kwarg_signature(callable_obj: Any) -> CallableKwargSignature:
     if type(callable_obj) is MethodType:
         return _callable_kwarg_signature_cached(callable_obj.__func__, True)
@@ -100,12 +110,15 @@ def callable_declares_kwarg(callable_obj: Any, keyword: str) -> bool:
 
 def callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
     if type(callable_obj) is FunctionType:
-        signature = _callable_kwarg_signature_cached(callable_obj, False)
-    elif type(callable_obj) is MethodType:
-        signature = _callable_kwarg_signature_cached(callable_obj.__func__, True)
-    else:
-        signature = callable_kwarg_signature(callable_obj)
-    return keyword in signature.keyword_accessible_params or signature.accepts_var_keyword
+        return _callable_accepts_kwarg_cached(callable_obj, False, keyword)
+    if type(callable_obj) is MethodType:
+        return _callable_accepts_kwarg_cached(callable_obj.__func__, True, keyword)
+    cache_callable, skip_first_parameter = _callable_cache_target(callable_obj)
+    try:
+        return _callable_accepts_kwarg_cached(cache_callable, skip_first_parameter, keyword)
+    except TypeError:
+        signature = _callable_kwarg_signature_uncached(callable_obj)
+        return keyword in signature.keyword_accessible_params or signature.accepts_var_keyword
 
 
 def first_declared_kwarg(callable_obj: Any, keywords: tuple[str, ...]) -> str:
@@ -118,6 +131,7 @@ def first_declared_kwarg(callable_obj: Any, keywords: tuple[str, ...]) -> str:
 
 def clear_callable_kwarg_signature_cache() -> None:
     _callable_kwarg_signature_cached.cache_clear()
+    _callable_accepts_kwarg_cached.cache_clear()
 
 
 _INSTALLED_PACKAGE_VERSION_CACHE: dict[str, str] = {}
@@ -167,7 +181,7 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
     try:
         if not index_path.is_file():
             return 0
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload = json.loads(index_path.read_bytes())
     except (OSError, json.JSONDecodeError):
         return 0
     weight_map = payload.get("weight_map")
@@ -175,16 +189,28 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
         return 0
     total = 0
     seen: set[str] = set()
+    seen_add = seen.add
+    os_sep = os.sep
+    model_dir_path = os.fspath(model_dir)
+    is_model_weight_filename = _is_model_weight_filename
+    is_regular_file_mode = stat.S_ISREG
+    os_path_join = os.path.join
+    os_stat = os.stat
     for raw_shard in weight_map.values():
         shard_name = str(raw_shard or "").strip()
-        if not shard_name or shard_name in seen:
+        if not shard_name or shard_name in seen or not is_model_weight_filename(shard_name):
             continue
-        seen.add(shard_name)
-        if shard_name[0] == os.sep:
-            shard_path = Path(shard_name)
+        seen_add(shard_name)
+        if shard_name[0] == os_sep:
+            shard_path = shard_name
         else:
-            shard_path = model_dir / shard_name
-        total += _weight_file_size(shard_path)
+            shard_path = os_path_join(model_dir_path, shard_name)
+        try:
+            stat_result = os_stat(shard_path)
+            if is_regular_file_mode(stat_result.st_mode):
+                total += stat_result.st_size
+        except OSError:
+            continue
     return total
 
 

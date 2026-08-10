@@ -8,12 +8,11 @@ import logging
 import re
 
 from worker.runtime import tool_call_rescue
+from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
 
 logger = logging.getLogger(__name__)
 _UTF8_INCREMENTAL_DECODER = codecs.getincrementaldecoder("utf-8")
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
-def _whitespace_token_count(text: str) -> int:
-    return len(text.split())
 
 
 def _marker_prefix_suffixes(marker: str) -> tuple[str, ...]:
@@ -1423,8 +1422,9 @@ class RequestStreamAssembler:
         return adjusted
 
     def _recover_unclosed_reasoning_body(self, body: str) -> tuple[str, str]:
-        stripped = body.strip()
-        if not stripped:
+        if not body or body.isspace():
+            return "", ""
+        if "\n" not in body and "\r" not in body:
             return "", ""
         for marker in ("\n\n", "\r\n\r\n"):
             if marker in body:
@@ -1441,11 +1441,14 @@ class RequestStreamAssembler:
 
     @classmethod
     def _unclosed_reasoning_candidate_index(cls, body: str) -> int:
-        indexes = (
-            body.find(marker)
-            for marker in cls._UNCLOSED_REASONING_RECOVERY_MARKERS
-        )
-        return min((index for index in indexes if index >= 0), default=-1)
+        earliest = -1
+        for marker in cls._UNCLOSED_REASONING_RECOVERY_MARKERS:
+            index = body.find(marker)
+            if index == 0:
+                return 0
+            if index > 0 and (earliest < 0 or index < earliest):
+                earliest = index
+        return earliest
 
     @classmethod
     def _longest_unclosed_reasoning_marker_prefix_suffix(cls, body: str) -> str:
@@ -1685,15 +1688,23 @@ class RequestStreamAssembler:
     @staticmethod
     @lru_cache(maxsize=16)
     def _pipe_channel_name(header: str) -> str:
-        parts = header.split(None, 1)
-        return parts[0].lower() if parts else ""
+        header_length = len(header)
+        index = 0
+        while index < header_length and header[index].isspace():
+            index += 1
+        if index >= header_length:
+            return ""
+        start = index
+        while index < header_length and not header[index].isspace():
+            index += 1
+        return header[start:index].lower()
 
     @classmethod
     def _legacy_pipe_channel_header_body(cls, header: str, channel_name: str) -> str | None:
         if channel_name not in cls._HIDDEN_PIPE_CHANNELS:
             return None
         body = header[len(channel_name) :]
-        return body if body.strip() else None
+        return body if body and not body.isspace() else None
 
     def _pipe_channel_deltas(
         self,
@@ -1720,7 +1731,7 @@ class RequestStreamAssembler:
         return []
 
     def _hidden_pipe_channel_deltas(self, hidden: str, visible: str = "") -> list[AssemblyDelta]:
-        hidden_has_content = bool(hidden.strip())
+        hidden_has_content = bool(hidden) and not hidden.isspace()
         if not hidden_has_content:
             self._metrics["empty_thinking_sentinel_count"] += 1
         deltas: list[AssemblyDelta] = []

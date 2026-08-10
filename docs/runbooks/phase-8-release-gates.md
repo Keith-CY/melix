@@ -114,6 +114,14 @@ compute adjacent interpolation bounds without an extra `floor`/`ceil` pair, as
 long as empty, singleton, lower-bound, upper-bound, and interpolated percentile
 semantics remain covered by the focused statistical evidence tests.
 
+Category-breakdown maintenance is governed by the registered
+`statistical-evidence-category-breakdown-single-pass` PR-scoped probe. The
+breakdown builder may reuse first-seen category insertion order when newly seen
+labels are already sorted, but it must fall back to explicit key sorting as soon
+as a newly seen label is lower than the previous label. This keeps operator-facing
+category order deterministic while avoiding an extra sort on already ordered
+comparison datasets.
+
 The checked-in policy also includes an `m9` section for repository-owned ecosystem and security
 signals. The current required M9 probes include:
 

@@ -47,6 +47,22 @@ Local Linux registered probe samples for this follow-up on this host:
 - delta: `-90.690089` ms, `8.239762%` faster (`1.089797x`).
 - `metadata_iteration_calls_mean`: unchanged at `0.0`; `peak_bytes_mean`: unchanged at `1160.4`.
 
+## 2026-08-09 slotted config follow-up
+
+This follow-up keeps the same registered probe and narrows the
+behavior-preserving change to the immutable image-family dataclasses:
+`ImageFamilyDescriptor`, `ImageFamilyDetection`, and
+`ResolvedImageFamilyConfig` now use `slots=True`. Repeated image-family config
+resolution creates `ImageFamilyDetection` and `ResolvedImageFamilyConfig` objects
+on every call, so removing per-instance `__dict__` storage reduces allocation
+pressure without changing fallback or validation semantics.
+
+The focused regression test asserts these config objects no longer expose
+`__dict__`, matching the text-family config pattern already used in
+`worker/runtime/text_family_adapters.py`. The registered probe remains
+`image-family-config-copy-elision`; its `peak_bytes_mean` and elapsed-time metrics
+cover the repeated resolver allocation path.
+
 ## Verification plan
 
 Run the registered focused test command, changed-scope coverage command, and the

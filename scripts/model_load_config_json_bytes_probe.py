@@ -71,6 +71,15 @@ def _write_plain_executable_model(model_dir: Path, *, padding_bytes: int) -> Non
         "class MelixDemoConfig: pass\n",
         encoding="utf-8",
     )
+    for index in range(160):
+        (model_dir / f"adapter_{index:04d}.py").write_text(
+            "# non-executable adapter helper\n",
+            encoding="utf-8",
+        )
+        (model_dir / f"notes_{index:04d}.txt").write_text(
+            "non-python sidecar\n",
+            encoding="utf-8",
+        )
 
 
 def _run_sample(model, iterations: int) -> tuple[float, int, int]:

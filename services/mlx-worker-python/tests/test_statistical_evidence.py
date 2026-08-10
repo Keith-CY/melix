@@ -508,3 +508,31 @@ def test_build_category_breakdown_preserves_ordering_and_rounded_totals() -> Non
             "delta_accuracy": 0.25,
         },
     }
+
+
+def test_build_category_breakdown_reuses_sorted_insertion_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_sorted(values: object) -> list[object]:  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"unexpected category sort for already ordered labels: {values!r}"
+        )
+
+    monkeypatch.setattr(statistical_evidence_module, "sorted", fail_sorted, raising=False)
+
+    breakdown = build_category_breakdown(
+        rows=(
+            {"category_label": "alpha", "base_correct": True, "target_correct": True},
+            {"category_label": "beta", "base_correct": False, "target_correct": True},
+            {"category_label": "beta", "base_correct": True, "target_correct": False},
+            {"category_label": "gamma", "base_correct": False, "target_correct": False},
+        )
+    )
+
+    assert list(breakdown) == ["alpha", "beta", "gamma"]
+    assert breakdown["beta"] == {
+        "sample_size": 2,
+        "base_accuracy": 0.5,
+        "target_accuracy": 0.5,
+        "delta_accuracy": 0.0,
+    }

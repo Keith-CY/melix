@@ -46,7 +46,12 @@ def test_callable_kwarg_signature_caches_structured_lookup(monkeypatch: pytest.M
     assert capabilities.accepts_var_keyword is False
     assert signature_calls == 1
 
+    accepts_cache = runtime_utils._callable_accepts_kwarg_cached.cache_info()
+    assert accepts_cache.misses == 2
+    assert accepts_cache.hits == 1
+
     runtime_utils.clear_callable_kwarg_signature_cache()
+    assert runtime_utils._callable_accepts_kwarg_cached.cache_info().currsize == 0
 
 
 def test_callable_cache_target_fast_paths_plain_functions() -> None:
@@ -304,6 +309,45 @@ def test_indexed_safetensors_shard_bytes_joins_relative_names_without_path_round
     assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"weights")
 
 
+def test_indexed_safetensors_shard_bytes_reads_index_as_bytes(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = bundle / "model-00001-of-00001.safetensors"
+    shard.write_bytes(b"weights")
+    index_path = bundle / "model.safetensors.index.json"
+    index_path.write_text(
+        json.dumps({"weight_map": {"layers.0.weight": shard.name}}),
+        encoding="utf-8",
+    )
+    original_read_bytes = runtime_utils.Path.read_bytes
+
+    def fail_read_text(
+        self: Path,
+        *args: Any,
+        **kwargs: Any,
+    ) -> str:  # pragma: no cover - regression guard must stay uncalled
+        if self == index_path:
+            raise AssertionError("safetensors index should be read as bytes")
+        return Path.read_text(self, *args, **kwargs)
+
+    read_bytes_calls = 0
+
+    def tracked_read_bytes(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        nonlocal read_bytes_calls
+        if self == index_path:
+            read_bytes_calls += 1
+        return original_read_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(runtime_utils.Path, "read_text", fail_read_text)
+    monkeypatch.setattr(runtime_utils.Path, "read_bytes", tracked_read_bytes)
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"weights")
+    assert read_bytes_calls == 1
+
+
 def test_indexed_safetensors_shard_bytes_preserves_absolute_shard_paths(tmp_path) -> None:
     bundle = tmp_path / "indexed-model"
     bundle.mkdir()
@@ -337,6 +381,48 @@ def test_indexed_safetensors_shard_bytes_strips_legacy_shard_whitespace(tmp_path
     )
 
     assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"legacy-whitespace")
+
+
+def test_indexed_safetensors_shard_bytes_uses_os_stat_and_tolerates_errors(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "indexed-model"
+    bundle.mkdir()
+    shard = bundle / "model-00001-of-00001.safetensors"
+    shard.write_bytes(b"weights")
+    missing = "model-missing.safetensors"
+    notes = "notes.txt"
+    (bundle / notes).write_text("ignored", encoding="utf-8")
+    (bundle / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "layers.0.weight": shard.name,
+                    "layers.missing.weight": missing,
+                    "layers.notes.weight": notes,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_os_stat = runtime_utils.os.stat
+    stat_paths: list[str] = []
+
+    index_path = str(bundle / "model.safetensors.index.json")
+
+    def tracked_os_stat(path: str | os.PathLike[str], *args: Any, **kwargs: Any):
+        path_text = os.fspath(path)
+        if path_text != index_path:
+            stat_paths.append(path_text)
+        if path_text.endswith(missing):
+            raise OSError("missing indexed shard")
+        return original_os_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(runtime_utils.os, "stat", tracked_os_stat)
+
+    assert runtime_utils._indexed_safetensors_shard_bytes(bundle) == len(b"weights")
+    assert stat_paths == [str(shard), str(bundle / missing)]
 
 
 def test_estimate_model_weight_resident_bytes_skips_expanduser_for_plain_paths(

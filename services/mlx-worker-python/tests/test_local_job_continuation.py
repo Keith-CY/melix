@@ -1657,6 +1657,36 @@ def test_store_scan_followup_candidates_uses_scanned_entry_path_without_rejoin(
     assert [candidate.record.job_id for candidate in scan.candidates] == ["ready"]
 
 
+def test_store_load_scanned_record_skips_public_safe_id_for_scanned_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    record = _record(
+        job_id="ready",
+        status="completed",
+        exit_status=0,
+        artifact_paths=("/workspace/out/ready.json",),
+    )
+    path = tmp_path / "ready.json"
+    path.write_text(json.dumps(record.to_dict()), encoding="utf-8")
+
+    original_safe_job_id = local_job_continuation_module._safe_job_id
+    safe_job_id_calls = 0
+
+    def counted_safe_job_id(job_id: str) -> str:
+        nonlocal safe_job_id_calls
+        safe_job_id_calls += 1
+        return original_safe_job_id(job_id)
+
+    monkeypatch.setattr(local_job_continuation_module, "_safe_job_id", counted_safe_job_id)
+
+    loaded = store._load_scanned_record("ready", os.fspath(path))
+
+    assert loaded == record
+    assert safe_job_id_calls == 1
+
+
 def test_store_scan_followup_candidates_tolerates_scanned_path_deleted_before_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

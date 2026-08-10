@@ -4513,11 +4513,17 @@ def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
     assert metrics["partial_suffix_hits"] == 3.0
     assert metrics["long_literal_empty_hits"] == 3.0
     assert metrics["close_marker_hits"] == 3.0
+    assert metrics["legacy_pipe_body_hits"] == 3.0
+    assert metrics["unclosed_reasoning_hits"] == 3.0
+    assert metrics["unclosed_reasoning_candidate_hits"] == 3.0
     assert metrics["prefix_identity_hits"] == 3.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["partial_suffix_elapsed_ms_mean"] >= 0
     assert metrics["long_literal_suffix_elapsed_ms_mean"] >= 0
     assert metrics["close_marker_prefix_elapsed_ms_mean"] >= 0
+    assert metrics["legacy_pipe_body_elapsed_ms_mean"] >= 0
+    assert metrics["unclosed_reasoning_recovery_elapsed_ms_mean"] >= 0
+    assert metrics["unclosed_reasoning_candidate_elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
 
 
@@ -7564,6 +7570,10 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["root_plain_child_path_joins_mean"] == 0.0
     assert metrics["root_identity_comparisons_mean"] == 0.0
+    assert metrics["module_path_glob_calls_mean"] == 0.0
+    assert metrics["module_path_scandir_calls_mean"] == 1.0
+    assert metrics["artifact_weight_glob_calls_mean"] == 0.0
+    assert metrics["artifact_weight_scandir_calls_mean"] == 1.0
     assert metrics["plain_scan_count_mean"] == metrics["model_count"] == 400.0
     assert metrics["manifest_count_mean"] == 400.0
     assert metrics["sample_count"] == 20.0
@@ -7575,6 +7585,10 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     direct_metrics = json.loads(capsys.readouterr().out)
     assert direct_metrics["root_plain_child_path_joins_mean"] == 0.0
     assert direct_metrics["root_identity_comparisons_mean"] == 0.0
+    assert direct_metrics["module_path_glob_calls_mean"] == 0.0
+    assert direct_metrics["module_path_scandir_calls_mean"] == 1.0
+    assert direct_metrics["artifact_weight_glob_calls_mean"] == 0.0
+    assert direct_metrics["artifact_weight_scandir_calls_mean"] == 1.0
     assert direct_metrics["plain_scan_count_mean"] == direct_metrics["manifest_count_mean"] == 3.0
 
 

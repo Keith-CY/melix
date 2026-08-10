@@ -5,6 +5,9 @@ from collections.abc import Iterator, Mapping
 import pytest
 
 from worker.runtime.image_family_adapters import (
+    ImageFamilyDescriptor,
+    ImageFamilyDetection,
+    ResolvedImageFamilyConfig,
     detect_image_family_identity,
     resolve_image_family_config,
 )
@@ -24,6 +27,32 @@ class IterationCountingMetadata(Mapping[str, str]):
 
     def __getitem__(self, key: str) -> str:
         return self._values[key]
+
+
+def test_image_family_config_dataclasses_are_slotted_for_repeated_resolution_memory() -> None:
+    resolved = resolve_image_family_config(
+        {"melix.image.family_id": "kontext-v1"},
+        model_path="models/flux-kontext-dev",
+        default_task_kind="image-text-to-image",
+    )
+    detected = detect_image_family_identity(
+        model_path="models/flux-kontext-dev",
+        explicit_task_kind="image-text-to-image",
+    )
+    descriptor = ImageFamilyDescriptor(
+        family_id="probe-v1",
+        default_backend_id="deterministic",
+        default_task_kind="text-to-image",
+        supports_generation=True,
+        supports_edit=False,
+        default_workflow_role="generate",
+    )
+
+    assert isinstance(resolved, ResolvedImageFamilyConfig)
+    assert isinstance(detected, ImageFamilyDetection)
+    assert not hasattr(resolved, "__dict__")
+    assert not hasattr(detected, "__dict__")
+    assert not hasattr(descriptor, "__dict__")
 
 
 def test_detect_image_family_identity_supports_explicit_overrides_and_path_inference() -> None:

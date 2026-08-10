@@ -30,6 +30,7 @@ _DIFF_PARSER_ACCEPTS_BYTES = True
 _EMPTY_CHANGED_LINES: frozenset[int] = frozenset()
 _DIFF_FROM_ENV = "MELIX_CHANGED_SCOPE_COVERAGE_DIFF_FROM"
 _DENSE_CHANGED_LINE_SCAN_THRESHOLD = 32
+_DENSE_SOURCE_LINE_READ_THRESHOLD = 64
 _ALLOWLIST_CACHE_MISS = object()
 _ALLOWLIST_LAST_RAW = ""
 _ALLOWLIST_LAST_RESULT: frozenset[str] | None | object = _ALLOWLIST_CACHE_MISS
@@ -96,7 +97,6 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
     header_prefix_len = len(header_prefix)
     header_separator_len = len(header_separator)
     hunk_new_range_marker = b" +"
-    parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit_bytes
     bytes_find = bytes.find
     bytes_startswith = bytes.startswith
     ascii_backslash = _ASCII_BACKSLASH
@@ -104,6 +104,10 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
     ascii_minus = _ASCII_MINUS
     ascii_at = _ASCII_AT
     ascii_lower_d = _ASCII_LOWER_D
+    ascii_zero = _ASCII_ZERO
+    ascii_nine = _ASCII_NINE
+    ascii_comma = _ASCII_COMMA
+    ascii_space = _ASCII_SPACE
     add_changed_line = None
     new_line: int | None = None
     diff_bytes = diff_text if isinstance(diff_text, bytes) else diff_text.encode()
@@ -126,7 +130,23 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
             if new_range_index < 0:
                 new_line = None
                 continue
-            new_line = parse_hunk_new_start_from_digit(line, new_range_index + 2)
+            digit_index = new_range_index + 2
+            parsed_new_line = 0
+            index = digit_index
+            line_length = len(line)
+            while index < line_length:
+                character_code = line[index]
+                if ascii_zero <= character_code <= ascii_nine:
+                    parsed_new_line = parsed_new_line * 10 + (character_code - ascii_zero)
+                    index += 1
+                    continue
+                if character_code == ascii_comma or character_code == ascii_space:
+                    new_line = parsed_new_line if index > digit_index else None
+                    break
+                new_line = None
+                break
+            else:
+                new_line = None
             continue
         if add_changed_line is None or new_line is None:
             continue
@@ -298,16 +318,47 @@ def _measurable_non_comment_lines(
     caller already passes a sorted list, so the sort is a linear no-op there, but
     it keeps unsorted input from silently reordering the result.
     """
-    with source_path.open("r", encoding="utf-8") as source_file:
-        source_lines = source_file.readlines()
-    line_count = len(source_lines)
+    sorted_line_numbers = sorted(line_numbers)
+    if not sorted_line_numbers:
+        return []
     measurable: list[int] = []
-    for line_no in sorted(line_numbers):
-        if not 1 <= line_no <= line_count:
-            continue
-        stripped = source_lines[line_no - 1].strip()
-        if stripped and not stripped.startswith("#"):
-            measurable.append(line_no)
+    if len(sorted_line_numbers) >= _DENSE_SOURCE_LINE_READ_THRESHOLD:
+        with source_path.open("r", encoding="utf-8") as source_file:
+            source_lines = source_file.readlines()
+        line_count = len(source_lines)
+        for line_no in sorted_line_numbers:
+            if not 1 <= line_no <= line_count:
+                continue
+            stripped = source_lines[line_no - 1].strip()
+            if stripped and not stripped.startswith("#"):
+                measurable.append(line_no)
+        return measurable
+
+    target_count = len(sorted_line_numbers)
+    target_index = 0
+    with source_path.open("r", encoding="utf-8") as source_file:
+        for source_line_no, line in enumerate(source_file, start=1):
+            while (
+                target_index < target_count
+                and sorted_line_numbers[target_index] < source_line_no
+            ):
+                target_index += 1
+            if target_index >= target_count:
+                break
+            target_line_no = sorted_line_numbers[target_index]
+            if target_line_no > source_line_no:
+                continue
+            stripped = line.strip()
+            is_measurable = bool(stripped) and not stripped.startswith("#")
+            while (
+                target_index < target_count
+                and sorted_line_numbers[target_index] == source_line_no
+            ):
+                if is_measurable:
+                    measurable.append(source_line_no)
+                target_index += 1
+            if target_index >= target_count:
+                break
     return measurable
 
 

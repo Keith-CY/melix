@@ -43,7 +43,7 @@ def test_worker_mlx_extra_isolates_pyarrow_from_synthetic_data() -> None:
     workspace_conflicts = workspace_payload["tool"]["uv"]["conflicts"]
 
     assert "pyarrow" not in runtime_dependencies
-    assert "pyarrow>=23.0.1,<25" in mlx_dependencies
+    assert "pyarrow>=23.0.1,<26" in mlx_dependencies
     assert "pyarrow" in mlx_dependency_names
     assert [
         {"package": "melix-mlx-worker", "extra": "mlx"},
