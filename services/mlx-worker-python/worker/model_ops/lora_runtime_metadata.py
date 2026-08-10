@@ -421,12 +421,16 @@ def _quantized_kind_from_text(raw_value: str) -> str:
     # The token boundary only needs ASCII [a-z0-9] checks; avoid regex dispatch
     # in this hot parser loop while preserving the same delimiter semantics.
     contains_kind_token = _contains_quantized_kind_token
+    if (
+        "q4" in raw_value
+        and "4bit" not in raw_value
+        and contains_kind_token(raw_value, "q4")
+    ):
+        return "q4"
     if "4bit" in raw_value and contains_kind_token(raw_value, "4bit"):
         return "4bit"
     if "8bit" in raw_value and contains_kind_token(raw_value, "8bit"):
         return "8bit"
-    if "q4" in raw_value and contains_kind_token(raw_value, "q4"):
-        return "q4"
     if "q8" in raw_value and contains_kind_token(raw_value, "q8"):
         return "q8"
     if "optiq" in raw_value and contains_kind_token(raw_value, "optiq"):
@@ -434,12 +438,16 @@ def _quantized_kind_from_text(raw_value: str) -> str:
     normalized = raw_value.lower()
     if normalized == raw_value:
         return "unknown"
+    if (
+        "q4" in normalized
+        and "4bit" not in normalized
+        and contains_kind_token(normalized, "q4")
+    ):
+        return "q4"
     if "4bit" in normalized and contains_kind_token(normalized, "4bit"):
         return "4bit"
     if "8bit" in normalized and contains_kind_token(normalized, "8bit"):
         return "8bit"
-    if "q4" in normalized and contains_kind_token(normalized, "q4"):
-        return "q4"
     if "q8" in normalized and contains_kind_token(normalized, "q8"):
         return "q8"
     if "optiq" in normalized and contains_kind_token(normalized, "optiq"):

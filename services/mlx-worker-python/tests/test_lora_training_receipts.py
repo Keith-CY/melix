@@ -635,6 +635,9 @@ def test_lora_quantized_kind_detection_uses_ascii_token_boundaries() -> None:
     assert lora_runtime_metadata_module._quantized_kind_from_text("q4-mlx") == "q4"
     assert lora_runtime_metadata_module._quantized_kind_from_text("模型q4版本") == "q4"
     assert lora_runtime_metadata_module._quantized_kind_from_text("badq4 q4") == "q4"
+    assert lora_runtime_metadata_module._quantized_kind_from_text("q4 and 4bit") == "4bit"
+    assert lora_runtime_metadata_module._quantized_kind_from_text("q8 optiq") == "q8"
+    assert lora_runtime_metadata_module._quantized_kind_from_text("optiq q8") == "q8"
 
 
 def test_lora_quantized_kind_detection_skips_boundary_scan_without_substring(
