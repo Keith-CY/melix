@@ -599,12 +599,19 @@ def _build_redacted_excerpt(
     except OSError:
         resolved_target_root = layout.target_root
     resolved_target_root_text = str(resolved_target_root)
+    resolved_target_root_prefix = resolved_target_root_text + "/" if resolved_target_root_text else ""
     for index, source_line in enumerate(source_lines):
         if output_line_count >= bounded_lines:
             summary.truncated = True
             break
         source_path = source_line.source_path
-        redacted = redact_text(source_line.text, resolved_target_root, resolved_target_root_text, summary)
+        redacted = redact_text(
+            source_line.text,
+            resolved_target_root,
+            resolved_target_root_text,
+            summary,
+            resolved_target_root_prefix,
+        )
         if source_path == last_source_path:
             source_prefix = last_source_prefix
         else:
@@ -665,6 +672,7 @@ def _redact_text(
     resolved_target_root: Path,
     resolved_target_root_text: str,
     summary: _RedactionSummary,
+    resolved_target_root_prefix: str = "",
 ) -> str:
     if _has_private_text_line_marker(text) and _PRIVATE_TEXT_LINE_PATTERN.search(text):
         summary.redacted_prompt_or_response_count += 1
@@ -699,7 +707,12 @@ def _redact_text(
             )
     if "/" not in text:
         return text
-    fast_redacted = _redact_target_root_paths_text(text, resolved_target_root_text, summary)
+    fast_redacted = _redact_target_root_paths_text(
+        text,
+        resolved_target_root_text,
+        summary,
+        resolved_target_root_prefix,
+    )
     if fast_redacted is not None:
         return fast_redacted
     return _ABSOLUTE_PATH_PATTERN.sub(
@@ -717,10 +730,11 @@ def _redact_target_root_paths_text(
     text: str,
     resolved_target_root_text: str,
     summary: _RedactionSummary,
+    resolved_target_root_prefix: str = "",
 ) -> str | None:
     if not resolved_target_root_text or "/../" in text or text.endswith("/.."):
         return None
-    target_root_prefix = resolved_target_root_text + "/"
+    target_root_prefix = resolved_target_root_prefix or (resolved_target_root_text + "/")
     target_root_parts = text.split(target_root_prefix)
     redaction_count = len(target_root_parts) - 1
     if redaction_count <= 0:
