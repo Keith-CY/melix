@@ -54,6 +54,27 @@ def test_pipe_channel_name_scans_first_token_without_split() -> None:
     RequestStreamAssembler._pipe_channel_name.cache_clear()
 
 
+def test_legacy_pipe_hidden_channel_body_avoids_strip_copy() -> None:
+    class StripTrackingHeader(str):
+        strip_calls = 0
+
+        def __getitem__(self, key: Any):
+            return self.__class__(super().__getitem__(key))
+
+        def strip(self, *args: Any, **kwargs: Any):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.strip_calls += 1
+            return super().strip(*args, **kwargs)
+
+    header = StripTrackingHeader("analysis " + ("reasoning payload " * 64))
+
+    assert RequestStreamAssembler._legacy_pipe_channel_header_body(header, "analysis") == header[
+        len("analysis") :
+    ]
+    assert StripTrackingHeader.strip_calls == 0
+    assert RequestStreamAssembler._legacy_pipe_channel_header_body("analysis   \t", "analysis") is None
+    assert RequestStreamAssembler._legacy_pipe_channel_header_body("final visible", "final") is None
+
+
 def test_token_count_compression_reuses_cached_weight_shape() -> None:
     stream_assembler._cached_compress_delta_token_counts.cache_clear()
     weights = [

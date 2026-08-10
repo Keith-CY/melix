@@ -1701,7 +1701,7 @@ class RequestStreamAssembler:
         if channel_name not in cls._HIDDEN_PIPE_CHANNELS:
             return None
         body = header[len(channel_name) :]
-        return body if body.strip() else None
+        return body if body and not body.isspace() else None
 
     def _pipe_channel_deltas(
         self,

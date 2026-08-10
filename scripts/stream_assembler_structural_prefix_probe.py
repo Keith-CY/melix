@@ -49,8 +49,11 @@ def main() -> None:
     partial_elapsed_samples: list[float] = []
     long_literal_elapsed_samples: list[float] = []
     close_marker_elapsed_samples: list[float] = []
+    legacy_pipe_body_elapsed_samples: list[float] = []
     long_literal_empty_hits = 0
     close_marker_hits = 0
+    legacy_pipe_body_hits = 0
+    legacy_pipe_header = "analysis " + ("reasoning payload " * 64)
 
     assembler = _build_assembler()
     long_literal_assembler = _build_long_literal_assembler()
@@ -93,6 +96,15 @@ def main() -> None:
                 close_marker_hits += 1
         close_marker_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
+        started = time.perf_counter()
+        for _index in range(iterations):
+            if RequestStreamAssembler._legacy_pipe_channel_header_body(
+                legacy_pipe_header,
+                "analysis",
+            ):
+                legacy_pipe_body_hits += 1
+        legacy_pipe_body_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
     expected_hits = iterations * sample_count
     if held_suffix_hits != expected_hits:
         raise RuntimeError(
@@ -114,6 +126,11 @@ def main() -> None:
     if close_marker_hits != expected_hits:  # pragma: no cover - probe safety guard
         raise RuntimeError(
             f"unexpected close marker prefix hits: {close_marker_hits} != {expected_hits}"
+        )
+    if legacy_pipe_body_hits != expected_hits:  # pragma: no cover - probe safety guard
+        raise RuntimeError(
+            "unexpected legacy pipe body hits: "
+            f"{legacy_pipe_body_hits} != {expected_hits}"
         )
 
     print(
@@ -142,6 +159,14 @@ def main() -> None:
                     min(close_marker_elapsed_samples),
                     6,
                 ),
+                "legacy_pipe_body_elapsed_ms_mean": round(
+                    statistics.fmean(legacy_pipe_body_elapsed_samples),
+                    6,
+                ),
+                "legacy_pipe_body_elapsed_ms_min": round(
+                    min(legacy_pipe_body_elapsed_samples),
+                    6,
+                ),
                 "peak_bytes_mean": round(statistics.fmean(peak_samples), 3),
                 "iteration_count": float(iterations),
                 "sample_count": float(sample_count),
@@ -149,6 +174,7 @@ def main() -> None:
                 "partial_suffix_hits": float(partial_suffix_hits),
                 "long_literal_empty_hits": float(long_literal_empty_hits),
                 "close_marker_hits": float(close_marker_hits),
+                "legacy_pipe_body_hits": float(legacy_pipe_body_hits),
                 "prefix_identity_hits": float(prefix_identity_hits),
             },
             sort_keys=True,
