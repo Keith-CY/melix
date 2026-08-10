@@ -25,6 +25,7 @@ RECEIPT_SCHEMA_VERSION = "melix.local_job_continuation_receipt.v1"
 JOB_STATUSES = frozenset({"pending", "running", "completed", "failed", "timeout", "blocked"})
 FOLLOWUP_STATUSES = frozenset({"not_started", "pending", "in_progress", "completed", "blocked"})
 JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+_JSON_LOADS = json.loads
 
 
 class LocalJobContinuationStoreError(RuntimeError):
@@ -186,7 +187,7 @@ class LocalJobContinuationStore:
                 content = record_file.read()
         except FileNotFoundError:
             return None
-        return LocalJobContinuationRecord.from_dict(json.loads(content))
+        return LocalJobContinuationRecord.from_dict(_JSON_LOADS(content))
 
     def save_record(
         self,
@@ -279,7 +280,7 @@ class LocalJobContinuationStore:
                 content = record_file.read()
         except FileNotFoundError:
             return None
-        return LocalJobContinuationRecord.from_dict(json.loads(content))
+        return LocalJobContinuationRecord.from_dict(_JSON_LOADS(content))
 
     def claim_followup(
         self,
