@@ -383,6 +383,16 @@ def test_scope_report_selects_report_evidence_gate_probe() -> None:
     assert _selected_probe_ids(scope) == ["report-evidence-gate-run-kind-set-membership"]
 
 
+def test_scope_report_selects_pr_evidence_required_section_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/validate_pr_evidence.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["pr-evidence-required-section-scan"]
+
+
 def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -5308,6 +5318,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "video-preprocessing-uri-byte-length-reuse",
         "vision-family-prompt-token-count-scan",
         "probe-policy-noop-overhead",
+        "pr-evidence-required-section-scan",
         "serving-diagnostics-debug-queue-bounds",
         "dev-up-mlx-metal-dist-info-scandir",
         "evaluation-answer-normalization-fast-path",
