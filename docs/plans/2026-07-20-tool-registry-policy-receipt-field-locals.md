@@ -24,3 +24,18 @@ This slice extends that probe with a policy-aware selection case so `allow_web=F
 - Run the changed-scope coverage command locally on Linux.
 - Run the registered probe locally on Linux and compare `policy_planning_elapsed_ms_mean` before/after the production change.
 - Let the PR-scoped performance workflow validate the registered probe in CI before merging.
+
+## Follow-up Slice: Preflight Callable Tools List Copy
+
+The 2026-08-10 follow-up keeps agentic tool schema-consistency receipts isolated
+and behavior-compatible, but reuses the registry's cached tool-name list snapshot
+when building `callable_tools`. `preflight_agentic_tool_schema_consistency()` is
+called repeatedly by the registered selector probe and no longer needs to rebuild
+a list from the canonical tuple for every receipt.
+
+Expected effect:
+
+- reduce `tool-registry-select-name-index-cache` `preflight_consistency_elapsed_ms_mean`;
+- preserve fresh mutable `callable_tools` receipt lists for callers;
+- leave referenced-tool ordering, missing-tool detection, registry selection, and
+  tool config serialization unchanged.
