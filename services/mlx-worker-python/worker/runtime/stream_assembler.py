@@ -1442,11 +1442,14 @@ class RequestStreamAssembler:
 
     @classmethod
     def _unclosed_reasoning_candidate_index(cls, body: str) -> int:
-        indexes = (
-            body.find(marker)
-            for marker in cls._UNCLOSED_REASONING_RECOVERY_MARKERS
-        )
-        return min((index for index in indexes if index >= 0), default=-1)
+        earliest = -1
+        for marker in cls._UNCLOSED_REASONING_RECOVERY_MARKERS:
+            index = body.find(marker)
+            if index == 0:
+                return 0
+            if index > 0 and (earliest < 0 or index < earliest):
+                earliest = index
+        return earliest
 
     @classmethod
     def _longest_unclosed_reasoning_marker_prefix_suffix(cls, body: str) -> str:
