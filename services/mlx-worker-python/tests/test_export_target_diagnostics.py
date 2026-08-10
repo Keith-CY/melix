@@ -130,18 +130,22 @@ def test_export_target_diagnostics_target_path_fast_path_skips_absolute_path_reg
     )
     summary = export_target_diagnostics_module._RedactionSummary()
     target_root = tmp_path / "target"
-    raw_path = target_root / "artifacts" / "model.gguf"
+    model_path = target_root / "artifacts" / "model.gguf"
+    log_path = target_root / "logs" / "runtime.log"
 
     redacted = export_target_diagnostics_module._redact_text(
-        f"runtime load failed at {raw_path}",
+        f"runtime load failed at {model_path}; see {log_path}",
         target_root,
         str(target_root),
         summary,
     )
 
-    assert redacted == "runtime load failed at <target>/artifacts/model.gguf"
-    assert summary.redacted_absolute_path_count == 1
-    assert summary.redaction_count == 1
+    assert redacted == (
+        "runtime load failed at <target>/artifacts/model.gguf; "
+        "see <target>/logs/runtime.log"
+    )
+    assert summary.redacted_absolute_path_count == 2
+    assert summary.redaction_count == 2
 
 
 def test_export_target_diagnostics_marker_prefilter_matches_runtime_load_phrase() -> None:

@@ -721,13 +721,13 @@ def _redact_target_root_paths_text(
     if not resolved_target_root_text or "/../" in text or text.endswith("/.."):
         return None
     target_root_prefix = resolved_target_root_text + "/"
-    if target_root_prefix not in text:
+    target_root_parts = text.split(target_root_prefix)
+    redaction_count = len(target_root_parts) - 1
+    if redaction_count <= 0:
         return None
-    redacted = text.replace(target_root_prefix, "<target>/")
-    redaction_count = text.count(target_root_prefix)
     summary.redacted_absolute_path_count += redaction_count
     summary.redaction_count += redaction_count
-    return redacted
+    return "<target>/".join(target_root_parts)
 
 
 def _has_secret_redaction_marker(text: str) -> bool:
