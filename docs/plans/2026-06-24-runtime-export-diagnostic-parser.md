@@ -269,6 +269,13 @@ normalization fallback, but ordinary runtime log lines such as
 `... /target/artifacts/model.gguf` now emit the same `<target>/artifacts/...`
 label without running the broader absolute-path matcher.
 
+A follow-up 2026-08-10 target-root prefix cache slice keeps the redacted excerpt
+contract unchanged while computing the resolved target-root slash suffix once per
+bounded excerpt build. `_build_redacted_excerpt()` now passes the cached prefix
+through `_redact_text()` into the clean target-local path fast path, avoiding one
+repeated string concatenation per excerpt line while preserving direct-call
+fallback behavior for `_redact_text()` and `_redact_target_root_paths_text()`.
+
 Focused verification:
 
 ```bash

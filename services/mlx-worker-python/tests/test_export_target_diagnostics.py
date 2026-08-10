@@ -148,6 +148,61 @@ def test_export_target_diagnostics_target_path_fast_path_skips_absolute_path_reg
     assert summary.redaction_count == 2
 
 
+def test_export_target_diagnostics_excerpt_reuses_resolved_target_root_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    prefixes: list[str] = []
+    original_redact_target_root = (
+        export_target_diagnostics_module._redact_target_root_paths_text
+    )
+
+    def tracking_redact_target_root(
+        text: str,
+        resolved_target_root_text: str,
+        summary: export_target_diagnostics_module._RedactionSummary,
+        resolved_target_root_prefix: str = "",
+    ) -> str | None:
+        prefixes.append(resolved_target_root_prefix)
+        return original_redact_target_root(
+            text,
+            resolved_target_root_text,
+            summary,
+            resolved_target_root_prefix=resolved_target_root_prefix,
+        )
+
+    monkeypatch.setattr(
+        export_target_diagnostics_module,
+        "_redact_target_root_paths_text",
+        tracking_redact_target_root,
+    )
+    target_root = tmp_path / "target"
+    target_root.mkdir()
+    layout = SimpleNamespace(target_root=target_root)
+    source_lines = [
+        _SourceLine(
+            source_path="logs/runtime.log",
+            text=f"runtime load failed at {target_root / 'artifacts' / 'a.gguf'}",
+        ),
+        _SourceLine(
+            source_path="logs/runtime.log",
+            text=f"runtime load failed at {target_root / 'artifacts' / 'b.gguf'}",
+        ),
+    ]
+
+    excerpt = _build_redacted_excerpt(
+        layout,  # type: ignore[arg-type]
+        source_lines,
+        bounded_bytes=4096,
+        bounded_lines=10,
+    )
+
+    assert prefixes == [str(target_root) + "/", str(target_root) + "/"]
+    assert excerpt.summary.redacted_absolute_path_count == 2
+    assert "<target>/artifacts/a.gguf" in excerpt.text
+    assert "<target>/artifacts/b.gguf" in excerpt.text
+
+
 def test_export_target_diagnostics_marker_prefilter_matches_runtime_load_phrase() -> None:
     assert _has_diagnosis_marker("late duplicate runtime load failed marker") is True
 
