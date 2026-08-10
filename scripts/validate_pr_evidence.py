@@ -19,6 +19,7 @@ REQUIRED_SECTIONS = (
     "Coverage and Metrics",
     "Known Gaps",
 )
+_REQUIRED_SECTION_SET = frozenset(REQUIRED_SECTIONS)
 PLACEHOLDER_MARKERS = ("tbd", "todo", "_no response_")
 
 
@@ -66,8 +67,12 @@ def _extract_sections(body_text: str) -> dict[str, str]:
     current_section: str | None = None
     for line in body_text.splitlines():
         if line.startswith("## "):
-            current_section = line[3:].strip()
-            sections.setdefault(current_section, [])
+            section_name = line[3:].strip()
+            if section_name in _REQUIRED_SECTION_SET:
+                current_section = section_name
+                sections.setdefault(section_name, [])
+            else:
+                current_section = None
             continue
         if current_section is not None:
             sections[current_section].append(line)

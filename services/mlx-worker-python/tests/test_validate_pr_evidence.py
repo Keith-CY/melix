@@ -89,6 +89,36 @@ make integration-test
     assert validate_pr_evidence.validate_body_text(body) == []
 
 
+def test_extract_sections_ignores_non_required_pr_template_sections() -> None:
+    body = """
+## Summary
+- TBD: placeholder text in a non-gated section is allowed by this validator.
+
+## Plan or Spec
+- docs/plans/2026-08-10-pr-evidence-required-section-scan.md
+
+## Commands Run
+```text
+python3 scripts/validate_pr_evidence.py --body-file /tmp/body.md
+```
+
+## Coverage and Metrics
+- changed-scope coverage: 100 percent.
+
+## Known Gaps
+- None.
+
+## Evidence Checklist
+- [ ] TODO: operator updates checklist before merge.
+"""
+
+    sections = validate_pr_evidence._extract_sections(body)
+
+    assert set(sections) == set(validate_pr_evidence.REQUIRED_SECTIONS)
+    assert "TODO" not in "\n".join(sections.values())
+    assert validate_pr_evidence.validate_body_text(body) == []
+
+
 def test_validate_body_text_reports_missing_or_placeholder_sections() -> None:
     body = """
 ## Summary
@@ -339,3 +369,25 @@ make proto-check
 
     assert excinfo.value.code == 0
     assert "PR evidence looks valid." in capsys.readouterr().out
+
+
+def test_required_section_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_VALIDATE_PR_EVIDENCE_FILLER_LINES", "10")
+    monkeypatch.setenv("MELIX_VALIDATE_PR_EVIDENCE_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_VALIDATE_PR_EVIDENCE_SAMPLES", "1")
+    probe_script = runpy.run_path(
+        str(Path(__file__).resolve().parents[3] / "scripts/validate_pr_evidence_required_section_probe.py")
+    )
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["irrelevant_section_line_count"] == 20.0
+    assert metrics["iterations"] == 2.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["section_checksum"] > 0.0
