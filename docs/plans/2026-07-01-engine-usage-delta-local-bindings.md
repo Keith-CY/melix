@@ -20,7 +20,7 @@ The probe includes focused `test_command`, `coverage_command`, and
 ## Implementation Plan
 
 1. Preserve `UsageDelta` field semantics for empty and media-usage calls.
-2. Bind sanitized token counts once before constructing the protobuf message.
+2. Bind the sanitizer once and sanitize token counts before constructing the protobuf message.
 3. Fast-path empty media usage so the common text-only path avoids repeated
    dictionary lookup and zero sanitization for media counters.
 4. Verify with focused engine tests, changed-scope coverage, and the registered
