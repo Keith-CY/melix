@@ -31,6 +31,16 @@ This follow-up stays inside the same parser and registered probe. `_quantized_ki
 
 This follow-up remains limited to `_contains_quantized_kind_token()` and the same registered `lora-aux-modules-scandir` probe. The parser now binds a module-level ASCII lowercase-alphanumeric boundary table once per scan and uses direct one-character membership tests for both token edges. This removes the repeated Python range-comparison chains from the inner false-positive scan loop while preserving the existing delimiter semantics for lowercase, uppercase-after-normalization, whitespace, hyphen, underscore, and non-ASCII boundaries.
 
+### 2026-08-10 q4 hot-token order follow-up
+
+This follow-up remains limited to `_quantized_kind_from_text()` and the same
+registered `lora-aux-modules-scandir` probe. The parser keeps the existing
+candidate precedence for overlapping detected kinds, but it adds an early `q4`
+check for the common non-overlapping `q4` case before the longer `4bit`/`8bit`
+probes in both raw and normalized passes. Existing `4bit` before `q4` and `q8`
+before `optiq` precedence is retained, and the focused test covers mixed-token
+inputs so the ordering remains explicit.
+
 ## Verification plan
 
 Run the registered focused tests, changed-scope coverage command, and the registered local probe on Linux before opening the PR. For the ASCII boundary follow-up, compare the registered probe against `origin/main` locally; the PR-scoped performance workflow remains the merge gate for the registered probe result in CI.
