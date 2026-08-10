@@ -33,3 +33,13 @@ Primary registered probe: `evaluation-answer-normalization-fast-path`.
 Run the registered focused test command, changed-scope coverage command, and
 registered probe locally on Linux. The PR-scoped performance workflow remains the
 merge gate for the scheduled slice.
+
+## 2026-08-10 single-option strip elision follow-up
+
+This follow-up keeps the same `EvaluationCore._normalized_answer()` boundary and
+registered `evaluation-answer-normalization-fast-path` probe. It moves the
+already-canonical single-character option check before `_strip_wrapping()` so
+unwrapped option answers avoid the generic strip/wrapping path while preserving
+quoted, blank, numeric, free-text, and Unicode option semantics. Focused tests
+cover the no-strip fast path for ASCII and Unicode single-letter options; local
+Linux probe output and PR-scoped CI remain the metric gates.

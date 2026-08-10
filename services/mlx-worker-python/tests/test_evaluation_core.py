@@ -3592,6 +3592,18 @@ def test_normalized_answer_plain_ascii_fast_path_skips_strip_wrapping(
     assert strip_calls == 1
 
 
+def test_normalized_answer_single_option_skips_strip_wrapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_strip(value: str) -> str:  # pragma: no cover - must not be called
+        raise AssertionError(f"single option should skip wrapping strip: {value!r}")
+
+    monkeypatch.setattr(EvaluationCore, "_strip_wrapping", staticmethod(fail_strip))
+
+    assert EvaluationCore._normalized_answer("b") == "B"
+    assert EvaluationCore._normalized_answer("é") == "É"
+
+
 def test_evaluation_helpers_cover_timeout_fallback_and_digit_choice_resolution() -> None:
     assert (
         EvaluationCore._sample_code_timeout_seconds({}, {"code_timeout_seconds": "invalid"}) == 5.0
