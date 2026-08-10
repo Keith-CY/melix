@@ -53,3 +53,17 @@ include `dense_elapsed_ms_mean` for the changed-path measured-line scan,
 - Parser tests preserve multi-file, hunk, marker, blank-context, and added-content semantics.
 - Changed-scope coverage is at least 95% for the touched executable lines.
 - Local and CI probe metrics show a clear non-regression or improvement for `elapsed_ms_mean` with unchanged guard-rail counts.
+
+## 2026-08-10 non-addition branch collapse slice
+
+This slice is limited to the `_parse_changed_lines(...)` hot loop after a hunk
+has established the active new-line counter. It preserves the existing first-byte
+dispatch and addition handling, while collapsing the deletion and backslash
+skip branches into one negative check before ordinary context line accounting.
+Parser semantics remain unchanged for additions, deletions, `\\ No newline...`
+markers, blank context lines, and ordinary context lines.
+
+Registered probe: `changed-scope-coverage-diff-parser` in
+`infra/perf/pr_scoped_probes.json`. The probe already covers
+`scripts/changed_scope_coverage.py`, the parser probe script, focused parser
+unit tests, changed-scope coverage, and PR-scoped probe registry validation.

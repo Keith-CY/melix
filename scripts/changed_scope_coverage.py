@@ -153,11 +153,7 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
         if first_char == ascii_plus:
             add_changed_line(new_line)
             new_line += 1
-        elif first_char == ascii_minus:
-            continue
-        elif first_char == ascii_backslash:
-            continue
-        else:
+        elif first_char != ascii_minus and first_char != ascii_backslash:
             new_line += 1
     return changed_by_path
 
