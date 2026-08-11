@@ -404,11 +404,12 @@
       "services/mlx-worker-python/worker/runtime/runtime_utils.py",
       "services/mlx-worker-python/tests/test_runtime_utils.py",
       "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
-      "scripts/runtime_utils_kwarg_cache_probe.py"
+      "scripts/runtime_utils_kwarg_cache_probe.py",
+      "docs/plans/2026-08-11-runtime-utils-declares-kwarg-cache.md"
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_runtime_utils.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_runtime_utils_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_runtime_utils_kwarg_cache_probe_script_emits_metrics",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_runtime_utils.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_runtime_utils_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_runtime_utils_kwarg_cache_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/runtime_utils.py services/mlx-worker-python/tests/test_runtime_utils.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/runtime_utils_kwarg_cache_probe.py",
-    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/runtime_utils_kwarg_cache_probe.py ]; then python3 scripts/runtime_utils_kwarg_cache_probe.py; else python3 -c \"import base64; exec(base64.b64decode(\\\"aW1wb3J0IGluc3BlY3QsanNvbixzdGF0aXN0aWNzLHN5cyx0aW1lCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aApyZXBvX3Jvb3Q9UGF0aC5jd2QoKQpzeXMucGF0aC5pbnNlcnQoMCxzdHIocmVwb19yb290KSkKc3lzLnBhdGguaW5zZXJ0KDAsc3RyKHJlcG9fcm9vdC8nc2VydmljZXMvbWx4LXdvcmtlci1weXRob24nKSkKZnJvbSB3b3JrZXIucnVudGltZSBpbXBvcnQgcnVudGltZV91dGlscwoKZGVmIHNhbXBsZV9mdW5jdGlvbigqLCB0ZW1wZXJhdHVyZT0wLjAsIHRvcF9wPTEuMCk6CiAgICBwYXNzCml0ZXJhdGlvbnM9NDAwMDAKc2FtcGxlX2NvdW50PTUKZWxhcHNlZD1bXQpjYWxscz1bXQpvcmlnPWluc3BlY3Quc2lnbmF0dXJlCmZvciBfIGluIHJhbmdlKHNhbXBsZV9jb3VudCk6CiAgICBpZiBoYXNhdHRyKHJ1bnRpbWVfdXRpbHMsJ2NsZWFyX2NhbGxhYmxlX2FjY2VwdHNfa3dhcmdfY2FjaGUnKToKICAgICAgICBydW50aW1lX3V0aWxzLmNsZWFyX2NhbGxhYmxlX2FjY2VwdHNfa3dhcmdfY2FjaGUoKQogICAgY291bnRlcj1bMF0KICAgIGRlZiB0cmFja2VkKGNhbGxhYmxlX29iaik6CiAgICAgICAgY291bnRlclswXSs9MQogICAgICAgIHJldHVybiBvcmlnKGNhbGxhYmxlX29iaikKICAgIHJ1bnRpbWVfdXRpbHMuaW5zcGVjdC5zaWduYXR1cmU9dHJhY2tlZAogICAgc3RhcnRlZD10aW1lLnBlcmZfY291bnRlcigpCiAgICBmb3IgaW5kZXggaW4gcmFuZ2UoaXRlcmF0aW9ucyk6CiAgICAgICAga2V5d29yZD0ndGVtcGVyYXR1cmUnIGlmIGluZGV4ICUgMiA9PSAwIGVsc2UgJ3RvcF9wJwogICAgICAgIGlmIG5vdCBydW50aW1lX3V0aWxzLmNhbGxhYmxlX2FjY2VwdHNfa3dhcmcoc2FtcGxlX2Z1bmN0aW9uLCBrZXl3b3JkKToKICAgICAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChmJ3VuZXhwZWN0ZWQgbWlzc2luZyBrd2FyZzoge2tleXdvcmR9JykKICAgIGVsYXBzZWQuYXBwZW5kKCh0aW1lLnBlcmZfY291bnRlcigpLXN0YXJ0ZWQpKjEwMDAuMCkKICAgIGNhbGxzLmFwcGVuZChjb3VudGVyWzBdKQpydW50aW1lX3V0aWxzLmluc3BlY3Quc2lnbmF0dXJlPW9yaWcKaWYgaGFzYXR0cihydW50aW1lX3V0aWxzLCdjbGVhcl9jYWxsYWJsZV9hY2NlcHRzX2t3YXJnX2NhY2hlJyk6CiAgICBydW50aW1lX3V0aWxzLmNsZWFyX2NhbGxhYmxlX2FjY2VwdHNfa3dhcmdfY2FjaGUoKQpwcmludChqc29uLmR1bXBzKHsnZWxhcHNlZF9tc19tZWFuJzpzdGF0aXN0aWNzLmZtZWFuKGVsYXBzZWQpLCdpbnNwZWN0X3NpZ25hdHVyZV9jYWxsc19tZWFuJzpzdGF0aXN0aWNzLmZtZWFuKGNhbGxzKSwnaXRlcmF0aW9uc19wZXJfc2FtcGxlJzpmbG9hdChpdGVyYXRpb25zKSwnc2FtcGxlX2NvdW50JzpmbG9hdChzYW1wbGVfY291bnQpfSwgc29ydF9rZXlzPVRydWUpKQ==\\\"))\"; fi'",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 -c 'import base64; exec(base64.b64decode(\"ZnJvbSBfX2Z1dHVyZV9fIGltcG9ydCBhbm5vdGF0aW9ucwoKaW1wb3J0IGluc3BlY3QKaW1wb3J0IGpzb24KaW1wb3J0IHN0YXRpc3RpY3MKaW1wb3J0IHN5cwppbXBvcnQgdGltZQpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKZnJvbSB0eXBpbmcgaW1wb3J0IEFueQoKUkVQT19ST09UID0gUGF0aC5jd2QoKQpzeXMucGF0aC5pbnNlcnQoMCwgc3RyKFJFUE9fUk9PVCkpCnN5cy5wYXRoLmluc2VydCgwLCBzdHIoUkVQT19ST09UIC8gInNlcnZpY2VzL21seC13b3JrZXItcHl0aG9uIikpCgpmcm9tIHdvcmtlci5ydW50aW1lIGltcG9ydCBydW50aW1lX3V0aWxzCgoKZGVmIF9zYW1wbGVfZnVuY3Rpb24oKiwgdGVtcGVyYXR1cmU6IGZsb2F0ID0gMC4wLCB0b3BfcDogZmxvYXQgPSAxLjApIC0+IE5vbmU6CiAgICBfID0gKHRlbXBlcmF0dXJlLCB0b3BfcCkKCgpkZWYgbWFpbigpIC0+IGludDoKICAgIGl0ZXJhdGlvbnMgPSA0MDAwMAogICAgc2FtcGxlX2NvdW50ID0gNQogICAgZWxhcHNlZF9zYW1wbGVzOiBsaXN0W2Zsb2F0XSA9IFtdCiAgICBzaWduYXR1cmVfY2FsbF9zYW1wbGVzOiBsaXN0W2ludF0gPSBbXQogICAgZGVjbGFyZXNfZWxhcHNlZF9zYW1wbGVzOiBsaXN0W2Zsb2F0XSA9IFtdCiAgICBkZWNsYXJlc19zaWduYXR1cmVfY2FsbF9zYW1wbGVzOiBsaXN0W2ludF0gPSBbXQogICAgb3JpZ2luYWxfc2lnbmF0dXJlID0gaW5zcGVjdC5zaWduYXR1cmUKCiAgICBmb3IgXyBpbiByYW5nZShzYW1wbGVfY291bnQpOgogICAgICAgIHJ1bnRpbWVfdXRpbHMuY2xlYXJfY2FsbGFibGVfa3dhcmdfc2lnbmF0dXJlX2NhY2hlKCkKICAgICAgICBzaWduYXR1cmVfY2FsbHMgPSAwCgogICAgICAgIGRlZiB0cmFja2VkX3NpZ25hdHVyZShjYWxsYWJsZV9vYmo6IEFueSkgLT4gaW5zcGVjdC5TaWduYXR1cmU6CiAgICAgICAgICAgIG5vbmxvY2FsIHNpZ25hdHVyZV9jYWxscwogICAgICAgICAgICBzaWduYXR1cmVfY2FsbHMgKz0gMQogICAgICAgICAgICByZXR1cm4gb3JpZ2luYWxfc2lnbmF0dXJlKGNhbGxhYmxlX29iaikKCiAgICAgICAgcnVudGltZV91dGlscy5pbnNwZWN0LnNpZ25hdHVyZSA9IHRyYWNrZWRfc2lnbmF0dXJlCiAgICAgICAgc3RhcnRlZCA9IHRpbWUucGVyZl9jb3VudGVyKCkKICAgICAgICBmb3IgaW5kZXggaW4gcmFuZ2UoaXRlcmF0aW9ucyk6CiAgICAgICAgICAgIGtleXdvcmQgPSAidGVtcGVyYXR1cmUiIGlmIGluZGV4ICUgMiA9PSAwIGVsc2UgInRvcF9wIgogICAgICAgICAgICBpZiBub3QgcnVudGltZV91dGlscy5jYWxsYWJsZV9hY2NlcHRzX2t3YXJnKF9zYW1wbGVfZnVuY3Rpb24sIGtleXdvcmQpOgogICAgICAgICAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChmInVuZXhwZWN0ZWQgbWlzc2luZyBrd2FyZzoge2tleXdvcmR9IikKICAgICAgICBlbGFwc2VkX3NhbXBsZXMuYXBwZW5kKCh0aW1lLnBlcmZfY291bnRlcigpIC0gc3RhcnRlZCkgKiAxMDAwLjApCiAgICAgICAgc2lnbmF0dXJlX2NhbGxfc2FtcGxlcy5hcHBlbmQoc2lnbmF0dXJlX2NhbGxzKQoKICAgICAgICBydW50aW1lX3V0aWxzLmNsZWFyX2NhbGxhYmxlX2t3YXJnX3NpZ25hdHVyZV9jYWNoZSgpCiAgICAgICAgZGVjbGFyZXNfc2lnbmF0dXJlX2NhbGxzID0gMAoKICAgICAgICBkZWYgdHJhY2tlZF9kZWNsYXJlc19zaWduYXR1cmUoY2FsbGFibGVfb2JqOiBBbnkpIC0+IGluc3BlY3QuU2lnbmF0dXJlOgogICAgICAgICAgICBub25sb2NhbCBkZWNsYXJlc19zaWduYXR1cmVfY2FsbHMKICAgICAgICAgICAgZGVjbGFyZXNfc2lnbmF0dXJlX2NhbGxzICs9IDEKICAgICAgICAgICAgcmV0dXJuIG9yaWdpbmFsX3NpZ25hdHVyZShjYWxsYWJsZV9vYmopCgogICAgICAgIHJ1bnRpbWVfdXRpbHMuaW5zcGVjdC5zaWduYXR1cmUgPSB0cmFja2VkX2RlY2xhcmVzX3NpZ25hdHVyZQogICAgICAgIGRlY2xhcmVzX3N0YXJ0ZWQgPSB0aW1lLnBlcmZfY291bnRlcigpCiAgICAgICAgZm9yIGluZGV4IGluIHJhbmdlKGl0ZXJhdGlvbnMpOgogICAgICAgICAgICBrZXl3b3JkID0gInRlbXBlcmF0dXJlIiBpZiBpbmRleCAlIDIgPT0gMCBlbHNlICJtaXNzaW5nIgogICAgICAgICAgICBleHBlY3RlZCA9IGtleXdvcmQgPT0gInRlbXBlcmF0dXJlIgogICAgICAgICAgICBpZiBydW50aW1lX3V0aWxzLmNhbGxhYmxlX2RlY2xhcmVzX2t3YXJnKF9zYW1wbGVfZnVuY3Rpb24sIGtleXdvcmQpIGlzIG5vdCBleHBlY3RlZDoKICAgICAgICAgICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZiJ1bmV4cGVjdGVkIGt3YXJnIGRlY2xhcmF0aW9uIGZvcjoge2tleXdvcmR9IikgICMgcHJhZ21hOiBubyBjb3ZlcgogICAgICAgIGRlY2xhcmVzX2VsYXBzZWRfc2FtcGxlcy5hcHBlbmQoKHRpbWUucGVyZl9jb3VudGVyKCkgLSBkZWNsYXJlc19zdGFydGVkKSAqIDEwMDAuMCkKICAgICAgICBkZWNsYXJlc19zaWduYXR1cmVfY2FsbF9zYW1wbGVzLmFwcGVuZChkZWNsYXJlc19zaWduYXR1cmVfY2FsbHMpCgogICAgcnVudGltZV91dGlscy5pbnNwZWN0LnNpZ25hdHVyZSA9IG9yaWdpbmFsX3NpZ25hdHVyZQogICAgcnVudGltZV91dGlscy5jbGVhcl9jYWxsYWJsZV9rd2FyZ19zaWduYXR1cmVfY2FjaGUoKQoKICAgIG1ldHJpY3MgPSB7CiAgICAgICAgImVsYXBzZWRfbXNfbWVhbiI6IHN0YXRpc3RpY3MuZm1lYW4oZWxhcHNlZF9zYW1wbGVzKSwKICAgICAgICAiaW5zcGVjdF9zaWduYXR1cmVfY2FsbHNfbWVhbiI6IHN0YXRpc3RpY3MuZm1lYW4oc2lnbmF0dXJlX2NhbGxfc2FtcGxlcyksCiAgICAgICAgImRlY2xhcmVzX2VsYXBzZWRfbXNfbWVhbiI6IHN0YXRpc3RpY3MuZm1lYW4oZGVjbGFyZXNfZWxhcHNlZF9zYW1wbGVzKSwKICAgICAgICAiZGVjbGFyZXNfc2lnbmF0dXJlX2NhbGxzX21lYW4iOiBzdGF0aXN0aWNzLmZtZWFuKGRlY2xhcmVzX3NpZ25hdHVyZV9jYWxsX3NhbXBsZXMpLAogICAgICAgICJpdGVyYXRpb25zX3Blcl9zYW1wbGUiOiBmbG9hdChpdGVyYXRpb25zKSwKICAgICAgICAic2FtcGxlX2NvdW50IjogZmxvYXQoc2FtcGxlX2NvdW50KSwKICAgIH0KICAgIHByaW50KGpzb24uZHVtcHMobWV0cmljcywgc29ydF9rZXlzPVRydWUpKQogICAgcmV0dXJuIDAKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgcmFpc2UgU3lzdGVtRXhpdChtYWluKCkpCg==\"))'",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -420,6 +421,18 @@
       },
       {
         "key": "inspect_signature_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "declares_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "declares_signature_calls_mean",
         "unit": "calls",
         "direction": "lower_is_better",
         "warn_pct": 0.0
@@ -5475,37 +5488,37 @@
         "key": "no_op_reason_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_empty_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_none_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_valid_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_invalid_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "env_parse_empty_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_invalid_overhead_pct",
@@ -5516,13 +5529,13 @@
         "key": "evidence_policy_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "debug_policy_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "evidence_policy_overhead_pct",
@@ -6955,16 +6968,16 @@
         "warn_abs": 1.0
       },
       {
-      "key": "mlx_active_peak_delta_reduction_bytes",
-      "unit": "bytes",
-      "direction": "higher_is_better",
-      "warn_pct": 5.0
+        "key": "mlx_active_peak_delta_reduction_bytes",
+        "unit": "bytes",
+        "direction": "higher_is_better",
+        "warn_pct": 5.0
       },
       {
-      "key": "mlx_reported_peak_delta_reduction_bytes",
-      "unit": "bytes",
-      "direction": "higher_is_better",
-      "warn_pct": 5.0
+        "key": "mlx_reported_peak_delta_reduction_bytes",
+        "unit": "bytes",
+        "direction": "higher_is_better",
+        "warn_pct": 5.0
       },
       {
         "key": "process_resident_peak_delta_reduction_bytes",
