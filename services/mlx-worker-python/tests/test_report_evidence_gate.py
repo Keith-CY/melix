@@ -311,6 +311,33 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
     assert mutable_roles == ["dynamic", "numeric_rule"]
 
 
+class _UnstringableEvidenceId:
+    def __str__(self) -> str:  # pragma: no cover - should not be called
+        raise AssertionError("unmatched evidence IDs should not be normalized")
+
+
+def test_report_evidence_gate_release_matrix_skips_evidence_id_normalization_for_unmatched_roles() -> None:
+    rows = report_evidence_gate_module._release_matrix_rows(
+        [
+            {
+                "release_matrix_roles": ["unmatched", "also_unmatched"],
+                "source_evidence_ids": [_UnstringableEvidenceId()],
+            }
+        ],
+        {"serving": {"run_kinds": ("serving_benchmark",), "description": "serving"}},
+    )
+
+    assert rows == [
+        {
+            "role": "serving",
+            "required": True,
+            "present": False,
+            "evidence_ids": [],
+            "description": "serving",
+        }
+    ]
+
+
 def test_report_evidence_gate_metric_prefix_preserves_non_string_match() -> None:
     assert report_evidence_gate_module._rule_matches_report(
         rule={"metric_prefixes": ("42",)},

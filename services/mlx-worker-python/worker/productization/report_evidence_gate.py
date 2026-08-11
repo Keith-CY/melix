@@ -252,10 +252,13 @@ def _release_matrix_rows(
             or not source_evidence_ids
         ):
             continue
-        evidence_ids = {str(evidence_id) for evidence_id in source_evidence_ids}
+        evidence_ids: set[str] | None = None
         for role in roles:
-            if role in matrix:
-                evidence_by_role.setdefault(role, set()).update(evidence_ids)
+            if role not in matrix:
+                continue
+            if evidence_ids is None:
+                evidence_ids = {str(evidence_id) for evidence_id in source_evidence_ids}
+            evidence_by_role.setdefault(role, set()).update(evidence_ids)
 
     if not evidence_by_role:
         return [
