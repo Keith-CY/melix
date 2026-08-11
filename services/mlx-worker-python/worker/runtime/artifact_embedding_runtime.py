@@ -1264,18 +1264,23 @@ class MLXEmbeddingRuntime:
             )
 
         vectors: list[list[float]] = []
+        expected_dimensions = descriptor.dimensions
+        isfinite = math.isfinite
         for row in result.vectors:
-            if len(row) != descriptor.dimensions:
+            if len(row) != expected_dimensions:
                 raise ArtifactEmbeddingError(
                     "embedding_output_dimension_invalid",
-                    f"Embedding backend returned dimension {len(row)}; expected {descriptor.dimensions}.",
+                    f"Embedding backend returned dimension {len(row)}; expected {expected_dimensions}.",
                 )
-            vector = [float(value) for value in row]
-            if not all(math.isfinite(value) for value in vector):
-                raise ArtifactEmbeddingError(
-                    "embedding_output_nonfinite",
-                    "Embedding backend returned a non-finite vector value.",
-                )
+            vector: list[float] = []
+            for value in row:
+                float_value = float(value)
+                if not isfinite(float_value):
+                    raise ArtifactEmbeddingError(
+                        "embedding_output_nonfinite",
+                        "Embedding backend returned a non-finite vector value.",
+                    )
+                vector.append(float_value)
             vectors.append(vector)
 
         receipt = {

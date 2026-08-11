@@ -488,3 +488,22 @@ measurement point: it must preserve one tokenizer call, one encoder forward for
 the 32-row batch, finite vectors, exact dimensions, and no direct regression.
 The full versioned pre-commit gate remains mandatory before the remediation
 commit.
+
+## 2026-08-11 Vector Validation Single-Pass Slice
+
+This Python-only performance slice is limited to artifact embedding output
+validation in `MLXEmbeddingRuntime._embed_inputs(...)`. The affected path is
+covered by the registered PR-scoped performance probe `artifact-embedding-batch`
+in `infra/perf/pr_scoped_probes.json`, including focused `test_command`,
+`coverage_command`, and `probe_command` entries.
+
+The slice preserves the backend contract checks and receipt shape while merging
+per-value `float(...)` coercion and finite-value validation into one loop. This
+removes the previous second pass over every output vector (`all(math.isfinite(...))`)
+on successful batches. The registered probe remains the evidence source for the
+32-row artifact batch path: one tokenizer call, one encoder forward, finite
+outputs, exact output dimensions, and batch throughput versus singleton calls.
+
+Acceptance requires focused artifact runtime tests, changed-scope coverage for
+the touched runtime/test/probe scope, a local Linux replay of the registered
+probe, and green GitHub Actions PR-scoped performance before merge.

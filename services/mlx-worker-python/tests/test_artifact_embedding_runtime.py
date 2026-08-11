@@ -714,6 +714,69 @@ def test_embed_inputs_executes_one_ordered_batch_and_records_shape_receipt(
     }
 
 
+def test_embed_inputs_validates_and_coerces_backend_vectors_without_model_load(
+    tmp_path: Path,
+) -> None:
+    descriptor = artifact_runtime.ArtifactEmbeddingDescriptor(
+        model_path=tmp_path,
+        architecture="bert",
+        backend_id="mlx-bert-v1",
+        config={},
+        config_path=tmp_path / "config.json",
+        tokenizer_paths=(),
+        weight_paths=(),
+        model_hash="sha256:test",
+        tokenizer_hash="sha256:test",
+        pooling_mode="mean",
+        normalization="l2",
+        artifact_pooling_mode="",
+        artifact_normalization="",
+        dimensions=3,
+        max_length=8,
+        vector_kind="single_dense",
+        dtype="float32",
+        estimated_resident_bytes=0,
+    )
+    loaded: dict[str, object] = {
+        "embedding_artifact_descriptor": descriptor,
+        "embedding_backend": StaticBatchBackend(
+            EmbeddingBatchResult(
+                vectors=((1, 2, 3.0),),
+                input_token_count=4,
+                forward_count=1,
+                dtype="float32",
+            )
+        ),
+    }
+
+    vectors = MLXEmbeddingRuntime().embed_inputs(loaded, ("alpha",))
+
+    assert vectors == [[1.0, 2.0, 3.0]]
+    assert loaded["embedding_request_receipt"] == {
+        "backend_id": "mlx-bert-v1",
+        "batch_size": 1,
+        "input_token_count": 4,
+        "forward_count": 1,
+        "output_row_count": 1,
+        "dimensions": 3,
+        "vector_kind": "single_dense",
+        "dtype": "float32",
+        "finite_output": True,
+    }
+
+    loaded["embedding_backend"] = StaticBatchBackend(
+        EmbeddingBatchResult(
+            vectors=((1.0, math.inf, 3.0),),
+            input_token_count=4,
+            forward_count=1,
+            dtype="float32",
+        )
+    )
+    with pytest.raises(ArtifactEmbeddingError) as caught:
+        MLXEmbeddingRuntime().embed_inputs(loaded, ("alpha",))
+    assert caught.value.code == "embedding_output_nonfinite"
+
+
 @pytest.mark.parametrize(
     ("case", "expected_code"),
     [
