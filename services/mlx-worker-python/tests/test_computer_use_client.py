@@ -398,11 +398,9 @@ async def _restart_broker(
     *,
     broker_instance_id: str,
 ) -> None:
+    retired_socket_path = f"{fixture.socket_path}.retired"
+    os.replace(fixture.socket_path, retired_socket_path)
     await fixture.server.stop(grace=None)
-    try:
-        os.unlink(fixture.socket_path)
-    except FileNotFoundError:
-        pass
     server = grpc.aio.server()
     servicer = _ComputerBrokerFixtureServicer()
     servicer.handshake_instance_id = broker_instance_id
@@ -413,6 +411,7 @@ async def _restart_broker(
     assert server.add_insecure_port(f"unix://{fixture.socket_path}")
     await server.start()
     os.chmod(fixture.socket_path, 0o600)
+    os.unlink(retired_socket_path)
     fixture.server = server
     fixture.servicer = servicer
 
