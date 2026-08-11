@@ -50,12 +50,17 @@ struct AgentToolJSONSchemaValidatorTests {
                 Issue.record("Supported schema case \(index) failed: \(error)")
             }
         }
+
+        try validator.validateSchemaDefinition(
+            #"{"description":"escaped quote: \" and delimiters: } ]","type":"string"}"#
+        )
     }
 
     @Test("malformed and unsupported schemas fail closed")
     func malformedAndUnsupportedSchemasFailClosed() throws {
         let invalidSchemas = [
             "not-json",
+            "}",
             "[]",
             #"{"unknownAssertion":true}"#,
             #"{"type":7}"#,
@@ -102,6 +107,14 @@ struct AgentToolJSONSchemaValidatorTests {
         }
         expectValidationError(.invalidSchema) {
             try validator.validateSchemaDefinition(deeplyNested)
+        }
+
+        var semanticallyDeep = #"{"type":"string"}"#
+        for _ in 0..<66 {
+            semanticallyDeep = #"{"additionalProperties":\#(semanticallyDeep)}"#
+        }
+        expectValidationError(.invalidSchema) {
+            try validator.validateSchemaDefinition(semanticallyDeep)
         }
         expectValidationError(.invalidSchema) {
             try AgentToolJSONSchemaValidator(allowRegularExpressions: false)

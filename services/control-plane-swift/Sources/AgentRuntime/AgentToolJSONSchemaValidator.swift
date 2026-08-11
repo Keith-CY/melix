@@ -10,6 +10,9 @@ enum AgentToolJSONSchemaValidationError: Error, Sendable, Equatable {
 /// built-ins and commonly returned by MCP servers. Unknown assertion keywords
 /// make the catalog invalid instead of being silently ignored.
 struct AgentToolJSONSchemaValidator: Sendable {
+    // A schema chain at the semantic depth limit (64) occupies 129 raw JSON
+    // containers. Reject the next chain before Foundation recursively decodes it.
+    private static let maximumRawJSONNestingDepth = 130
     private let allowRegularExpressions: Bool
 
     init(allowRegularExpressions: Bool = true) {
@@ -60,10 +63,48 @@ struct AgentToolJSONSchemaValidator: Sendable {
         _ json: String,
         invalidAs mappedError: AgentToolJSONSchemaValidationError
     ) throws -> StructuredJSONValue {
+        try validateRawJSONNesting(json, invalidAs: mappedError)
         do {
             return try StructuredJSONValue.parse(text: json)
         } catch {
             throw mappedError
+        }
+    }
+
+    private func validateRawJSONNesting(
+        _ json: String,
+        invalidAs mappedError: AgentToolJSONSchemaValidationError
+    ) throws {
+        var depth = 0
+        var isInsideString = false
+        var isEscaping = false
+        for byte in json.utf8 {
+            if isInsideString {
+                if isEscaping {
+                    isEscaping = false
+                } else if byte == 0x5C {
+                    isEscaping = true
+                } else if byte == 0x22 {
+                    isInsideString = false
+                }
+                continue
+            }
+            switch byte {
+            case 0x22:
+                isInsideString = true
+            case 0x5B, 0x7B:
+                depth += 1
+                guard depth <= Self.maximumRawJSONNestingDepth else {
+                    throw mappedError
+                }
+            case 0x5D, 0x7D:
+                depth -= 1
+                guard depth >= 0 else {
+                    throw mappedError
+                }
+            default:
+                continue
+            }
         }
     }
 
