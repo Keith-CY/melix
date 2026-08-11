@@ -461,10 +461,20 @@ Every emitted observation must include:
 Payload handling must:
 
 - redact configured terms before persistence
-- enforce UTF-8-safe byte limits
+- enforce UTF-8-safe per-string byte limits
+- cap the complete canonical serialized observation at 1,048,576 bytes
 - preserve deterministic hashes over sanitized payloads
 - record timeout metadata when status is `timeout`
 - reject empty observations
+
+When the complete observation would exceed the global cap, the normalizer emits
+`globally_truncated = true` and replaces the payload with a typed
+`melix.agentic_tool_observation_truncation.v1` record containing the original
+payload byte count, SHA-256, and the largest deterministic UTF-8-safe canonical
+preview that still fits. The worker receipt sets `observation_truncated` for
+either this global case or any per-string truncation. Source-level MCP result
+truncation remains a separate input to the same operator-visible
+`result_truncated` projection.
 
 ### Untrusted Fixture Boundary
 
@@ -1472,6 +1482,235 @@ Cancellation is represented as observation status `failed` with
 `failure_stage: cancelled` and `cancelled: true` in the sanitized payload,
 because the v1 observation status set is intentionally limited to `completed`,
 `timeout`, and `failed`.
+
+### Live Interactive Agent Execution
+
+Interactive Agent mode reuses the registry, guardrail, observation, and
+untrusted-context contracts above, but it is not deterministic fixture replay.
+The Swift control plane owns the run state machine and repeatedly:
+
+1. requests one model turn with the admitted tool catalog;
+2. assembles streamed tool-call fragments by call ID;
+3. validates a complete JSON object against the selected schema;
+4. evaluates approval policy;
+5. invokes the worker-owned `ToolExecutionRuntime`;
+6. appends the normalized result as correlated, untrusted tool-output prompt
+   data;
+7. requests the next model turn until the model answers or a terminal condition
+   is reached.
+
+MCP `CallToolResult.isError = true` is not a transport failure. The worker emits
+a completed execution terminal phase with a normalized observation whose
+`status` is `failed` and whose payload records `is_error: true`; the control
+plane appends that correlated, untrusted tool-role result and permits the model
+to repair its request on the next turn. MCP transport, protocol, deadline,
+cancellation, and worker-runtime failures remain terminal and fail closed.
+
+The initial implementation is sequential and bounded by configured model-turn,
+tool-call, wall-clock, and observation-byte budgets. Unknown tools, malformed
+arguments, missing approval, policy denial, exhausted budgets, owner-scope
+mismatch, or cancellation fail closed. Tool output must never be interpolated
+into trusted system instructions.
+
+Each terminal worker receipt provides a bounded `result_summary` and a typed
+truncation flag. The control plane projects those fields into Run History and
+projects run- and call-level error code, message, and `failure_stage` without
+parsing observation prose. Evidence persistence failure after successful tool
+execution remains a completed call with a degraded-evidence warning.
+
+Ordinary OpenAI-compatible function calling remains caller-executed unless the
+request explicitly enables Melix Agent mode. Advertising a tool catalog alone
+must not imply that Melix connected to or executed the source.
+
+### Live MCP Execution
+
+An MCP source is `catalog_only` until a configured transport has successfully
+initialized and completed `tools/list`. A live MCP adapter must support:
+
+- initialization and protocol-version negotiation;
+- server capability capture;
+- paginated `tools/list` and catalog digesting;
+- `tools/call` with a stable run and call identity;
+- tool-list change notifications;
+- timeout, cancellation, process exit, reconnect, and orderly close;
+- stdio with an explicit command vector and scrubbed environment;
+- streamable HTTP with an explicit URL and credential reference.
+
+MCP tool descriptions, schemas, annotations, and results are untrusted server
+data. They pass through the same size, redaction, approval, and prompt-admission
+boundaries as other live tools. Credentials, raw environment variables,
+private prompt text, and unbounded result content must not appear in receipts.
+Stdio child stderr is also untrusted: a server can read explicitly injected
+credentials and echo them. It must never inherit the worker stderr that the
+desktop persists to disk. Until a dedicated bounded redacting sink exists,
+Melix discards child stderr and exposes only typed, credential-free transport
+failures.
+
+### Live Cancellation Contract
+
+Live execution uses a cancellation tree rooted at the agent run. Cancellation
+first closes control-plane admission, then propagates to the active model turn,
+approval wait, worker execution task, MCP request or subprocess, and Computer
+Use session. A component may report `too_late` only after crossing a documented
+irreversible commit point. Accepted cancellation must not be represented merely
+as an observation override.
+
+Computer Use execution grants expire after at most 60 seconds. Session cleanup
+may reuse an exact signed grant only on the broker's cancellation-only endpoint
+for at most 15 minutes after normal expiry, covering the longest supported
+desktop Agent run without authorizing a new capture or action. The worker must
+also retain the newest grant only after the broker accepts an exact same-run,
+same-actor session call using a strictly increasing issue and expiry tuple, so
+rejected refreshes, delayed older calls, and equal-freshness conflicts cannot
+roll or replace cleanup authorization.
+
+The source-tree private UDS does not provide a stable per-connection peer
+identity: an anonymous Unix-domain client may be reported using the shared
+server socket path. The broker therefore treats handshake as stateless protocol
+negotiation, never as admission state keyed by `remotePeer`. Every non-handshake
+RPC carries the private caller-verification capability and the broker compares
+it in constant time before parsing or executing the request. Every such RPC
+also retains its exact Ed25519 control-plane authorization; permission requests
+are not an exception. A successful handshake or RPC on one client connection
+cannot admit a second connection that omits or presents the wrong capability.
+
+This bounded cleanup window is not an indefinite lease. A host suspension that
+outlives it may leave stale broker bookkeeping, while the independent session
+absolute deadline still blocks all capture and action. Automatic expiry
+reconciliation remains required before treating cleanup as cross-suspension
+complete.
+
+A signed Computer Use capture authorization binds the expected previous frame
+generation. Omitting `expected_previous_generation` authorizes only generation
+`0`, never an arbitrary later generation. The broker rejects reuse of that
+envelope with any nonzero generation before invoking ScreenCaptureKit, so a
+single grant cannot be replayed to spend the session frame budget.
+
+AX semantic actions use a two-phase broker boundary. The broker first prepares
+and validates the exact target and element without invoking `AXPress`, then
+durably creates a `preflight_prepared` record and a `commit_intent` record with
+exclusive file creation, private permissions, file sync, and parent-directory
+sync. Any boundary-record failure terminates before the native action. The
+commit adapter then revalidates trust, process launch identity, foreground
+window, unique element identity, enabled and secure state, performs `AXPress`,
+and captures the post-action snapshot. A `rejected` commit result proves that
+no side effect was invoked; an `indeterminate` result means invocation occurred
+but the target application's observed outcome cannot be proven. Receipts must
+retain references to both boundary records.
+
+The public Accessibility API does not expose the ScreenCaptureKit window ID.
+Therefore a semantic press may proceed only when a fresh ScreenCaptureKit
+inventory still contains exactly the approval-bound window identity, its title
+is unique within the same process, that title resolves to exactly one
+Accessibility window root, and the broker has raised and revalidated that root
+as both the focused and main window. The broker repeats the live
+ScreenCaptureKit and Accessibility checks immediately before commit. Any
+identity change, title ambiguity, focus mismatch, or inability to prove this
+cross-framework binding produces a typed refusal before `AXPress`.
+
+Each run and tool call emits exactly one terminal record. Repeated cancellation
+is idempotent. After terminal state, no provider request, tool execution, MCP
+message, native action, or non-terminal event may begin.
+
+The cancellation receipt is part of the durable run snapshot and survives
+process restart. Stop must prefer the active coordinator for a live run before
+consulting historical receipt storage. Before a live Stop returns, the exact
+run event stream drains and the terminal snapshot plus full receipt converge
+under the per-run serialization gate. The bounded standalone receipt index is
+secondary: eviction cannot remove snapshot truth, while disagreement between
+the two copies and a receipt-less `cancelled` snapshot both fail closed as
+unavailable/unknown. Durable run-snapshot creation requires file and directory
+sync; exact retries repair durability before retention, and a pending retention
+failure blocks admission of a different identity without invalidating the
+already-committed identity.
+
+Safety reconciliation uses a distinct, complete nonterminal inventory rather
+than inferring active work from a bounded history page. The daemon opens every
+canonical run entry without following links, validates the descriptor and
+encoded run identity, treats unknown states as nonterminal, includes admitting
+runs in the completeness decision, and reports incomplete on corruption or
+truncation. The App fails closed when this inventory is not complete. Known
+background Chats may run independently; only a nonterminal run whose Chat
+identity is unknown to the current App is an orphan recovery conflict for new
+Agent admission. A pure orphan conflict does not block ordinary Ask generation
+or Chat navigation; only selected-Chat ownership conflicts block transcript
+mutation. Ask keeps an exact Stop control while the independent orphan repair
+entry remains visible.
+
+Clearing or deleting a Chat is not authorized by a client-side run inventory,
+even when that inventory is complete: another frontend may win a later Start
+admission, and a cleared Chat may rehydrate an older terminal snapshot. Until
+the control plane exposes a durable atomic session-close boundary, Agent-aware
+clients keep Clear Chat and Delete Chat unavailable and present an explicit
+`Session Close Required` repair state. They must not ship a list-then-cancel-
+then-list approximation as a safe destructive action.
+
+The durable run snapshot bound protects every nonterminal record. Retention may
+remove terminal history only; if no such candidate exists, a new run fails
+closed. This invariant is what lets restart reconciliation produce an explicit
+interrupted terminal snapshot instead of losing a long-running approval, tool,
+or Computer Use session.
+
+The control plane serializes each run's event consumption, coalesced snapshot
+flush, durable write, cleanup, and publication behind one per-run gate. An
+awaiting journal write must not allow a later terminal event to publish around
+it. If a snapshot write fails, queued events become inert, cancellation and
+owner-bound cleanup finish first, and only the journal-failure terminal may be
+published. The control plane should retry the smaller fail-closed snapshot once
+so durable and in-memory terminal truth converge after a transient write error.
+
+Worker cancellation and execution tombstones use a fixed 3,600-second retry
+horizon and a default maximum of 4,096 records per bounded record class. Only
+expired records that are neither active nor in flight may be evicted. When no
+safe eviction candidate exists, new identities fail closed instead of
+displacing an unexpired receipt. Concurrent retries for the same identity must
+join the same in-flight cancellation and return the same semantic receipt.
+Control-plane run and call identifiers are globally unique and must never be
+reused after tombstone expiry. The current worker tombstones are process-local;
+after a worker restart, the durable control-plane terminal journal remains the
+admission truth and old identifiers must not be replayed.
+
+### Computer Use Projection
+
+Computer Use executes through an independent native broker. Its raw native
+evidence is evidence-only rather than deterministic replay. The worker projects
+bounded, redacted broker receipts into the shared tool-observation shape for
+model continuation and evaluation, but it must retain evidence fields that
+distinguish:
+
+- production ScreenCaptureKit and AX execution from test fakes;
+- semantic AX actions from coordinate fallback;
+- before and after observation artifacts;
+- target, frame generation, approval, precondition, commit, and cancellation
+  receipts;
+- `replayability = evidence_only`.
+
+A run may carry zero or exactly one operator-selected Computer Use window. The
+control plane must refresh the signed live target inventory before admission
+and require that the selected window's complete trusted identity is still
+present. The singleton selection must not be compared for equality with the
+entire live inventory, and neither IPC callers nor model output may widen the
+run to multiple windows.
+
+The operator inventory represents window discovery with a typed state that is
+separate from the returned target list. `empty` means a successful bounded
+discovery found no eligible on-screen windows; `failed` carries a bounded error
+and retryability and must never be rendered as an empty result. `not_requested`
+remains distinct when Screen Recording is unavailable, and every attempted
+refresh records its observation time.
+
+Desktop submission revalidates the selected target against a fresh inventory
+immediately before `StartAgentRun`. A missing target is a stale-selection repair
+state: clear the selection, retain the operator draft, and do not send a run.
+
+The broker stores bounded frame artifacts in its session-scoped runtime root and
+returns references, hashes, dimensions, and redaction metadata. Large image
+bytes do not travel through the control plane.
+
+The current broker persists preflight and commit-intent boundary records but
+does not yet scan and reconcile those records automatically at broker startup.
+An unreconciled commit intent must therefore be treated as possibly executed,
+never as proof that cancellation prevented the action.
 
 ## Surface Contracts
 

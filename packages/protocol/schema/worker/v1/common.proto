@@ -392,10 +392,19 @@ message MessagePart {
   MediaMetadata media = 6;
 }
 
+message ChatToolCall {
+  string id = 1;
+  string type = 2;
+  string name = 3;
+  string arguments_json = 4;
+}
+
 message ChatMessage {
   string role = 1;
   string name = 2;
   repeated MessagePart parts = 3;
+  repeated ChatToolCall tool_calls = 4;
+  string tool_call_id = 5;
 }
 
 message CacheHints {

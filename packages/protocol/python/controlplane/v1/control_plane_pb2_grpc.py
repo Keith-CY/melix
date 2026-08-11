@@ -3,6 +3,7 @@
 import grpc
 import warnings
 
+from packages.protocol.python.controlplane.v1 import control_plane_pb2 as controlplane_dot_v1_dot_control__plane__pb2
 
 GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
@@ -22,3 +23,302 @@ if _version_not_supported:
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
+
+
+class ControlPlaneIPCServiceStub(object):
+    """The final signed service boundary uses the same typed messages over XPC.
+    This service is the private Unix-domain transport used by source-tree and
+    packaged-preview launchers so the app still talks to the daemon instead of
+    constructing a second control plane in its own process.
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.Handshake = channel.unary_unary(
+                '/melix.controlplane.v1.ControlPlaneIPCService/Handshake',
+                request_serializer=controlplane_dot_v1_dot_control__plane__pb2.HandshakeRequest.SerializeToString,
+                response_deserializer=controlplane_dot_v1_dot_control__plane__pb2.HandshakeResponse.FromString,
+                _registered_method=True)
+        self.Execute = channel.unary_unary(
+                '/melix.controlplane.v1.ControlPlaneIPCService/Execute',
+                request_serializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneRequest.SerializeToString,
+                response_deserializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneResponse.FromString,
+                _registered_method=True)
+        self.Subscribe = channel.unary_stream(
+                '/melix.controlplane.v1.ControlPlaneIPCService/Subscribe',
+                request_serializer=controlplane_dot_v1_dot_control__plane__pb2.SubscribeRequest.SerializeToString,
+                response_deserializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneEvent.FromString,
+                _registered_method=True)
+        self.StartChat = channel.unary_stream(
+                '/melix.controlplane.v1.ControlPlaneIPCService/StartChat',
+                request_serializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCChatRequest.SerializeToString,
+                response_deserializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCChatEvent.FromString,
+                _registered_method=True)
+        self.CancelChat = channel.unary_unary(
+                '/melix.controlplane.v1.ControlPlaneIPCService/CancelChat',
+                request_serializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCCancelChatRequest.SerializeToString,
+                response_deserializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCCancelChatResponse.FromString,
+                _registered_method=True)
+        self.StartAgentRun = channel.unary_unary(
+                '/melix.controlplane.v1.ControlPlaneIPCService/StartAgentRun',
+                request_serializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCStartAgentRunRequest.SerializeToString,
+                response_deserializer=controlplane_dot_v1_dot_control__plane__pb2.AgentRunSnapshot.FromString,
+                _registered_method=True)
+
+
+class ControlPlaneIPCServiceServicer(object):
+    """The final signed service boundary uses the same typed messages over XPC.
+    This service is the private Unix-domain transport used by source-tree and
+    packaged-preview launchers so the app still talks to the daemon instead of
+    constructing a second control plane in its own process.
+    """
+
+    def Handshake(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Execute(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Subscribe(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StartChat(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CancelChat(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StartAgentRun(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_ControlPlaneIPCServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'Handshake': grpc.unary_unary_rpc_method_handler(
+                    servicer.Handshake,
+                    request_deserializer=controlplane_dot_v1_dot_control__plane__pb2.HandshakeRequest.FromString,
+                    response_serializer=controlplane_dot_v1_dot_control__plane__pb2.HandshakeResponse.SerializeToString,
+            ),
+            'Execute': grpc.unary_unary_rpc_method_handler(
+                    servicer.Execute,
+                    request_deserializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneRequest.FromString,
+                    response_serializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneResponse.SerializeToString,
+            ),
+            'Subscribe': grpc.unary_stream_rpc_method_handler(
+                    servicer.Subscribe,
+                    request_deserializer=controlplane_dot_v1_dot_control__plane__pb2.SubscribeRequest.FromString,
+                    response_serializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneEvent.SerializeToString,
+            ),
+            'StartChat': grpc.unary_stream_rpc_method_handler(
+                    servicer.StartChat,
+                    request_deserializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCChatRequest.FromString,
+                    response_serializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCChatEvent.SerializeToString,
+            ),
+            'CancelChat': grpc.unary_unary_rpc_method_handler(
+                    servicer.CancelChat,
+                    request_deserializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCCancelChatRequest.FromString,
+                    response_serializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCCancelChatResponse.SerializeToString,
+            ),
+            'StartAgentRun': grpc.unary_unary_rpc_method_handler(
+                    servicer.StartAgentRun,
+                    request_deserializer=controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCStartAgentRunRequest.FromString,
+                    response_serializer=controlplane_dot_v1_dot_control__plane__pb2.AgentRunSnapshot.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'melix.controlplane.v1.ControlPlaneIPCService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('melix.controlplane.v1.ControlPlaneIPCService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class ControlPlaneIPCService(object):
+    """The final signed service boundary uses the same typed messages over XPC.
+    This service is the private Unix-domain transport used by source-tree and
+    packaged-preview launchers so the app still talks to the daemon instead of
+    constructing a second control plane in its own process.
+    """
+
+    @staticmethod
+    def Handshake(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/melix.controlplane.v1.ControlPlaneIPCService/Handshake',
+            controlplane_dot_v1_dot_control__plane__pb2.HandshakeRequest.SerializeToString,
+            controlplane_dot_v1_dot_control__plane__pb2.HandshakeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Execute(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/melix.controlplane.v1.ControlPlaneIPCService/Execute',
+            controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneRequest.SerializeToString,
+            controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Subscribe(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/melix.controlplane.v1.ControlPlaneIPCService/Subscribe',
+            controlplane_dot_v1_dot_control__plane__pb2.SubscribeRequest.SerializeToString,
+            controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StartChat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/melix.controlplane.v1.ControlPlaneIPCService/StartChat',
+            controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCChatRequest.SerializeToString,
+            controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCChatEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CancelChat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/melix.controlplane.v1.ControlPlaneIPCService/CancelChat',
+            controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCCancelChatRequest.SerializeToString,
+            controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCCancelChatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StartAgentRun(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/melix.controlplane.v1.ControlPlaneIPCService/StartAgentRun',
+            controlplane_dot_v1_dot_control__plane__pb2.ControlPlaneIPCStartAgentRunRequest.SerializeToString,
+            controlplane_dot_v1_dot_control__plane__pb2.AgentRunSnapshot.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)

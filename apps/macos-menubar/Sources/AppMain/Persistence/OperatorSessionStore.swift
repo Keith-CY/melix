@@ -389,6 +389,8 @@ private extension DesktopSurface {
         switch Self.normalizedOperatorSessionID(rawValue) {
         case "commandcenter":
             self = .commandCenter
+        case "agent", "agents":
+            self = .agents
         case "image":
             self = .image
         case "server", "servers":
@@ -416,6 +418,8 @@ private extension DesktopSurface {
         switch self {
         case .chat:
             return "chat"
+        case .agents:
+            return "agents"
         case .commandCenter:
             return "commandCenter"
         case .image:

@@ -15,6 +15,7 @@ from packages.protocol.python.worker.v1 import (
     inference_pb2,
     maintenance_pb2,
     runtime_pb2,
+    tool_runtime_pb2,
 )
 
 from backend_identity_support import (
@@ -1900,6 +1901,9 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     maintenance_method_count = len(
         maintenance_pb2.DESCRIPTOR.services_by_name["MaintenanceService"].methods
     )
+    tool_runtime_method_count = len(
+        tool_runtime_pb2.DESCRIPTOR.services_by_name["ToolRuntimeService"].methods
+    )
 
     class FakeBoundServer:
         def add_generic_rpc_handlers(self, handlers) -> None:
@@ -1931,12 +1935,13 @@ def test_build_server_and_main_bootstrap(monkeypatch, tmp_path: Path) -> None:
     assert isinstance(runtime_service, ProductionWorkerRuntimeService)
     assert isinstance(inference_service, ProductionWorkerInferenceService)
     assert seen_build == {
-        "handlers": 4,
+        "handlers": 5,
         "registered_services": [
             ("melix.worker.v1.RuntimeService", 8),
             ("melix.worker.v1.InferenceService", 11),
             ("melix.worker.v1.MaintenanceService", maintenance_method_count),
             ("melix.worker.v1.CacheService", 6),
+            ("melix.worker.v1.ToolRuntimeService", tool_runtime_method_count),
         ],
         "address": f"unix://{Path('/tmp/melix-test.sock').resolve()}",
         "stopped": 0,

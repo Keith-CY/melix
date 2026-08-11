@@ -648,82 +648,6 @@ struct RemoteProviderClientTests {
         #expect(await transport.lastBodyString?.contains(#""stream":false"#) == true)
     }
 
-    @Test("forwards optional OpenAI compatible generation controls")
-    func forwardsOptionalOpenAICompatibleGenerationControls() async throws {
-        let transport = RecordingRemoteProviderTransport(response: .init(
-            statusCode: 200,
-            headers: ["content-type": "application/json"],
-            body: Data(
-                #"{ "choices": [{ "message": { "content": "OK." }, "finish_reason": "stop" }] }"#
-                    .utf8
-            )
-        ))
-        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
-
-        _ = try await client.complete(
-            RemoteProviderChatRequest(
-                serverID: "reasoning-endpoint",
-                providerKind: "openai-compatible",
-                baseURL: "https://reasoning.example/v1",
-                apiKey: "sk-secret",
-                modelID: "deepseek-v4-flash",
-                messages: [.init(role: "user", content: "Reply with exactly OK.")],
-                stream: false,
-                enableThinking: false,
-                reasoningEffort: "none",
-                temperature: 0.2,
-                topP: 0.9,
-                maxTokens: 128
-            )
-        )
-
-        let bodyString = try #require(await transport.lastBodyString)
-        let bodyData = try #require(bodyString.data(using: .utf8))
-        let body = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
-        #expect(body["enable_thinking"] as? Bool == false)
-        #expect(body["reasoning_effort"] as? String == "none")
-        #expect(body["temperature"] as? Double == 0.2)
-        #expect(body["top_p"] as? Double == 0.9)
-        #expect(body["max_tokens"] as? Int == 128)
-    }
-
-    @Test("omits enable_thinking unless thinking is explicitly disabled")
-    func omitsEnableThinkingUnlessThinkingIsExplicitlyDisabled() async throws {
-        for enableThinking in [nil, true] as [Bool?] {
-            let transport = RecordingRemoteProviderTransport(response: .init(
-                statusCode: 200,
-                headers: ["content-type": "application/json"],
-                body: Data(
-                    #"{ "choices": [{ "message": { "content": "OK." }, "finish_reason": "stop" }] }"#
-                        .utf8
-                )
-            ))
-            let client = OpenAICompatibleRemoteProviderClient(transport: transport)
-
-            _ = try await client.complete(
-                RemoteProviderChatRequest(
-                    serverID: "strict-endpoint",
-                    providerKind: "openai-compatible",
-                    baseURL: "https://strict.example/v1",
-                    apiKey: "sk-secret",
-                    modelID: "gpt-5",
-                    messages: [.init(role: "user", content: "Reply with exactly OK.")],
-                    stream: false,
-                    enableThinking: enableThinking
-                )
-            )
-
-            let bodyString = try #require(await transport.lastBodyString)
-            let bodyData = try #require(bodyString.data(using: .utf8))
-            let body = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
-            #expect(body["enable_thinking"] == nil)
-            #expect(body["reasoning_effort"] == nil)
-            #expect(body["temperature"] == nil)
-            #expect(body["top_p"] == nil)
-            #expect(body["max_tokens"] == nil)
-        }
-    }
-
     @Test("parses OpenAI compatible SSE chat completion")
     func parsesOpenAICompatibleSSEChatCompletion() async throws {
         let body = """
@@ -827,7 +751,7 @@ struct RemoteProviderClientTests {
             )))
 
             await #expect(throws: RemoteProviderError.invalidResponse("remote provider response did not include choices")) {
-                _ = try await client.stream(
+                let stream = try await client.stream(
                     RemoteProviderChatRequest(
                         serverID: "malformed-stream",
                         providerKind: "openai-compatible",
@@ -838,39 +762,50 @@ struct RemoteProviderClientTests {
                         stream: true
                     )
                 )
+                for try await _ in stream {}
             }
         }
     }
 
-    @Test("parses OpenAI compatible SSE reasoning separately from assistant text")
-    func parsesOpenAICompatibleSSEReasoningSeparatelyFromAssistantText() async throws {
-        let body = """
-        data: {"choices":[{"delta":{"reasoning_content":"check "},"finish_reason":null}]}
-
-        data: {"choices":[{"delta":{"reasoning_content":"facts"},"finish_reason":null}]}
-
-        data: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}
-
-        data: [DONE]
-
-        """
+    @Test("streams reasoning and fragmented tool identity without mixing assistant text")
+    func streamsReasoningAndFragmentedToolIdentityWithoutMixingAssistantText() async throws {
         let transport = RecordingRemoteProviderTransport(response: .init(
             statusCode: 200,
             headers: ["content-type": "text/event-stream"],
-            body: Data(body.utf8)
+            body: Data(
+                (#"""
+                data: {"choices":[{"delta":{"reasoning_content":"check "},"finish_reason":null}]}
+
+                data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_","type":"func","function":{"name":"look","arguments":"{\"q\":"}}]},"finish_reason":null}]}
+
+                data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"up","type":"tion","function":{"name":"up","arguments":"\"Kyoto\"}"}}]},"finish_reason":"tool_calls"}]}
+
+                data: [DONE]
+
+                """#).utf8
+            )
         ))
         let client = OpenAICompatibleRemoteProviderClient(transport: transport)
 
         let stream = try await client.stream(
             RemoteProviderChatRequest(
-                serverID: "reasoning-endpoint",
+                serverID: "reasoning-tools",
                 providerKind: "openai-compatible",
-                baseURL: "https://reasoning.example/v1",
-                apiKey: "sk-secret",
-                modelID: "deepseek-v4-flash",
-                messages: [.init(role: "user", content: "solve")],
+                baseURL: "https://provider.example/v1",
+                apiKey: "secret",
+                modelID: "tool-model",
+                messages: [.init(role: "user", content: "Look up Kyoto")],
+                tools: [
+                    RemoteProviderToolDefinition(
+                        name: "lookup",
+                        parametersJSON: #"{"type":"object"}"#
+                    ),
+                ],
+                toolChoice: "auto",
+                parallelToolCalls: false,
                 stream: true,
-                enableThinking: true
+                enableThinking: true,
+                reasoningEffort: "medium"
             )
         )
         var events: [RemoteProviderChatStreamEvent] = []
@@ -880,10 +815,654 @@ struct RemoteProviderClientTests {
 
         #expect(events == [
             .reasoningDelta("check "),
-            .reasoningDelta("facts"),
-            .tokenDelta("answer"),
-            .completed(finishReason: "stop", assistantText: "answer"),
+            .toolCallsCompleted([
+                RemoteProviderToolCall(
+                    callID: "call_up",
+                    toolName: "lookup",
+                    argumentsJSON: #"{"q":"Kyoto"}"#
+                ),
+            ]),
+            .completed(finishReason: "tool_calls", assistantText: ""),
         ])
+        let bodyData = try #require(await transport.lastRequest?.httpBody)
+        let body = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+        #expect(body["reasoning_effort"] as? String == "medium")
+        #expect(body["enable_thinking"] == nil)
+        #expect((body["tools"] as? [[String: Any]])?.count == 1)
+        #expect((body["stream_options"] as? [String: Bool])?["include_usage"] == true)
+    }
+
+    @Test("serializes structured tools, history, and generation controls together")
+    func serializesStructuredToolsHistoryAndGenerationControlsTogether() async throws {
+        let transport = RecordingRemoteProviderTransport(response: .init(
+            statusCode: 200,
+            headers: ["content-type": "application/json"],
+            body: Data(
+                #"{"choices":[{"message":{"content":"","tool_calls":[{"id":"call_next","type":"function","function":{"name":"lookup","arguments":"{\"query\":\"Kyoto\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":12,"completion_tokens":4}}"#.utf8
+            )
+        ))
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+        let priorCall = RemoteProviderToolCall(
+            callID: "call_prior",
+            toolName: "lookup",
+            argumentsJSON: #"{"query":"Tokyo"}"#
+        )
+
+        let result = try await client.complete(
+            RemoteProviderChatRequest(
+                serverID: "remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://provider.example/v1",
+                apiKey: "secret",
+                modelID: "tool-model",
+                messages: [
+                    .init(role: "user", content: "Look it up"),
+                    .init(role: "assistant", content: "", toolCalls: [priorCall]),
+                    .init(
+                        role: "tool",
+                        content: #"{"temperature":22}"#,
+                        name: "lookup",
+                        toolCallID: "call_prior"
+                    ),
+                ],
+                tools: [
+                    RemoteProviderToolDefinition(
+                        name: "lookup",
+                        description: "Look up a city",
+                        parametersJSON: #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#
+                    ),
+                ],
+                toolChoice: "auto",
+                parallelToolCalls: false,
+                stream: false,
+                enableThinking: false,
+                reasoningEffort: "none",
+                temperature: 0.2,
+                topP: 0.9,
+                maxTokens: 128
+            )
+        )
+
+        #expect(result.finishReason == "tool_calls")
+        #expect(result.toolCalls == [
+            RemoteProviderToolCall(
+                callID: "call_next",
+                toolName: "lookup",
+                argumentsJSON: #"{"query":"Kyoto"}"#
+            ),
+        ])
+
+        let bodyData = try #require(await transport.lastRequest?.httpBody)
+        let body = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+        let messages = try #require(body["messages"] as? [[String: Any]])
+        let assistantToolCalls = try #require(messages[1]["tool_calls"] as? [[String: Any]])
+        let assistantFunction = try #require(assistantToolCalls[0]["function"] as? [String: Any])
+        let tools = try #require(body["tools"] as? [[String: Any]])
+        let toolFunction = try #require(tools[0]["function"] as? [String: Any])
+        let parameters = try #require(toolFunction["parameters"] as? [String: Any])
+
+        #expect(assistantToolCalls[0]["id"] as? String == "call_prior")
+        #expect(assistantFunction["arguments"] as? String == #"{"query":"Tokyo"}"#)
+        #expect(messages[2]["tool_call_id"] as? String == "call_prior")
+        #expect(messages[2]["name"] as? String == "lookup")
+        #expect(toolFunction["name"] as? String == "lookup")
+        #expect(parameters["type"] as? String == "object")
+        #expect(body["tool_choice"] as? String == "auto")
+        #expect(body["parallel_tool_calls"] as? Bool == false)
+        #expect(body["enable_thinking"] as? Bool == false)
+        #expect(body["reasoning_effort"] as? String == "none")
+        #expect(body["temperature"] as? Double == 0.2)
+        #expect(body["top_p"] as? Double == 0.9)
+        #expect(body["max_tokens"] as? Int == 128)
+    }
+
+    @Test("omits enable_thinking unless thinking is explicitly disabled")
+    func omitsEnableThinkingUnlessThinkingIsExplicitlyDisabled() async throws {
+        for enableThinking in [nil, true] as [Bool?] {
+            let transport = RecordingRemoteProviderTransport(response: .init(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    #"{ "choices": [{ "message": { "content": "OK." }, "finish_reason": "stop" }] }"#
+                        .utf8
+                )
+            ))
+            let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+
+            _ = try await client.complete(
+                RemoteProviderChatRequest(
+                    serverID: "strict-endpoint",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://strict.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "gpt-5",
+                    messages: [.init(role: "user", content: "Reply with exactly OK.")],
+                    stream: false,
+                    enableThinking: enableThinking
+                )
+            )
+
+            let bodyData = try #require(await transport.lastRequest?.httpBody)
+            let body = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+            #expect(body["enable_thinking"] == nil)
+            #expect(body["reasoning_effort"] == nil)
+            #expect(body["temperature"] == nil)
+            #expect(body["top_p"] == nil)
+            #expect(body["max_tokens"] == nil)
+        }
+    }
+
+    @Test("streams incrementally and accumulates fragmented tool calls")
+    func streamsIncrementallyAndAccumulatesFragmentedToolCalls() async throws {
+        let transport = ControlledRemoteProviderStreamingTransport()
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://provider.example/v1",
+                apiKey: "secret",
+                modelID: "tool-model",
+                messages: [.init(role: "user", content: "weather")],
+                tools: [
+                    RemoteProviderToolDefinition(
+                        name: "weather",
+                        parametersJSON: #"{"type":"object"}"#
+                    ),
+                ],
+                stream: true
+            )
+        )
+        var iterator = stream.makeAsyncIterator()
+
+        await transport.yield(
+            #"data: {"choices":[{"delta":{"content":"checking "},"finish_reason":null}]}"# + "\n\n"
+        )
+        #expect(try await iterator.next() == .tokenDelta("checking "))
+
+        await transport.yield(
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_weather","type":"function","function":{"name":"weather","arguments":"{\"city\":"}}]},"finish_reason":null}]}"# + "\n\n"
+        )
+        await transport.yield(
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Tokyo\"}"}}]},"finish_reason":"tool_calls"}]}"# + "\n\n"
+        )
+        #expect(
+            try await iterator.next() == .toolCallDelta(
+                RemoteProviderToolCallDelta(
+                    index: 0,
+                    callID: "call_weather",
+                    toolName: "weather",
+                    argumentsFragment: #"{"city":"Tokyo"}"#
+                )
+            )
+        )
+
+        await transport.yield(
+            #"data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":3}}"# + "\n\n"
+        )
+        #expect(try await iterator.next() == .usage(promptTokens: 9, completionTokens: 3))
+
+        await transport.yield("data: [DONE]\n\n")
+        #expect(
+            try await iterator.next() == .toolCallsCompleted([
+                RemoteProviderToolCall(
+                    callID: "call_weather",
+                    toolName: "weather",
+                    argumentsJSON: #"{"city":"Tokyo"}"#
+                ),
+            ])
+        )
+        #expect(
+            try await iterator.next() == .completed(
+                finishReason: "tool_calls",
+                assistantText: "checking "
+            )
+        )
+        #expect(try await iterator.next() == nil)
+
+        let requestBody = try #require(await transport.lastRequest?.httpBody)
+        let requestObject = try #require(JSONSerialization.jsonObject(with: requestBody) as? [String: Any])
+        let streamOptions = try #require(requestObject["stream_options"] as? [String: Any])
+        #expect(streamOptions["include_usage"] as? Bool == true)
+    }
+
+    @Test("buffers tool arguments until fragmented identity is complete")
+    func buffersToolArgumentsUntilFragmentedIdentityIsComplete() async throws {
+        let transport = ControlledRemoteProviderStreamingTransport()
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://provider.example/v1",
+                apiKey: "secret",
+                modelID: "tool-model",
+                messages: [.init(role: "user", content: "weather")],
+                tools: [
+                    RemoteProviderToolDefinition(
+                        name: "weather",
+                        parametersJSON: #"{"type":"object"}"#
+                    ),
+                ],
+                stream: true
+            )
+        )
+        let collector = Task {
+            var events: [RemoteProviderChatStreamEvent] = []
+            for try await event in stream {
+                events.append(event)
+            }
+            return events
+        }
+
+        await transport.yield(
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_","function":{"arguments":"{\"city\":"}}]},"finish_reason":null}]}"#
+                + "\n\n"
+        )
+        await transport.yield(
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"weather","function":{"name":"wea","arguments":"\"Tokyo\""}}]},"finish_reason":null}]}"#
+                + "\n\n"
+        )
+        await transport.yield(
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"ther"}}]},"finish_reason":null}]}"#
+                + "\n\n"
+        )
+        await transport.yield(
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":"tool_calls"}]}"#
+                + "\n\n"
+        )
+        await transport.yield("data: [DONE]\n\n")
+
+        let events = try await collector.value
+        #expect(events.first == .toolCallDelta(
+            RemoteProviderToolCallDelta(
+                index: 0,
+                callID: "call_weather",
+                toolName: "weather",
+                argumentsFragment: #"{"city":"Tokyo"}"#
+            )
+        ))
+        #expect(events.contains(.toolCallsCompleted([
+            RemoteProviderToolCall(
+                callID: "call_weather",
+                toolName: "weather",
+                argumentsJSON: #"{"city":"Tokyo"}"#
+            ),
+        ])))
+    }
+
+    @Test("stream termination cancels the underlying transport")
+    func streamTerminationCancelsUnderlyingTransport() async throws {
+        let transport = ControlledRemoteProviderStreamingTransport()
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://provider.example/v1",
+                apiKey: "secret",
+                modelID: "model",
+                messages: [.init(role: "user", content: "hello")],
+                stream: true
+            )
+        )
+        let consumer = Task {
+            for try await _ in stream {}
+        }
+        await Task.yield()
+        consumer.cancel()
+        _ = await consumer.result
+
+        for _ in 0..<1_000 where transport.cancellationProbe.wasMarked == false {
+            await Task.yield()
+        }
+        #expect(transport.cancellationProbe.wasMarked)
+    }
+
+    @Test("URLSession streaming cancellation cancels its data task")
+    func urlSessionStreamingCancellationCancelsItsDataTask() async throws {
+        RemoteProviderHoldingURLProtocol.state.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RemoteProviderHoldingURLProtocol.self]
+        let transport = URLSessionRemoteProviderHTTPTransport(
+            streamingConfiguration: configuration
+        )
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://streaming.example.test/v1",
+                apiKey: "secret",
+                modelID: "model",
+                messages: [.init(role: "user", content: "hello")],
+                stream: true
+            )
+        )
+        var iterator = stream.makeAsyncIterator()
+        #expect(try await iterator.next() == .tokenDelta("first"))
+
+        let consumer = Task {
+            while try await iterator.next() != nil {}
+        }
+        await Task.yield()
+        consumer.cancel()
+        _ = await consumer.result
+
+        for _ in 0..<100 where RemoteProviderHoldingURLProtocol.state.wasStopped == false {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(RemoteProviderHoldingURLProtocol.state.wasStopped)
+    }
+
+    @Test("URLSession transport supports buffered data and normally completed streams")
+    func urlSessionTransportSupportsBufferedDataAndNormallyCompletedStreams() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RemoteProviderCompletingURLProtocol.self]
+        let bufferedSession = URLSession(configuration: configuration)
+        let transport = URLSessionRemoteProviderHTTPTransport(
+            bufferedSession: bufferedSession,
+            streamingConfiguration: configuration
+        )
+        let url = try #require(URL(string: "https://completing.example.test/v1/chat/completions"))
+        let (data, response) = try await transport.data(for: URLRequest(url: url))
+        #expect(response.statusCode == 200)
+        #expect(data.isEmpty == false)
+
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://completing.example.test/v1",
+                apiKey: "secret",
+                modelID: "model",
+                messages: [.init(role: "user", content: "hello")],
+                stream: true
+            )
+        )
+        var events: [RemoteProviderChatStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+        #expect(events == [
+            .tokenDelta("complete"),
+            .completed(finishReason: "stop", assistantText: "complete"),
+        ])
+    }
+
+    @Test("cancelling before URLSession response headers aborts the data task")
+    func cancellingBeforeURLSessionResponseHeadersAbortsTheDataTask() async throws {
+        RemoteProviderNoResponseURLProtocol.state.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RemoteProviderNoResponseURLProtocol.self]
+        let transport = URLSessionRemoteProviderHTTPTransport(
+            streamingConfiguration: configuration
+        )
+        let request = URLRequest(
+            url: try #require(URL(string: "https://no-response.example.test/chat/completions"))
+        )
+        let task = Task {
+            try await transport.stream(for: request)
+        }
+        await Task.yield()
+        task.cancel()
+        let result = await task.result
+        if case .success = result {
+            Issue.record("Expected response-header wait to be cancelled")
+        }
+
+        for _ in 0..<100 where RemoteProviderNoResponseURLProtocol.state.wasStopped == false {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(RemoteProviderNoResponseURLProtocol.state.wasStopped)
+    }
+
+    @Test("streaming provider failures and malformed tool shapes fail closed")
+    func streamingProviderFailuresAndMalformedToolShapesFailClosed() async throws {
+        let providerErrorClient = OpenAICompatibleRemoteProviderClient(
+            transport: RecordingRemoteProviderTransport(response: .init(
+                statusCode: 429,
+                headers: ["content-type": "application/json"],
+                body: Data("rate limited".utf8)
+            ))
+        )
+        await #expect(throws: RemoteProviderError.provider(statusCode: 429, message: "rate limited")) {
+            _ = try await providerErrorClient.stream(
+                RemoteProviderChatRequest(
+                    serverID: "remote",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://provider.example/v1",
+                    apiKey: "secret",
+                    modelID: "model",
+                    messages: [.init(role: "user", content: "hello")],
+                    stream: true
+                )
+            )
+        }
+
+        for body in [
+            #"{"choices":[{"message":{"tool_calls":{}},"finish_reason":"tool_calls"}]}"#,
+            #"{"choices":[{"message":{"tool_calls":[{"id":"","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#,
+            #"{"choices":[{"message":{"tool_calls":[{"id":"duplicate","function":{"name":"lookup","arguments":"{}"}},{"id":"duplicate","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#,
+        ] {
+            let client = OpenAICompatibleRemoteProviderClient(
+                transport: RecordingRemoteProviderTransport(response: .init(
+                    statusCode: 200,
+                    headers: ["content-type": "application/json"],
+                    body: Data(body.utf8)
+                ))
+            )
+            await #expect(throws: RemoteProviderError.self) {
+                _ = try await client.complete(
+                    RemoteProviderChatRequest(
+                        serverID: "remote",
+                        providerKind: "openai-compatible",
+                        baseURL: "https://provider.example/v1",
+                        apiKey: "secret",
+                        modelID: "model",
+                        messages: [.init(role: "user", content: "hello")],
+                        stream: false
+                    )
+                )
+            }
+        }
+    }
+
+    @Test("tool request validation rejects invalid schemas and unsupported Gemini history")
+    func toolRequestValidationRejectsInvalidSchemasAndUnsupportedGeminiHistory() async throws {
+        let transport = RecordingRemoteProviderTransport(response: .init(
+            statusCode: 200,
+            headers: ["content-type": "application/json"],
+            body: Data(#"{"choices":[{"message":{},"finish_reason":null}]}"#.utf8)
+        ))
+        let client = OpenAICompatibleRemoteProviderClient(transport: transport)
+
+        for tool in [
+            RemoteProviderToolDefinition(name: " ", parametersJSON: #"{"type":"object"}"#),
+            RemoteProviderToolDefinition(name: "lookup", parametersJSON: "[]"),
+        ] {
+            await #expect(throws: RemoteProviderError.self) {
+                _ = try await client.complete(
+                    RemoteProviderChatRequest(
+                        serverID: "remote",
+                        providerKind: "openai-compatible",
+                        baseURL: "https://provider.example/v1",
+                        apiKey: "secret",
+                        modelID: "model",
+                        messages: [.init(role: "user", content: "hello")],
+                        tools: [tool],
+                        stream: false,
+                        timeoutSeconds: 0
+                    )
+                )
+            }
+        }
+
+        await #expect(throws: RemoteProviderError.invalidRequest(
+            "structured tools are currently supported only by openai-compatible remote providers"
+        )) {
+            _ = try await client.complete(
+                RemoteProviderChatRequest(
+                    serverID: "gemini",
+                    providerKind: "gemini-generative-language",
+                    baseURL: "https://generativelanguage.googleapis.com/v1beta",
+                    apiKey: "secret",
+                    modelID: "gemini",
+                    messages: [
+                        .init(
+                            role: "tool",
+                            content: "{}",
+                            toolCallID: "call-1"
+                        ),
+                    ],
+                    stream: false
+                )
+            )
+        }
+
+        await #expect(throws: RemoteProviderError.invalidRequest("remote provider base_url is empty")) {
+            _ = try await client.complete(
+                RemoteProviderChatRequest(
+                    serverID: "gemini",
+                    providerKind: "gemini-generative-language",
+                    baseURL: " ",
+                    apiKey: "secret",
+                    modelID: "gemini",
+                    messages: [.init(role: "user", content: "hello")],
+                    stream: false,
+                    timeoutSeconds: 0
+                )
+            )
+        }
+
+        let completion = try await client.complete(
+            RemoteProviderChatRequest(
+                serverID: "remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://provider.example/v1",
+                apiKey: "secret",
+                modelID: "model",
+                messages: [.init(role: "user", content: "hello")],
+                stream: false,
+                timeoutSeconds: 0
+            )
+        )
+        #expect(completion.assistantText == "")
+        #expect(completion.finishReason == "stop")
+        #expect(completion.promptTokens == 0)
+        #expect(completion.completionTokens == 0)
+        #expect(await transport.lastRequest?.timeoutInterval == 60)
+    }
+
+    @Test("SSE accepts CRLF comments and terminal finish without done marker")
+    func sseAcceptsCRLFCommentsAndTerminalFinishWithoutDoneMarker() async throws {
+        let body = ": keepalive\r\nid: ignored\r\n" +
+            #"data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}"#
+        let client = OpenAICompatibleRemoteProviderClient(
+            transport: RecordingRemoteProviderTransport(response: .init(
+                statusCode: 200,
+                headers: ["content-type": "text/event-stream"],
+                body: Data(body.utf8)
+            ))
+        )
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://provider.example/v1",
+                apiKey: "secret",
+                modelID: "model",
+                messages: [.init(role: "user", content: "hello")],
+                stream: true
+            )
+        )
+        var events: [RemoteProviderChatStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+        #expect(events == [
+            .tokenDelta("done"),
+            .completed(finishReason: "stop", assistantText: "done"),
+        ])
+    }
+
+    @Test("malformed SSE variants fail without emitting a terminal event")
+    func malformedSSEVariantsFailWithoutEmittingATerminalEvent() async throws {
+        let bodies = [
+            "data: []\n\n",
+            #"data: {"usage":{}}"# + "\n\n",
+            #"data: {"choices":[{"delta":{"tool_calls":{}},"finish_reason":null}]}"# + "\n\n",
+            #"data: {"choices":[{"delta":{"tool_calls":[{"index":-1,"function":{"name":"x","arguments":"{}"}}]},"finish_reason":null}]}"# + "\n\n",
+            (
+                #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_","function":{"name":"look","arguments":"{\"q\":"}}]},"finish_reason":null}]}"# + "\n\n"
+                    + #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Kyoto\""}}]},"finish_reason":null}]}"# + "\n\n"
+                    + #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"up","function":{"name":"up","arguments":"}"}}]},"finish_reason":"tool_calls"}]}"# + "\n\n"
+            ),
+            (
+                #"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"duplicate","function":{"name":"first","arguments":"{}"}},{"index":1,"id":"duplicate","function":{"name":"second","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#
+                    + "\n\ndata: [DONE]\n\n"
+            ),
+            #"data: {"choices":[{"delta":{"content":"unterminated"},"finish_reason":null}]}"# + "\n\n",
+        ]
+
+        for body in bodies {
+            let client = OpenAICompatibleRemoteProviderClient(
+                transport: RecordingRemoteProviderTransport(response: .init(
+                    statusCode: 200,
+                    headers: ["content-type": "text/event-stream"],
+                    body: Data(body.utf8)
+                ))
+            )
+            let stream = try await client.stream(
+                RemoteProviderChatRequest(
+                    serverID: "remote",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://provider.example/v1",
+                    apiKey: "secret",
+                    modelID: "model",
+                    messages: [.init(role: "user", content: "hello")],
+                    stream: true
+                )
+            )
+            do {
+                for try await _ in stream {}
+                Issue.record("Expected malformed SSE to fail")
+            } catch {
+                #expect(error is RemoteProviderError)
+            }
+        }
+    }
+
+    @Test("SSE rejects an oversized transport chunk before buffering it")
+    func sseRejectsOversizedTransportChunkBeforeBuffering() async throws {
+        let oversized = Data(repeating: 0x61, count: 1_048_577)
+        let client = OpenAICompatibleRemoteProviderClient(
+            transport: RecordingRemoteProviderTransport(response: .init(
+                statusCode: 200,
+                headers: ["content-type": "text/event-stream"],
+                body: oversized
+            ))
+        )
+        let stream = try await client.stream(
+            RemoteProviderChatRequest(
+                serverID: "remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://provider.example/v1",
+                apiKey: "secret",
+                modelID: "model",
+                messages: [.init(role: "user", content: "hello")],
+                stream: true
+            )
+        )
+        do {
+            for try await _ in stream {}
+            Issue.record("Expected oversized SSE transport to fail")
+        } catch let error as RemoteProviderError {
+            #expect(
+                error.description.contains("bounded transport budget")
+            )
+        }
     }
 
     @Test("parses Gemini generateContent chat completion")
@@ -1166,6 +1745,176 @@ private actor RecordingRemoteProviderTransport: RemoteProviderHTTPTransport {
             headerFields: response.headers
         )!
         return (response.body, httpResponse)
+    }
+}
+
+private actor ControlledRemoteProviderStreamingTransport: RemoteProviderHTTPTransport {
+    nonisolated let cancellationProbe = RemoteProviderCancellationProbe()
+
+    private let body: AsyncThrowingStream<Data, Error>
+    private let continuation: AsyncThrowingStream<Data, Error>.Continuation
+    private(set) var lastRequest: URLRequest?
+
+    init() {
+        let pair = AsyncThrowingStream<Data, Error>.makeStream()
+        body = pair.stream
+        continuation = pair.continuation
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        throw RemoteProviderError.invalidRequest("buffered transport was not expected")
+    }
+
+    func stream(for request: URLRequest) async throws -> RemoteProviderHTTPResponseStream {
+        lastRequest = request
+        let continuation = self.continuation
+        let cancellationProbe = self.cancellationProbe
+        return RemoteProviderHTTPResponseStream(
+            response: HTTPURLResponse(
+                url: request.url ?? URL(string: "https://provider.example/v1/chat/completions")!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["content-type": "text/event-stream"]
+            )!,
+            body: body,
+            cancel: {
+                cancellationProbe.mark()
+                continuation.finish(throwing: CancellationError())
+            }
+        )
+    }
+
+    func yield(_ text: String) {
+        continuation.yield(Data(text.utf8))
+    }
+}
+
+private final class RemoteProviderCancellationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var marked = false
+
+    var wasMarked: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return marked
+    }
+
+    func mark() {
+        lock.lock()
+        marked = true
+        lock.unlock()
+    }
+}
+
+private final class RemoteProviderHoldingURLProtocolState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopped = false
+
+    var wasStopped: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopped
+    }
+
+    func reset() {
+        lock.lock()
+        stopped = false
+        lock.unlock()
+    }
+
+    func markStopped() {
+        lock.lock()
+        stopped = true
+        lock.unlock()
+    }
+}
+
+private final class RemoteProviderHoldingURLProtocol: URLProtocol, @unchecked Sendable {
+    static let state = RemoteProviderHoldingURLProtocolState()
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "streaming.example.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["content-type": "text/event-stream"]
+              )
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(
+            self,
+            didLoad: Data(
+                (#"data: {"choices":[{"delta":{"content":"first"},"finish_reason":null}]}"# + "\n\n").utf8
+            )
+        )
+    }
+
+    override func stopLoading() {
+        Self.state.markStopped()
+    }
+}
+
+private final class RemoteProviderCompletingURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "completing.example.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["content-type": "text/event-stream"]
+              )
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(
+            self,
+            didLoad: Data(
+                (#"data: {"choices":[{"delta":{"content":"complete"},"finish_reason":"stop"}]}"# + "\n\n").utf8
+            )
+        )
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private final class RemoteProviderNoResponseURLProtocol: URLProtocol, @unchecked Sendable {
+    static let state = RemoteProviderHoldingURLProtocolState()
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "no-response.example.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {}
+
+    override func stopLoading() {
+        Self.state.markStopped()
     }
 }
 

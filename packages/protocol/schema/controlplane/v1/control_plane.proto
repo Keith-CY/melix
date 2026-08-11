@@ -2,6 +2,19 @@ syntax = "proto3";
 
 package melix.controlplane.v1;
 
+// The final signed service boundary uses the same typed messages over XPC.
+// This service is the private Unix-domain transport used by source-tree and
+// packaged-preview launchers so the app still talks to the daemon instead of
+// constructing a second control plane in its own process.
+service ControlPlaneIPCService {
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  rpc Execute(ControlPlaneRequest) returns (ControlPlaneResponse);
+  rpc Subscribe(SubscribeRequest) returns (stream ControlPlaneEvent);
+  rpc StartChat(ControlPlaneIPCChatRequest) returns (stream ControlPlaneIPCChatEvent);
+  rpc CancelChat(ControlPlaneIPCCancelChatRequest) returns (ControlPlaneIPCCancelChatResponse);
+  rpc StartAgentRun(ControlPlaneIPCStartAgentRunRequest) returns (AgentRunSnapshot);
+}
+
 message ErrorStatus {
   string code = 1;
   string message = 2;
@@ -25,6 +38,156 @@ message HandshakeResponse {
   ServerSnapshot snapshot = 5;
 }
 
+message ControlPlaneIPCChatToolCall {
+  string call_id = 1;
+  string type = 2;
+  string tool_name = 3;
+  string arguments_json = 4;
+}
+
+message ControlPlaneIPCChatMessage {
+  string role = 1;
+  string content = 2;
+  string name = 3;
+  bool has_name = 4;
+  repeated ControlPlaneIPCChatToolCall tool_calls = 5;
+  string tool_call_id = 6;
+  bool has_tool_call_id = 7;
+}
+
+message ControlPlaneIPCChatToolDefinition {
+  string name = 1;
+  string description = 2;
+  string parameters_json = 3;
+}
+
+message ControlPlaneIPCRemoteTarget {
+  string server_id = 1;
+  string provider_kind = 2;
+  string base_url = 3;
+  string api_key = 4;
+  string model_id = 5;
+  uint32 timeout_seconds = 6;
+  uint32 rate_limit_per_minute = 7;
+}
+
+message ControlPlaneIPCChatRequest {
+  string model_id = 1;
+  string server_session_id = 2;
+  repeated ControlPlaneIPCChatMessage messages = 3;
+  repeated ControlPlaneIPCChatToolDefinition tools = 4;
+  string tool_choice = 5;
+  bool has_tool_choice = 6;
+  bool parallel_tool_calls = 7;
+  bool enable_thinking = 8;
+  bool has_enable_thinking = 9;
+  string reasoning_effort = 10;
+  bool has_reasoning_effort = 11;
+  string chat_template_kwargs_json = 12;
+  bool has_chat_template_kwargs_json = 13;
+  string resume_request_id = 14;
+  bool has_resume_request_id = 15;
+  double temperature = 16;
+  bool has_temperature = 17;
+  double top_p = 18;
+  bool has_top_p = 19;
+  uint32 max_tokens = 20;
+  bool has_max_tokens = 21;
+  ControlPlaneIPCRemoteTarget remote_target = 22;
+  // Client-generated correlation used to cancel a chat before the daemon has
+  // returned the execution request_id in start metadata.
+  string transport_request_id = 23;
+}
+
+message ControlPlaneIPCChatStarted {
+  string request_id = 1;
+  string model_id = 2;
+}
+
+message ControlPlaneIPCChatEvent {
+  oneof payload {
+    ControlPlaneIPCChatStarted started = 1;
+    ControlPlaneIPCChatDelta event = 2;
+  }
+}
+
+enum ControlPlaneIPCChatDeltaKind {
+  CONTROL_PLANE_IPC_CHAT_DELTA_KIND_UNSPECIFIED = 0;
+  CONTROL_PLANE_IPC_CHAT_QUEUED = 1;
+  CONTROL_PLANE_IPC_CHAT_ADMITTED = 2;
+  CONTROL_PLANE_IPC_CHAT_PREFILL_STARTED = 3;
+  CONTROL_PLANE_IPC_CHAT_DECODE_STARTED = 4;
+  CONTROL_PLANE_IPC_CHAT_TOKEN = 5;
+  CONTROL_PLANE_IPC_CHAT_REASONING = 6;
+  CONTROL_PLANE_IPC_CHAT_TOOL_CALL = 7;
+  CONTROL_PLANE_IPC_CHAT_ANNOTATION = 8;
+  CONTROL_PLANE_IPC_CHAT_TOOL_RESULT = 9;
+  CONTROL_PLANE_IPC_CHAT_USAGE = 10;
+  CONTROL_PLANE_IPC_CHAT_COMPLETED = 11;
+  CONTROL_PLANE_IPC_CHAT_FAILED = 12;
+  CONTROL_PLANE_IPC_CHAT_HEARTBEAT = 13;
+}
+
+message ControlPlaneIPCChatDelta {
+  string request_id = 1;
+  uint64 seq = 2;
+  ControlPlaneIPCChatDeltaKind kind = 3;
+  string lane = 4;
+  uint32 queue_position = 5;
+  double backpressure = 6;
+  string worker_id = 7;
+  double queue_delay_ms = 8;
+  uint32 input_tokens = 9;
+  string decode_handle = 10;
+  uint32 max_output_tokens = 11;
+  string text = 12;
+  string call_id = 13;
+  string tool_name = 14;
+  string arguments_fragment = 15;
+  string annotation_id = 16;
+  string annotation_kind = 17;
+  uint32 start_offset = 18;
+  uint32 end_offset = 19;
+  string payload_json = 20;
+  string status = 21;
+  string result_json = 22;
+  uint32 prompt_tokens = 23;
+  uint32 completion_tokens = 24;
+  uint32 cached_prompt_tokens = 25;
+  uint64 media_feature_cache_hits = 26;
+  uint64 media_feature_cache_misses = 27;
+  uint64 media_feature_encoder_calls_saved = 28;
+  uint64 media_feature_work_saved_bytes = 29;
+  string finish_reason = 30;
+  string assistant_text = 31;
+  string reasoning_text = 32;
+  string error_code = 33;
+  string error_message = 34;
+}
+
+message ControlPlaneIPCCancelChatRequest {
+  string request_id = 1;
+}
+
+enum ControlPlaneIPCChatCancellationDisposition {
+  CONTROL_PLANE_IPC_CHAT_CANCELLATION_DISPOSITION_UNSPECIFIED = 0;
+  CONTROL_PLANE_IPC_CHAT_CANCELLATION_ACCEPTED = 1;
+  CONTROL_PLANE_IPC_CHAT_CANCELLATION_ALREADY_TERMINAL = 2;
+  CONTROL_PLANE_IPC_CHAT_CANCELLATION_NOT_FOUND = 3;
+  CONTROL_PLANE_IPC_CHAT_CANCELLATION_UNAVAILABLE = 4;
+}
+
+message ControlPlaneIPCCancelChatResponse {
+  string request_id = 1;
+  ControlPlaneIPCChatCancellationDisposition disposition = 2;
+}
+
+message ControlPlaneIPCStartAgentRunRequest {
+  StartAgentRun command = 1;
+  string actor_id = 2;
+  ControlPlaneIPCRemoteTarget remote_target = 3;
+}
+
 message ControlPlaneRequest {
   string request_id = 1;
   string actor_id = 2;
@@ -43,6 +206,7 @@ message ControlPlaneRequest {
     OpsCommand ops = 24;
     PresetCommand preset = 25;
     ImageCommand image = 26;
+    AgentCommand agent = 27;
   }
 }
 
@@ -62,6 +226,7 @@ message ControlPlaneResponse {
     OpsReply ops = 24;
     PresetReply preset = 25;
     ImageReply image = 26;
+    AgentReply agent = 27;
   }
 }
 
@@ -88,6 +253,7 @@ message ControlPlaneEvent {
     Heartbeat heartbeat = 28;
     ResourcePressureEvent resource_pressure = 29;
     ImageJobStateChanged image_job = 30;
+    AgentRunStateChanged agent_run = 31;
   }
 }
 
@@ -178,6 +344,20 @@ message ImageCommand {
   }
 }
 
+message AgentCommand {
+  oneof kind {
+    StartAgentRun start = 1;
+    DecideAgentApproval decide_approval = 2;
+    CancelAgentRun cancel = 3;
+    GetAgentRun get = 4;
+    ListAgentRuns list = 5;
+    GetAgentApprovalPolicy get_approval_policy = 6;
+    ReplaceAgentApprovalPolicy replace_approval_policy = 7;
+    GetAgentOperations get_operations = 8;
+    ActivateAgentRun activate = 9;
+  }
+}
+
 enum ImageEditMode {
   IMAGE_EDIT_MODE_UNSPECIFIED = 0;
   IMAGE_EDIT_MODE_EDIT = 1;
@@ -230,6 +410,444 @@ message PresetReply {
 message ImageReply {
   ImageJobSummary job = 1;
   ImageDefaultsSummary image_defaults = 2;
+}
+
+message AgentReply {
+  AgentRunSnapshot run = 1;
+  repeated AgentRunSnapshot runs = 2;
+  AgentApprovalDecisionReceipt approval = 3;
+  AgentRunCancellationReceipt cancellation = 4;
+  AgentApprovalPolicySnapshot approval_policy = 5;
+  AgentApprovalPolicyMutationReceipt approval_policy_mutation = 6;
+  AgentOperationsSnapshot operations = 7;
+  // True only when an authoritative run inventory was read without corruption
+  // and the response was not truncated by the requested bound.
+  bool runs_complete = 8;
+}
+
+enum AgentInteractionMode {
+  AGENT_INTERACTION_MODE_UNSPECIFIED = 0;
+  AGENT_INTERACTION_MODE_ASK = 1;
+  AGENT_INTERACTION_MODE_ACT = 2;
+}
+
+enum AgentApprovalChoice {
+  AGENT_APPROVAL_CHOICE_UNSPECIFIED = 0;
+  AGENT_APPROVAL_ALLOW_ONCE = 1;
+  AGENT_APPROVAL_ALWAYS_ALLOW = 2;
+  AGENT_APPROVAL_DENY = 3;
+}
+
+enum AgentApprovalPolicyPersistenceDisposition {
+  AGENT_APPROVAL_POLICY_PERSISTENCE_DISPOSITION_UNSPECIFIED = 0;
+  AGENT_APPROVAL_POLICY_PERSISTENCE_NOT_REQUESTED = 1;
+  AGENT_APPROVAL_POLICY_PERSISTENCE_APPLIED = 2;
+  AGENT_APPROVAL_POLICY_PERSISTENCE_NOT_APPLIED = 3;
+}
+
+message AgentRunMessage {
+  string role = 1;
+  string content = 2;
+  string tool_call_id = 3;
+  string tool_name = 4;
+  string tool_arguments_json = 5;
+}
+
+message StartAgentRun {
+  string session_id = 1;
+  string branch_id = 2;
+  string server_session_id = 3;
+  string model_id = 4;
+  string provider_server_id = 5;
+  AgentInteractionMode mode = 6;
+  repeated AgentRunMessage messages = 7;
+  uint32 max_model_turns = 8;
+  uint32 max_tool_calls = 9;
+  int64 deadline_unix_ms = 10;
+  repeated AgentComputerUseTarget computer_use_targets = 11;
+  // Stable caller-generated identity used to address cancellation while the
+  // control plane is still admitting the run. The control plane validates
+  // uniqueness and generates a value only for legacy callers that omit it.
+  string run_id = 12;
+  // When true, StartAgentRun returns a durable created snapshot without
+  // starting provider work. The caller must issue ActivateAgentRun after it
+  // has received the run identity; cancellation remains admissible first.
+  bool defer_activation = 13;
+}
+
+message AgentComputerUseTarget {
+  string target_id = 1;
+  string bundle_id = 2;
+  int32 process_id = 3;
+  string process_launch_identity = 4;
+  uint32 window_id = 5;
+  string window_title = 6;
+  string application_name = 7;
+}
+
+message AgentApprovalBinding {
+  string run_id = 1;
+  string call_id = 2;
+  string schema_digest = 3;
+  string argument_digest = 4;
+  string policy_revision = 5;
+  string binding_digest = 6;
+}
+
+message DecideAgentApproval {
+  AgentApprovalBinding binding = 1;
+  AgentApprovalChoice choice = 2;
+}
+
+message CancelAgentRun {
+  string run_id = 1;
+  string reason = 2;
+}
+
+message ActivateAgentRun {
+  string run_id = 1;
+}
+
+message GetAgentRun {
+  string run_id = 1;
+}
+
+message ListAgentRuns {
+  string session_id = 1;
+  uint32 limit = 2;
+  // Safety inventory mode: return active/nonterminal runs only and set the
+  // AgentReply.runs_complete bit from the authoritative durable inventory.
+  bool nonterminal_only = 3;
+}
+
+enum AgentApprovalPolicyEffect {
+  AGENT_APPROVAL_POLICY_EFFECT_UNSPECIFIED = 0;
+  AGENT_APPROVAL_POLICY_ALLOW = 1;
+  AGENT_APPROVAL_POLICY_ASK = 2;
+  AGENT_APPROVAL_POLICY_DENY = 3;
+}
+
+enum AgentApprovalRiskClass {
+  AGENT_APPROVAL_RISK_CLASS_UNSPECIFIED = 0;
+  AGENT_APPROVAL_RISK_CLASS_UNKNOWN = 1;
+  AGENT_APPROVAL_RISK_CLASS_LOW = 2;
+  AGENT_APPROVAL_RISK_CLASS_MEDIUM = 3;
+  AGENT_APPROVAL_RISK_CLASS_HIGH = 4;
+  AGENT_APPROVAL_RISK_CLASS_CRITICAL = 5;
+}
+
+enum AgentApprovalOperationKind {
+  AGENT_APPROVAL_OPERATION_KIND_UNSPECIFIED = 0;
+  AGENT_APPROVAL_OPERATION_UNKNOWN = 1;
+  AGENT_APPROVAL_OPERATION_READ = 2;
+  AGENT_APPROVAL_OPERATION_WRITE = 3;
+  AGENT_APPROVAL_OPERATION_CREDENTIAL_ACCESS = 4;
+  AGENT_APPROVAL_OPERATION_AUTHENTICATION = 5;
+  AGENT_APPROVAL_OPERATION_UPLOAD = 6;
+  AGENT_APPROVAL_OPERATION_SEND = 7;
+  AGENT_APPROVAL_OPERATION_PURCHASE = 8;
+  AGENT_APPROVAL_OPERATION_DESTRUCTIVE_MUTATION = 9;
+  AGENT_APPROVAL_OPERATION_PROCESS_EXECUTION = 10;
+  AGENT_APPROVAL_OPERATION_SECURE_FIELD_INTERACTION = 11;
+}
+
+message AgentApprovalPolicyRule {
+  string id = 1;
+  AgentApprovalPolicyEffect effect = 2;
+  string source_id = 3;
+  string tool_name = 4;
+  AgentApprovalRiskClass risk_class = 5;
+  AgentApprovalOperationKind operation_kind = 6;
+  string workspace_scope = 7;
+  string app_bundle_id = 8;
+  string network_host = 9;
+  string schema_digest = 10;
+}
+
+message AgentApprovalPolicySnapshot {
+  string schema_version = 1;
+  uint64 revision = 2;
+  repeated AgentApprovalPolicyRule rules = 3;
+}
+
+message GetAgentApprovalPolicy {}
+
+message ReplaceAgentApprovalPolicy {
+  uint64 expected_revision = 1;
+  repeated AgentApprovalPolicyRule rules = 2;
+}
+
+message AgentApprovalPolicyMutationReceipt {
+  uint64 revision = 1;
+  uint32 rule_count = 2;
+}
+
+message GetAgentOperations {}
+
+message AgentToolSourceStatus {
+  string source_id = 1;
+  string transport_kind = 2;
+  string connection_state = 3;
+  string server_name = 4;
+  string server_version = 5;
+  repeated string capabilities = 6;
+  uint32 tool_count = 7;
+  string catalog_digest = 8;
+  string error_code = 9;
+  bool catalog_only = 10;
+}
+
+message AgentToolDefinitionSummary {
+  string source_id = 1;
+  string adapter_kind = 2;
+  string name = 3;
+  string title = 4;
+  string schema_digest = 5;
+  string risk_class = 6;
+  string replayability = 7;
+  bool annotations_untrusted = 8;
+}
+
+enum AgentComputerUseTargetDiscoveryState {
+  AGENT_COMPUTER_USE_TARGET_DISCOVERY_STATE_UNSPECIFIED = 0;
+  AGENT_COMPUTER_USE_TARGET_DISCOVERY_NOT_REQUESTED = 1;
+  AGENT_COMPUTER_USE_TARGET_DISCOVERY_READY = 2;
+  AGENT_COMPUTER_USE_TARGET_DISCOVERY_EMPTY = 3;
+  AGENT_COMPUTER_USE_TARGET_DISCOVERY_FAILED = 4;
+}
+
+message AgentComputerUseStatus {
+  bool broker_configured = 1;
+  string capability_level = 2;
+  repeated string supported_actions = 3;
+  string screen_recording_permission = 4;
+  string accessibility_permission = 5;
+  uint32 maximum_frames = 6;
+  uint32 maximum_actions = 7;
+  uint64 maximum_artifact_bytes = 8;
+  uint32 idle_timeout_seconds = 9;
+  uint32 absolute_timeout_seconds = 10;
+  string transport_identity_state = 11;
+  repeated AgentComputerUseTarget available_targets = 12;
+  // State is independent from available_targets so a failed refresh is never
+  // represented as a successful empty inventory.
+  AgentComputerUseTargetDiscoveryState target_discovery_state = 13;
+  // Present only for AGENT_COMPUTER_USE_TARGET_DISCOVERY_FAILED.
+  ErrorStatus target_discovery_error = 14;
+  // Observation time for the last attempted live target refresh.
+  int64 targets_observed_at_unix_ms = 15;
+}
+
+enum AgentComputerUseFieldAvailability {
+  AGENT_COMPUTER_USE_FIELD_AVAILABILITY_UNSPECIFIED = 0;
+  AGENT_COMPUTER_USE_FIELD_UNAVAILABLE = 1;
+  AGENT_COMPUTER_USE_FIELD_AVAILABLE = 2;
+}
+
+enum AgentComputerUseSessionState {
+  AGENT_COMPUTER_USE_SESSION_STATE_UNSPECIFIED = 0;
+  AGENT_COMPUTER_USE_SESSION_UNAVAILABLE = 1;
+  AGENT_COMPUTER_USE_SESSION_OPEN = 2;
+  AGENT_COMPUTER_USE_SESSION_CLOSED = 3;
+}
+
+enum AgentComputerUsePermissionState {
+  AGENT_COMPUTER_USE_PERMISSION_STATE_UNSPECIFIED = 0;
+  AGENT_COMPUTER_USE_PERMISSION_UNAVAILABLE = 1;
+  AGENT_COMPUTER_USE_PERMISSION_NOT_DETERMINED = 2;
+  AGENT_COMPUTER_USE_PERMISSION_DENIED = 3;
+  AGENT_COMPUTER_USE_PERMISSION_GRANTED = 4;
+  AGENT_COMPUTER_USE_PERMISSION_RESTART_REQUIRED = 5;
+}
+
+enum AgentComputerUseRestartState {
+  AGENT_COMPUTER_USE_RESTART_STATE_UNSPECIFIED = 0;
+  AGENT_COMPUTER_USE_RESTART_UNAVAILABLE = 1;
+  AGENT_COMPUTER_USE_RESTART_NOT_REQUIRED = 2;
+  AGENT_COMPUTER_USE_RESTART_REQUIRED = 3;
+}
+
+enum AgentComputerUseOperation {
+  AGENT_COMPUTER_USE_OPERATION_UNSPECIFIED = 0;
+  AGENT_COMPUTER_USE_OPERATION_UNAVAILABLE = 1;
+  AGENT_COMPUTER_USE_GET_PERMISSIONS = 2;
+  AGENT_COMPUTER_USE_OPEN_SESSION = 3;
+  AGENT_COMPUTER_USE_CAPTURE_FRAME = 4;
+  AGENT_COMPUTER_USE_PRESS_ELEMENT = 5;
+  AGENT_COMPUTER_USE_CLOSE_SESSION = 6;
+}
+
+enum AgentComputerUseResultState {
+  AGENT_COMPUTER_USE_RESULT_STATE_UNSPECIFIED = 0;
+  AGENT_COMPUTER_USE_RESULT_UNAVAILABLE = 1;
+  AGENT_COMPUTER_USE_RESULT_COMPLETED = 2;
+  AGENT_COMPUTER_USE_RESULT_FAILED = 3;
+  AGENT_COMPUTER_USE_RESULT_CANCELLED = 4;
+  AGENT_COMPUTER_USE_RESULT_TIMEOUT = 5;
+}
+
+message AgentComputerUseTargetProjection {
+  AgentComputerUseFieldAvailability availability = 1;
+  string bundle_id = 2;
+  uint32 window_id = 3;
+  string window_title = 4;
+}
+
+message AgentComputerUseBudgetProjection {
+  AgentComputerUseFieldAvailability limit_availability = 1;
+  uint32 limit = 2;
+  AgentComputerUseFieldAvailability used_availability = 3;
+  uint32 used = 4;
+}
+
+message AgentComputerUseDeadlineProjection {
+  AgentComputerUseFieldAvailability availability = 1;
+  int64 unix_ms = 2;
+}
+
+// Durable, operator-safe projection of the Computer Use session attached to
+// one Agent run. It intentionally excludes the private session capability and
+// only accepts fields anchored by the structured adapter receipt.
+message AgentComputerUseSessionProjection {
+  string schema_version = 1;
+  string session_id = 2;
+  AgentComputerUseSessionState session_state = 3;
+  AgentComputerUseFieldAvailability allowed_targets_availability = 4;
+  repeated AgentComputerUseTargetProjection allowed_targets = 5;
+  AgentComputerUseTargetProjection active_target = 6;
+  AgentComputerUseBudgetProjection frame_budget = 7;
+  AgentComputerUseBudgetProjection action_budget = 8;
+  AgentComputerUseDeadlineProjection idle_deadline = 9;
+  AgentComputerUseDeadlineProjection absolute_deadline = 10;
+  AgentComputerUsePermissionState screen_recording_permission = 11;
+  AgentComputerUsePermissionState accessibility_permission = 12;
+  AgentComputerUseRestartState restart_state = 13;
+  AgentComputerUseOperation last_operation = 14;
+  AgentComputerUseResultState last_result = 15;
+  string last_action_id = 16;
+  string last_call_id = 17;
+  int64 updated_at_unix_ms = 18;
+}
+
+message AgentOperationsSnapshot {
+  repeated AgentToolSourceStatus tool_sources = 1;
+  repeated AgentToolDefinitionSummary tools = 2;
+  AgentComputerUseStatus computer_use = 3;
+  string catalog_digest = 4;
+  int64 observed_at_unix_ms = 5;
+}
+
+message AgentToolCallSnapshot {
+  string call_id = 1;
+  string source_id = 2;
+  string tool_name = 3;
+  string title = 4;
+  string intended_effect = 5;
+  string risk_class = 6;
+  string state = 7;
+  string schema_digest = 8;
+  string argument_digest = 9;
+  double duration_ms = 10;
+  string evidence_reference = 11;
+  bool result_truncated = 12;
+  ErrorStatus error = 13;
+  // Bounded worker-authored operator summary. Raw tool output remains in the
+  // normalized observation/evidence path and is never copied into this field.
+  string result_summary = 14;
+  string failure_stage = 15;
+}
+
+message AgentPendingApproval {
+  AgentApprovalBinding binding = 1;
+  string source_id = 2;
+  string tool_name = 3;
+  string title = 4;
+  string intended_effect = 5;
+  string risk_class = 6;
+  string operation_kind = 7;
+  string redacted_arguments_json = 8;
+  repeated string target_scopes = 9;
+  bool arguments_truncated = 10;
+  bool persistent_allow_eligible = 11;
+  string persistent_allow_unavailable_reason = 12;
+}
+
+message AgentRunSnapshot {
+  string run_id = 1;
+  string session_id = 2;
+  string branch_id = 3;
+  string model_id = 4;
+  string state = 5;
+  uint32 model_turn_count = 6;
+  uint32 tool_call_count = 7;
+  repeated AgentToolCallSnapshot tool_calls = 8;
+  AgentPendingApproval pending_approval = 9;
+  string assistant_text = 10;
+  int64 started_at_unix_ms = 11;
+  int64 updated_at_unix_ms = 12;
+  ErrorStatus error = 13;
+  AgentComputerUseSessionProjection computer_use_session = 14;
+  uint64 revision = 15;
+  // Durable cancellation truth, attached on Get/List from the immutable
+  // cancellation journal so historical runs remain inspectable after restart.
+  AgentRunCancellationReceipt cancellation_receipt = 16;
+  string failure_stage = 17;
+}
+
+message AgentApprovalDecisionReceipt {
+  AgentApprovalBinding binding = 1;
+  AgentApprovalChoice choice = 2;
+  string decision_id = 3;
+  string actor_id = 4;
+  int64 decided_at_unix_ms = 5;
+  string policy_revision_after_decision = 6;
+  // The current exact call decision may commit even when an Always Allow
+  // policy mutation cannot be saved. Consumers must inspect this typed
+  // disposition instead of inferring persistence from the operator choice.
+  AgentApprovalPolicyPersistenceDisposition policy_persistence_disposition = 7;
+  ErrorStatus policy_persistence_error = 8;
+}
+
+enum AgentToolSideEffectState {
+  AGENT_TOOL_SIDE_EFFECT_STATE_UNSPECIFIED = 0;
+  AGENT_TOOL_SIDE_EFFECT_NONE = 1;
+  AGENT_TOOL_SIDE_EFFECT_COMMITTED = 2;
+  AGENT_TOOL_SIDE_EFFECT_UNKNOWN = 3;
+}
+
+message AgentToolCancellationReceipt {
+  string call_id = 1;
+  string disposition = 2;
+  // Deprecated lossy projection retained for older clients. Consumers that
+  // need cancellation safety must use side_effect_state.
+  bool side_effect_committed = 3 [deprecated = true];
+  string adapter_kind = 4;
+  string source_id = 5;
+  AgentToolSideEffectState side_effect_state = 6;
+}
+
+message AgentRunCancellationReceipt {
+  string run_id = 1;
+  string cancellation_id = 2;
+  string disposition = 3;
+  // Deprecated lossy projection retained for older clients. Consumers that
+  // need cancellation safety must use side_effect_state.
+  bool side_effect_committed = 4 [deprecated = true];
+  AgentToolCancellationReceipt tool = 5;
+  AgentToolSideEffectState side_effect_state = 6;
+  AgentRunToolCancellationReceipt run_tools = 7;
+}
+
+message AgentRunToolCancellationReceipt {
+  string disposition = 1;
+  AgentToolSideEffectState side_effect_state = 2;
+  repeated AgentToolCancellationReceipt calls = 3;
+  string computer_use_disposition = 4;
+}
+
+message AgentRunStateChanged {
+  AgentRunSnapshot run = 1;
+  string change_kind = 2;
 }
 
 message StartServer {

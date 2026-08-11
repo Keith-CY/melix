@@ -705,7 +705,9 @@ public struct TextRequestShaper: Sendable {
                 role: message.role,
                 name: message.name,
                 parts: parts,
-                harmonyMetadata: message.harmonyMetadata
+                harmonyMetadata: message.harmonyMetadata,
+                toolCalls: message.toolCalls,
+                toolCallID: message.toolCallID
             )
         }
 

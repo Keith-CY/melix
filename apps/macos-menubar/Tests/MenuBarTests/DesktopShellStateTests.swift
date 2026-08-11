@@ -9,12 +9,14 @@ struct DesktopShellStateTests {
     func desktopRouteMetadataEncodesAcceptedProductIA() throws {
         #expect(DesktopSurface.titlebarNavigationCases == [
             .chat,
+            .agents,
             .server,
             .models,
             .workflows,
         ])
         #expect(DesktopSurface.titlebarNavigationCases.map(\.rawValue) == [
             "Chat",
+            "Agents",
             "Providers",
             "Models",
             "Workflows",
@@ -22,6 +24,7 @@ struct DesktopShellStateTests {
         #expect(DesktopSurface.visibleNavigationCases == DesktopSurface.routableWorkspaceCases)
         #expect(DesktopSurface.routableWorkspaceCases == [
             .chat,
+            .agents,
             .commandCenter,
             .server,
             .models,
@@ -34,6 +37,7 @@ struct DesktopShellStateTests {
         ])
         #expect(DesktopSurface.routableWorkspaceCases.map(\.rawValue) == [
             "Chat",
+            "Agents",
             "Command Center",
             "Providers",
             "Models",
@@ -48,6 +52,7 @@ struct DesktopShellStateTests {
         let metadata = DesktopRouteMetadata.acceptedWindowIA
         #expect(metadata.domains.map(\.domain.routeDomainID) == [
             "chat",
+            "agents",
             "command",
             "providers",
             "models",
@@ -65,6 +70,11 @@ struct DesktopShellStateTests {
         #expect(chat.crumb == "Chat")
         #expect(chat.routePath == "/chat/session")
         #expect(chat.inspectorModule == .chatRuntime)
+
+        let agents = try #require(metadata.page(domain: .agents, pageID: "runs"))
+        #expect(agents.title == "Agents")
+        #expect(agents.primaryAction?.title == "Start in Chat")
+        #expect(agents.primaryAction?.target == .page(domain: .chat, pageID: "session"))
 
         let command = try #require(metadata.page(domain: .commandCenter, pageID: "overview"))
         #expect(command.primaryAction?.title == "Review Eval Drift")

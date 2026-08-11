@@ -39,6 +39,42 @@ Reasons:
 - the daemon should remain distinct from the UI process
 - macOS code-signing validation can be enforced on the connection
 
+### Local Preview Transport
+
+The source-tree and packaged-preview launchers use the generated
+`ControlPlaneIPCService` over a private Unix domain socket until the signed
+launchd/XPC service is installed. This is a transport substitution, not a
+second control plane: the app and any attached CLI still talk only to the daemon
+and never construct a competing `ControlPlaneService` or reach a worker
+directly.
+
+The development service exposes the same typed protocol model through:
+
+- `Handshake`;
+- `Execute`;
+- server-streaming `Subscribe`;
+- server-streaming `StartChat` plus explicit `CancelChat`;
+- `StartAgentRun`.
+
+Chat messages, tools, remote-provider targets, stream deltas, cancellation
+dispositions, and Agent start commands are first-party protobuf fields. The
+transport does not use an untyped JSON command envelope and does not import
+worker stream messages into the control-plane protocol module.
+
+The socket parent must be a current-user `0700` directory and the bound socket
+must be a current-user socket sealed to `0600`. Startup refuses a non-owned or
+non-socket stale path and shutdown removes only the validated owned socket. The
+client repeats canonical-path, owner, type, and mode validation before every
+connection. Chat start metadata has a bounded 30-second default wait; timeout or
+caller cancellation closes the stream task so cancellation reaches the server
+handler. The launcher passes the app only the control-plane socket; the
+mode-`0600` active-runtime descriptor lets a separately launched CLI discover
+that same daemon. Explicit malformed CLI socket configuration fails closed.
+Worker sockets, the Computer Use broker socket, and the control-plane signing
+key stay daemon-side. Unlike packaged XPC, this transport does not expose a
+macOS audit token for peer code-sign validation, so it must not be presented as
+the final packaged security boundary.
+
 ### Payload Encoding
 
 XPC should transport opaque `Data` payloads containing protobuf bytes rather than large trees of custom Swift classes.
@@ -76,6 +112,12 @@ The daemon owns:
 - cache metadata summaries and indices
 - worker discovery and health
 - metrics, logs, diagnostics, and benchmark orchestration
+
+Before creating these stateful services, the daemon must acquire the
+process-lifetime single-writer lease for the effective `MELIX_HOME`. Its fencing
+token becomes `daemon_instance_id`. A second writer for that home fails fast;
+clients can detect a replacement writer because the next successful daemon has
+a different token.
 
 ### macOS App
 
@@ -300,6 +342,28 @@ session and branch. `session.register_tool_result` and
 mutating state when a caller replays one of those identifiers across a different
 session or branch.
 
+### AgentCommand
+
+Used for:
+
+- starting an explicit Agent-mode run;
+- approving or denying one exact tool call;
+- cancelling the complete run tree;
+- reading run history and active tool state;
+- reading the typed `GetAgentOperations` snapshot for tool sources, callable
+  schemas, live or catalog-only status, and catalog digest;
+- updating approval policy;
+- reading Computer Use broker permissions and configured limits through that
+  same runtime snapshot. Its target list is accompanied by a typed discovery
+  state (`not_requested`, `ready`, `empty`, or `failed`), a bounded error for
+  failed refreshes, and the target observation time; an empty successful result
+  must not represent transport or validation failure.
+
+`AgentCommand` is distinct from compatibility API function calling. Ordinary
+OpenAI-compatible callers may continue to receive tool calls for execution by
+the caller. Melix executes tools only when the request explicitly selects
+Agent mode.
+
 ### OpsCommand
 
 Used for:
@@ -427,6 +491,71 @@ supervisor without claiming that current production code launches a process.
 - completed
 - aborted
 - failed
+
+### AgentRunState
+
+An agent run has one stable run ID and the following phases. Interactive
+clients allocate that bounded, unpredictable ID before issuing
+`StartAgentRun`; legacy callers may omit it and let the control plane allocate
+one. The pre-bound identity makes `CancelAgentRun` addressable while catalog
+and target admission are still in flight. The control plane reserves the ID,
+closes admission on Stop, and does not resume the prepared coordinator until
+the initial snapshot is durable and cancellation-addressable. Interactive
+clients set `defer_activation = true`, wait for the bound Start reply, and then
+issue `ActivateAgentRun`. A cancelled or superseded client never activates the
+prepared run. Legacy clients may omit deferred activation and retain the
+single-call Start behavior.
+
+```text
+created
+  -> model_turn
+  -> waiting_for_approval
+  -> tool_running
+  -> model_turn
+  -> completed | failed | cancelled
+```
+
+Every tool call has a unique call ID within the run and one typed state:
+`requested`, `waiting_for_approval`, `running`, `completed`, `failed`, or
+`cancelled`. Read models expose source, canonical tool name, schema digest,
+argument digest, risk class, approval state, duration, normalized result
+summary, and redacted evidence references. They must not expose raw credentials,
+hidden reasoning, or unbounded result payloads.
+
+`AgentToolCallSnapshot.result_summary` is bounded operator copy derived from the
+worker receipt, and `result_truncated` is true for source-level truncation,
+field-level observation truncation, or the global serialized-observation cap.
+Typed tool errors carry `failure_stage`; run-terminal errors carry the matching
+run-level `failure_stage`. A completed tool whose evidence could not be persisted
+remains `completed` and uses `agent_tool_evidence_unavailable`; clients must
+present that as degraded evidence, not as an execution failure.
+
+An approval request is bound to the exact run ID, call ID, tool schema digest,
+argument digest, target scope, and policy revision. A changed argument, schema,
+target, or policy revision invalidates the approval. An `always allow` decision
+creates or updates policy only after the current one-time decision has been
+recorded independently. `AgentPendingApproval` carries a control-plane-produced,
+bounded `redacted_arguments_json`, typed operation kind, and target/policy scope
+summary. It never carries the raw argument blob or credentials. If the preview
+is truncated, the UI must disclose that state before enabling approval.
+Scope summaries label persisted `policy:` entries separately from
+non-persistent `call target:` entries. A call target must never be presented as
+part of an `always allow` rule unless it is also present in the policy context
+used to build that exact rule.
+
+`AgentApprovalDecisionReceipt.policy_persistence_disposition` separately states
+whether an Always Allow rule was applied. If the operator decision journal is
+durable but the policy compare-and-swap fails, the exact current call remains
+approved, the receipt returns `not_applied` with a bounded typed error, and the
+UI must say that Always Allow was not saved. It must neither execute as though a
+broader rule exists nor misreport the current call as denied.
+
+Saved policy management uses `GetAgentApprovalPolicy` and
+`ReplaceAgentApprovalPolicy`. Replacement is a full-document compare-and-swap
+against `expected_revision`; a stale editor receives
+`agent_policy_revision_conflict` and must refresh before retrying. The desktop
+may revoke one rule by replacing the document without that rule, but it must not
+silently create broad allow rules outside a bound approval decision.
 
 ## Scheduler Read Models
 
@@ -786,11 +915,103 @@ The control plane should:
 - attempt cancellation for expired work in flight
 - emit terminal request progress when expiration leads to abort or failure
 
+For the Agent command family, `StartAgentRun`, `DecideAgentApproval`, and
+`ReplaceAgentApprovalPolicy` are mutations. The control plane rejects each of
+these when its request-envelope deadline is already expired and revalidates the
+same deadline immediately before the mutation's durable persistence or commit
+point. `StartAgentRun` uses the earliest positive value of the envelope deadline
+and its command-level deadline; a missing or non-positive value does not replace
+the other positive deadline.
+
+`CancelAgentRun` is the deliberate safety exception: it remains admissible when
+the request-envelope deadline has expired so that an operator or timeout path
+can still stop outstanding work. Cancellation propagation continues to use its
+own bounded backend timeouts and explicit receipt dispositions; accepting the
+late cancellation command does not weaken those bounds or imply that an already
+committed side effect was reversed.
+
+The Swift-to-worker Agent tool transport converts these semantic deadlines into
+gRPC call timeouts. `ListAgentTools` uses its request deadline, with a 30-second
+fallback only when no positive deadline is present. `ExecuteAgentTool` uses the
+execution-context deadline, with a 120-second fallback. `CancelAgentTool` and
+the owner-bound `CancelAgentRunTools` safety cleanup have independent 3-second
+and 5-second transport bounds because their request messages intentionally do
+not carry a caller-controlled deadline. A deadline is never rounded down to a
+zero or negative timeout. Transport tests use a deliberately stalled UDS
+service and require every operation to fail within its bound.
+
 ### Cancellation
 
 Cancellation should be expressed as a normal command, not as a special XPC side channel.
 
 The control plane then maps that request to worker abort semantics.
+
+Agent cancellation is hierarchical. `CancelAgentRun` first makes the run
+terminal for admission, then propagates cancellation to the active model turn,
+queued approval, worker tool execution, live MCP request, and Computer Use
+session. No new provider turn or tool call may begin after the run becomes
+terminal. A cancellation received while `StartAgentRun` is admitting the same
+pre-bound run ID returns an idempotent typed receipt and prevents provider or
+tool execution. The UI does not wait for the start reply before issuing Stop.
+If transport reordering lets that first Stop arrive before Start, the UI retries
+the bound cancellation after the deferred Start reply and never sends
+`ActivateAgentRun`, so provider and tool work remain suspended.
+
+Cancellation receipts use explicit dispositions:
+
+- `accepted`;
+- `already_terminal`;
+- `too_late`;
+- `not_found`;
+- `scope_mismatch`.
+
+For model generation and cooperative tools, `accepted` means a terminal event
+will follow and no later loop work will be admitted. For Computer Use,
+`accepted` before the action commit point additionally guarantees no side
+effect. If an action is already committing, the broker must return `too_late`;
+Melix must not claim the side effect was reversed, but the run still admits no
+subsequent action. Repeated cancellation is idempotent, and every run and tool
+call emits exactly one terminal state.
+
+Every terminal `AgentRunSnapshot` carries its durable
+`cancellation_receipt` when cancellation was requested. List and get operations
+must project the same bound receipt after restart instead of relying on a
+session-local UI cache. The terminal snapshot is the authoritative copy; the
+bounded standalone cancellation index is only a lookup accelerator, and its
+eviction cannot downgrade embedded side-effect truth. A readable disagreement
+between the two copies fails closed as unavailable/unknown. A `cancelled`
+snapshot with neither copy is likewise incomplete, never synthesized as
+`already_terminal/none`. A live run always consults its active coordinator
+before historical cancellation journal state, so a corrupt or stale historical
+record cannot turn Stop into a no-op.
+
+The durable run journal is immutable per run identity. Its first create and
+every identity-changing replacement require file sync and parent-directory
+sync. Exact retries first make the already-written identity durable, even when
+retention maintenance previously failed; a different run identity is rejected
+until pending maintenance recovers. Retention must never delete the prior
+identity before the replacement identity is durably named.
+
+`ListAgentRuns(nonterminal_only=true)` is the safety inventory used for App
+startup, reconnect, and admission reconciliation. `AgentReply.runs_complete`
+is true only when every committed run-journal entry was opened from the exact
+descriptor without following links, decoded, identity-checked, classified, and
+returned without truncation. A corrupt, unreadable, non-regular, foreign, or
+in-flight admission entry makes the inventory unavailable or incomplete; it
+must never be silently skipped. Ordinary bounded terminal history remains a
+separate presentation query and does not make a safety-completeness claim.
+
+Snapshot retention removes terminal snapshots only. A nonterminal snapshot is
+never an eviction candidate, even when it is older than terminal history. When
+the configured bound has no terminal candidate, admission of a new run identity
+fails closed instead of displacing live cancellation and recovery truth.
+
+For `CancelAgentTool`, `cancellation_id` is an RPC correlation token rather
+than the worker's durable terminal identity. The worker validates it as a
+non-blank, NUL-free value of at most 256 UTF-8 bytes and echoes it exactly in
+the response. The execution runtime may retain a separate stable cancellation
+identity internally so repeated requests can resolve to the same terminal
+receipt while each RPC remains exactly correlated to its caller.
 
 ## Security Model
 
@@ -939,6 +1160,14 @@ Required commands:
 - `GetMetricsSnapshot`
 - `RunDoctor`
 - `RunBench`
+- `StartAgentRun`
+- `DecideAgentApproval`
+- `CancelAgentRun`
+- `GetAgentRun`
+- `ListAgentRuns`
+- `GetAgentApprovalPolicy`
+- `ReplaceAgentApprovalPolicy`
+- `GetAgentOperations`
 
 Required events:
 
@@ -950,6 +1179,8 @@ Required events:
 - `CacheStatsEvent`
 - `ResourcePressureEvent`
 - `LogEvent`
+- `AgentRunEvent`
+- `ApprovalRequested`
 
 ## Anti-Patterns
 

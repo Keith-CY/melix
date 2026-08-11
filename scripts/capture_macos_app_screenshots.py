@@ -174,7 +174,7 @@ def package_python_executable(repo_root: Path) -> Path:
 
 
 def resolve_menubar_binary(app_path: Path) -> Path:
-    candidate = app_path / "Contents" / "Resources" / "melix-menubar"
+    candidate = app_path / "Contents" / "MacOS" / "melix-menubar"
     if not candidate.is_file():
         raise FileNotFoundError(f"Missing bundled menubar binary: {candidate}")
     return candidate

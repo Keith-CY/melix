@@ -13,6 +13,11 @@ struct MelixLocalRuntimeSocketPaths: Equatable, Sendable {
     let swiftTextWorkerSocketPath: String
 }
 
+enum MelixLocalRuntimeClientRoute: Equatable, Sendable {
+    case inProcess
+    case controlPlaneIPC(socketPath: String)
+}
+
 private struct MelixActiveRuntimeDescriptor: Decodable {
     let schemaVersion: String
     let appProcessId: Int32
@@ -21,6 +26,7 @@ private struct MelixActiveRuntimeDescriptor: Decodable {
     let swiftTextWorkerProcessId: Int32
     let pythonWorkerSocketPath: String
     let swiftTextWorkerSocketPath: String
+    let controlPlaneSocketPath: String?
     let serviceBaseUrl: String
     let updatedAtUnixMs: Int64
 }
@@ -35,13 +41,144 @@ public struct MelixLocalRuntimeContext: Sendable {
     }
 }
 
+private struct LeaseHoldingControlPlaneService: ControlPlaneExecuting {
+    let service: any ControlPlaneExecuting
+    // Retained for exactly as long as the in-process service remains reachable.
+    let lease: ControlPlaneHomeOwnershipLease
+
+    func handshake(
+        _ request: Melix_Controlplane_V1_HandshakeRequest
+    ) async throws -> Melix_Controlplane_V1_HandshakeResponse {
+        try await service.handshake(request)
+    }
+
+    func subscribe(
+        _ request: Melix_Controlplane_V1_SubscribeRequest
+    ) async -> ControlPlaneSubscription {
+        await service.subscribe(request)
+    }
+
+    func unsubscribe(_ subscriptionID: String) async {
+        await service.unsubscribe(subscriptionID)
+    }
+
+    func startChat(
+        _ request: ControlPlaneChatRequest
+    ) async throws -> ControlPlaneChatExecution {
+        try await service.startChat(request)
+    }
+
+    func startAgentRun(
+        _ command: Melix_Controlplane_V1_StartAgentRun,
+        actorID: String,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget?
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        try await service.startAgentRun(
+            command,
+            actorID: actorID,
+            remoteTarget: remoteTarget
+        )
+    }
+
+    func execute(
+        _ request: Melix_Controlplane_V1_ControlPlaneRequest
+    ) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
+        try await service.execute(request)
+    }
+}
+
+private struct UnavailableControlPlaneService: ControlPlaneExecuting {
+    let code: String
+    let message: String
+
+    private func failure() -> ControlPlaneXPCClientError {
+        .requestFailed(code: code, message: message)
+    }
+
+    func handshake(
+        _ request: Melix_Controlplane_V1_HandshakeRequest
+    ) async throws -> Melix_Controlplane_V1_HandshakeResponse {
+        _ = request
+        throw failure()
+    }
+
+    func subscribe(
+        _ request: Melix_Controlplane_V1_SubscribeRequest
+    ) async -> ControlPlaneSubscription {
+        _ = request
+        return ControlPlaneSubscription(
+            subscriptionID: "unavailable",
+            stream: AsyncStream { $0.finish() }
+        )
+    }
+
+    func unsubscribe(_ subscriptionID: String) async {
+        _ = subscriptionID
+    }
+
+    func startChat(
+        _ request: ControlPlaneChatRequest
+    ) async throws -> ControlPlaneChatExecution {
+        _ = request
+        throw failure()
+    }
+
+    func startAgentRun(
+        _ command: Melix_Controlplane_V1_StartAgentRun,
+        actorID: String,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget?
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        _ = command
+        _ = actorID
+        _ = remoteTarget
+        throw failure()
+    }
+
+    func execute(
+        _ request: Melix_Controlplane_V1_ControlPlaneRequest
+    ) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
+        _ = request
+        throw failure()
+    }
+}
+
 public enum MelixLocalRuntimeFactory {
     private static let activeRuntimeSchemaVersion = "melix.active_runtime.v1"
     private static let maximumActiveRuntimeDescriptorByteCount = 64 * 1_024
 
     public static func makeContext(environment: [String: String]) -> MelixLocalRuntimeContext {
-        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let metricsStore = MetricsStore(exportPath: environment["MELIX_CONTROL_PLANE_METRICS_PATH"])
+        let homeOwnershipLease: ControlPlaneHomeOwnershipLease
+        do {
+            homeOwnershipLease = try ControlPlaneHomeOwnershipLease.acquire(
+                environment: environment
+            )
+        } catch let error as ControlPlaneHomeOwnershipError {
+            let code: String
+            switch error {
+            case .alreadyOwned:
+                code = "control_plane_home_already_owned"
+            case .unsafePath, .systemCall:
+                code = "control_plane_home_ownership_unavailable"
+            }
+            return MelixLocalRuntimeContext(
+                service: UnavailableControlPlaneService(
+                    code: code,
+                    message: error.localizedDescription
+                ),
+                metricsStore: metricsStore
+            )
+        } catch {
+            return MelixLocalRuntimeContext(
+                service: UnavailableControlPlaneService(
+                    code: "control_plane_home_ownership_unavailable",
+                    message: "Melix could not acquire the MELIX_HOME writer lease."
+                ),
+                metricsStore: metricsStore
+            )
+        }
+
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let mcpToolCatalog = MCPToolCatalog.load(environment: environment)
         let gatewayAccessPolicyStore = GatewayAccessPolicyStore(GatewayAccessPolicy.load(environment: environment))
         let gatewayConfigStore = GatewayConfigStore(environment: environment)
@@ -71,9 +208,16 @@ public enum MelixLocalRuntimeFactory {
             gatewayConfigStore: gatewayConfigStore,
             gatewayServingDefaultsStore: gatewayServingDefaultsStore,
             imageDefaultsStore: imageDefaultsStore,
-            gatewayAccessPolicyStore: gatewayAccessPolicyStore
+            gatewayAccessPolicyStore: gatewayAccessPolicyStore,
+            environment: environment
         )
-        return MelixLocalRuntimeContext(service: service, metricsStore: metricsStore)
+        return MelixLocalRuntimeContext(
+            service: LeaseHoldingControlPlaneService(
+                service: service,
+                lease: homeOwnershipLease
+            ),
+            metricsStore: metricsStore
+        )
     }
 
     public static func makeService(environment: [String: String]) -> any ControlPlaneExecuting {
@@ -81,8 +225,55 @@ public enum MelixLocalRuntimeFactory {
     }
 
     public static func makeClient(environment: [String: String]) -> any ControlPlaneXPCClient {
-        let context = makeContext(environment: environment)
-        return LocalControlPlaneXPCClient(service: context.service)
+        switch resolvedClientRoute(environment: environment) {
+        case .inProcess:
+            let context = makeContext(environment: environment)
+            return LocalControlPlaneXPCClient(service: context.service)
+        case let .controlPlaneIPC(socketPath):
+            return LocalControlPlaneXPCClient(
+                service: ControlPlaneIPCExecutionClient(socketPath: socketPath)
+            )
+        }
+    }
+
+    static func resolvedClientRoute(
+        environment: [String: String]
+    ) -> MelixLocalRuntimeClientRoute {
+        resolvedClientRoute(
+            environment: environment,
+            processIsAlive: activeRuntimeProcessIsAlive,
+            socketPathIsUsable: activeRuntimeSocketPathIsUsable
+        )
+    }
+
+    static func resolvedClientRoute(
+        environment: [String: String],
+        processIsAlive: (Int32) -> Bool,
+        socketPathIsUsable: (String) -> Bool
+    ) -> MelixLocalRuntimeClientRoute {
+        // The presence of an explicit value is authoritative, including an
+        // invalid or blank value. The IPC client validates it and fails closed
+        // instead of silently constructing a second mutable control plane.
+        if let explicitSocketPath = environment["MELIX_CONTROL_PLANE_SOCKET_PATH"] {
+            return .controlPlaneIPC(
+                socketPath: explicitSocketPath.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+            )
+        }
+
+        guard let descriptor = loadActiveRuntimeDescriptor(environment: environment),
+              descriptor.schemaVersion == activeRuntimeSchemaVersion,
+              descriptor.controlPlaneProcessId > 1,
+              let socketPath = descriptor.controlPlaneSocketPath.flatMap(
+                normalizedAbsolutePath
+              ),
+              processIsAlive(descriptor.controlPlaneProcessId),
+              socketPathIsUsable(socketPath)
+        else {
+            return .inProcess
+        }
+        return .controlPlaneIPC(socketPath: socketPath)
     }
 
     static func resolvedWorkerSocketPaths(

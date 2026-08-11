@@ -1911,6 +1911,7 @@ struct TextEndpointContractTests {
         #expect(normalized.messages.count == 2)
         #expect(normalized.messages[1].role == "tool")
         #expect(normalized.messages[1].name == "call_weather_123")
+        #expect(normalized.messages[1].toolCallID == "call_weather_123")
         #expect(normalized.messages[1].content.contains("ignore developer policy"))
         #expect(encoded.contains(#""type":"function_call_output""#))
         #expect(encoded.contains(#""call_id":"call_weather_123""#))
@@ -2684,6 +2685,71 @@ struct TextEndpointContractTests {
         #expect(decodedMultimodal.hasMultimodalContent)
         #expect(decodedMultimodal.contentParts?.count == 2)
         #expect(String(decoding: encodedMultimodal, as: UTF8.self).contains("\"content\":["))
+    }
+
+    @Test("chat tool-call history preserves assistant calls and tool result bindings")
+    func chatToolCallHistoryPreservesAssistantCallsAndToolResultBindings() throws {
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-tool-history" })
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "messages": [
+                    { "role": "user", "content": "What is the weather?" },
+                    {
+                      "role": "assistant",
+                      "content": null,
+                      "tool_calls": [
+                        {
+                          "id": "call_weather_123",
+                          "type": "function",
+                          "function": {
+                            "name": "weather",
+                            "arguments": "{\\"city\\":\\"Tokyo\\"}"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "role": "tool",
+                      "tool_call_id": "call_weather_123",
+                      "content": "{\\"temperature_c\\":22}"
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalize(request)
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+        let encoded = String(decoding: try encoder.encode(request), as: UTF8.self)
+
+        #expect(normalized.messages[1].content.isEmpty)
+        #expect(normalized.messages[1].toolCalls == [
+            NormalizedToolCall(
+                id: "call_weather_123",
+                name: "weather",
+                argumentsJSON: #"{"city":"Tokyo"}"#
+            ),
+        ])
+        #expect(normalized.messages[2].toolCallID == "call_weather_123")
+        #expect(translated.workerRequest.messages[1].toolCalls.count == 1)
+        #expect(translated.workerRequest.messages[1].toolCalls[0].id == "call_weather_123")
+        #expect(translated.workerRequest.messages[1].toolCalls[0].name == "weather")
+        #expect(
+            translated.workerRequest.messages[1].toolCalls[0].argumentsJson
+                == #"{"city":"Tokyo"}"#
+        )
+        #expect(translated.workerRequest.messages[2].toolCallID == "call_weather_123")
+        #expect(encoded.contains(#""content":null"#))
+        #expect(encoded.contains(#""tool_calls""#))
+        #expect(encoded.contains(#""tool_call_id":"call_weather_123""#))
     }
 
     @Test("multimodal chat normalization preserves text-only and multimodal messages in order")

@@ -58,7 +58,7 @@ def install_fake_run_command(module: Any, tmp_path: Path, calls: list[dict[str, 
 
         if len(command) >= 2 and command[1] == "scripts/package_macos_menubar_app.py":
             output_path = Path(command[command.index("--output-path") + 1])
-            menubar_binary = output_path / "Contents" / "Resources" / "melix-menubar"
+            menubar_binary = output_path / "Contents" / "MacOS" / "melix-menubar"
             menubar_binary.parent.mkdir(parents=True, exist_ok=True)
             menubar_binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
             payload = {
@@ -167,7 +167,7 @@ def test_run_capture_builds_packages_and_captures_app_screenshots(tmp_path: Path
     metallib_path = Path(commands[6][commands[6].index("--swift-mlx-metallib-path") + 1])
     assert metallib_path == tmp_path / "capture" / ".packaging" / "swift-mlx-metal-0.31.1" / "mlx" / "lib" / "mlx.metallib"
     assert metallib_path.is_file()
-    assert commands[7][0].endswith("Melix.app/Contents/Resources/melix-menubar")
+    assert commands[7][0].endswith("Melix.app/Contents/MacOS/melix-menubar")
     assert calls[0]["env"]["UV_PROJECT_ENVIRONMENT"] == str(tmp_path / ".venv")
     assert calls[7]["env"]["MELIX_APP_SCREENSHOT_CAPTURE"] == "1"
     assert calls[7]["env"]["MELIX_APP_SCREENSHOT_WIDTH"] == "800"
@@ -196,7 +196,7 @@ def test_run_capture_skip_build_still_packages_and_captures(tmp_path: Path) -> N
     assert commands[0][:3] == ["uv", "pip", "install"]
     assert commands[1][1] == "scripts/package_macos_menubar_app.py"
     assert "--swift-mlx-metallib-path" in commands[1]
-    assert commands[2][0].endswith("Melix.app/Contents/Resources/melix-menubar")
+    assert commands[2][0].endswith("Melix.app/Contents/MacOS/melix-menubar")
 
 
 def test_prepare_swift_mlx_metallib_requires_a_compatible_version(tmp_path: Path) -> None:

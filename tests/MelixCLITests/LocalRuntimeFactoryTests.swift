@@ -2,9 +2,172 @@ import Foundation
 import Testing
 
 @testable import MelixCLICore
+import MelixControlPlaneCore
+import MelixControlPlaneProtocol
 
 @Suite("Local Runtime Factory")
 struct LocalRuntimeFactoryTests {
+    @Test("explicit control-plane socket always selects the daemon route")
+    func explicitControlPlaneSocketSelectsDaemonRoute() {
+        let valid = MelixLocalRuntimeFactory.resolvedClientRoute(
+            environment: ["MELIX_CONTROL_PLANE_SOCKET_PATH": " /tmp/control.sock "],
+            processIsAlive: { _ in false },
+            socketPathIsUsable: { _ in false }
+        )
+        let invalid = MelixLocalRuntimeFactory.resolvedClientRoute(
+            environment: ["MELIX_CONTROL_PLANE_SOCKET_PATH": ""],
+            processIsAlive: { _ in false },
+            socketPathIsUsable: { _ in false }
+        )
+
+        #expect(valid == .controlPlaneIPC(socketPath: "/tmp/control.sock"))
+        #expect(invalid == .controlPlaneIPC(socketPath: ""))
+    }
+
+    @Test("live descriptor selects its single control-plane daemon")
+    func liveDescriptorSelectsControlPlaneDaemon() throws {
+        let fixture = try ActiveRuntimeDescriptorFixture()
+        defer { fixture.remove() }
+        try fixture.write(fixture.descriptorJSON())
+
+        let live = MelixLocalRuntimeFactory.resolvedClientRoute(
+            environment: ["MELIX_ACTIVE_RUNTIME_PATH": fixture.descriptorURL.path],
+            processIsAlive: { $0 == fixture.controlPlaneProcessID },
+            socketPathIsUsable: { $0 == fixture.controlPlaneSocketPath }
+        )
+        let stale = MelixLocalRuntimeFactory.resolvedClientRoute(
+            environment: ["MELIX_ACTIVE_RUNTIME_PATH": fixture.descriptorURL.path],
+            processIsAlive: { _ in false },
+            socketPathIsUsable: { _ in true }
+        )
+
+        #expect(live == .controlPlaneIPC(socketPath: fixture.controlPlaneSocketPath))
+        #expect(stale == .inProcess)
+    }
+
+    @Test("in-process fallback fails closed when MELIX_HOME already has a writer")
+    func inProcessFallbackRequiresTheSingleWriterLease() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "melix-cli-single-writer-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        let descriptorURL = root.appendingPathComponent("active-runtime.json")
+        try Data("not-json".utf8).write(to: descriptorURL, options: .atomic)
+        let environment = [
+            "MELIX_HOME": root.path,
+            "MELIX_REPO_ROOT": "/tmp/melix-single-writer-test",
+            "MELIX_ACTIVE_RUNTIME_PATH": descriptorURL.path,
+        ]
+
+        let first = MelixLocalRuntimeFactory.makeClient(environment: environment)
+        _ = try await first.handshake()
+
+        let second = MelixLocalRuntimeFactory.makeClient(environment: environment)
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "control_plane_home_already_owned",
+            message: "Another Melix control plane already owns this MELIX_HOME."
+        )) {
+            try await second.handshake()
+        }
+    }
+
+    @Test("in-process and unavailable services preserve the complete execution boundary")
+    func localRuntimeServicesForwardEveryExecutionOperation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "melix-cli-execution-boundary-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        let environment = [
+            "MELIX_HOME": root.path,
+            "MELIX_REPO_ROOT": "/tmp/melix-execution-boundary-test",
+        ]
+
+        let context = MelixLocalRuntimeFactory.makeContext(environment: environment)
+        _ = try await context.service.handshake(Melix_Controlplane_V1_HandshakeRequest())
+        let subscription = await context.service.subscribe(
+            Melix_Controlplane_V1_SubscribeRequest()
+        )
+        await context.service.unsubscribe(subscription.subscriptionID)
+        _ = try? await context.service.startChat(
+            ControlPlaneChatRequest(modelID: "", messages: [])
+        )
+        _ = try? await context.service.startAgentRun(
+            Melix_Controlplane_V1_StartAgentRun(),
+            actorID: "local-runtime-boundary-test",
+            remoteTarget: nil
+        )
+        _ = try? await context.service.execute(
+            Melix_Controlplane_V1_ControlPlaneRequest()
+        )
+
+        let unavailable = MelixLocalRuntimeFactory.makeContext(environment: environment)
+        await #expect(throws: ControlPlaneXPCClientError.self) {
+            try await unavailable.service.handshake(
+                Melix_Controlplane_V1_HandshakeRequest()
+            )
+        }
+        let unavailableSubscription = await unavailable.service.subscribe(
+            Melix_Controlplane_V1_SubscribeRequest()
+        )
+        await unavailable.service.unsubscribe(unavailableSubscription.subscriptionID)
+        await #expect(throws: ControlPlaneXPCClientError.self) {
+            try await unavailable.service.startChat(
+                ControlPlaneChatRequest(modelID: "", messages: [])
+            )
+        }
+        await #expect(throws: ControlPlaneXPCClientError.self) {
+            try await unavailable.service.startAgentRun(
+                Melix_Controlplane_V1_StartAgentRun(),
+                actorID: "local-runtime-boundary-test",
+                remoteTarget: nil
+            )
+        }
+        await #expect(throws: ControlPlaneXPCClientError.self) {
+            try await unavailable.service.execute(
+                Melix_Controlplane_V1_ControlPlaneRequest()
+            )
+        }
+
+        let unsafeRoot = root.appendingPathComponent("unsafe-home", isDirectory: true)
+        let unsafeStateTarget = root.appendingPathComponent(
+            "unsafe-state-target",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: unsafeRoot,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: unsafeStateTarget,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: unsafeRoot.appendingPathComponent("state", isDirectory: true),
+            withDestinationURL: unsafeStateTarget
+        )
+        let unsafeHome = MelixLocalRuntimeFactory.makeContext(
+            environment: ["MELIX_HOME": unsafeRoot.path]
+        )
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "control_plane_home_ownership_unavailable",
+            message: "MELIX_HOME state directory must be a current-user directory."
+        )) {
+            try await unsafeHome.service.handshake(
+                Melix_Controlplane_V1_HandshakeRequest()
+            )
+        }
+    }
+
     @Test("active runtime descriptor supplies the paired worker sockets")
     func activeRuntimeDescriptorSuppliesPairedWorkerSockets() throws {
         let fixture = try ActiveRuntimeDescriptorFixture()
@@ -219,13 +382,14 @@ private struct ActiveRuntimeDescriptorFixture {
     let descriptorURL: URL
     let pythonSocketPath: String
     let swiftTextSocketPath: String
+    let controlPlaneSocketPath: String
     let appProcessID: Int32 = 41_001
     let controlPlaneProcessID: Int32 = 41_002
     let pythonWorkerProcessID: Int32 = 41_003
     let swiftTextWorkerProcessID: Int32 = 41_004
 
     var socketPaths: [String] {
-        [pythonSocketPath, swiftTextSocketPath]
+        [pythonSocketPath, swiftTextSocketPath, controlPlaneSocketPath]
     }
 
     var runtimeProcessIDs: [Int32] {
@@ -238,6 +402,7 @@ private struct ActiveRuntimeDescriptorFixture {
         descriptorURL = rootURL.appendingPathComponent("active-runtime.json", isDirectory: false)
         pythonSocketPath = rootURL.appendingPathComponent("python-worker.sock").path
         swiftTextSocketPath = rootURL.appendingPathComponent("swift-text-worker.sock").path
+        controlPlaneSocketPath = rootURL.appendingPathComponent("control-plane.sock").path
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
     }
 
@@ -258,6 +423,7 @@ private struct ActiveRuntimeDescriptorFixture {
           "swift_text_worker_process_id": \(swiftTextWorkerProcessID),
           "python_worker_socket_path": "\(descriptorPythonSocketPath)",
           "swift_text_worker_socket_path": "\(descriptorSwiftTextSocketPath)",
+          "control_plane_socket_path": "\(controlPlaneSocketPath)",
           "service_base_url": "http://127.0.0.1:12436",
           "updated_at_unix_ms": 1784304000000
         }

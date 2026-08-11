@@ -5,6 +5,20 @@ import MelixControlPlaneProtocol
 @testable import MelixControlPlaneCore
 
 struct StructuredOutputValidationTests {
+    @Test("JSON parsing keeps numeric zero and one distinct from booleans")
+    func jsonParsingKeepsNumbersDistinctFromBooleans() throws {
+        let parsed = try StructuredJSONValue.parse(
+            text: #"{"zero":0,"one":1,"false":false,"true":true}"#
+        )
+
+        #expect(parsed == .object([
+            "zero": .number(0),
+            "one": .number(1),
+            "false": .bool(false),
+            "true": .bool(true),
+        ]))
+    }
+
     @Test("structured output request contracts decode across endpoint variants")
     func structuredOutputRequestContractsDecodeAcrossEndpointVariants() throws {
         let decoder = JSONDecoder()

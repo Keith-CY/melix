@@ -28,6 +28,8 @@ struct DesktopWorkspaceShellView: View {
                         showsSidebar: paneVisibilityBinding(.sidebar, for: .chat),
                         showsInspector: paneVisibilityBinding(.inspector, for: .chat)
                     )
+                case .agents:
+                    DesktopAgentsView(viewModel: viewModel)
                 case .commandCenter:
                     DesktopCommandCenterView(viewModel: viewModel)
                 case .image:

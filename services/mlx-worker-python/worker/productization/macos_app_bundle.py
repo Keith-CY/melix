@@ -25,6 +25,16 @@ from worker.productization.packaging_targets import (
     packaged_python_import_isolation_env_exports,
     resolve_local_connect_host,
 )
+from worker.productization.mcp_credential_environment import (
+    APP_PARENT_ENVIRONMENT_KEYS,
+    COMMON_CHILD_ENVIRONMENT_KEYS,
+    CONTROL_PLANE_PARENT_ENVIRONMENT_KEYS,
+    LAUNCHER_INTERNAL_ENVIRONMENT_KEYS,
+    MCP_CREDENTIAL_KEYS_ENV,
+    PRIVATE_SERVICE_ENVIRONMENT_KEYS,
+    PYTHON_WORKER_PARENT_ENVIRONMENT_KEYS,
+    SWIFT_WORKER_PARENT_ENVIRONMENT_KEYS,
+)
 from worker.productization.startup_signals import default_update_channel_path
 
 
@@ -65,7 +75,7 @@ _DISABLE_LIBRARY_VALIDATION_ENTITLEMENTS = {
 }
 _DYNAMIC_CODE_HOST_RELATIVE_PATHS = frozenset(
     (
-        Path("Contents/Resources/melix-menubar"),
+        Path("Contents/MacOS/melix-menubar"),
         Path("Contents/Resources/melix-text-worker-swift"),
     )
 )
@@ -85,6 +95,9 @@ class MacOSAppBundleLayout:
     bundled_cli_binary_path: Path
     bundled_control_plane_binary_path: Path
     bundled_swift_worker_binary_path: Path
+    bundled_computer_broker_bundle_path: Path
+    bundled_computer_broker_binary_path: Path
+    bundled_computer_broker_plist_path: Path
     bundled_swift_mlx_metallib_path: Path
     swift_mlx_metallib_link_path: Path
     bundled_python_runtime_path: Path
@@ -104,6 +117,7 @@ def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Meli
     macos_path = contents_path / "MacOS"
     resources_path = contents_path / "Resources"
     python_runtime_path = resources_path / "python-runtime"
+    computer_broker_bundle_path = resources_path / "MelixComputerUseBroker.app"
     return MacOSAppBundleLayout(
         app_path=app_path,
         contents_path=contents_path,
@@ -113,10 +127,17 @@ def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Meli
         plist_path=contents_path / "Info.plist",
         launcher_path=macos_path / app_name,
         launcher_script_path=resources_path / f"{app_name}.sh",
-        bundled_app_binary_path=resources_path / "melix-menubar",
+        bundled_app_binary_path=macos_path / "melix-menubar",
         bundled_cli_binary_path=resources_path / "melix",
         bundled_control_plane_binary_path=resources_path / "melix-control-plane",
         bundled_swift_worker_binary_path=resources_path / "melix-text-worker-swift",
+        bundled_computer_broker_bundle_path=computer_broker_bundle_path,
+        bundled_computer_broker_binary_path=(
+            computer_broker_bundle_path / "Contents/MacOS/melix-computer-broker"
+        ),
+        bundled_computer_broker_plist_path=(
+            computer_broker_bundle_path / "Contents/Info.plist"
+        ),
         bundled_swift_mlx_metallib_path=resources_path / "swift-mlx/mlx.metallib",
         swift_mlx_metallib_link_path=resources_path / "mlx.metallib",
         bundled_python_runtime_path=python_runtime_path,
@@ -282,6 +303,30 @@ def render_info_plist(
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=False)
 
 
+def render_background_helper_info_plist(
+    *,
+    helper_name: str,
+    executable_name: str,
+    bundle_id: str,
+    version: str,
+    minimum_system_version: str = "15.0",
+) -> bytes:
+    return plistlib.dumps(
+        {
+            "CFBundleExecutable": executable_name,
+            "CFBundleIdentifier": bundle_id,
+            "CFBundleName": helper_name,
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": version,
+            "LSBackgroundOnly": True,
+            "LSMinimumSystemVersion": minimum_system_version,
+        },
+        fmt=plistlib.FMT_XML,
+        sort_keys=False,
+    )
+
+
 def resolve_macos_minimum_system_version(repo_root: str | Path) -> str:
     """Read the single macOS deployment target from the app Package.swift."""
 
@@ -378,16 +423,48 @@ def render_launcher_script(
     bundled_cli_binary_name: str,
     bundled_control_plane_binary_name: str,
     bundled_swift_worker_binary_name: str,
+    bundled_computer_broker_binary_relative_path: str,
     bundled_python_executable_relative_path: str,
     bundled_site_packages_relative_path: str,
     wait_script_relative_path: str,
     menu_bar_presentation_mode: str = "dock-and-tray",
 ) -> str:
     repo_root = Path(bundle_repo_root)
+    clean_environment_keys = (
+        *PRIVATE_SERVICE_ENVIRONMENT_KEYS,
+        *LAUNCHER_INTERNAL_ENVIRONMENT_KEYS,
+    )
+    clean_environment_arguments = " ".join(
+        f"-u {key}" for key in clean_environment_keys
+    )
+    clean_environment_array_arguments = " ".join(
+        f'"-u" "{key}"' for key in clean_environment_keys
+    )
+    private_child_environment_array_arguments = " ".join(
+        f'"{key}"' for key in COMMON_CHILD_ENVIRONMENT_KEYS
+    )
+    control_plane_parent_environment_array_arguments = " ".join(
+        f'"{key}"' for key in CONTROL_PLANE_PARENT_ENVIRONMENT_KEYS
+    )
+    app_parent_environment_array_arguments = " ".join(
+        f'"{key}"' for key in APP_PARENT_ENVIRONMENT_KEYS
+    )
+    swift_worker_parent_environment_array_arguments = " ".join(
+        f'"{key}"' for key in SWIFT_WORKER_PARENT_ENVIRONMENT_KEYS
+    )
+    python_worker_parent_environment_array_arguments = " ".join(
+        f'"{key}"' for key in PYTHON_WORKER_PARENT_ENVIRONMENT_KEYS
+    )
     return "\n".join(
         [
             "#!/usr/bin/env bash",
             "set -euo pipefail",
+            'for inherited_fd_path in /dev/fd/*; do',
+            '  inherited_fd="${inherited_fd_path##*/}"',
+            '  [[ "$inherited_fd" =~ ^[0-9]+$ ]] || continue',
+            '  (( inherited_fd >= 3 )) || continue',
+            '  eval "exec ${inherited_fd}>&-"',
+            'done',
             'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
             'CONTENTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"',
             'export MELIX_APP_BUNDLE_PATH="$(cd "$CONTENTS_DIR/.." && pwd)"',
@@ -396,9 +473,21 @@ def render_launcher_script(
             'source "$RESOURCES_DIR/melix-product-env.sh"',
             f'export MELIX_CLI="$RESOURCES_DIR/{bundled_cli_binary_name}"',
             'mkdir -p "$MELIX_HOME/config" "$MELIX_HOME/state" "$MELIX_HOME/secrets" "$MELIX_HOME/install" "$MELIX_RUNTIME_DIR" "$MELIX_LOGS_DIR" "$MELIX_RUNTIME_DIR/swift-text-worker-cache" "$MELIX_RUNTIME_DIR/python-bytecode-cache" "$MELIX_MANAGED_MODEL_ROOT" "$MELIX_AUDIO_RUNTIME_PACK_ROOT" "$MELIX_MODEL_OPS_JOBS_ROOT" "$MELIX_EVALUATION_JOBS_ROOT"',
+            'chmod 700 "$MELIX_RUNTIME_DIR"',
             'RUN_TOKEN="${MELIX_RUN_TOKEN:-$$}"',
-            'export MELIX_WORKER_SOCKET_PATH="$MELIX_RUNTIME_DIR/python-worker-${RUN_TOKEN}.sock"',
-            'export MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$MELIX_RUNTIME_DIR/swift-text-worker-${RUN_TOKEN}.sock"',
+            'if [[ ! "$RUN_TOKEN" =~ ^[A-Za-z0-9_-]+$ ]] || (( ${#RUN_TOKEN} > 32 )); then',
+            '  printf "MELIX_RUN_TOKEN must contain at most 32 letters, numbers, underscores, or hyphens.\\n" >&2',
+            '  exit 2',
+            'fi',
+            'MELIX_SOCKET_ROOT=""',
+            'MELIX_WORKER_SOCKET_PATH=""',
+            'MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH=""',
+            'export MELIX_CONTROL_PLANE_SOCKET_PATH=""',
+            'MELIX_COMPUTER_BROKER_DIR=""',
+            'MELIX_COMPUTER_BROKER_SOCKET=""',
+            'MELIX_COMPUTER_BROKER_CAPABILITY_FILE=""',
+            'MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE=""',
+            'MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE=""',
             'export MELIX_CONTROL_PLANE_METRICS_PATH="$MELIX_RUNTIME_DIR/control-plane-metrics-${RUN_TOKEN}.json"',
             'export MELIX_SWIFT_TEXT_WORKER_METRICS_PATH="$MELIX_RUNTIME_DIR/swift-text-worker-metrics-${RUN_TOKEN}.json"',
             'export MELIX_PYTHON_WORKER_METRICS_PATH="$MELIX_RUNTIME_DIR/python-worker-metrics-${RUN_TOKEN}.json"',
@@ -408,35 +497,319 @@ def render_launcher_script(
             'export PYTHONUNBUFFERED=1',
             *packaged_python_import_isolation_env_exports(),  # pragma: no cover
             f'export PYTHONPATH="$RESOURCES_DIR/{bundled_site_packages_relative_path}:$MELIX_REPO_ROOT:$MELIX_REPO_ROOT/services/mlx-worker-python"',
+            'if [[ -n "${MELIX_MCP_CONFIG_PATH:-}" ]]; then',
+            '  export MELIX_MCP_CONFIG_PATH="$("$MELIX_PYTHON_BRIDGE_EXECUTABLE" -m worker.productization.mcp_credential_environment --melix-home "$MELIX_HOME" --normalize-explicit-path)"',
+            'fi',
+            'export MELIX_ACTIVE_RUNTIME_PATH="${MELIX_ACTIVE_RUNTIME_PATH:-$MELIX_RUNTIME_DIR/active-runtime.json}"',
+            f'STATIC_PRIVATE_ENVIRONMENT_ARGUMENTS=({clean_environment_array_arguments})',
+            f'PRIVATE_CHILD_ENVIRONMENT_KEYS=({private_child_environment_array_arguments})',
+            'PRIVATE_CHILD_ENVIRONMENT=()',
+            'for private_child_key in "${PRIVATE_CHILD_ENVIRONMENT_KEYS[@]}"; do',
+            '  if [[ -n "${!private_child_key+x}" ]]; then',
+            '    PRIVATE_CHILD_ENVIRONMENT+=("$private_child_key=${!private_child_key}")',
+            '  fi',
+            'done',
+            'PYTHON_WORKER_CHILD_ENVIRONMENT=()',
+            f'PYTHON_WORKER_PARENT_ENVIRONMENT_KEYS=({python_worker_parent_environment_array_arguments})',
+            'for python_worker_parent_key in "${PYTHON_WORKER_PARENT_ENVIRONMENT_KEYS[@]}"; do',
+            '  if [[ -n "${!python_worker_parent_key+x}" ]]; then',
+            '    PYTHON_WORKER_CHILD_ENVIRONMENT+=("$python_worker_parent_key=${!python_worker_parent_key}")',
+            '  fi',
+            'done',
+            'SWIFT_WORKER_CHILD_ENVIRONMENT=("${PRIVATE_CHILD_ENVIRONMENT[@]}")',
+            f'SWIFT_WORKER_PARENT_ENVIRONMENT_KEYS=({swift_worker_parent_environment_array_arguments})',
+            'for swift_worker_parent_key in "${SWIFT_WORKER_PARENT_ENVIRONMENT_KEYS[@]}"; do',
+            '  if [[ -n "${!swift_worker_parent_key+x}" ]]; then',
+            '    SWIFT_WORKER_CHILD_ENVIRONMENT+=("$swift_worker_parent_key=${!swift_worker_parent_key}")',
+            '  fi',
+            'done',
+            'APP_CHILD_ENVIRONMENT=("${PRIVATE_CHILD_ENVIRONMENT[@]}")',
+            f'APP_PARENT_ENVIRONMENT_KEYS=({app_parent_environment_array_arguments})',
+            'for app_parent_key in "${APP_PARENT_ENVIRONMENT_KEYS[@]}"; do',
+            '  if [[ -n "${!app_parent_key+x}" ]]; then',
+            '    APP_CHILD_ENVIRONMENT+=("$app_parent_key=${!app_parent_key}")',
+            '  fi',
+            'done',
+            'CONTROL_PLANE_CHILD_ENVIRONMENT=("${PRIVATE_CHILD_ENVIRONMENT[@]}")',
+            f'CONTROL_PLANE_PARENT_ENVIRONMENT_KEYS=({control_plane_parent_environment_array_arguments})',
+            'for control_plane_parent_key in "${CONTROL_PLANE_PARENT_ENVIRONMENT_KEYS[@]}"; do',
+            '  if [[ -n "${!control_plane_parent_key+x}" ]]; then',
+            '    CONTROL_PLANE_CHILD_ENVIRONMENT+=("$control_plane_parent_key=${!control_plane_parent_key}")',
+            '  fi',
+            'done',
+            'INITIAL_MCP_CREDENTIAL_KEYS=()',
+            'CURRENT_MCP_CREDENTIAL_KEYS=()',
+            'FROZEN_MCP_CREDENTIAL_KEYS=()',
+            'PRIVATE_ENVIRONMENT_ARGUMENTS=()',
+            'MCP_CREDENTIALS_CAPTURED_BY_PYTHON_WORKER=0',
+            'load_mcp_credential_keys() {',
+            '  local payload="$1"',
+            '  CURRENT_MCP_CREDENTIAL_KEYS=()',
+            '  while IFS= read -r key; do',
+            '    [[ -z "$key" ]] || CURRENT_MCP_CREDENTIAL_KEYS+=("$key")',
+            '  done <<< "$payload"',
+            '}',
+            'resolve_mcp_credential_keys() {',
+            '  "$MELIX_PYTHON_BRIDGE_EXECUTABLE" -m worker.productization.mcp_credential_environment --melix-home "$MELIX_HOME"',
+            '}',
+            'validate_frozen_mcp_credential_keys() {',
+            '  local payload',
+            '  payload="$({',
+            '    if (( ${#INITIAL_MCP_CREDENTIAL_KEYS[@]} > 0 )); then',
+            '      printf "%s\\n" "${INITIAL_MCP_CREDENTIAL_KEYS[@]}"',
+            '    fi',
+            '    printf "\\0"',
+            '    if (( ${#CURRENT_MCP_CREDENTIAL_KEYS[@]} > 0 )); then',
+            '      printf "%s\\n" "${CURRENT_MCP_CREDENTIAL_KEYS[@]}"',
+            '    fi',
+            '  } | "$MELIX_PYTHON_BRIDGE_EXECUTABLE" -m worker.productization.mcp_credential_environment --validate-frozen-key-snapshot)"',
+            '  FROZEN_MCP_CREDENTIAL_KEYS=()',
+            '  while IFS= read -r key; do',
+            '    [[ -z "$key" ]] || FROZEN_MCP_CREDENTIAL_KEYS+=("$key")',
+            '  done <<< "$payload"',
+            '}',
+            'join_frozen_mcp_credential_keys() {',
+            '  if (( ${#FROZEN_MCP_CREDENTIAL_KEYS[@]} == 0 )); then',
+            '    return 0',
+            '  fi',
+            '  local IFS=,',
+            '  printf "%s" "${FROZEN_MCP_CREDENTIAL_KEYS[*]}"',
+            '}',
+            'refresh_private_environment() {',
+            '  local payload',
+            '  payload="$(resolve_mcp_credential_keys)"',
+            '  load_mcp_credential_keys "$payload"',
+            '  validate_frozen_mcp_credential_keys',
+            '  PRIVATE_ENVIRONMENT_ARGUMENTS=("${STATIC_PRIVATE_ENVIRONMENT_ARGUMENTS[@]}")',
+            '  local key',
+            '  if (( ${#FROZEN_MCP_CREDENTIAL_KEYS[@]} > 0 )); then',
+            '    for key in "${FROZEN_MCP_CREDENTIAL_KEYS[@]}"; do',
+            '      [[ -z "$key" ]] || PRIVATE_ENVIRONMENT_ARGUMENTS+=("-u" "$key")',
+            '      if [[ "$MCP_CREDENTIALS_CAPTURED_BY_PYTHON_WORKER" == "1" && -n "$key" ]]; then',
+            '        unset "$key"',
+            '      fi',
+            '    done',
+            '  fi',
+            '}',
+            'INITIAL_MCP_CREDENTIAL_PAYLOAD="$(resolve_mcp_credential_keys)"',
+            'load_mcp_credential_keys "$INITIAL_MCP_CREDENTIAL_PAYLOAD"',
+            'if (( ${#CURRENT_MCP_CREDENTIAL_KEYS[@]} > 0 )); then',
+            '  INITIAL_MCP_CREDENTIAL_KEYS=("${CURRENT_MCP_CREDENTIAL_KEYS[@]}")',
+            'fi',
+            'validate_frozen_mcp_credential_keys',
+            'if (( ${#FROZEN_MCP_CREDENTIAL_KEYS[@]} > 0 )); then',
+            '  for initial_mcp_credential_key in "${FROZEN_MCP_CREDENTIAL_KEYS[@]}"; do',
+            '    if [[ -n "${!initial_mcp_credential_key+x}" ]]; then',
+            '      PYTHON_WORKER_CHILD_ENVIRONMENT+=("$initial_mcp_credential_key=${!initial_mcp_credential_key}")',
+            '    fi',
+            '  done',
+            'fi',
+            f'PYTHON_WORKER_CHILD_ENVIRONMENT+=("{MCP_CREDENTIAL_KEYS_ENV}=$(join_frozen_mcp_credential_keys)")',
+            'refresh_private_environment',
+            'exec_private_service() {',
+            '  exec "$MELIX_PYTHON_BRIDGE_EXECUTABLE" -c \'import os, sys; os.closerange(3, int(os.sysconf("SC_OPEN_MAX"))); os.execve(sys.argv[1], sys.argv[1:], os.environ)\' /usr/bin/env -i "${PRIVATE_CHILD_ENVIRONMENT[@]}" "$@"',
+            '}',
+            'exec_python_worker_service() {',
+            '  exec "$MELIX_PYTHON_BRIDGE_EXECUTABLE" -c \'import os, sys; os.closerange(3, int(os.sysconf("SC_OPEN_MAX"))); os.execve(sys.argv[1], sys.argv[1:], os.environ)\' /usr/bin/env -i "${PYTHON_WORKER_CHILD_ENVIRONMENT[@]}" "$@"',
+            '}',
+            'exec_swift_worker_service() {',
+            '  exec "$MELIX_PYTHON_BRIDGE_EXECUTABLE" -c \'import os, sys; os.closerange(3, int(os.sysconf("SC_OPEN_MAX"))); os.execve(sys.argv[1], sys.argv[1:], os.environ)\' /usr/bin/env -i "${SWIFT_WORKER_CHILD_ENVIRONMENT[@]}" "$@"',
+            '}',
+            'exec_control_plane_service() {',
+            '  exec "$MELIX_PYTHON_BRIDGE_EXECUTABLE" -c \'import os, sys; os.closerange(5, int(os.sysconf("SC_OPEN_MAX"))); os.execve(sys.argv[1], sys.argv[1:], os.environ)\' /usr/bin/env -i "${CONTROL_PLANE_CHILD_ENVIRONMENT[@]}" "$@"',
+            '}',
+            'exec_app_service() {',
+            '  exec "$MELIX_PYTHON_BRIDGE_EXECUTABLE" -c \'import os, sys; os.closerange(3, int(os.sysconf("SC_OPEN_MAX"))); os.execve(sys.argv[1], sys.argv[1:], os.environ)\' /usr/bin/env -i "${APP_CHILD_ENVIRONMENT[@]}" "$@"',
+            '}',
+            'run_private_service() {',
+            '  "$MELIX_PYTHON_BRIDGE_EXECUTABLE" -c \'import os, sys; os.closerange(3, int(os.sysconf("SC_OPEN_MAX"))); os.execve(sys.argv[1], sys.argv[1:], os.environ)\' /usr/bin/env -i "${PRIVATE_CHILD_ENVIRONMENT[@]}" "$@"',
+            '}',
+            'terminate_private_process() {',
+            '  private_pid="${1:-}"',
+            '  [[ -n "$private_pid" ]] || return 0',
+            '  kill "$private_pid" >/dev/null 2>&1 || return 0',
+            '  for _ in {1..40}; do',
+            '    kill -0 "$private_pid" >/dev/null 2>&1 || return 0',
+            '    /bin/sleep 0.05',
+            '  done',
+            '  kill -KILL "$private_pid" >/dev/null 2>&1 || true',
+            '}',
+            'record_cleanup_failure() {',
+            '  local cleanup_message="$1"',
+            '  local repair_message="Melix cleanup failed; inspect this log before relaunching."',
+            '  printf "%s\\n" "$cleanup_message" >&2',
+            '  printf "%s\\n" "$repair_message" >&2',
+            '  if [[ -n "${MELIX_LOGS_DIR:-}" ]]; then',
+            '    printf "%s\\n" "$cleanup_message" >>"$MELIX_LOGS_DIR/launcher-cleanup.log" || true',
+            '    printf "%s\\n" "$repair_message" >>"$MELIX_LOGS_DIR/launcher-cleanup.log" || true',
+            '  fi',
+            '}',
+            'remove_private_runtime_artifacts() {',
+            '  local cleanup_failed=0',
+            '  local cleanup_path',
+            '  for cleanup_path in "$MELIX_ACTIVE_RUNTIME_PATH" "${MELIX_WORKER_SOCKET_PATH:-}" "${MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH:-}" "${MELIX_CONTROL_PLANE_SOCKET_PATH:-}" "${MELIX_CONTROL_PLANE_SOCKET_PATH:+${MELIX_CONTROL_PLANE_SOCKET_PATH}.lock}" "${MELIX_COMPUTER_BROKER_SOCKET:-}" "${MELIX_COMPUTER_BROKER_SOCKET:+${MELIX_COMPUTER_BROKER_SOCKET}.lock}" "${MELIX_COMPUTER_BROKER_CAPABILITY_FILE:-}" "${MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE:-}" "${MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE:-}"; do',
+            '    [[ -z "$cleanup_path" ]] && continue',
+            '    if ! rm -f "$cleanup_path"; then',
+            '      record_cleanup_failure "Melix could not remove private runtime file $cleanup_path."',
+            '      cleanup_failed=1',
+            '    fi',
+            '  done',
+            '  for cleanup_path in "${MELIX_COMPUTER_BROKER_DIR:-}" "${MELIX_SOCKET_ROOT:-}"; do',
+            '    [[ -z "$cleanup_path" ]] && continue',
+            '    if ! rmdir "$cleanup_path"; then',
+            '      record_cleanup_failure "Melix retained private runtime directory $cleanup_path because it was not empty or could not be removed."',
+            '      cleanup_failed=1',
+            '    fi',
+            '  done',
+            '  return "$cleanup_failed"',
+            '}',
             'cleanup() {',
             '  status=$?',
-            '  [[ -n "${MELIX_ACTIVE_RUNTIME_PATH:-}" ]] && rm -f "$MELIX_ACTIVE_RUNTIME_PATH"',
-            '  [[ -n "${MELIX_CONTROL_PLANE_PID:-}" ]] && kill "$MELIX_CONTROL_PLANE_PID" >/dev/null 2>&1 || true',
-            '  [[ -n "${MELIX_SWIFT_WORKER_PID:-}" ]] && kill "$MELIX_SWIFT_WORKER_PID" >/dev/null 2>&1 || true',
-            '  [[ -n "${MELIX_PYTHON_WORKER_PID:-}" ]] && kill "$MELIX_PYTHON_WORKER_PID" >/dev/null 2>&1 || true',
-            '  rm -f "$MELIX_WORKER_SOCKET_PATH" "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"',
+            '  trap - EXIT INT TERM',
+            '  terminate_private_process "${MELIX_WATCHDOG_PID:-}"',
+            '  terminate_private_process "${MELIX_APP_PROCESS_PID:-}"',
+            '  terminate_private_process "${MELIX_COMPUTER_BROKER_PID:-}"',
+            '  terminate_private_process "${MELIX_CONTROL_PLANE_PID:-}"',
+            '  terminate_private_process "${MELIX_SWIFT_WORKER_PID:-}"',
+            '  terminate_private_process "${MELIX_PYTHON_WORKER_PID:-}"',
+            '  if ! remove_private_runtime_artifacts; then',
+            '    [[ "$status" != "0" ]] || status=1',
+            '  fi',
             '  exit $status',
             '}',
             'trap cleanup EXIT INT TERM',
-            f'"$RESOURCES_DIR/{bundled_swift_worker_binary_name}" >"$MELIX_LOGS_DIR/swift-text-worker.stdout.log" 2>"$MELIX_LOGS_DIR/swift-text-worker.stderr.log" &',
-            'MELIX_SWIFT_WORKER_PID=$!',
-            'export MELIX_SWIFT_WORKER_PID',
-            f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" -m worker.bootstrap --socket-path "$MELIX_WORKER_SOCKET_PATH" --backend-mode "$MELIX_BACKEND_MODE" >"$MELIX_LOGS_DIR/python-worker.stdout.log" 2>"$MELIX_LOGS_DIR/python-worker.stderr.log" &',
-            'MELIX_PYTHON_WORKER_PID=$!',
-            'export MELIX_PYTHON_WORKER_PID',
-            f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" "$RESOURCES_DIR/{wait_script_relative_path}" --socket-path "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH" --timeout-seconds 30',
-            f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" "$RESOURCES_DIR/{wait_script_relative_path}" --socket-path "$MELIX_WORKER_SOCKET_PATH" --timeout-seconds 30',
+            'umask 077',
+            'if ! MELIX_SOCKET_ROOT="$(run_private_service "$MELIX_PYTHON_BRIDGE_EXECUTABLE" -m worker.productization.packaged_socket_root --run-token "$RUN_TOKEN")"; then',
+            '  printf "Melix could not create a private bounded socket root.\\n" >&2',
+            '  exit 1',
+            'fi',
+            'MELIX_WORKER_SOCKET_PATH="$MELIX_SOCKET_ROOT/python.sock"',
+            'MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$MELIX_SOCKET_ROOT/swift.sock"',
+            'export MELIX_CONTROL_PLANE_SOCKET_PATH="$MELIX_SOCKET_ROOT/control.sock"',
+            'MELIX_COMPUTER_BROKER_DIR="$MELIX_SOCKET_ROOT/computer-broker"',
+            'MELIX_COMPUTER_BROKER_SOCKET="$MELIX_COMPUTER_BROKER_DIR/broker.sock"',
+            'MELIX_COMPUTER_BROKER_CAPABILITY_FILE="$MELIX_COMPUTER_BROKER_DIR/verification-capability.bin"',
+            'MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE="$MELIX_COMPUTER_BROKER_DIR/authorization-private-key.bin"',
+            'MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE="$MELIX_COMPUTER_BROKER_DIR/authorization-public-key.bin"',
+            'mkdir "$MELIX_COMPUTER_BROKER_DIR"',
+            'chmod 700 "$MELIX_COMPUTER_BROKER_DIR"',
             (
-                f'if "$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
+                'run_private_service '
+                f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
+                "-c 'import os, sys; "
+                "[(lambda fd: (os.write(fd, os.urandom(32)), os.fchmod(fd, 0o600), os.close(fd)))(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)) for path in sys.argv[1:]]' "
+                '"$MELIX_COMPUTER_BROKER_CAPABILITY_FILE" '
+                '"$MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE"'
+            ),
+            ': > "$MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE"',
+            'chmod 600 "$MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE"',
+            'refresh_private_environment',
+            (
+                'exec_swift_worker_service '
+                'MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH" '
+                f'"$RESOURCES_DIR/{bundled_swift_worker_binary_name}" '
+                '>"$MELIX_LOGS_DIR/swift-text-worker.stdout.log" '
+                '2>"$MELIX_LOGS_DIR/swift-text-worker.stderr.log" &'
+            ),
+            'MELIX_SWIFT_WORKER_PID=$!',
+            (
+                'exec_python_worker_service '
+                'MELIX_WORKER_SOCKET_PATH="$MELIX_WORKER_SOCKET_PATH" '
+                'MELIX_COMPUTER_BROKER_SOCKET="$MELIX_COMPUTER_BROKER_SOCKET" '
+                'MELIX_COMPUTER_BROKER_CLIENT_INSTANCE_ID="packaged-worker-${RUN_TOKEN}" '
+                'MELIX_COMPUTER_BROKER_CALLER_BUNDLE_ID="io.melix.worker" '
+                'MELIX_COMPUTER_BROKER_CALLER_TEAM_ID="MELIXLOCAL" '
+                'MELIX_COMPUTER_BROKER_VERIFICATION_CAPABILITY_FILE="$MELIX_COMPUTER_BROKER_CAPABILITY_FILE" '
+                f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
+                '-m worker.bootstrap --socket-path "$MELIX_WORKER_SOCKET_PATH" '
+                '--backend-mode "$MELIX_BACKEND_MODE" '
+                '>"$MELIX_LOGS_DIR/python-worker.stdout.log" '
+                '2>"$MELIX_LOGS_DIR/python-worker.stderr.log" &'
+            ),
+            'MELIX_PYTHON_WORKER_PID=$!',
+            'MCP_CREDENTIALS_CAPTURED_BY_PYTHON_WORKER=1',
+            'refresh_private_environment',
+            f'run_private_service "$RESOURCES_DIR/{bundled_python_executable_relative_path}" "$RESOURCES_DIR/{wait_script_relative_path}" --socket-path "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH" --timeout-seconds 30',
+            'refresh_private_environment',
+            f'run_private_service "$RESOURCES_DIR/{bundled_python_executable_relative_path}" "$RESOURCES_DIR/{wait_script_relative_path}" --socket-path "$MELIX_WORKER_SOCKET_PATH" --timeout-seconds 30',
+            'refresh_private_environment',
+            (
+                f'if run_private_service "$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
                 '-c \'import socket, sys; connection = socket.create_connection((sys.argv[1], int(sys.argv[2])), 0.2); connection.close()\' '
                 '"$MELIX_HTTP_CONNECT_HOST" "$MELIX_HTTP_PORT" >/dev/null 2>&1; then'
             ),
             '  printf "Melix HTTP port %s is already in use on %s.\\n" "$MELIX_HTTP_PORT" "$MELIX_HTTP_CONNECT_HOST" >&2',
             '  exit 1',
             'fi',
-            f'"$RESOURCES_DIR/{bundled_control_plane_binary_name}" >"$MELIX_LOGS_DIR/control-plane.stdout.log" 2>"$MELIX_LOGS_DIR/control-plane.stderr.log" &',
+            'refresh_private_environment',
+            (
+                'exec_control_plane_service '
+                'MELIX_WORKER_SOCKET_PATH="$MELIX_WORKER_SOCKET_PATH" '
+                'MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH" '
+                'MELIX_CONTROL_PLANE_SOCKET_PATH="$MELIX_CONTROL_PLANE_SOCKET_PATH" '
+                'MELIX_COMPUTER_BROKER_SOCKET="$MELIX_COMPUTER_BROKER_SOCKET" '
+                'MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_FD=3 '
+                'MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_FD=4 '
+                f'"$RESOURCES_DIR/{bundled_control_plane_binary_name}" '
+                '3<"$MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE" '
+                '4>"$MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE" '
+                '>"$MELIX_LOGS_DIR/control-plane.stdout.log" '
+                '2>"$MELIX_LOGS_DIR/control-plane.stderr.log" &'
+            ),
             'MELIX_CONTROL_PLANE_PID=$!',
-            'export MELIX_CONTROL_PLANE_PID',
+            'rm -f "$MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE"',
+            'refresh_private_environment',
+            (
+                'run_private_service '
+                f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
+                "-c 'import os, sys, time; path, pid = sys.argv[1], int(sys.argv[2]); deadline = time.monotonic() + 30; "
+                "\nwhile time.monotonic() < deadline:\n"
+                "    if os.path.isfile(path) and os.path.getsize(path) == 32: raise SystemExit(0)\n"
+                "    try: os.kill(pid, 0)\n"
+                "    except OSError: raise SystemExit(2)\n"
+                "    time.sleep(0.05)\n"
+                "raise SystemExit(1)' "
+                '"$MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE" "$MELIX_CONTROL_PLANE_PID"'
+            ),
+            'refresh_private_environment',
+            (
+                f'MELIX_COMPUTER_BROKER_PUBLIC_KEY_BASE64="$(run_private_service "$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
+                "-c 'import base64, pathlib, sys; payload = pathlib.Path(sys.argv[1]).read_bytes(); assert len(payload) == 32; print(base64.b64encode(payload).decode(\"ascii\"))' "
+                '"$MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE")"'
+            ),
+            'rm -f "$MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE"',
+            'refresh_private_environment',
+            (
+                'exec_private_service '
+                'MELIX_RUNTIME_DIR="$MELIX_RUNTIME_DIR" '
+                'MELIX_SERVICE_INSTANCE_NAME="packaged-${RUN_TOKEN}" '
+                'MELIX_COMPUTER_BROKER_CALLER_BUNDLE_ID="io.melix.worker" '
+                'MELIX_COMPUTER_BROKER_CALLER_TEAM_ID="MELIXLOCAL" '
+                'MELIX_COMPUTER_BROKER_VERIFICATION_CAPABILITY_FILE="$MELIX_COMPUTER_BROKER_CAPABILITY_FILE" '
+                'MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_BASE64="$MELIX_COMPUTER_BROKER_PUBLIC_KEY_BASE64" '
+                f'"$RESOURCES_DIR/{bundled_computer_broker_binary_relative_path}" '
+                'serve --socket "$MELIX_COMPUTER_BROKER_SOCKET" '
+                '>"$MELIX_LOGS_DIR/computer-broker.stdout.log" '
+                '2>"$MELIX_LOGS_DIR/computer-broker.stderr.log" &'
+            ),
+            'MELIX_COMPUTER_BROKER_PID=$!',
+            'unset MELIX_COMPUTER_BROKER_PUBLIC_KEY_BASE64',
+            'refresh_private_environment',
+            (
+                'run_private_service '
+                f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
+                "-c 'import os, stat, sys, time; path, pid = sys.argv[1], int(sys.argv[2]); deadline = time.monotonic() + 30; "
+                "\nwhile time.monotonic() < deadline:\n"
+                "    try:\n"
+                "        info = os.stat(path, follow_symlinks=False)\n"
+                "        if stat.S_ISSOCK(info.st_mode) and info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o600: raise SystemExit(0)\n"
+                "    except FileNotFoundError: pass\n"
+                "    try: os.kill(pid, 0)\n"
+                "    except OSError: raise SystemExit(2)\n"
+                "    time.sleep(0.05)\n"
+                "raise SystemExit(1)' "
+                '"$MELIX_COMPUTER_BROKER_SOCKET" "$MELIX_COMPUTER_BROKER_PID"'
+            ),
             'MELIX_HTTP_READY_URL="http://$MELIX_HTTP_CONNECT_HOST:$MELIX_HTTP_PORT/health"',
             'MELIX_HTTP_READY=0',
             'for _ in {1..60}; do',
@@ -445,7 +818,7 @@ def render_launcher_script(
             '    printf "Melix control plane exited before becoming ready. See %s/control-plane.stderr.log.\\n" "$MELIX_LOGS_DIR" >&2',
             '    exit 1',
             '  fi',
-            '  if /usr/bin/curl --fail --silent --show-error "$MELIX_HTTP_READY_URL" >/dev/null 2>&1; then',
+            '  if run_private_service /usr/bin/curl --fail --silent --show-error "$MELIX_HTTP_READY_URL" >/dev/null 2>&1; then',
             '    sleep 0.1',
             '    if kill -0 "$MELIX_CONTROL_PLANE_PID" >/dev/null 2>&1; then',
             '      MELIX_HTTP_READY=1',
@@ -458,43 +831,54 @@ def render_launcher_script(
             '  printf "Melix control plane did not become ready at %s. See %s/control-plane.stderr.log.\\n" "$MELIX_HTTP_READY_URL" "$MELIX_LOGS_DIR" >&2',
             '  exit 1',
             'fi',
-            'export MELIX_ACTIVE_RUNTIME_PATH="${MELIX_ACTIVE_RUNTIME_PATH:-$MELIX_RUNTIME_DIR/active-runtime.json}"',
+            'refresh_private_environment',
             (
+                'exec_app_service '
+                'MELIX_CONTROL_PLANE_SOCKET_PATH="$MELIX_CONTROL_PLANE_SOCKET_PATH" '
+                'MELIX_CONTROL_PLANE_PID="$MELIX_CONTROL_PLANE_PID" '
+                'MELIX_SWIFT_WORKER_PID="$MELIX_SWIFT_WORKER_PID" '
+                'MELIX_PYTHON_WORKER_PID="$MELIX_PYTHON_WORKER_PID" '
+                f'{MCP_CREDENTIAL_KEYS_ENV}="$(join_frozen_mcp_credential_keys)" '
+                f'"$CONTENTS_DIR/MacOS/{bundled_app_binary_name}" "$@" &'
+            ),
+            'MELIX_APP_PROCESS_PID=$!',
+            (
+                'run_private_service '
                 f'"$RESOURCES_DIR/{bundled_python_executable_relative_path}" '
                 '-m worker.productization.active_runtime '
                 '--output-path "$MELIX_ACTIVE_RUNTIME_PATH" '
-                '--app-process-id "$$" '
+                '--app-process-id "$MELIX_APP_PROCESS_PID" '
                 '--control-plane-process-id "$MELIX_CONTROL_PLANE_PID" '
                 '--python-worker-process-id "$MELIX_PYTHON_WORKER_PID" '
                 '--swift-text-worker-process-id "$MELIX_SWIFT_WORKER_PID" '
-                '--python-worker-socket-path "$MELIX_WORKER_SOCKET_PATH" '
-                '--swift-text-worker-socket-path "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH" '
+                '--computer-broker-process-id "$MELIX_COMPUTER_BROKER_PID" '
+                '--python-worker-socket-path "" '
+                '--swift-text-worker-socket-path "" '
+                '--control-plane-socket-path "$MELIX_CONTROL_PLANE_SOCKET_PATH" '
                 '--service-base-url "http://$MELIX_HTTP_CONNECT_HOST:$MELIX_HTTP_PORT/v1"'
             ),
-            'MELIX_APP_PROCESS_PID=$$',
             'MELIX_WATCHDOG_CONTROL_PLANE_PID="$MELIX_CONTROL_PLANE_PID"',
             'MELIX_WATCHDOG_SWIFT_WORKER_PID="$MELIX_SWIFT_WORKER_PID"',
             'MELIX_WATCHDOG_PYTHON_WORKER_PID="$MELIX_PYTHON_WORKER_PID"',
+            'MELIX_WATCHDOG_COMPUTER_BROKER_PID="$MELIX_COMPUTER_BROKER_PID"',
             '(',
+            '  trap - EXIT INT TERM',
             '  while kill -0 "$MELIX_APP_PROCESS_PID" >/dev/null 2>&1; do',
-            '    if [[ -n "$MELIX_WATCHDOG_CONTROL_PLANE_PID" ]] && ! kill -0 "$MELIX_WATCHDOG_CONTROL_PLANE_PID" >/dev/null 2>&1; then',
-            '      MELIX_WATCHDOG_CONTROL_PLANE_PID=""',
-            '    fi',
-            '    if [[ -n "$MELIX_WATCHDOG_SWIFT_WORKER_PID" ]] && ! kill -0 "$MELIX_WATCHDOG_SWIFT_WORKER_PID" >/dev/null 2>&1; then',
-            '      MELIX_WATCHDOG_SWIFT_WORKER_PID=""',
-            '    fi',
-            '    if [[ -n "$MELIX_WATCHDOG_PYTHON_WORKER_PID" ]] && ! kill -0 "$MELIX_WATCHDOG_PYTHON_WORKER_PID" >/dev/null 2>&1; then',
-            '      MELIX_WATCHDOG_PYTHON_WORKER_PID=""',
+            '    if ! kill -0 "$MELIX_WATCHDOG_CONTROL_PLANE_PID" >/dev/null 2>&1 || ! kill -0 "$MELIX_WATCHDOG_SWIFT_WORKER_PID" >/dev/null 2>&1 || ! kill -0 "$MELIX_WATCHDOG_PYTHON_WORKER_PID" >/dev/null 2>&1 || ! kill -0 "$MELIX_WATCHDOG_COMPUTER_BROKER_PID" >/dev/null 2>&1; then',
+            '      kill "$MELIX_APP_PROCESS_PID" >/dev/null 2>&1 || true',
+            '      break',
             '    fi',
             '    /bin/sleep 0.25',
             '  done',
-            '  rm -f "$MELIX_ACTIVE_RUNTIME_PATH"',
-            '  [[ -n "$MELIX_WATCHDOG_CONTROL_PLANE_PID" ]] && kill "$MELIX_WATCHDOG_CONTROL_PLANE_PID" >/dev/null 2>&1 || true',
-            '  [[ -n "$MELIX_WATCHDOG_SWIFT_WORKER_PID" ]] && kill "$MELIX_WATCHDOG_SWIFT_WORKER_PID" >/dev/null 2>&1 || true',
-            '  [[ -n "$MELIX_WATCHDOG_PYTHON_WORKER_PID" ]] && kill "$MELIX_WATCHDOG_PYTHON_WORKER_PID" >/dev/null 2>&1 || true',
-            '  rm -f "$MELIX_WORKER_SOCKET_PATH" "$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"',
-            ') >/dev/null 2>&1 &',
-            f'exec "$RESOURCES_DIR/{bundled_app_binary_name}" "$@"',
+            ') >>"$MELIX_LOGS_DIR/launcher-cleanup.log" 2>&1 &',
+            'MELIX_WATCHDOG_PID=$!',
+            'set +e',
+            'wait "$MELIX_APP_PROCESS_PID"',
+            'MELIX_APP_EXIT_STATUS=$?',
+            'set -e',
+            'wait "$MELIX_WATCHDOG_PID" >/dev/null 2>&1 || true',
+            'MELIX_WATCHDOG_PID=""',
+            'exit "$MELIX_APP_EXIT_STATUS"',
             "",
         ]
     )
@@ -543,6 +927,13 @@ def render_native_launcher_source(*, script_relative_path: str) -> str:
             "        scriptArgv[index + 1] = argv[index];",
             "    }",
             "    scriptArgv[argc + 1] = NULL;",
+            "    long maximumFileDescriptor = sysconf(_SC_OPEN_MAX);",
+            "    if (maximumFileDescriptor < 0) {",
+            "        maximumFileDescriptor = 1024;",
+            "    }",
+            "    for (int fileDescriptor = 3; fileDescriptor < maximumFileDescriptor; fileDescriptor += 1) {",
+            "        close(fileDescriptor);",
+            "    }",
             '    execv("/bin/bash", scriptArgv);',
             '    perror("execv /bin/bash Melix launcher script");',
             "    return 127;",
@@ -899,6 +1290,7 @@ def write_unsigned_macos_app_bundle(
     cli_executable_path: str | Path,
     control_plane_executable_path: str | Path,
     swift_text_worker_executable_path: str | Path,
+    computer_broker_executable_path: str | Path,
     swift_mlx_metallib_path: str | Path,
     swift_mlx_metallib_version: str,
     python_runtime_root: str | Path,
@@ -931,6 +1323,9 @@ def write_unsigned_macos_app_bundle(
     cli_executable = Path(cli_executable_path).expanduser().resolve()
     control_plane_executable = Path(control_plane_executable_path).expanduser().resolve()
     swift_worker_executable = Path(swift_text_worker_executable_path).expanduser().resolve()
+    computer_broker_executable = (
+        Path(computer_broker_executable_path).expanduser().resolve()
+    )
     swift_mlx_metallib = Path(swift_mlx_metallib_path).expanduser().resolve()
     normalized_swift_mlx_metallib_version = swift_mlx_metallib_version.strip()
     python_runtime = Path(python_runtime_root).expanduser().resolve()
@@ -1024,6 +1419,11 @@ def write_unsigned_macos_app_bundle(
         raise FileNotFoundError(f"Missing Melix control-plane executable: {control_plane_executable}")
     if not swift_worker_executable.is_file():
         raise FileNotFoundError(f"Missing Swift text worker executable: {swift_worker_executable}")
+    if not computer_broker_executable.is_file():
+        raise FileNotFoundError(
+            "Missing Computer Use broker executable: "
+            f"{computer_broker_executable}"
+        )
     if not swift_mlx_metallib.is_file():
         raise FileNotFoundError(f"Missing Swift MLX metallib: {swift_mlx_metallib}")
     if not normalized_swift_mlx_metallib_version:
@@ -1058,6 +1458,10 @@ def write_unsigned_macos_app_bundle(
     layout.macos_path.mkdir(parents=True, exist_ok=True)
     layout.resources_path.mkdir(parents=True, exist_ok=True)
     layout.frameworks_path.mkdir(parents=True, exist_ok=True)
+    layout.bundled_computer_broker_binary_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     started_at = time.perf_counter()
     shutil.copy2(executable, layout.bundled_app_binary_path)
@@ -1071,6 +1475,12 @@ def write_unsigned_macos_app_bundle(
     started_at = time.perf_counter()
     shutil.copy2(swift_worker_executable, layout.bundled_swift_worker_binary_path)
     timings["copy_swift_worker_binary_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
+    shutil.copy2(
+        computer_broker_executable,
+        layout.bundled_computer_broker_binary_path,
+    )
+    timings["copy_computer_broker_binary_seconds"] = elapsed_seconds(started_at)
     started_at = time.perf_counter()
     layout.bundled_swift_mlx_metallib_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(swift_mlx_metallib, layout.bundled_swift_mlx_metallib_path)
@@ -1109,6 +1519,7 @@ def write_unsigned_macos_app_bundle(
             layout.bundled_cli_binary_path,
             layout.bundled_control_plane_binary_path,
             layout.bundled_swift_worker_binary_path,
+            layout.bundled_computer_broker_binary_path,
         ]
     )
     timings["strip_swift_binaries_seconds"] = elapsed_seconds(started_at)
@@ -1243,6 +1654,15 @@ def write_unsigned_macos_app_bundle(
             minimum_system_version=minimum_system_version,
         )
     )
+    layout.bundled_computer_broker_plist_path.write_bytes(
+        render_background_helper_info_plist(
+            helper_name="MelixComputerUseBroker",
+            executable_name=layout.bundled_computer_broker_binary_path.name,
+            bundle_id=f"{bundle_id}.computer-broker",
+            version=version,
+            minimum_system_version=minimum_system_version,
+        )
+    )
     layout.launcher_script_path.write_text(
         render_launcher_script(
             app_name=app_name,
@@ -1251,6 +1671,11 @@ def write_unsigned_macos_app_bundle(
             bundled_cli_binary_name=layout.bundled_cli_binary_path.name,
             bundled_control_plane_binary_name=layout.bundled_control_plane_binary_path.name,
             bundled_swift_worker_binary_name=layout.bundled_swift_worker_binary_path.name,
+            bundled_computer_broker_binary_relative_path=(
+                layout.bundled_computer_broker_binary_path.relative_to(
+                    layout.resources_path
+                ).as_posix()
+            ),
             bundled_python_executable_relative_path=layout.bundled_python_executable_path.relative_to(layout.resources_path).as_posix(),
             bundled_site_packages_relative_path=layout.bundled_site_packages_path.relative_to(layout.resources_path).as_posix(),
             wait_script_relative_path=layout.bundled_wait_script_path.relative_to(layout.resources_path).as_posix(),
@@ -1281,6 +1706,7 @@ def write_unsigned_macos_app_bundle(
         layout.bundled_cli_binary_path,
         layout.bundled_control_plane_binary_path,
         layout.bundled_swift_worker_binary_path,
+        layout.bundled_computer_broker_binary_path,
         layout.bundled_python_executable_path,
     ):
         os.chmod(path, 0o755)
@@ -1296,6 +1722,15 @@ def write_unsigned_macos_app_bundle(
         "bundled_cli_binary_path": str(layout.bundled_cli_binary_path),
         "bundled_control_plane_binary_path": str(layout.bundled_control_plane_binary_path),
         "bundled_swift_worker_binary_path": str(layout.bundled_swift_worker_binary_path),
+        "bundled_computer_broker_binary_path": str(
+            layout.bundled_computer_broker_binary_path
+        ),
+        "bundled_computer_broker_bundle_path": str(
+            layout.bundled_computer_broker_bundle_path
+        ),
+        "bundled_computer_broker_plist_path": str(
+            layout.bundled_computer_broker_plist_path
+        ),
         "bundled_swift_mlx_metallib_path": str(layout.bundled_swift_mlx_metallib_path),
         "swift_mlx_metallib_link_path": str(layout.swift_mlx_metallib_link_path),
         "swift_mlx_metallib_version": normalized_swift_mlx_metallib_version,
@@ -1411,6 +1846,9 @@ def macos_code_signing_plan(app_path: str | Path) -> list[MacOSCodeSigningTarget
 
     app = Path(app_path).expanduser().resolve()
     sparkle_framework = app / "Contents/Frameworks/Sparkle.framework"
+    computer_broker_helper = (
+        app / "Contents/Resources/MelixComputerUseBroker.app"
+    )
     plan: list[MacOSCodeSigningTarget] = []
     if sparkle_framework.exists():
         fixed_targets = [
@@ -1457,6 +1895,13 @@ def macos_code_signing_plan(app_path: str | Path) -> list[MacOSCodeSigningTarget
         )
         for path in other_macho_targets
     )
+    if computer_broker_helper.exists():
+        plan.append(
+            MacOSCodeSigningTarget(
+                computer_broker_helper,
+                "computer_broker_helper_app",
+            )
+        )
     plan.append(MacOSCodeSigningTarget(app, "outer_app"))
     return plan
 

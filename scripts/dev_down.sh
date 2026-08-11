@@ -35,12 +35,18 @@ if len(normalized) > 32:
     digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:8]
     normalized = f"{normalized[:23].rstrip('-')}-{digest}"
 repo_hash = hashlib.sha1(str(repo_root).encode("utf-8")).hexdigest()[:10]
-print(socket_dir / f"melix-{normalized}-{repo_hash}-{role}.sock")
+if role == "computer":
+    print(socket_dir / f"melix-{normalized}-{repo_hash}-computer" / "broker.sock")
+else:
+    print(socket_dir / f"melix-{normalized}-{repo_hash}-{role}.sock")
 PY
 }
 PYTHON_SOCKET_PATH="${MELIX_WORKER_SOCKET_PATH:-$(default_socket_path python)}"
 SWIFT_TEXT_WORKER_SOCKET_PATH="${MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH:-$(default_socket_path swift)}"
 SWIFT_VISION_WORKER_SOCKET_PATH="${MELIX_SWIFT_VISION_WORKER_SOCKET_PATH:-$(default_socket_path swift-vision)}"
+CONTROL_PLANE_SOCKET_PATH="${MELIX_CONTROL_PLANE_SOCKET_PATH:-$(default_socket_path controlplane)}"
+COMPUTER_BROKER_SOCKET_PATH="${MELIX_COMPUTER_BROKER_SOCKET:-$(default_socket_path computer)}"
+COMPUTER_BROKER_CAPABILITY_PATH="${MELIX_COMPUTER_BROKER_VERIFICATION_CAPABILITY_FILE:-$RUNTIME_DIR/computer-broker-capability.bin}"
 CONTROL_PLANE_METRICS_PATH="${MELIX_CONTROL_PLANE_METRICS_PATH:-$RUNTIME_DIR/control-plane-metrics.json}"
 SWIFT_TEXT_WORKER_METRICS_PATH="${MELIX_SWIFT_TEXT_WORKER_METRICS_PATH:-$RUNTIME_DIR/swift-text-worker-metrics.json}"
 SWIFT_VISION_WORKER_METRICS_PATH="${MELIX_SWIFT_VISION_WORKER_METRICS_PATH:-$RUNTIME_DIR/swift-vision-worker-metrics.json}"
@@ -71,6 +77,7 @@ stop_pid_file() {
 }
 
 stop_pid_file "$RUNTIME_DIR/menubar.pid"
+stop_pid_file "$RUNTIME_DIR/computer-broker.pid"
 stop_pid_file "$RUNTIME_DIR/control-plane.pid"
 stop_pid_file "$RUNTIME_DIR/python-worker.pid"
 stop_pid_file "$RUNTIME_DIR/swift-vision-worker.pid"
@@ -80,6 +87,9 @@ rm -f \
   "$PYTHON_SOCKET_PATH" \
   "$SWIFT_TEXT_WORKER_SOCKET_PATH" \
   "$SWIFT_VISION_WORKER_SOCKET_PATH" \
+  "$CONTROL_PLANE_SOCKET_PATH" \
+  "$COMPUTER_BROKER_SOCKET_PATH" \
+  "$COMPUTER_BROKER_CAPABILITY_PATH" \
   "$CONTROL_PLANE_METRICS_PATH" \
   "$SWIFT_TEXT_WORKER_METRICS_PATH" \
   "$SWIFT_VISION_WORKER_METRICS_PATH" \

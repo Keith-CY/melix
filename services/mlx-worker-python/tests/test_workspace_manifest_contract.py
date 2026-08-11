@@ -648,6 +648,16 @@ def test_proto_gen_rewrites_workspace_python_imports() -> None:
     ) in proto_gen
 
 
+def test_proto_gen_pins_every_grpc_tools_invocation_to_python_312() -> None:
+    proto_gen = (ROOT / "scripts/proto_gen.sh").read_text(encoding="utf-8")
+    grpc_tools_commands = [
+        line for line in proto_gen.splitlines() if "grpc_tools.protoc" in line
+    ]
+
+    assert len(grpc_tools_commands) == 4
+    assert all("--python 3.12" in line for line in grpc_tools_commands)
+
+
 def _write_manifest(tmp_path: Path, mutate: object) -> Path:
     manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
     mutate(manifest)

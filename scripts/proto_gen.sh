@@ -15,6 +15,7 @@ PROTOCOL_MODULE_CACHE_PATH="$CLANG_MODULE_CACHE_PATH/protocol"
 PYTHON_PROJECT="$ROOT_DIR/services/mlx-worker-python"
 
 PROTO_FILES=(
+  "$SCHEMA_DIR/computer/v1/computer.proto"
   "$SCHEMA_DIR/controlplane/v1/control_plane.proto"
   "$SCHEMA_DIR/workspace/v1/export_target_manifest.proto"
   "$SCHEMA_DIR/workspace/v1/workspace_manifest.proto"
@@ -23,6 +24,7 @@ PROTO_FILES=(
   "$SCHEMA_DIR/worker/v1/inference.proto"
   "$SCHEMA_DIR/worker/v1/cache.proto"
   "$SCHEMA_DIR/worker/v1/maintenance.proto"
+  "$SCHEMA_DIR/worker/v1/tool_runtime.proto"
 )
 
 mkdir -p "$SWIFT_OUT" "$PYTHON_OUT" "$DESCRIPTOR_OUT"
@@ -69,25 +71,28 @@ if [[ ! -x "$GRPC_SWIFT_PLUGIN_BIN" ]]; then
   exit 1
 fi
 
-UV_CACHE_DIR="$UV_CACHE_DIR" uv run --project "$PYTHON_PROJECT" python -m grpc_tools.protoc \
+UV_CACHE_DIR="$UV_CACHE_DIR" uv run --project "$PYTHON_PROJECT" --python 3.12 python -m grpc_tools.protoc \
   --plugin="protoc-gen-swift=$SWIFT_PLUGIN_BIN" \
   --proto_path="$SCHEMA_DIR" \
   --swift_opt=Visibility=Public \
   --swift_out="$SWIFT_OUT" \
   "${PROTO_FILES[@]}"
 
-UV_CACHE_DIR="$UV_CACHE_DIR" uv run --project "$PYTHON_PROJECT" python -m grpc_tools.protoc \
+UV_CACHE_DIR="$UV_CACHE_DIR" uv run --project "$PYTHON_PROJECT" --python 3.12 python -m grpc_tools.protoc \
   --plugin="protoc-gen-grpc-swift-2=$GRPC_SWIFT_PLUGIN_BIN" \
   --proto_path="$SCHEMA_DIR" \
   --grpc-swift-2_opt=Visibility=Public \
   --grpc-swift-2_opt=Availability=macOS\ 15.0 \
   --grpc-swift-2_out="$SWIFT_OUT" \
+  "$SCHEMA_DIR/computer/v1/computer.proto" \
+  "$SCHEMA_DIR/controlplane/v1/control_plane.proto" \
   "$SCHEMA_DIR/worker/v1/runtime.proto" \
   "$SCHEMA_DIR/worker/v1/inference.proto" \
   "$SCHEMA_DIR/worker/v1/cache.proto" \
-  "$SCHEMA_DIR/worker/v1/maintenance.proto"
+  "$SCHEMA_DIR/worker/v1/maintenance.proto" \
+  "$SCHEMA_DIR/worker/v1/tool_runtime.proto"
 
-UV_CACHE_DIR="$UV_CACHE_DIR" uv run --project "$PYTHON_PROJECT" python -m grpc_tools.protoc \
+UV_CACHE_DIR="$UV_CACHE_DIR" uv run --project "$PYTHON_PROJECT" --python 3.12 python -m grpc_tools.protoc \
   --proto_path="$SCHEMA_DIR" \
   --python_out="$PYTHON_OUT" \
   --grpc_python_out="$PYTHON_OUT" \
@@ -99,6 +104,7 @@ from pathlib import Path
 
 python_out = Path(os.environ["PYTHON_OUT_PATH"])
 replacements = {
+    "from computer.v1 import ": "from packages.protocol.python.computer.v1 import ",
     "from worker.v1 import ": "from packages.protocol.python.worker.v1 import ",
     "from controlplane.v1 import ": "from packages.protocol.python.controlplane.v1 import ",
     "from workspace.v1 import ": "from packages.protocol.python.workspace.v1 import ",
@@ -113,7 +119,7 @@ for path in python_out.rglob("*.py"):
         path.write_text(updated)
 PY
 
-UV_CACHE_DIR="$UV_CACHE_DIR" uv run --project "$PYTHON_PROJECT" python -m grpc_tools.protoc \
+UV_CACHE_DIR="$UV_CACHE_DIR" uv run --project "$PYTHON_PROJECT" --python 3.12 python -m grpc_tools.protoc \
   --proto_path="$SCHEMA_DIR" \
   --include_imports \
   --descriptor_set_out="$DESCRIPTOR_OUT/melix.pb" \

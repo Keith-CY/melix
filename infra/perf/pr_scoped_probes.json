@@ -5475,37 +5475,37 @@
         "key": "no_op_reason_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_empty_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_none_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_valid_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_invalid_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "env_parse_empty_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "mode_parse_invalid_overhead_pct",
@@ -5516,13 +5516,13 @@
         "key": "evidence_policy_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "debug_policy_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_abs": 2e-05
+        "warn_abs": 0.00002
       },
       {
         "key": "evidence_policy_overhead_pct",
@@ -6955,16 +6955,16 @@
         "warn_abs": 1.0
       },
       {
-      "key": "mlx_active_peak_delta_reduction_bytes",
-      "unit": "bytes",
-      "direction": "higher_is_better",
-      "warn_pct": 5.0
+        "key": "mlx_active_peak_delta_reduction_bytes",
+        "unit": "bytes",
+        "direction": "higher_is_better",
+        "warn_pct": 5.0
       },
       {
-      "key": "mlx_reported_peak_delta_reduction_bytes",
-      "unit": "bytes",
-      "direction": "higher_is_better",
-      "warn_pct": 5.0
+        "key": "mlx_reported_peak_delta_reduction_bytes",
+        "unit": "bytes",
+        "direction": "higher_is_better",
+        "warn_pct": 5.0
       },
       {
         "key": "process_resident_peak_delta_reduction_bytes",
@@ -8015,6 +8015,221 @@
         "direction": "lower_is_better",
         "warn_pct": 0.0,
         "warn_abs": 0.0
+      }
+    ]
+  },
+  {
+    "id": "mcp-client-typed-lifecycle-dispatch",
+    "name": "MCP client typed lifecycle dispatch",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/mcp_client.py",
+      "services/mlx-worker-python/worker/runtime/tool_execution_runtime.py",
+      "services/mlx-worker-python/worker/grpc_server.py",
+      "services/mlx-worker-python/tests/test_mcp_client.py",
+      "services/mlx-worker-python/tests/test_tool_execution_runtime.py",
+      "services/mlx-worker-python/tests/test_tool_runtime_service.py",
+      "services/mlx-worker-python/tests/test_runtime_edges.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/mcp_client_lifecycle_probe.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_mcp_client.py::test_active_stdio_call_cancels_and_connection_remains_usable services/mlx-worker-python/tests/test_mcp_client.py::test_active_cancel_reports_only_acknowledged_sdk_task_cancellation services/mlx-worker-python/tests/test_mcp_client.py::test_manager_metrics_snapshot_tracks_latency_reconnect_and_schema_changes services/mlx-worker-python/tests/test_mcp_client.py::test_http_source_rejects_url_userinfo_and_fragments services/mlx-worker-python/tests/test_mcp_client.py::test_http_source_requires_environment_references_for_credentials services/mlx-worker-python/tests/test_mcp_client.py::test_resolved_http_header_credential_is_enforced_in_result_redaction services/mlx-worker-python/tests/test_tool_execution_runtime.py::test_runtime_metrics_measure_only_dispatched_adapter_cancellations services/mlx-worker-python/tests/test_tool_execution_runtime.py::test_run_cancel_at_computer_commit_boundary_preserves_final_evidence services/mlx-worker-python/tests/test_tool_runtime_service.py::test_worker_tool_service_exports_typed_agent_runtime_metrics services/mlx-worker-python/tests/test_tool_runtime_service.py::test_worker_tool_service_lists_and_executes_real_mcp_source services/mlx-worker-python/tests/test_runtime_edges.py::test_build_server_and_main_bootstrap services/mlx-worker-python/tests/test_runtime_edges.py::test_bootstrap_metrics_exporter_writes_atomically services/mlx-worker-python/tests/test_runtime_edges.py::test_bootstrap_metrics_exporter_is_noop_without_export_path services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_mcp_client_lifecycle_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mcp_client_lifecycle_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mcp_client_lifecycle_probe_registration_has_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_mcp_client.py services/mlx-worker-python/tests/test_tool_execution_runtime.py services/mlx-worker-python/tests/test_tool_runtime_service.py services/mlx-worker-python/tests/test_runtime_edges.py::test_build_server_and_main_bootstrap services/mlx-worker-python/tests/test_runtime_edges.py::test_bootstrap_metrics_exporter_writes_atomically services/mlx-worker-python/tests/test_runtime_edges.py::test_bootstrap_metrics_exporter_is_noop_without_export_path services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_mcp_client_lifecycle_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mcp_client_lifecycle_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mcp_client_lifecycle_probe_registration_has_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_agent_runtime_control_surface_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_runtime_control_surface_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_runtime_control_surface_probe_has_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_agent_worker_cancellation_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_worker_cancellation_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_worker_cancellation_probe_has_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_new_agent_probe_scripts_emit_explicit_missing_feature_baselines services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_new_python_probe_commands_distinguish_base_and_head_repositories services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_control_probe_command_has_base_compatible_feature_fallback services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/mcp_client.py services/mlx-worker-python/worker/runtime/tool_execution_runtime.py services/mlx-worker-python/worker/grpc_server.py services/mlx-worker-python/tests/test_mcp_client.py services/mlx-worker-python/tests/test_tool_execution_runtime.py services/mlx-worker-python/tests/test_tool_runtime_service.py services/mlx-worker-python/tests/test_runtime_edges.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/mcp_client_lifecycle_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_MCP_LIFECYCLE_PROBE_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python python3 -c 'import os,runpy; script=next((candidate for candidate in (\"../head/scripts/mcp_client_lifecycle_probe.py\", os.path.join(os.environ.get(\"GITHUB_WORKSPACE\", \"\"), \"head/scripts/mcp_client_lifecycle_probe.py\"), \"scripts/mcp_client_lifecycle_probe.py\") if os.path.isfile(candidate)), None); script or (_ for _ in ()).throw(SystemExit(\"missing MCP lifecycle probe script\")); namespace=runpy.run_path(script); raise SystemExit(namespace[\"main\"]())'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "initialize_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0,
+        "warn_abs": 0.02
+      },
+      {
+        "key": "list_tools_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0,
+        "warn_abs": 0.01
+      },
+      {
+        "key": "call_tool_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0,
+        "warn_abs": 0.01
+      },
+      {
+        "key": "cancel_propagation_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0,
+        "warn_abs": 0.01
+      },
+      {
+        "key": "metrics_snapshot_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0,
+        "warn_abs": 0.01
+      },
+      {
+        "key": "operation_count",
+        "unit": "calls",
+        "direction": "informational"
+      },
+      {
+        "key": "feature_available_count",
+        "unit": "features",
+        "direction": "informational"
+      }
+    ]
+  },
+  {
+    "id": "agent-worker-cancellation-computer-use",
+    "name": "Agent worker cancellation and Computer Use dispatch",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/tool_execution_runtime.py",
+      "services/mlx-worker-python/worker/runtime/computer_use_adapter.py",
+      "services/mlx-worker-python/worker/runtime/computer_use_client.py",
+      "services/mlx-worker-python/worker/control_plane_bridge.py",
+      "services/mlx-worker-python/worker/grpc_server.py",
+      "services/mlx-worker-python/tests/test_tool_execution_runtime.py",
+      "services/mlx-worker-python/tests/test_computer_use_adapter.py",
+      "services/mlx-worker-python/tests/test_computer_use_client.py",
+      "services/mlx-worker-python/tests/test_tool_runtime_service.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "packages/protocol/schema/worker/v1/tool_runtime.proto",
+      "packages/protocol/schema/computer/**",
+      "scripts/agent_worker_cancellation_probe.py",
+      "infra/perf/pr_scoped_probes.json",
+      "docs/plans/2026-07-31-live-agent-mcp-approval-computer-use.md",
+      "docs/unified-agentic-tool-runtime-contract.md"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_tool_execution_runtime.py::test_runtime_metrics_measure_only_dispatched_adapter_cancellations services/mlx-worker-python/tests/test_tool_execution_runtime.py::test_run_cancel_at_computer_commit_boundary_preserves_final_evidence services/mlx-worker-python/tests/test_tool_execution_runtime.py::test_untrusted_mcp_schema_cannot_reuse_trusted_validator_cache services/mlx-worker-python/tests/test_computer_use_adapter.py::test_run_cancellation_closes_sessions_without_an_active_action services/mlx-worker-python/tests/test_computer_use_adapter.py::test_run_cancellation_retains_newest_session_authorization services/mlx-worker-python/tests/test_computer_use_adapter.py::test_rejected_newer_authorization_does_not_poison_session_cleanup services/mlx-worker-python/tests/test_tool_runtime_service.py::test_worker_tool_service_exports_typed_agent_runtime_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_agent_worker_cancellation_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_worker_cancellation_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_worker_cancellation_probe_has_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_tool_execution_runtime.py services/mlx-worker-python/tests/test_computer_use_adapter.py services/mlx-worker-python/tests/test_computer_use_client.py services/mlx-worker-python/tests/test_tool_runtime_service.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_mcp_client_lifecycle_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mcp_client_lifecycle_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_mcp_client_lifecycle_probe_registration_has_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_agent_runtime_control_surface_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_runtime_control_surface_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_runtime_control_surface_probe_has_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_agent_worker_cancellation_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_worker_cancellation_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_worker_cancellation_probe_has_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_new_agent_probe_scripts_emit_explicit_missing_feature_baselines services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_new_python_probe_commands_distinguish_base_and_head_repositories services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_agent_control_probe_command_has_base_compatible_feature_fallback services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/tool_execution_runtime.py services/mlx-worker-python/worker/runtime/computer_use_adapter.py services/mlx-worker-python/worker/runtime/computer_use_client.py services/mlx-worker-python/tests/test_tool_execution_runtime.py services/mlx-worker-python/tests/test_computer_use_adapter.py services/mlx-worker-python/tests/test_computer_use_client.py services/mlx-worker-python/tests/test_tool_runtime_service.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/agent_worker_cancellation_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_AGENT_WORKER_PROBE_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python python3 -c 'import os,runpy; script=next((candidate for candidate in (\"../head/scripts/agent_worker_cancellation_probe.py\", os.path.join(os.environ.get(\"GITHUB_WORKSPACE\", \"\"), \"head/scripts/agent_worker_cancellation_probe.py\"), \"scripts/agent_worker_cancellation_probe.py\") if os.path.isfile(candidate)), None); script or (_ for _ in ()).throw(SystemExit(\"missing Agent worker cancellation probe script\")); namespace=runpy.run_path(script); raise SystemExit(namespace[\"main\"]())'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "run_cancel_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0,
+        "warn_abs": 0.05
+      },
+      {
+        "key": "idempotent_cancel_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0,
+        "warn_abs": 0.02
+      },
+      {
+        "key": "worker_to_adapter_cancel_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 10.0,
+        "warn_abs": 0.02
+      },
+      {
+        "key": "adapter_dispatch_count",
+        "unit": "calls",
+        "direction": "informational"
+      },
+      {
+        "key": "iteration_count",
+        "unit": "calls",
+        "direction": "informational"
+      },
+      {
+        "key": "feature_available_count",
+        "unit": "features",
+        "direction": "informational"
+      }
+    ]
+  },
+  {
+    "id": "agent-runtime-control-surface",
+    "name": "Agent runtime approval cancellation Computer Use and desktop control surface",
+    "runner": "macos-15",
+    "watch_globs": [
+      "services/control-plane-swift/Sources/AgentRuntime/**",
+      "services/control-plane-swift/Sources/Requests/MCPToolCatalog.swift",
+      "services/control-plane-swift/Sources/XPCService/ControlPlaneService.swift",
+      "services/control-plane-swift/Sources/XPCService/ControlPlaneIPCTransport.swift",
+      "services/control-plane-swift/Sources/WorkerClient/PythonBridgeWorkerClient.swift",
+      "services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneAgentRuntimeTests.swift",
+      "services/control-plane-swift/Tests/ControlPlaneTests/AgentAdapterBoundaryTests.swift",
+      "services/control-plane-swift/Tests/ControlPlaneTests/AgentRunCoordinatorTests.swift",
+      "services/control-plane-swift/Tests/ControlPlaneTests/AgentRuntimeMetricsObserverTests.swift",
+      "services/control-plane-swift/Tests/ControlPlaneTests/ApprovalPolicyStoreTests.swift",
+      "services/control-plane-swift/Tests/ControlPlaneTests/ComputerUseToolAuthorizationTests.swift",
+      "services/control-plane-swift/Tests/ControlPlaneTests/ControlPlaneServiceTests.swift",
+      "services/control-plane-swift/Tests/ControlPlaneTests/MCPToolCatalogTests.swift",
+      "services/computer-use-broker-swift/Sources/**",
+      "services/computer-use-broker-swift/Tests/**",
+      "Sources/MelixCLICore/**",
+      "Sources/MelixCLI/**",
+      "Sources/MelixSessionLifecycleSmoke/**",
+      "tests/MelixCLITests/**",
+      "apps/macos-menubar/Sources/AppMain/**",
+      "apps/macos-menubar/Tests/MenuBarTests/**",
+      "packages/protocol/schema/controlplane/v1/control_plane.proto",
+      "packages/protocol/schema/computer/**",
+      "scripts/agent_runtime_control_surface_probe.py",
+      "scripts/swift_changed_scope_coverage.py",
+      "services/mlx-worker-python/tests/test_swift_changed_scope_coverage.py",
+      "tests/integration/test_agent_mcp_worker_e2e.py",
+      "tests/integration/fixtures/agent_mcp_stdio_server.py",
+      "infra/perf/pr_scoped_probes.json",
+      "docs/plans/2026-07-31-live-agent-mcp-approval-computer-use.md",
+      "docs/unified-agentic-tool-runtime-contract.md",
+      "docs/window-ui-product-spec.md"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_swift_changed_scope_coverage.py && swift test --filter 'LocalRuntimeFactoryTests' && swift test --package-path services/control-plane-swift --no-parallel --filter 'MCPToolCatalogTests|blockedSnapshotFlushFailurePreservesOneTerminalTruth|agentOperationsReturnsLiveRuntimeReadModel|agentOperationsReportsEmptyComputerTargetDiscovery|agentOperationsReportsComputerTargetDiscoveryFailure|agentOperationsReportsComputerTargetDiscoveryNotRequested|exactBinding|longRunDeadlineIsCappedPerBrokerRequest|failClosedInputs|approvalOperationPresentationMatchesPolicyContext|approvalScopePresentationDistinguishesPolicyAndCallTargets|approvalArgumentReviewBoundsAreExplicit|approvalDeadlineExpiresBeforeDecisionPersistence|cancellationReachesActiveModelTransport|corruptCancellationJournalStillStopsLiveRun|cancellationPersistenceFailureDoesNotCacheSuccess' && swift test --package-path services/computer-use-broker-swift --filter 'agedAuthorizationOnlyCancelsSessionOverRealUDS|signedAuthorizationVerifierFailsClosed|sessionCancellationClosesIdleSession|sessionCancellationBoundariesAreTyped' && swift test --package-path apps/macos-menubar --filter 'actStartsTypedAgentRunAndNewChatResetsToAsk|computerTargetDiscoveryPresentationIsTruthful|agentApprovalPolicyRefreshAndRevokeUsesCAS|agentOperationsRefreshUsesTypedRuntimeSnapshot|chatStopRecordsBackendCancellationBeforeLeavingStreamingState|agentApprovalAndStopWaitForBoundTypedReceipts'",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage erase && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_swift_changed_scope_coverage.py && swift run --package-path services/computer-use-broker-swift melix-computer-broker --version && swift test --enable-code-coverage && swift test --package-path services/control-plane-swift --enable-code-coverage --no-parallel && swift test --package-path services/computer-use-broker-swift --enable-code-coverage && swift package --package-path services/computer-use-broker-swift --scratch-path services/computer-use-broker-swift/.build/native-focus-coverage clean && MELIX_RUN_NATIVE_FOCUS_ACCEPTANCE=1 swift test --package-path services/computer-use-broker-swift --scratch-path services/computer-use-broker-swift/.build/native-focus-coverage --enable-code-coverage --filter nativeFocusActivationAcceptance && swift test --package-path apps/macos-menubar --enable-code-coverage && MELIX_AGENT_MCP_E2E_ENABLE_SWIFT_COVERAGE=1 PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q tests/integration/test_agent_mcp_worker_e2e.py && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run --append scripts/swift_changed_scope_coverage.py --minimum 95 --package . --package services/control-plane-swift --package services/computer-use-broker-swift --package apps/macos-menubar --additional-profdata 'services/control-plane-swift=.build/agent-mcp-e2e/*/debug/codecov/default.profdata' --additional-profdata 'services/computer-use-broker-swift=services/computer-use-broker-swift/.build/native-focus-coverage/*/debug/codecov/default.profdata' --exclude-nonmeasurable 'services/control-plane-swift/Sources/Bootstrap/main.swift=SwiftPM test bundles do not link the @main daemon executable; verified by named-runtime readiness, trust-root, writer-lease, and shutdown acceptance' --exclude-nonmeasurable 'services/computer-use-broker-swift/Sources/ComputerUseBrokerCLI/main.swift=SwiftPM test bundles do not link the @main executable; verified by the broker --version smoke and named-runtime acceptance' && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage report --fail-under=95 --include='scripts/swift_changed_scope_coverage.py' >/dev/null",
+    "probe_command": "MELIX_AGENT_CONTROL_PROBE_REPO_ROOT=\"$PWD\" python3 -c 'import os,runpy; script=next((candidate for candidate in (\"../head/scripts/agent_runtime_control_surface_probe.py\", os.path.join(os.environ.get(\"GITHUB_WORKSPACE\", \"\"), \"head/scripts/agent_runtime_control_surface_probe.py\"), \"scripts/agent_runtime_control_surface_probe.py\") if os.path.isfile(candidate)), None); script or (_ for _ in ()).throw(SystemExit(\"missing Agent control-surface probe script\")); namespace=runpy.run_path(script); raise SystemExit(namespace[\"main\"]())'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "control_plane_test_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 15.0
+      },
+      {
+        "key": "computer_broker_test_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 15.0
+      },
+      {
+        "key": "desktop_test_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 15.0
+      },
+      {
+        "key": "total_test_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 15.0
+      },
+      {
+        "key": "component_count",
+        "unit": "components",
+        "direction": "informational"
+      },
+      {
+        "key": "feature_available_count",
+        "unit": "features",
+        "direction": "informational"
       }
     ]
   }

@@ -180,6 +180,58 @@ struct SessionLifecycleSmokeRunnerTests {
         #expect(output.contains("\"assistantText\" : \"Echo: confirm restart recovery\""))
     }
 
+    @Test("command renderer default daemon route fails closed on a missing socket")
+    func commandRendererDefaultDaemonRouteFailsClosed() async {
+        let missingSocket = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "melix-session-lifecycle-missing-\(UUID().uuidString).sock"
+            )
+
+        await #expect(throws: Error.self) {
+            _ = try await SessionLifecycleSmokeCommand.renderReport(
+                arguments: ["--json"],
+                environment: [
+                    "MELIX_CONTROL_PLANE_SOCKET_PATH": missingSocket.path
+                ]
+            )
+        }
+    }
+
+    @Test("command renderer default in-process route reaches isolated runtime")
+    func commandRendererDefaultInProcessRouteUsesIsolatedRuntime() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "melix-session-lifecycle-local-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        await #expect(throws: Error.self) {
+            _ = try await SessionLifecycleSmokeCommand.renderReport(
+                arguments: ["--json"],
+                environment: [
+                    "MELIX_HOME": root.appendingPathComponent("home").path,
+                    "MELIX_ACTIVE_RUNTIME_PATH": root
+                        .appendingPathComponent("missing-active-runtime.json")
+                        .path,
+                    "MELIX_WORKER_SOCKET_PATH": root
+                        .appendingPathComponent("missing-python-worker.sock")
+                        .path,
+                    "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": root
+                        .appendingPathComponent("missing-swift-worker.sock")
+                        .path,
+                    "MELIX_CONTROL_PLANE_METRICS_PATH": root
+                        .appendingPathComponent("metrics.json")
+                        .path,
+                ]
+            )
+        }
+    }
+
     @Test("command parser rejects missing values and unexpected arguments")
     func commandParserRejectsInvalidArguments() async throws {
         #expect(throws: MelixCLIError.missingValue("--server-session-id")) {
@@ -258,12 +310,21 @@ struct SessionLifecycleSmokeRunnerTests {
 
     @Test("local runtime factory honors explicit repo root and makeClient")
     func localRuntimeFactoryHonorsExplicitRepoRoot() async throws {
+        let melixHome = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "melix-local-runtime-factory-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: melixHome) }
+        let environment = [
+            "MELIX_REPO_ROOT": "/tmp/melix-explicit-root",
+            "MELIX_HOME": melixHome.path,
+        ]
         _ = MelixLocalRuntimeFactory.makeContext(
-            environment: ["MELIX_REPO_ROOT": "/tmp/melix-explicit-root"]
+            environment: environment
         )
 
         let client = MelixLocalRuntimeFactory.makeClient(
-            environment: ["MELIX_REPO_ROOT": "/tmp/melix-explicit-root"]
+            environment: environment
         )
         let handshake = try await client.handshake()
         #expect(!handshake.serverVersion.isEmpty)

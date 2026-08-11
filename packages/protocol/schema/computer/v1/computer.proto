@@ -1,0 +1,359 @@
+syntax = "proto3";
+
+package melix.computer.v1;
+
+service ComputerUseBrokerService {
+  rpc Handshake(BrokerHandshakeRequest) returns (BrokerHandshakeResponse);
+  rpc GetPermissions(GetPermissionsRequest) returns (PermissionSnapshot);
+  rpc ListTargets(ListComputerTargetsRequest) returns (ListComputerTargetsResponse);
+  rpc RequestPermission(PermissionPromptRequest) returns (PermissionPromptReceipt);
+  rpc OpenSession(OpenComputerSessionRequest) returns (ComputerSessionLease);
+  rpc CaptureFrame(CaptureFrameRequest) returns (CaptureFrameResponse);
+  rpc ExecuteAction(ExecuteComputerActionRequest) returns (stream ComputerActionEvent);
+  rpc CancelAction(CancelComputerActionRequest) returns (CancelComputerActionResponse);
+  rpc CancelSession(CancelComputerSessionRequest) returns (CancelComputerSessionResponse);
+  rpc CloseSession(CloseComputerSessionRequest) returns (CloseComputerSessionResponse);
+}
+
+message BrokerHandshakeRequest {
+  string protocol_version = 1;
+  string control_plane_instance_id = 2;
+  string caller_bundle_id = 3;
+  string caller_team_id = 4;
+  bytes caller_verification_capability = 5;
+}
+
+message BrokerHandshakeResponse {
+  string protocol_version = 1;
+  string broker_version = 2;
+  string broker_instance_id = 3;
+  repeated string features = 4;
+  PermissionSnapshot permissions = 5;
+}
+
+message ControlPlaneToolAuthorization {
+  string key_id = 1;
+  string algorithm = 2;
+  bytes signed_payload = 3;
+  bytes signature = 4;
+}
+
+message GetPermissionsRequest {
+  ControlPlaneToolAuthorization authorization = 1;
+  bytes caller_verification_capability = 2;
+}
+
+message ListComputerTargetsRequest {
+  ControlPlaneToolAuthorization authorization = 1;
+  bytes caller_verification_capability = 2;
+}
+
+message ListComputerTargetsResponse {
+  repeated TargetIdentity targets = 1;
+  int64 observed_at_unix_ms = 2;
+}
+
+enum PermissionState {
+  PERMISSION_STATE_UNSPECIFIED = 0;
+  PERMISSION_NOT_DETERMINED = 1;
+  PERMISSION_DENIED = 2;
+  PERMISSION_GRANTED = 3;
+  PERMISSION_RESTART_REQUIRED = 4;
+  PERMISSION_UNAVAILABLE = 5;
+}
+
+message PermissionSnapshot {
+  PermissionState screen_recording = 1;
+  PermissionState accessibility = 2;
+  bool coordinate_fallback_enabled = 3;
+  bool secure_field_actions_allowed = 4;
+  int64 observed_at_unix_ms = 5;
+}
+
+enum PermissionKind {
+  PERMISSION_KIND_UNSPECIFIED = 0;
+  PERMISSION_SCREEN_RECORDING = 1;
+  PERMISSION_ACCESSIBILITY = 2;
+}
+
+message PermissionPromptRequest {
+  PermissionKind kind = 1;
+  string actor_id = 2;
+  string operator_gesture_id = 3;
+  ControlPlaneToolAuthorization authorization = 4;
+  bytes caller_verification_capability = 5;
+}
+
+message PermissionPromptReceipt {
+  PermissionKind kind = 1;
+  bool prompt_requested = 2;
+  string disposition = 3;
+  PermissionSnapshot permissions = 4;
+}
+
+message ComputerSessionIdentity {
+  string agent_run_id = 1;
+  string request_id = 2;
+  string tool_call_id = 3;
+  string session_id = 4;
+  string branch_id = 5;
+  string actor_id = 6;
+}
+
+message TargetIdentity {
+  string bundle_id = 1;
+  int32 process_id = 2;
+  string process_launch_identity = 3;
+  uint32 window_id = 4;
+  string window_title = 5;
+  string application_name = 6;
+}
+
+message ComputerSessionLimits {
+  uint32 maximum_frames = 1;
+  uint32 maximum_actions = 2;
+  uint32 maximum_artifact_bytes = 3;
+  int64 idle_deadline_unix_ms = 4;
+  int64 absolute_deadline_unix_ms = 5;
+}
+
+message OpenComputerSessionRequest {
+  ComputerSessionIdentity identity = 1;
+  repeated TargetIdentity allowed_targets = 2;
+  string artifact_root = 3;
+  ComputerSessionLimits limits = 4;
+  string idempotency_key = 5;
+  ControlPlaneToolAuthorization authorization = 6;
+  bytes caller_verification_capability = 7;
+}
+
+message ComputerSessionLease {
+  ComputerSessionIdentity identity = 1;
+  bytes session_capability = 2;
+  string broker_instance_id = 3;
+  repeated TargetIdentity allowed_targets = 4;
+  ComputerSessionLimits limits = 5;
+  int64 opened_at_unix_ms = 6;
+}
+
+message CaptureFrameRequest {
+  ComputerSessionIdentity identity = 1;
+  bytes session_capability = 2;
+  TargetIdentity target = 3;
+  string capture_id = 4;
+  uint64 expected_previous_generation = 5;
+  int64 deadline_unix_ms = 6;
+  ControlPlaneToolAuthorization authorization = 7;
+  bytes caller_verification_capability = 8;
+}
+
+message ArtifactReference {
+  string artifact_id = 1;
+  string relative_path = 2;
+  string sha256 = 3;
+  string media_type = 4;
+  uint64 byte_length = 5;
+  uint32 width = 6;
+  uint32 height = 7;
+  string redaction_receipt_json = 8;
+}
+
+message ElementHandle {
+  string handle_id = 1;
+  uint64 frame_generation = 2;
+  string role = 3;
+  string title = 4;
+  bool secure = 5;
+  bool enabled = 6;
+}
+
+message CaptureFrameResponse {
+  ComputerSessionIdentity identity = 1;
+  TargetIdentity actual_target = 2;
+  string observation_id = 3;
+  uint64 frame_generation = 4;
+  ArtifactReference frame = 5;
+  repeated ElementHandle elements = 6;
+  string evidence_receipt_json = 7;
+}
+
+message ApprovalGrant {
+  string approval_id = 1;
+  string action_digest = 2;
+  string policy_hash = 3;
+  int64 approved_at_unix_ms = 4;
+  int64 expires_at_unix_ms = 5;
+  string actor_id = 6;
+  string scope = 7;
+  bytes verification_capability = 8 [deprecated = true];
+}
+
+message ObserveAction {}
+
+message PressElementAction {
+  ElementHandle element = 1;
+}
+
+message SetTextAction {
+  ElementHandle element = 1;
+  string text = 2;
+}
+
+message KeyPressAction {
+  repeated string modifiers = 1;
+  string key = 2;
+}
+
+message ScrollAction {
+  ElementHandle element = 1;
+  double delta_x = 2;
+  double delta_y = 3;
+}
+
+message PointerAction {
+  double normalized_x = 1;
+  double normalized_y = 2;
+  string button = 3;
+  uint32 click_count = 4;
+}
+
+message ExecuteComputerActionRequest {
+  ComputerSessionIdentity identity = 1;
+  bytes session_capability = 2;
+  TargetIdentity target = 3;
+  string action_id = 4;
+  uint64 attempt = 5;
+  string idempotency_key = 6;
+  string expected_observation_id = 7;
+  uint64 expected_frame_generation = 8;
+  int64 deadline_unix_ms = 9;
+  ApprovalGrant approval = 10;
+  ControlPlaneToolAuthorization authorization = 11;
+  bytes caller_verification_capability = 12;
+
+  oneof action {
+    ObserveAction observe = 20;
+    PressElementAction press_element = 21;
+    SetTextAction set_text = 22;
+    KeyPressAction key_press = 23;
+    ScrollAction scroll = 24;
+    PointerAction pointer = 25;
+  }
+}
+
+enum ComputerActionPhase {
+  COMPUTER_ACTION_PHASE_UNSPECIFIED = 0;
+  COMPUTER_ACTION_QUEUED = 1;
+  COMPUTER_ACTION_PRECONDITION_CHECKED = 2;
+  COMPUTER_ACTION_STARTED = 3;
+  COMPUTER_ACTION_BEFORE_OBSERVATION = 4;
+  COMPUTER_ACTION_COMMIT_STARTED = 5;
+  COMPUTER_ACTION_COMMITTED = 6;
+  COMPUTER_ACTION_AFTER_OBSERVATION = 7;
+  COMPUTER_ACTION_COMPLETED = 8;
+  COMPUTER_ACTION_CANCELLED = 9;
+  COMPUTER_ACTION_FAILED = 10;
+  COMPUTER_ACTION_HEARTBEAT = 11;
+}
+
+message ComputerActionResult {
+  string action_id = 1;
+  uint64 attempt = 2;
+  string status = 3;
+  TargetIdentity requested_target = 4;
+  TargetIdentity actual_target = 5;
+  string before_observation_id = 6;
+  string after_observation_id = 7;
+  repeated ArtifactReference artifacts = 8;
+  string adapter_kind = 9;
+  string action_mode = 10;
+  string evidence_receipt_json = 11;
+}
+
+message ComputerActionError {
+  string code = 1;
+  string message = 2;
+  bool retriable = 3;
+}
+
+message ComputerActionEvent {
+  ComputerSessionIdentity identity = 1;
+  string action_id = 2;
+  uint64 attempt = 3;
+  uint64 seq = 4;
+  ComputerActionPhase phase = 5;
+  int64 emitted_at_unix_ms = 6;
+  oneof payload {
+    ComputerActionResult result = 10;
+    ComputerActionError error = 11;
+  }
+}
+
+message CancelComputerActionRequest {
+  ComputerSessionIdentity identity = 1;
+  bytes session_capability = 2;
+  string action_id = 3;
+  uint64 attempt = 4;
+  string cancellation_id = 5;
+  ControlPlaneToolAuthorization authorization = 6;
+  bytes caller_verification_capability = 7;
+}
+
+enum ComputerCancellationDisposition {
+  COMPUTER_CANCELLATION_DISPOSITION_UNSPECIFIED = 0;
+  COMPUTER_CANCELLATION_ACCEPTED = 1;
+  COMPUTER_CANCELLATION_ALREADY_TERMINAL = 2;
+  COMPUTER_CANCELLATION_TOO_LATE = 3;
+  COMPUTER_CANCELLATION_NOT_FOUND = 4;
+  COMPUTER_CANCELLATION_SCOPE_MISMATCH = 5;
+}
+
+message CancelComputerActionResponse {
+  string action_id = 1;
+  uint64 attempt = 2;
+  string cancellation_id = 3;
+  ComputerCancellationDisposition disposition = 4;
+  bool side_effect_committed = 5;
+}
+
+enum ComputerSessionCancellationDisposition {
+  COMPUTER_SESSION_CANCELLATION_DISPOSITION_UNSPECIFIED = 0;
+  COMPUTER_SESSION_CANCELLATION_ACCEPTED = 1;
+  COMPUTER_SESSION_CANCELLATION_ALREADY_TERMINAL = 2;
+  COMPUTER_SESSION_CANCELLATION_NOT_FOUND = 3;
+  COMPUTER_SESSION_CANCELLATION_SCOPE_MISMATCH = 4;
+}
+
+message CancelComputerSessionRequest {
+  ComputerSessionIdentity identity = 1;
+  bytes session_capability = 2;
+  string cancellation_id = 3;
+  string reason = 4;
+  ControlPlaneToolAuthorization authorization = 5;
+  bytes caller_verification_capability = 6;
+}
+
+message CancelComputerSessionResponse {
+  string session_id = 1;
+  string cancellation_id = 2;
+  ComputerSessionCancellationDisposition disposition = 3;
+  repeated string cancelled_action_ids = 4;
+  repeated string too_late_action_ids = 5;
+  int64 cancelled_at_unix_ms = 6;
+}
+
+message CloseComputerSessionRequest {
+  ComputerSessionIdentity identity = 1;
+  bytes session_capability = 2;
+  string reason = 3;
+  ControlPlaneToolAuthorization authorization = 4;
+  string close_id = 5;
+  bytes caller_verification_capability = 6;
+}
+
+message CloseComputerSessionResponse {
+  string session_id = 1;
+  bool closed = 2;
+  uint32 invalidated_handle_count = 3;
+  int64 closed_at_unix_ms = 4;
+}

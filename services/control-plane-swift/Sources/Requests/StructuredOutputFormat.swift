@@ -89,14 +89,14 @@ public enum StructuredJSONValue: Sendable, Codable, Equatable {
             self = .array(try value.map(StructuredJSONValue.init(any:)))
         case let value as String:
             self = .string(value)
-        case let value as Bool:
-            self = .bool(value)
         case let value as NSNumber:
             if CFGetTypeID(value) == CFBooleanGetTypeID() {
                 self = .bool(value.boolValue)
             } else {
                 self = .number(value.doubleValue)
             }
+        case let value as Bool:
+            self = .bool(value)
         case _ as NSNull:
             self = .null
         default:

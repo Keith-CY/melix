@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import MelixCLICore
 import Testing
@@ -852,6 +853,7 @@ struct AppMainBootstrapTests {
                 "MELIX_REPO_ROOT": "/tmp/melix-root",
                 "MELIX_WORKER_SOCKET_PATH": "/tmp/python.sock",
                 "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": "/tmp/swift.sock",
+                "MELIX_CONTROL_PLANE_SOCKET_PATH": "/tmp/control-plane.sock",
                 "MELIX_MENU_BAR_STARTUP_SURFACE": "console",
                 "MELIX_MENU_BAR_PRESENTATION_MODE": "dock-and-tray",
                 "MELIX_MENU_BAR_TERMINATION_MODE": "dev-down-script",
@@ -860,8 +862,7 @@ struct AppMainBootstrapTests {
         )
 
         #expect(environment.repoRoot == "/tmp/melix-root")
-        #expect(environment.pythonWorkerSocketPath == "/tmp/python.sock")
-        #expect(environment.swiftTextWorkerSocketPath == "/tmp/swift.sock")
+        #expect(environment.controlPlaneSocketPath == "/tmp/control-plane.sock")
         #expect(environment.startupSurface == .console)
         #expect(environment.presentationMode == .dockAndTray)
         #expect(environment.terminationMode == .devDownScript)
@@ -882,8 +883,7 @@ struct AppMainBootstrapTests {
                 atPath: repoRootURL.appendingPathComponent("apps/macos-menubar/Package.swift").path
             )
         )
-        #expect(environment.pythonWorkerSocketPath == "/tmp/melix-worker.sock")
-        #expect(environment.swiftTextWorkerSocketPath == "/var/run/melix/swift-text-worker.sock")
+        #expect(environment.controlPlaneSocketPath == "/tmp/melix-controlplane.sock")
         #expect(environment.startupSurface == .console)
         #expect(environment.presentationMode == .tray)
         #expect(environment.terminationMode == .terminate)
@@ -914,7 +914,7 @@ struct AppMainBootstrapTests {
 
     @Test("bootstrap cli environment injects MelixHome-derived product paths")
     @MainActor
-    func bootstrapCLIEnvironmentInjectsMelixHomeDerivedProductPaths() {
+    func bootstrapCLIEnvironmentInjectsMelixHomeDerivedProductPaths() throws {
         let environment = MenuBarBootstrapEnvironment(
             environment: [
                 "MELIX_REPO_ROOT": "/tmp/melix-root",
@@ -922,7 +922,7 @@ struct AppMainBootstrapTests {
             ]
         )
 
-        let cliEnvironment = environment.cliEnvironment(
+        let cliEnvironment = try environment.cliEnvironment(
             base: [
                 "MELIX_HOME": "/tmp/melix-home",
             ]
@@ -941,9 +941,471 @@ struct AppMainBootstrapTests {
         #expect(cliEnvironment["MELIX_IMAGE_DEFAULTS_STORE_PATH"] == "/tmp/melix-home/config/image-defaults.json")
     }
 
+    @Test("bootstrap cli environment exposes only the control-plane endpoint")
+    @MainActor
+    func bootstrapCLIEnvironmentRemovesPrivateServiceEndpointsAndKeys() throws {
+        let environment = MenuBarBootstrapEnvironment(
+            environment: [
+                "MELIX_REPO_ROOT": "/tmp/melix-root",
+                "MELIX_CONTROL_PLANE_SOCKET_PATH": "/tmp/control-plane.sock",
+            ]
+        )
+        let privateKeys = [
+            "MELIX_WORKER_SOCKET_PATH",
+            "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH",
+            "MELIX_SWIFT_VISION_WORKER_SOCKET_PATH",
+            "MELIX_COMPUTER_BROKER_SOCKET",
+            "MELIX_COMPUTER_BROKER_CLIENT_INSTANCE_ID",
+            "MELIX_COMPUTER_BROKER_CALLER_BUNDLE_ID",
+            "MELIX_COMPUTER_BROKER_CALLER_TEAM_ID",
+            "MELIX_COMPUTER_BROKER_VERIFICATION_CAPABILITY_FILE",
+            "MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_FD",
+            "MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_FD",
+            "MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_BASE64",
+        ]
+        let cliEnvironment = try environment.cliEnvironment(
+            base: Dictionary(uniqueKeysWithValues: privateKeys.map { ($0, "secret") })
+        )
+
+        #expect(cliEnvironment["MELIX_CONTROL_PLANE_SOCKET_PATH"] == "/tmp/control-plane.sock")
+        for privateKey in privateKeys {
+            #expect(cliEnvironment[privateKey] == nil)
+        }
+    }
+
+    @Test("bootstrap cli preserves declared workflow keys and removes other role keys")
+    @MainActor
+    func bootstrapCLIEnvironmentUsesRoleAllowlist() throws {
+        let environment = MenuBarBootstrapEnvironment(
+            environment: [
+                "MELIX_REPO_ROOT": "/tmp/melix-root",
+                "MELIX_CONTROL_PLANE_SOCKET_PATH": "/tmp/control-plane.sock",
+            ]
+        )
+        let cliEnvironment = try environment.cliEnvironment(base: [
+            "MELIX_BATCH_RUN_ID": "batch-run",
+            "MELIX_ALLOWED_HOSTS": "public.example",
+            "MELIX_DEV_SPEECH_MODEL_PATH": "/tmp/speech-model",
+            "MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT": "1",
+        ])
+
+        #expect(cliEnvironment["MELIX_BATCH_RUN_ID"] == "batch-run")
+        #expect(cliEnvironment["MELIX_ALLOWED_HOSTS"] == nil)
+        #expect(cliEnvironment["MELIX_DEV_SPEECH_MODEL_PATH"] == nil)
+        #expect(cliEnvironment["MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT"] == nil)
+    }
+
+    @Test("bootstrap cli removes active MCP credential references from stdio and HTTP transports")
+    @MainActor
+    func bootstrapCLIEnvironmentRemovesDynamicMCPCredentials() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let configURL = root.appendingPathComponent("config/mcp-tools.json")
+        try FileManager.default.createDirectory(
+            at: configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        var nearMaximumDepth: Any = 0
+        for _ in 0..<126 {
+            nearMaximumDepth = [nearMaximumDepth]
+        }
+        let payload: [String: Any] = [
+            "unknown": Array(0..<16_000),
+            "near_maximum_depth": nearMaximumDepth,
+            "sources": [
+                ["source_id": "stdio", "transport": [
+                    "kind": "stdio",
+                    "command": "/usr/bin/true",
+                    "environment_references": ["TOKEN": "STDIO_SECRET"],
+                ], "enabled": true, "request_timeout_ms": 1],
+                ["source_id": "http", "transport": [
+                    "kind": "streamable_http",
+                    "url": "http://[::1]:12436/rpc",
+                    "headers": ["X-Melix-Client": "bootstrap-test"],
+                    "header_environment_references": ["Authorization": "HTTP_SECRET"],
+                ]],
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: payload).write(to: configURL)
+        let environment = MenuBarBootstrapEnvironment(
+            environment: [
+                "MELIX_REPO_ROOT": "/tmp/melix-root",
+                "MELIX_HOME": root.path,
+                "MELIX_CONTROL_PLANE_SOCKET_PATH": "/tmp/control-plane.sock",
+            ]
+        )
+
+        let cliEnvironment = try environment.cliEnvironment(base: [
+            "MELIX_HOME": root.path,
+            "STDIO_SECRET": "stdio-value",
+            "HTTP_SECRET": "http-value",
+            "ROTATED_SECRET": "rotated-value",
+            "MELIX_MCP_CREDENTIAL_ENV_KEYS": "STDIO_SECRET,ROTATED_SECRET",
+        ])
+
+        #expect(cliEnvironment["STDIO_SECRET"] == nil)
+        #expect(cliEnvironment["HTTP_SECRET"] == nil)
+        #expect(cliEnvironment["ROTATED_SECRET"] == nil)
+        #expect(cliEnvironment["MELIX_MCP_CREDENTIAL_ENV_KEYS"] == nil)
+        #expect(cliEnvironment["MELIX_CONTROL_PLANE_SOCKET_PATH"] == "/tmp/control-plane.sock")
+    }
+
+    @Test("bootstrap cli discovers MCP credentials below the default HOME")
+    @MainActor
+    func bootstrapCLIEnvironmentUsesDefaultHomeMCPConfig() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let configURL = root.appendingPathComponent(".melix/config/mcp-tools.json")
+        try FileManager.default.createDirectory(
+            at: configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"sources":[{"source_id":"stdio","transport":{"kind":"stdio","command":"/usr/bin/true","environment_references":{"TOKEN":"DEFAULT_HOME_SECRET"}}}]}"#.utf8)
+            .write(to: configURL)
+        let environment = MenuBarBootstrapEnvironment(environment: [
+            "MELIX_REPO_ROOT": "/tmp/melix-root",
+            "MELIX_CONTROL_PLANE_SOCKET_PATH": "/tmp/control-plane.sock",
+        ])
+
+        let cliEnvironment = try environment.cliEnvironment(base: [
+            "HOME": root.path,
+            "DEFAULT_HOME_SECRET": "must-not-cross",
+        ])
+        let explicitTildeEnvironment = try environment.cliEnvironment(base: [
+            "HOME": root.path,
+            "MELIX_MCP_CONFIG_PATH": "~/.melix/config/mcp-tools.json",
+            "DEFAULT_HOME_SECRET": "must-not-cross",
+        ])
+        let redundantSlashTildeEnvironment = try environment.cliEnvironment(base: [
+            "HOME": root.path,
+            "MELIX_MCP_CONFIG_PATH": "~//.melix/config/mcp-tools.json",
+            "DEFAULT_HOME_SECRET": "must-not-cross",
+        ])
+
+        #expect(cliEnvironment["DEFAULT_HOME_SECRET"] == nil)
+        #expect(explicitTildeEnvironment["DEFAULT_HOME_SECRET"] == nil)
+        #expect(redundantSlashTildeEnvironment["DEFAULT_HOME_SECRET"] == nil)
+        #expect(redundantSlashTildeEnvironment["MELIX_MCP_CONFIG_PATH"] == configURL.path)
+    }
+
+    @Test("bootstrap cli rejects a special-file MCP config without blocking")
+    @MainActor
+    func bootstrapCLIEnvironmentRejectsSpecialFileMCPConfig() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "melix-app-mcp-fifo-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("mcp-tools.json")
+        guard Darwin.mkfifo(configURL.path, S_IRUSR | S_IWUSR) == 0 else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let environment = MenuBarBootstrapEnvironment(environment: [
+            "MELIX_REPO_ROOT": "/tmp/melix-root",
+            "MELIX_CONTROL_PLANE_SOCKET_PATH": "/tmp/control-plane.sock",
+        ])
+
+        #expect(throws: Error.self) {
+            _ = try environment.cliEnvironment(base: [
+                "MELIX_MCP_CONFIG_PATH": configURL.path,
+            ])
+        }
+    }
+
+    @Test("bootstrap cli refuses invalid oversized and reserved MCP configurations")
+    @MainActor
+    func bootstrapCLIEnvironmentFailsClosedForInvalidMCPConfigs() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let configURL = root.appendingPathComponent("mcp-tools.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let environment = MenuBarBootstrapEnvironment(environment: [
+            "MELIX_REPO_ROOT": "/tmp/melix-root",
+            "MELIX_CONTROL_PLANE_SOCKET_PATH": "/tmp/control-plane.sock",
+        ])
+        func stdioPayload(
+            sourceID: String = "stdio-fixture",
+            fields: [String: Any]
+        ) throws -> Data {
+            let base: [String: Any] = [
+                "kind": "stdio",
+                "command": "/usr/bin/true",
+            ]
+            let transport = base.merging(fields) { _, newValue in newValue }
+            return try JSONSerialization.data(withJSONObject: [
+                "sources": [["source_id": sourceID, "transport": transport]],
+            ])
+        }
+        func httpPayload(
+            sourceID: String = "http-fixture",
+            fields: [String: Any]
+        ) throws -> Data {
+            let base: [String: Any] = [
+                "kind": "streamable_http",
+                "url": "https://mcp.example.test/rpc",
+            ]
+            let transport = base.merging(fields) { _, newValue in newValue }
+            return try JSONSerialization.data(withJSONObject: [
+                "sources": [["source_id": sourceID, "transport": transport]],
+            ])
+        }
+        let oversizedKeyPayload = try stdioPayload(fields: [
+            "environment_references": ["TOKEN": String(repeating: "A", count: 256)]
+        ])
+        let aggregateReferences = Dictionary(
+            uniqueKeysWithValues: (0..<130).map { index in
+                let suffix = String(index)
+                return (
+                    "TOKEN_\(suffix)",
+                    "KEY_\(suffix)_" + String(repeating: "A", count: 247 - suffix.count)
+                )
+            }
+        )
+        let oversizedAggregatePayload = try stdioPayload(fields: [
+            "environment_references": aggregateReferences
+        ])
+        let oversizedChildKeyPayload = try stdioPayload(fields: [
+            "environment_references": [String(repeating: "A", count: 256): "SECRET"]
+        ])
+        let aggregateChildReferences = Dictionary(
+            uniqueKeysWithValues: (0..<130).map { index in
+                let suffix = String(index)
+                return (
+                    "KEY_\(suffix)_" + String(repeating: "A", count: 247 - suffix.count),
+                    "SECRET"
+                )
+            }
+        )
+        let oversizedChildAggregatePayload = try stdioPayload(fields: [
+            "environment_references": aggregateChildReferences
+        ])
+        let oversizedHeaderPayload = try httpPayload(fields: [
+            "header_environment_references": [String(repeating: "X", count: 256): "SECRET"]
+        ])
+        let invalidHeaderPayload = try httpPayload(fields: [
+            "header_environment_references": ["Bad Header": "SECRET"]
+        ])
+        let invalidStaticHeaderPayload = try httpPayload(fields: [
+            "headers": ["Bad:Header": "visible"]
+        ])
+        let oversizedStaticHeaderAggregatePayload = try httpPayload(fields: [
+            "headers": Dictionary(
+                uniqueKeysWithValues: (0..<130).map { index in
+                    let suffix = String(index)
+                    return (
+                        "X-Key-\(suffix)-" + String(repeating: "A", count: 245 - suffix.count),
+                        "visible"
+                    )
+                }
+            )
+        ])
+        let oversizedStaticHeaderCountPayload = try httpPayload(fields: [
+            "headers": Dictionary(
+                uniqueKeysWithValues: (0..<1_025).map { ("X-Key-\($0)", "visible") }
+            )
+        ])
+        let oversizedReferenceCountPayload = try stdioPayload(fields: [
+            "environment_references": Dictionary(
+                uniqueKeysWithValues: (0..<1_025).map { ("TOKEN_\($0)", "SECRET") }
+            )
+        ])
+        let reservedHomePayload = try stdioPayload(fields: [
+            "environment_references": ["TOKEN": "MELIX_HOME"]
+        ])
+        let reservedBearerPayload = try stdioPayload(fields: [
+            "environment_references": ["TOKEN": "MELIX_GATEWAY_BEARER_TOKEN"]
+        ])
+        let reservedModelPayload = try stdioPayload(fields: [
+            "environment_references": ["TOKEN": "MELIX_DEV_TEXT_MODEL_PATH"]
+        ])
+        let reservedRuntimePayload = try stdioPayload(fields: [
+            "environment_references": ["TOKEN": "MELIX_ACTIVE_RUNTIME_PATH"]
+        ])
+        let mixedHTTPHeaderCountPayload = try JSONSerialization.data(withJSONObject: [
+            "sources": [[
+                "source_id": "mixed-http-headers",
+                "transport": [
+                    "kind": "streamable_http",
+                    "url": "https://mcp.example.test/rpc",
+                    "headers": Dictionary(
+                        uniqueKeysWithValues: (0..<600).map { ("X-Static-\($0)", "visible") }
+                    ),
+                    "header_environment_references": Dictionary(
+                        uniqueKeysWithValues: (0..<600).map { ("X-Secret-\($0)", "SECRET") }
+                    ),
+                ],
+            ]],
+        ])
+        let conflictingHTTPHeaderNamePayload = try JSONSerialization.data(withJSONObject: [
+            "sources": [[
+                "source_id": "conflicting-http-headers",
+                "transport": [
+                    "kind": "streamable_http",
+                    "url": "https://mcp.example.test/rpc",
+                    "headers": ["X-Custom": "visible"],
+                    "header_environment_references": ["x-custom": "SECRET"],
+                ],
+            ]],
+        ])
+        let duplicateNormalizedSourceIDPayload = try JSONSerialization.data(withJSONObject: [
+            "sources": [
+                ["source_id": " MCP-Source "],
+                ["source_id": "mcp-source"],
+            ],
+        ])
+        let invalidTransportSchemaPayload = try JSONSerialization.data(withJSONObject: [
+            "sources": [[
+                "source_id": "invalid-stdio",
+                "transport": [
+                    "kind": "stdio",
+                    "arguments": ["--serve"],
+                ],
+            ]],
+        ])
+        let crossKindCredentialPayload = try JSONSerialization.data(withJSONObject: [
+            "sources": [[
+                "source_id": "cross-kind",
+                "transport": [
+                    "kind": "stdio",
+                    "command": "/usr/bin/true",
+                    "header_environment_references": ["Authorization": "CROSS_KIND_SECRET"],
+                ],
+            ]],
+        ])
+        let staticCredentialHeaderPayload = try httpPayload(fields: [
+            "headers": ["Authorization": "must-not-be-static"]
+        ])
+        let invalidOptionalFieldPayload = try JSONSerialization.data(withJSONObject: [
+            "sources": [["source_id": "invalid-enabled", "enabled": 1]],
+        ])
+        let invalidWorkingDirectoryPayload = try stdioPayload(fields: [
+            "working_directory": "relative/path"
+        ])
+        let invalidHTTPURLPayload = try httpPayload(fields: [
+            "url": "http://example.com/mcp"
+        ])
+        let nullTransportPayload = try JSONSerialization.data(withJSONObject: [
+            "sources": [["source_id": "null-transport", "transport": NSNull()]],
+        ])
+        let oversizedJSONTokenPayload = try JSONSerialization.data(withJSONObject: [
+            "sources": [],
+            "unknown": Array(0..<16_384),
+        ])
+        var overMaximumDepth: Any = 0
+        for _ in 0..<127 {
+            overMaximumDepth = [overMaximumDepth]
+        }
+        let oversizedJSONDepthPayload = try JSONSerialization.data(withJSONObject: [
+            "sources": [],
+            "unknown": overMaximumDepth,
+        ])
+
+        for payload in [
+            Data("not-json".utf8),
+            Data(#"{"sources":[{"source_id":"duplicate","source_id":"other"}]}"#.utf8),
+            Data(#"{"sources":[],"unknown":NaN}"#.utf8),
+            Data(#"{"sources":[],"unknown":1.0}"#.utf8),
+            Data(#"{"sources":[],"unknown":1e0}"#.utf8),
+            Data(#"{"sources":[],"unknown":1e400}"#.utf8),
+            Data(#"{"sources":[],"unknown":"\ud800"}"#.utf8),
+            Data(repeating: 0x20, count: 1_048_577),
+            reservedHomePayload,
+            reservedBearerPayload,
+            reservedModelPayload,
+            reservedRuntimePayload,
+            oversizedKeyPayload,
+            oversizedAggregatePayload,
+            oversizedChildKeyPayload,
+            oversizedChildAggregatePayload,
+            oversizedHeaderPayload,
+            invalidHeaderPayload,
+            invalidStaticHeaderPayload,
+            oversizedStaticHeaderAggregatePayload,
+            oversizedStaticHeaderCountPayload,
+            oversizedReferenceCountPayload,
+            mixedHTTPHeaderCountPayload,
+            conflictingHTTPHeaderNamePayload,
+            duplicateNormalizedSourceIDPayload,
+            invalidTransportSchemaPayload,
+            crossKindCredentialPayload,
+            staticCredentialHeaderPayload,
+            invalidOptionalFieldPayload,
+            invalidWorkingDirectoryPayload,
+            invalidHTTPURLPayload,
+            nullTransportPayload,
+            oversizedJSONTokenPayload,
+            oversizedJSONDepthPayload,
+        ] {
+            try payload.write(to: configURL)
+            var rejected = false
+            do {
+                _ = try environment.cliEnvironment(base: [
+                    "MELIX_MCP_CONFIG_PATH": configURL.path,
+                    "SECRET_VALUE": "must-not-cross",
+                ])
+            } catch {
+                rejected = true
+            }
+            #expect(rejected)
+        }
+    }
+
+    @Test("direct app launch refuses an invalid MCP configuration before any entrypoint")
+    @MainActor
+    func mainFailsClosedForInvalidMCPConfig() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let configURL = root.appendingPathComponent("mcp-tools.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(#"{"sources":[{"source_id":"reserved-path","transport":{"kind":"stdio","command":"/usr/bin/true","environment_references":{"TOKEN":"PATH"}}}]}"#.utf8)
+            .write(to: configURL)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var liveLaunchCount = 0
+        var acceptanceCount = 0
+        var screenshotCount = 0
+        var failureCount = 0
+
+        MelixMenuBarApp.main(
+            environment: [
+                "MELIX_MCP_CONFIG_PATH": configURL.path,
+                "PATH": "sensitive-value",
+                "MELIX_APP_SCREENSHOT_CAPTURE": "1",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE": "1",
+            ],
+            launchLiveHandler: { liveLaunchCount += 1 },
+            phase8WindowUIAcceptanceHandler: { _ in acceptanceCount += 1 },
+            appScreenshotCaptureHandler: { _ in screenshotCount += 1 },
+            credentialBoundaryFailureHandler: { failureCount += 1 }
+        )
+
+        #expect(liveLaunchCount == 0)
+        #expect(acceptanceCount == 0)
+        #expect(screenshotCount == 0)
+        #expect(failureCount == 1)
+    }
+
+    @Test("live bootstrap disables CLI execution when MCP config changes to invalid")
+    @MainActor
+    func liveBootstrapDisablesCLIForInvalidMCPConfig() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let configURL = root.appendingPathComponent("mcp-tools.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("invalid".utf8).write(to: configURL)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        await withEnvironmentValue("MELIX_MCP_CONFIG_PATH", configURL.path) {
+            let bootstrap = MelixMenuBarBootstrap.live(
+                environment: MenuBarBootstrapEnvironment(
+                    environment: ProcessInfo.processInfo.environment
+                )
+            )
+            #expect(bootstrap.cliWorkflowRunner == nil)
+        }
+    }
+
     @Test("bootstrap cli environment preserves an explicit managed model root override")
     @MainActor
-    func bootstrapCLIEnvironmentPreservesExplicitManagedModelRoot() {
+    func bootstrapCLIEnvironmentPreservesExplicitManagedModelRoot() throws {
         let environment = MenuBarBootstrapEnvironment(
             environment: [
                 "MELIX_REPO_ROOT": "/tmp/melix-root",
@@ -951,7 +1413,7 @@ struct AppMainBootstrapTests {
             ]
         )
 
-        let cliEnvironment = environment.cliEnvironment(
+        let cliEnvironment = try environment.cliEnvironment(
             base: [
                 "MELIX_HOME": "/tmp/melix-home",
                 "MELIX_MANAGED_MODEL_ROOT": "/tmp/custom-managed-root",

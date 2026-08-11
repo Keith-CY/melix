@@ -24,12 +24,59 @@ extension ControlPlaneChatExecutionError: CustomStringConvertible {
 
 public struct ControlPlaneChatRequest: Sendable, Equatable {
     public struct Message: Sendable, Equatable {
+        public struct ToolCall: Sendable, Equatable {
+            public let callID: String
+            public let type: String
+            public let toolName: String
+            public let argumentsJSON: String
+
+            public init(
+                callID: String,
+                type: String = "function",
+                toolName: String,
+                argumentsJSON: String
+            ) {
+                self.callID = callID
+                self.type = type
+                self.toolName = toolName
+                self.argumentsJSON = argumentsJSON
+            }
+        }
+
         public let role: String
         public let content: String
+        public let name: String?
+        public let toolCalls: [ToolCall]
+        public let toolCallID: String?
 
-        public init(role: String, content: String) {
+        public init(
+            role: String,
+            content: String,
+            name: String? = nil,
+            toolCalls: [ToolCall] = [],
+            toolCallID: String? = nil
+        ) {
             self.role = role
             self.content = content
+            self.name = name
+            self.toolCalls = toolCalls
+            self.toolCallID = toolCallID
+        }
+    }
+
+    public struct ToolDefinition: Sendable, Equatable {
+        public let name: String
+        public let description: String
+        public let parametersJSON: String
+
+        public init(
+            name: String,
+            description: String = "",
+            parametersJSON: String
+        ) {
+            self.name = name
+            self.description = description
+            self.parametersJSON = parametersJSON
         }
     }
 
@@ -64,6 +111,9 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
     public let modelID: String
     public let serverSessionID: String
     public let messages: [Message]
+    public let tools: [ToolDefinition]
+    public let toolChoice: String?
+    public let parallelToolCalls: Bool
     public let enableThinking: Bool?
     public let reasoningEffort: String?
     public let chatTemplateKwargs: ChatTemplateRequestConfiguration?
@@ -77,6 +127,9 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
         modelID: String,
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
         messages: [Message],
+        tools: [ToolDefinition] = [],
+        toolChoice: String? = nil,
+        parallelToolCalls: Bool = false,
         enableThinking: Bool? = nil,
         reasoningEffort: String? = nil,
         chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil,
@@ -92,6 +145,9 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
             ? ServerSessionRuntimeStore.defaultServerSessionID
             : normalizedServerSessionID
         self.messages = messages
+        self.tools = tools
+        self.toolChoice = toolChoice
+        self.parallelToolCalls = parallelToolCalls
         self.enableThinking = enableThinking
         self.reasoningEffort = reasoningEffort
         self.chatTemplateKwargs = chatTemplateKwargs
@@ -100,6 +156,77 @@ public struct ControlPlaneChatRequest: Sendable, Equatable {
         self.topP = topP
         self.maxTokens = maxTokens
         self.remoteTarget = remoteTarget
+    }
+}
+
+public enum ControlPlaneChatCancellationDisposition: String, Sendable, Equatable {
+    case accepted
+    case alreadyTerminal
+    case notFound
+    case unavailable
+}
+
+public struct ControlPlaneChatCancellationReceipt: Sendable, Equatable {
+    public let requestID: String
+    public let disposition: ControlPlaneChatCancellationDisposition
+
+    public init(
+        requestID: String,
+        disposition: ControlPlaneChatCancellationDisposition
+    ) {
+        self.requestID = requestID
+        self.disposition = disposition
+    }
+}
+
+actor ControlPlaneChatCancellationController {
+    private enum State {
+        case active
+        case cancellationRequested
+        case terminal
+    }
+
+    private var cancellationAction: (@Sendable () -> Void)?
+    private var state: State = .active
+
+    func install(_ action: @escaping @Sendable () -> Void) {
+        switch state {
+        case .active:
+            cancellationAction = action
+        case .cancellationRequested:
+            action()
+        case .terminal:
+            break
+        }
+    }
+
+    func cancel(requestID: String) -> ControlPlaneChatCancellationReceipt {
+        switch state {
+        case .active:
+            break
+        case .cancellationRequested:
+            return ControlPlaneChatCancellationReceipt(
+                requestID: requestID,
+                disposition: .accepted
+            )
+        case .terminal:
+            return ControlPlaneChatCancellationReceipt(
+                requestID: requestID,
+                disposition: .alreadyTerminal
+            )
+        }
+        state = .cancellationRequested
+        cancellationAction?()
+        cancellationAction = nil
+        return ControlPlaneChatCancellationReceipt(
+            requestID: requestID,
+            disposition: .accepted
+        )
+    }
+
+    func markTerminal() {
+        state = .terminal
+        cancellationAction = nil
     }
 }
 
@@ -205,6 +332,7 @@ public struct ControlPlaneChatExecution: Sendable {
     public let modelID: String
     public let stream: AsyncThrowingStream<ControlPlaneChatStreamEvent, Error>
     public let lifecycle: AsyncStream<ConnectionLifecycleEvent>
+    public let cancel: @Sendable () async -> ControlPlaneChatCancellationReceipt
 
     public init(
         requestID: String,
@@ -212,11 +340,18 @@ public struct ControlPlaneChatExecution: Sendable {
         stream: AsyncThrowingStream<ControlPlaneChatStreamEvent, Error>,
         lifecycle: AsyncStream<ConnectionLifecycleEvent> = AsyncStream { continuation in
             continuation.finish()
-        }
+        },
+        cancel: (@Sendable () async -> ControlPlaneChatCancellationReceipt)? = nil
     ) {
         self.requestID = requestID
         self.modelID = modelID
         self.stream = stream
         self.lifecycle = lifecycle
+        self.cancel = cancel ?? {
+            ControlPlaneChatCancellationReceipt(
+                requestID: requestID,
+                disposition: .unavailable
+            )
+        }
     }
 }

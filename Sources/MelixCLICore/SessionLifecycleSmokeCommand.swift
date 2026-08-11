@@ -19,10 +19,22 @@ public enum SessionLifecycleSmokeCommand {
                 client = clientBuilder(environment)
                 flushMetrics = {}
             } else {
-                let context = MelixLocalRuntimeFactory.makeContext(environment: environment)
-                client = LocalControlPlaneXPCClient(service: context.service)
-                flushMetrics = {
-                    await context.metricsStore.flushExport()
+                switch MelixLocalRuntimeFactory.resolvedClientRoute(
+                    environment: environment
+                ) {
+                case .controlPlaneIPC:
+                    client = MelixLocalRuntimeFactory.makeClient(
+                        environment: environment
+                    )
+                    flushMetrics = {}
+                case .inProcess:
+                    let context = MelixLocalRuntimeFactory.makeContext(
+                        environment: environment
+                    )
+                    client = LocalControlPlaneXPCClient(service: context.service)
+                    flushMetrics = {
+                        await context.metricsStore.flushExport()
+                    }
                 }
             }
             let runner = SessionLifecycleSmokeRunner(

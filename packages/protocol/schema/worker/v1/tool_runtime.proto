@@ -1,0 +1,202 @@
+syntax = "proto3";
+
+package melix.worker.v1;
+
+import "worker/v1/common.proto";
+
+service ToolRuntimeService {
+  rpc ListAgentTools(ListAgentToolsRequest) returns (ToolCatalogReceipt);
+  rpc ExecuteAgentTool(ExecuteAgentToolRequest) returns (stream AgentToolExecutionEvent);
+  rpc CancelAgentTool(CancelAgentToolRequest) returns (CancelAgentToolResponse);
+  rpc CancelAgentRunTools(CancelAgentRunToolsRequest) returns (CancelAgentRunToolsResponse);
+}
+
+message MCPStdioTransport {
+  string command = 1;
+  repeated string arguments = 2;
+  string working_directory = 3;
+  map<string, string> environment_references = 4;
+}
+
+message MCPStreamableHTTPTransport {
+  string url = 1;
+  map<string, string> headers = 2;
+  map<string, string> header_environment_references = 3;
+}
+
+message AgentToolSourceConfig {
+  string source_id = 1;
+  bool enabled = 2;
+  oneof transport {
+    MCPStdioTransport stdio = 10;
+    MCPStreamableHTTPTransport streamable_http = 11;
+  }
+  uint32 request_timeout_ms = 20;
+  uint32 connect_timeout_ms = 21;
+  uint64 max_result_bytes = 22;
+  repeated string redaction_terms = 23;
+  string configuration_revision = 24;
+}
+
+message ListAgentToolsRequest {
+  RequestIdentity id = 1;
+  repeated AgentToolSourceConfig sources = 2;
+  bool refresh_sources = 3;
+  int64 deadline_unix_ms = 4;
+  string owner_actor_id = 5;
+  uint32 lease_ttl_ms = 6;
+  bool release_sources = 7;
+}
+
+message AgentToolDefinition {
+  string source_id = 1;
+  string adapter_kind = 2;
+  string name = 3;
+  string source_tool_name = 4;
+  string title = 5;
+  string description = 6;
+  string input_schema_json = 7;
+  string output_schema_json = 8;
+  string schema_digest = 9;
+  string risk_class = 10;
+  string replayability = 11;
+  bool annotations_untrusted = 12;
+}
+
+message AgentToolSourceReceipt {
+  string source_id = 1;
+  string transport_kind = 2;
+  string connection_state = 3;
+  string protocol_version = 4;
+  string server_name = 5;
+  string server_version = 6;
+  repeated string capabilities = 7;
+  uint32 tool_count = 8;
+  string catalog_digest = 9;
+  int64 connected_at_unix_ms = 10;
+  string error_code = 11;
+}
+
+message ToolCatalogReceipt {
+  string schema_version = 1;
+  repeated AgentToolDefinition tools = 2;
+  repeated AgentToolSourceReceipt sources = 3;
+  string catalog_digest = 4;
+  uint32 source_count = 5;
+  uint32 live_source_count = 6;
+}
+
+message AgentToolExecutionContext {
+  string run_id = 1;
+  string session_id = 2;
+  string branch_id = 3;
+  string actor_id = 4;
+  string admission_state = 5;
+  string approval_grant_digest = 6;
+  string policy_revision = 7;
+  int64 deadline_unix_ms = 8;
+  string control_plane_authorization_key_id = 9;
+  string control_plane_authorization_algorithm = 10;
+  bytes control_plane_authorization_payload = 11;
+  bytes control_plane_authorization_signature = 12;
+}
+
+message ExecuteAgentToolRequest {
+  AgentToolExecutionContext context = 1;
+  string call_id = 2;
+  string tool_name = 3;
+  string source_id = 4;
+  string arguments_json = 5;
+  string expected_schema_digest = 6;
+  string idempotency_key = 7;
+}
+
+enum AgentToolExecutionPhase {
+  AGENT_TOOL_EXECUTION_PHASE_UNSPECIFIED = 0;
+  AGENT_TOOL_EXECUTION_QUEUED = 1;
+  AGENT_TOOL_EXECUTION_STARTED = 2;
+  AGENT_TOOL_EXECUTION_COMPLETED = 3;
+  AGENT_TOOL_EXECUTION_FAILED = 4;
+  AGENT_TOOL_EXECUTION_CANCELLED = 5;
+  AGENT_TOOL_EXECUTION_TIMEOUT = 6;
+}
+
+message AgentToolExecutionResult {
+  string run_id = 1;
+  string call_id = 2;
+  string tool_name = 3;
+  string source_id = 4;
+  string adapter_kind = 5;
+  string status = 6;
+  string observation_json = 7;
+  double duration_ms = 8;
+  string receipt_json = 9;
+  // MELIX_HOME-relative reference to the bounded sanitized evidence envelope.
+  string evidence_reference = 10;
+}
+
+message AgentToolExecutionEvent {
+  string run_id = 1;
+  string call_id = 2;
+  uint64 seq = 3;
+  AgentToolExecutionPhase phase = 4;
+  int64 emitted_at_unix_ms = 5;
+  oneof payload {
+    AgentToolExecutionResult result = 10;
+    ErrorStatus error = 11;
+  }
+}
+
+message CancelAgentToolRequest {
+  string run_id = 1;
+  string call_id = 2;
+  string cancellation_id = 3;
+  string session_id = 4;
+  string branch_id = 5;
+  string actor_id = 6;
+}
+
+enum ToolCancellationDisposition {
+  TOOL_CANCELLATION_DISPOSITION_UNSPECIFIED = 0;
+  TOOL_CANCELLATION_ACCEPTED = 1;
+  TOOL_CANCELLATION_ALREADY_TERMINAL = 2;
+  TOOL_CANCELLATION_TOO_LATE = 3;
+  TOOL_CANCELLATION_NOT_FOUND = 4;
+  TOOL_CANCELLATION_SCOPE_MISMATCH = 5;
+}
+
+enum ToolSideEffectState {
+  TOOL_SIDE_EFFECT_STATE_UNSPECIFIED = 0;
+  TOOL_SIDE_EFFECT_NONE = 1;
+  TOOL_SIDE_EFFECT_COMMITTED = 2;
+  TOOL_SIDE_EFFECT_UNKNOWN = 3;
+}
+
+message CancelAgentToolResponse {
+  string run_id = 1;
+  string call_id = 2;
+  string cancellation_id = 3;
+  ToolCancellationDisposition disposition = 4;
+  string adapter_kind = 5;
+  string source_id = 6;
+  // Deprecated lossy projection retained for older clients.
+  bool side_effect_committed = 7 [deprecated = true];
+  ToolSideEffectState side_effect_state = 8;
+}
+
+message CancelAgentRunToolsRequest {
+  string run_id = 1;
+  string cancellation_id = 2;
+  string session_id = 3;
+  string branch_id = 4;
+  string actor_id = 5;
+}
+
+message CancelAgentRunToolsResponse {
+  string run_id = 1;
+  string cancellation_id = 2;
+  ToolCancellationDisposition disposition = 3;
+  ToolSideEffectState side_effect_state = 4;
+  repeated CancelAgentToolResponse calls = 5;
+  ToolCancellationDisposition computer_use_disposition = 6;
+}

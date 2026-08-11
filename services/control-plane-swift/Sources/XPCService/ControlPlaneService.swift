@@ -1,3 +1,5 @@
+import CoreFoundation
+import CryptoKit
 import Foundation
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
@@ -162,6 +164,15 @@ public actor ControlPlaneService {
     private let chatTranslator: ChatRequestTranslator
     private let textExecutionModelResolver: TextExecutionModelResolver
     private let mcpToolCatalog: MCPToolCatalog
+    private let agentRuntime: ControlPlaneAgentRuntime
+    private let agentRuntimeMetricsObserver: AgentRuntimeMetricsObserver
+    private let agentApprovalPolicy: (any AgentApprovalPolicyManaging)?
+    private let agentApprovalPolicyAdministrator:
+        (any AgentApprovalPolicyAdministering)?
+    private let agentApprovalContextRegistry: AgentApprovalContextRegistry
+    private let computerUseAuthorizationSigner:
+        ComputerUseToolAuthorizationSigner?
+    private let computerUseBrokerConfigured: Bool
     private let audioAssetManager: AudioAssetManager
     private let gatewayAccessPolicyStore: GatewayAccessPolicyStore
     private let gatewayConfigStore: GatewayConfigStore
@@ -192,6 +203,11 @@ public actor ControlPlaneService {
         remoteProviderClient: any RemoteProviderChatClient = OpenAICompatibleRemoteProviderClient(),
         chatTranslator: ChatRequestTranslator = ChatRequestTranslator(),
         mcpToolCatalog: MCPToolCatalog = .empty,
+        agentRuntime: ControlPlaneAgentRuntime? = nil,
+        agentApprovalPolicy: (any AgentApprovalPolicyManaging)? = nil,
+        agentApprovalContextRegistry: AgentApprovalContextRegistry? = nil,
+        computerUseAuthorizationSigner:
+            ComputerUseToolAuthorizationSigner? = nil,
         gatewayAccessPolicy: GatewayAccessPolicy = .localTrust,
         gatewayConfigStore: GatewayConfigStore? = nil,
         gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
@@ -252,6 +268,66 @@ public actor ControlPlaneService {
         self.chatTranslator = chatTranslator
         self.textExecutionModelResolver = TextExecutionModelResolver(modelCatalog: modelCatalog)
         self.mcpToolCatalog = mcpToolCatalog
+        let resolvedAgentRuntimeMetricsObserver = AgentRuntimeMetricsObserver()
+        self.agentRuntimeMetricsObserver = resolvedAgentRuntimeMetricsObserver
+        self.agentRuntime = agentRuntime ?? ControlPlaneAgentRuntime(
+            durableStore: AgentRunDurableStore(
+                rootURL: MelixPathLayout(environment: environment)
+                    .stateDirectoryURL
+                    .appendingPathComponent("agent-runtime", isDirectory: true)
+            ),
+            eventPublisher: { snapshot, changeKind in
+                await resolvedAgentRuntimeMetricsObserver.observe(
+                    snapshot: snapshot,
+                    changeKind: changeKind,
+                    metricsStore: metricsStore
+                )
+                var event = Melix_Controlplane_V1_ControlPlaneEvent()
+                event.eventType = "agent.run_state_changed"
+                event.source = "agent_runtime"
+                event.emittedAtUnixMs = Int64(
+                    Date().timeIntervalSince1970 * 1_000
+                )
+                event.agentRun = Melix_Controlplane_V1_AgentRunStateChanged()
+                event.agentRun.run = snapshot
+                event.agentRun.changeKind = changeKind
+                await eventHub.publish(event)
+            }
+        )
+        let resolvedApprovalContextRegistry = agentApprovalContextRegistry
+            ?? AgentApprovalContextRegistry()
+        self.agentApprovalContextRegistry = resolvedApprovalContextRegistry
+        if let agentApprovalPolicy {
+            self.agentApprovalPolicy = agentApprovalPolicy
+            self.agentApprovalPolicyAdministrator =
+                agentApprovalPolicy as? any AgentApprovalPolicyAdministering
+        } else if workerRegistry != nil {
+            let approvalPolicyStore = ApprovalPolicyStore(
+                fileURL: MelixPathLayout(environment: environment)
+                    .configDirectoryURL
+                    .appendingPathComponent(
+                        "agent-approval-policy.json",
+                        isDirectory: false
+                    ),
+                contextProvider: resolvedApprovalContextRegistry
+            )
+            self.agentApprovalPolicy = approvalPolicyStore
+            self.agentApprovalPolicyAdministrator = approvalPolicyStore
+        } else {
+            self.agentApprovalPolicy = nil
+            self.agentApprovalPolicyAdministrator = nil
+        }
+        let hasComputerUseBrokerSocket = environment[
+            "MELIX_COMPUTER_BROKER_SOCKET"
+        ]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let resolvedComputerUseSigner = Self.resolveComputerUseAuthorizationSigner(
+            injectedSigner: computerUseAuthorizationSigner,
+            brokerSocketConfigured: hasComputerUseBrokerSocket,
+            environment: environment
+        )
+        self.computerUseAuthorizationSigner = resolvedComputerUseSigner
+        self.computerUseBrokerConfigured = hasComputerUseBrokerSocket
+            && resolvedComputerUseSigner != nil
         self.audioAssetManager = audioAssetManager
         self.gatewayAccessPolicyStore = gatewayAccessPolicyStore ?? GatewayAccessPolicyStore(gatewayAccessPolicy)
         self.gatewayConfigStore = gatewayConfigStore ?? GatewayConfigStore()
@@ -289,6 +365,12 @@ public actor ControlPlaneService {
         if !mcpToolCatalog.sources.isEmpty || !mcpToolCatalog.configPath.isEmpty {
             response.features.append("mcp-tools")
         }
+        if agentApprovalPolicy != nil {
+            response.features.append("agent-runtime")
+        }
+        if computerUseBrokerConfigured {
+            response.features.append("computer-use-semantic-press")
+        }
         response.snapshot = await buildSnapshot()
         return response
     }
@@ -309,6 +391,8 @@ public actor ControlPlaneService {
             return await handleOps(request: request, command: command)
         case .image(let command):
             return await handleImage(request: request, command: command)
+        case .agent(let command):
+            return await handleAgent(request: request, command: command)
         default:
             return errorResponse(
                 for: request,
@@ -322,6 +406,77 @@ public actor ControlPlaneService {
         _ request: Melix_Controlplane_V1_SubscribeRequest = Melix_Controlplane_V1_SubscribeRequest()
     ) async -> ControlPlaneSubscription {
         await eventHub.subscribe(lastSeenSeq: request.lastSeenSeq)
+    }
+
+    static func validateSelectedComputerUseTargets(
+        _ selectedTargets: [TrustedComputerUseTarget],
+        liveTargets: [TrustedComputerUseTarget]
+    ) throws {
+        guard selectedTargets.count == 1 else {
+            throw ControlPlaneAgentRuntimeError.invalidRequest(
+                "Computer Use requires exactly one selected window"
+            )
+        }
+        guard liveTargets.contains(selectedTargets[0]) else {
+            throw ControlPlaneAgentRuntimeError.invalidRequest(
+                "The selected Computer Use window is stale; refresh and select it again"
+            )
+        }
+    }
+
+    public func startAgentRun(
+        _ command: Melix_Controlplane_V1_StartAgentRun,
+        actorID: String,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget? = nil
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        guard let agentApprovalPolicy else {
+            throw ControlPlaneAgentRuntimeError.invalidRequest(
+                "agent approval policy is not configured"
+            )
+        }
+        guard
+            let workerRegistry,
+            let worker = await workerRegistry.client(for: .pythonCompatibility)
+                as? any AgentToolRuntimeWorkerClientProtocol
+        else {
+            throw ControlPlaneAgentAdapterError.unavailableWorker
+        }
+        return try await agentRuntime.start(
+            command: command,
+            actorID: actorID,
+            dependencies: ControlPlaneAgentRuntimeStartDependencies(
+                worker: worker,
+                approvalPolicy: agentApprovalPolicy,
+                approvalContextRegistry: agentApprovalContextRegistry,
+                sourceConfigs: mcpToolCatalog.liveSourceConfigs,
+                remoteTarget: remoteTarget,
+                computerUseAuthorizationSigner:
+                    computerUseAuthorizationSigner,
+                validateComputerUseTargets: { [weak self] targets, descriptor, deadline in
+                    guard let self else {
+                        throw ControlPlaneAgentRuntimeError.invalidRequest(
+                            "Computer Use target discovery is unavailable"
+                        )
+                    }
+                    let liveTargets = try await self.discoverComputerUseTargets(
+                        worker: worker,
+                        schemaDigest: descriptor.schemaDigest,
+                        actorID: actorID,
+                        deadlineUnixMs: deadline
+                    )
+                    try Self.validateSelectedComputerUseTargets(
+                        targets,
+                        liveTargets: liveTargets
+                    )
+                },
+                startChat: { [weak self] request in
+                    guard let self else {
+                        throw ControlPlaneChatExecutionError.unavailable
+                    }
+                    return try await self.startChat(request)
+                }
+            )
+        )
     }
 
     public func startChat(
@@ -362,7 +517,23 @@ public actor ControlPlaneService {
                     forExecutionModelID: executionModelID
                 ),
                 stream: mappedChatStream(from: execution.stream),
-                lifecycle: execution.lifecycle
+                lifecycle: execution.lifecycle,
+                cancel: {
+                    do {
+                        let cancelled = try await requestCoordinator.cancel(
+                            requestID: execution.requestID
+                        )
+                        return ControlPlaneChatCancellationReceipt(
+                            requestID: execution.requestID,
+                            disposition: cancelled ? .accepted : .notFound
+                        )
+                    } catch {
+                        return ControlPlaneChatCancellationReceipt(
+                            requestID: execution.requestID,
+                            disposition: .unavailable
+                        )
+                    }
+                }
             )
         }
 
@@ -372,7 +543,24 @@ public actor ControlPlaneService {
             OpenAIChatCompletionsRequest(
                 model: request.modelID,
                 messages: request.messages.map {
-                    OpenAIChatCompletionsRequest.Message(role: $0.role, content: $0.content)
+                    OpenAIChatCompletionsRequest.Message(
+                        role: $0.role,
+                        name: $0.name,
+                        content: $0.content,
+                        toolCalls: $0.toolCalls.isEmpty
+                            ? nil
+                            : $0.toolCalls.map { call in
+                                OpenAIChatCompletionsRequest.Message.ToolCall(
+                                    id: call.callID,
+                                    type: call.type,
+                                    function: .init(
+                                        name: call.toolName,
+                                        arguments: call.argumentsJSON
+                                    )
+                                )
+                            },
+                        toolCallID: $0.toolCallID
+                    )
                 },
                 enableThinking: request.enableThinking,
                 reasoningEffort: request.reasoningEffort,
@@ -380,6 +568,22 @@ public actor ControlPlaneService {
                 temperature: request.temperature,
                 topP: request.topP,
                 maxTokens: request.maxTokens,
+                tools: try request.tools.map { tool in
+                    OpenAIChatTool(
+                        type: "function",
+                        function: .init(
+                            name: tool.name,
+                            description: tool.description.isEmpty
+                                ? nil
+                                : tool.description,
+                            parameters: try StructuredJSONValue.parse(
+                                text: tool.parametersJSON
+                            )
+                        )
+                    )
+                },
+                toolChoice: request.toolChoice.map(Self.openAIToolChoice),
+                parallelToolCalls: request.parallelToolCalls,
                 chatTemplateKwargs: request.chatTemplateKwargs
             )
         )
@@ -450,8 +654,35 @@ public actor ControlPlaneService {
             requestID: execution.requestID,
             modelID: responseModelID,
             stream: mappedChatStream(from: execution.stream),
-            lifecycle: execution.lifecycle
+            lifecycle: execution.lifecycle,
+            cancel: {
+                do {
+                    let cancelled = try await requestCoordinator.cancel(
+                        requestID: execution.requestID
+                    )
+                    return ControlPlaneChatCancellationReceipt(
+                        requestID: execution.requestID,
+                        disposition: cancelled ? .accepted : .notFound
+                    )
+                } catch {
+                    return ControlPlaneChatCancellationReceipt(
+                        requestID: execution.requestID,
+                        disposition: .unavailable
+                    )
+                }
+            }
         )
+    }
+
+    private static func openAIToolChoice(
+        _ value: String
+    ) -> OpenAIChatToolChoice {
+        if let structured = try? StructuredJSONValue.parse(text: value),
+           structured.objectValue != nil
+        {
+            return .structured(structured)
+        }
+        return .mode(value)
     }
 
     private func startChatLoadRouteKindOverride(
@@ -522,7 +753,31 @@ public actor ControlPlaneService {
             baseURL: remoteTarget.baseURL,
             apiKey: remoteTarget.apiKey,
             modelID: remoteTarget.modelID,
-            messages: request.messages.map { .init(role: $0.role, content: $0.content) },
+            messages: request.messages.map { message in
+                .init(
+                    role: message.role,
+                    content: message.content,
+                    name: message.name,
+                    toolCalls: message.toolCalls.map { call in
+                        RemoteProviderToolCall(
+                            callID: call.callID,
+                            type: call.type,
+                            toolName: call.toolName,
+                            argumentsJSON: call.argumentsJSON
+                        )
+                    },
+                    toolCallID: message.toolCallID
+                )
+            },
+            tools: request.tools.map { tool in
+                RemoteProviderToolDefinition(
+                    name: tool.name,
+                    description: tool.description,
+                    parametersJSON: tool.parametersJSON
+                )
+            },
+            toolChoice: request.toolChoice,
+            parallelToolCalls: request.parallelToolCalls,
             stream: true,
             enableThinking: request.enableThinking,
             reasoningEffort: request.reasoningEffort,
@@ -532,27 +787,126 @@ public actor ControlPlaneService {
             timeoutSeconds: remoteTarget.timeoutSeconds
         )
         let remoteStream = try await remoteProviderClient.stream(remoteRequest)
+        let requestID = "remote-\(UUID().uuidString)"
+        let cancellationController = ControlPlaneChatCancellationController()
         return ControlPlaneChatExecution(
-            requestID: "remote-\(UUID().uuidString)",
+            requestID: requestID,
             modelID: remoteTarget.modelID,
-            stream: mappedRemoteChatStream(from: remoteStream)
+            stream: mappedRemoteChatStream(
+                from: remoteStream,
+                cancellationController: cancellationController
+            ),
+            cancel: {
+                await cancellationController.cancel(requestID: requestID)
+            }
         )
     }
 
     private func mappedRemoteChatStream(
-        from stream: AsyncThrowingStream<RemoteProviderChatStreamEvent, Error>
+        from stream: AsyncThrowingStream<RemoteProviderChatStreamEvent, Error>,
+        cancellationController: ControlPlaneChatCancellationController
     ) -> AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> {
         AsyncThrowingStream<ControlPlaneChatStreamEvent, Error> { continuation in
             let forwardTask = Task {
                 do {
                     var reasoningFragments: [String] = []
+                    var reasoningByteCount = 0
+                    var streamedToolArguments: [String: String] = [:]
+                    var streamedToolNames: [String: String] = [:]
+                    var reconciledToolCallIDs: Set<String> = []
+                    var didReceiveTerminalEvent = false
                     for try await event in stream {
+                        guard !didReceiveTerminalEvent else {
+                            throw RemoteProviderError.invalidResponse(
+                                "remote provider emitted data after terminal completion"
+                            )
+                        }
                         switch event {
                         case .tokenDelta(let text):
                             continuation.yield(.tokenDelta(text))
                         case .reasoningDelta(let text):
+                            guard text.utf8.count <= 4 * 1_024 * 1_024,
+                                  reasoningByteCount
+                                    <= 4 * 1_024 * 1_024 - text.utf8.count
+                            else {
+                                throw RemoteProviderError.invalidResponse(
+                                    "remote provider streamed oversized reasoning text"
+                                )
+                            }
+                            reasoningByteCount += text.utf8.count
                             reasoningFragments.append(text)
                             continuation.yield(.reasoningDelta(text))
+                        case .toolCallDelta(let delta):
+                            if let streamedName = streamedToolNames[delta.callID],
+                               streamedName != delta.toolName
+                            {
+                                throw RemoteProviderError.invalidResponse(
+                                    "remote provider streamed inconsistent tool identity"
+                                )
+                            }
+                            streamedToolNames[delta.callID] = delta.toolName
+                            streamedToolArguments[delta.callID, default: ""] +=
+                                delta.argumentsFragment
+                            continuation.yield(
+                                .toolCallDelta(
+                                    callID: delta.callID,
+                                    toolName: delta.toolName,
+                                    argumentsFragment: delta.argumentsFragment
+                                )
+                            )
+                        case .toolCallsCompleted(let calls):
+                            let terminalCallIDs = Set(calls.map(\.callID))
+                            guard terminalCallIDs.count == calls.count else {
+                                throw RemoteProviderError.invalidResponse(
+                                    "remote provider returned duplicate terminal tool calls"
+                                )
+                            }
+                            guard Set(streamedToolArguments.keys).isSubset(
+                                of: terminalCallIDs
+                            ) else {
+                                throw RemoteProviderError.invalidResponse(
+                                    "remote provider omitted streamed tool calls from terminal reconciliation"
+                                )
+                            }
+                            for call in calls {
+                                if let streamedName = streamedToolNames[call.callID],
+                                   streamedName != call.toolName
+                                {
+                                    throw RemoteProviderError.invalidResponse(
+                                        "remote provider streamed inconsistent tool identity"
+                                    )
+                                }
+                                streamedToolNames[call.callID] = call.toolName
+                                let streamed = streamedToolArguments[
+                                    call.callID,
+                                    default: ""
+                                ]
+                                guard call.argumentsJSON.utf8.starts(
+                                    with: streamed.utf8
+                                ) else {
+                                    throw RemoteProviderError.invalidResponse(
+                                        "remote provider streamed inconsistent tool arguments"
+                                    )
+                                }
+                                let suffix = String(
+                                    decoding: call.argumentsJSON.utf8.dropFirst(
+                                        streamed.utf8.count
+                                    ),
+                                    as: UTF8.self
+                                )
+                                if !suffix.isEmpty || streamed.isEmpty {
+                                    continuation.yield(
+                                        .toolCallDelta(
+                                            callID: call.callID,
+                                            toolName: call.toolName,
+                                            argumentsFragment: suffix
+                                        )
+                                    )
+                                }
+                                streamedToolArguments[call.callID] =
+                                    call.argumentsJSON
+                            }
+                            reconciledToolCallIDs.formUnion(terminalCallIDs)
                         case .usage(let promptTokens, let completionTokens):
                             continuation.yield(
                                 .usage(
@@ -566,6 +920,7 @@ public actor ControlPlaneService {
                                 )
                             )
                         case .completed(let finishReason, let assistantText):
+                            didReceiveTerminalEvent = true
                             continuation.yield(
                                 .completed(
                                     finishReason: finishReason,
@@ -575,15 +930,959 @@ public actor ControlPlaneService {
                             )
                         }
                     }
+                    guard Set(streamedToolArguments.keys).isSubset(
+                        of: reconciledToolCallIDs
+                    ) else {
+                        throw RemoteProviderError.invalidResponse(
+                            "remote provider ended before terminal tool reconciliation"
+                        )
+                    }
+                    guard didReceiveTerminalEvent else {
+                        throw RemoteProviderError.invalidResponse(
+                            "remote provider stream ended before terminal completion"
+                        )
+                    }
+                    await cancellationController.markTerminal()
                     continuation.finish()
                 } catch {
+                    await cancellationController.markTerminal()
                     continuation.finish(throwing: error)
+                }
+            }
+            Task {
+                await cancellationController.install {
+                    forwardTask.cancel()
                 }
             }
             continuation.onTermination = { _ in
                 forwardTask.cancel()
+                Task {
+                    await cancellationController.markTerminal()
+                }
             }
         }
+    }
+
+    private func handleAgent(
+        request: Melix_Controlplane_V1_ControlPlaneRequest,
+        command: Melix_Controlplane_V1_AgentCommand
+    ) async -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let requiresFreshMutationEnvelope: Bool = switch command.kind {
+        case .start, .activate, .decideApproval, .replaceApprovalPolicy:
+            true
+        case .cancel, .get, .list, .getApprovalPolicy, .getOperations, nil:
+            false
+        }
+        if requiresFreshMutationEnvelope,
+           Self.deadlineHasExpired(request.deadlineUnixMs) {
+            return errorResponse(
+                for: request,
+                code: "deadline_exceeded",
+                message: "The Agent mutation envelope deadline has expired."
+            )
+        }
+        do {
+            var reply = Melix_Controlplane_V1_AgentReply()
+            switch command.kind {
+            case .start(var start):
+                if !start.providerServerID.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty {
+                    return errorResponse(
+                        for: request,
+                        code: "agent_remote_target_required",
+                        message: "Remote agent runs require a resolved provider target."
+                    )
+                }
+                start.deadlineUnixMs = Self.earliestPositiveDeadline(
+                    request.deadlineUnixMs,
+                    start.deadlineUnixMs
+                )
+                reply.run = try await startAgentRun(
+                    start,
+                    actorID: request.actorID,
+                    remoteTarget: nil
+                )
+            case .activate(let activation):
+                reply.run = try await agentRuntime.activate(
+                    runID: activation.runID,
+                    deadlineUnixMs: request.deadlineUnixMs
+                )
+            case .decideApproval(let decision):
+                let startedAt = Date()
+                reply.approval = try await agentRuntime.decideApproval(
+                    command: decision,
+                    actorID: request.actorID,
+                    deadlineUnixMs: request.deadlineUnixMs
+                )
+                await metricsStore.set(
+                    Date().timeIntervalSince(startedAt) * 1_000,
+                    forKey: "agent.approval.decision_propagation_ms"
+                )
+            case .cancel(let cancellation):
+                let startedAt = Date()
+                let reason: AgentCancellationReason = switch cancellation.reason {
+                case "deadline_exceeded":
+                    .deadlineExceeded
+                case "operator_requested", "":
+                    .operatorRequested
+                default:
+                    .system(cancellation.reason)
+                }
+                reply.cancellation = await agentRuntime.cancel(
+                    runID: cancellation.runID,
+                    reason: reason
+                )
+                await metricsStore.set(
+                    Date().timeIntervalSince(startedAt) * 1_000,
+                    forKey: "agent.cancel.control_plane_to_worker_ms"
+                )
+            case .get(let get):
+                reply.run = try await agentRuntime.snapshot(runID: get.runID)
+            case .list(let list):
+                if list.nonterminalOnly {
+                    let page = try await agentRuntime.nonterminalSnapshotPage(
+                        sessionID: list.sessionID,
+                        limit: list.limit > 0 ? Int(list.limit) : 500
+                    )
+                    reply.runs = page.snapshots
+                    reply.runsComplete = page.isComplete
+                } else {
+                    reply.runs = await agentRuntime.snapshots(
+                        sessionID: list.sessionID,
+                        limit: list.limit > 0 ? Int(list.limit) : 100
+                    )
+                    reply.runsComplete = false
+                }
+            case .getApprovalPolicy:
+                guard let agentApprovalPolicyAdministrator else {
+                    return errorResponse(
+                        for: request,
+                        code: "agent_policy_management_unavailable",
+                        message: "Agent approval policy management is not configured."
+                    )
+                }
+                reply.approvalPolicy = Self.agentApprovalPolicySnapshotProto(
+                    try await agentApprovalPolicyAdministrator.snapshot()
+                )
+            case .replaceApprovalPolicy(let replacement):
+                guard let agentApprovalPolicyAdministrator else {
+                    return errorResponse(
+                        for: request,
+                        code: "agent_policy_management_unavailable",
+                        message: "Agent approval policy management is not configured."
+                    )
+                }
+                guard replacement.rules.count <= 1_000 else {
+                    return errorResponse(
+                        for: request,
+                        code: "agent_policy_rule_limit_exceeded",
+                        message: "Agent approval policies may contain at most 1,000 rules."
+                    )
+                }
+                let rules = try replacement.rules.map(
+                    Self.agentApprovalPolicyRule
+                )
+                let mutation = try await agentApprovalPolicyAdministrator
+                    .replaceRules(
+                        rules,
+                        expectedRevision: replacement.expectedRevision,
+                        deadlineUnixMs: request.deadlineUnixMs
+                    )
+                reply.approvalPolicyMutation =
+                    Melix_Controlplane_V1_AgentApprovalPolicyMutationReceipt
+                        .with {
+                            $0.revision = mutation.revision
+                            $0.ruleCount = UInt32(mutation.ruleCount)
+                        }
+                reply.approvalPolicy = Self.agentApprovalPolicySnapshotProto(
+                    try await agentApprovalPolicyAdministrator.snapshot()
+                )
+            case .getOperations:
+                reply.operations = await buildAgentOperationsSnapshot(
+                    actorID: request.actorID
+                )
+            case nil:
+                return errorResponse(
+                    for: request,
+                    code: "invalid_request",
+                    message: "Agent command is required."
+                )
+            }
+            return okResponse(for: request, agent: reply)
+        } catch let error as ControlPlaneAgentRuntimeError {
+            return agentErrorResponse(for: request, error: error)
+        } catch let error as ControlPlaneAgentAdapterError {
+            let code: String = switch error {
+            case .unavailableWorker:
+                "agent_worker_unavailable"
+            case .emptyCatalog:
+                "agent_tool_catalog_empty"
+            case .duplicateToolName:
+                "agent_tool_catalog_ambiguous"
+            case .invalidToolSchema:
+                "agent_tool_schema_invalid"
+            case .unknownTool:
+                "agent_unknown_tool"
+            case .incompleteModelTurn:
+                "agent_model_turn_incomplete"
+            case .invalidToolResult:
+                "agent_tool_result_invalid"
+            }
+            return errorResponse(
+                for: request,
+                code: code,
+                message: "Agent request failed safely."
+            )
+        } catch let error as ApprovalPolicyStoreError {
+            let detail: (code: String, message: String) = switch error {
+            case .deadlineExceeded:
+                ("deadline_exceeded", "The Agent mutation envelope deadline has expired.")
+            case .invalidDocument:
+                ("agent_policy_invalid_document", "The saved Agent policy is invalid.")
+            case .invalidRule:
+                ("agent_policy_invalid_rule", "The Agent policy contains an invalid rule.")
+            case .duplicateRuleID:
+                ("agent_policy_duplicate_rule", "Agent policy rule IDs must be unique.")
+            case .revisionMismatch:
+                ("agent_policy_revision_conflict", "The Agent policy changed; refresh before retrying.")
+            case .revisionExhausted:
+                ("agent_policy_revision_exhausted", "The Agent policy revision cannot advance.")
+            case .approvalContextUnavailable, .approvalContextMismatch:
+                ("agent_policy_context_mismatch", "The Agent approval context is no longer current.")
+            case .ioFailure:
+                ("agent_policy_persistence_failed", "The Agent policy could not be persisted safely.")
+            }
+            return errorResponse(
+                for: request,
+                code: detail.code,
+                message: detail.message
+            )
+        } catch {
+            return errorResponse(
+                for: request,
+                code: "agent_runtime_error",
+                message: "Agent request failed safely."
+            )
+        }
+    }
+
+    private func buildAgentOperationsSnapshot(
+        actorID rawActorID: String
+    ) async -> Melix_Controlplane_V1_AgentOperationsSnapshot {
+        let observedAtUnixMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        var snapshot = Melix_Controlplane_V1_AgentOperationsSnapshot()
+        snapshot.observedAtUnixMs = observedAtUnixMs
+        snapshot.computerUse = baseComputerUseOperationsStatus()
+
+        let actorID = rawActorID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !actorID.isEmpty else {
+            snapshot.toolSources = [Self.unavailableAgentToolRuntimeSource(
+                errorCode: "agent_actor_required"
+            )]
+            return snapshot
+        }
+        guard
+            let workerRegistry,
+            let worker = await workerRegistry.client(for: .pythonCompatibility)
+                as? any AgentToolRuntimeWorkerClientProtocol
+        else {
+            snapshot.toolSources = [Self.unavailableAgentToolRuntimeSource(
+                errorCode: "agent_worker_unavailable"
+            )]
+            return snapshot
+        }
+
+        var listRequest = Melix_Worker_V1_ListAgentToolsRequest()
+        listRequest.id.requestID = "agent-operations-\(UUID().uuidString)"
+        listRequest.id.sessionID = "agent-operations"
+        listRequest.id.branchID = "operator-read-model"
+        listRequest.sources = mcpToolCatalog.liveSourceConfigs
+        listRequest.refreshSources = true
+        listRequest.deadlineUnixMs = observedAtUnixMs + 10_000
+        listRequest.ownerActorID = actorID
+        listRequest.leaseTtlMs = 30_000
+
+        let receipt: Melix_Worker_V1_ToolCatalogReceipt
+        do {
+            receipt = try await worker.listAgentTools(request: listRequest)
+        } catch {
+            await releaseAgentOperationsSources(
+                worker: worker,
+                ownerRequest: listRequest
+            )
+            snapshot.toolSources = [Self.unavailableAgentToolRuntimeSource(
+                errorCode: "agent_tool_catalog_unavailable"
+            )]
+            return snapshot
+        }
+
+        snapshot.catalogDigest = Self.boundedAgentOperationsText(
+            receipt.catalogDigest,
+            maximumUTF8Bytes: 128
+        )
+        snapshot.tools = Array(receipt.tools.prefix(512)).map {
+            Self.agentToolDefinitionSummary($0)
+        }
+        snapshot.toolSources = agentToolSourceStatuses(
+            receipt: receipt,
+            tools: snapshot.tools
+        )
+
+        if computerUseBrokerConfigured,
+           computerUseAuthorizationSigner != nil,
+           let computerTool = receipt.tools.first(where: {
+               $0.sourceID == "computer"
+                   && $0.name == "computer_use"
+                   && $0.adapterKind == "computer"
+           }) {
+            snapshot.computerUse = await probeComputerUseOperationsStatus(
+                worker: worker,
+                descriptor: computerTool,
+                actorID: actorID,
+                observedAtUnixMs: observedAtUnixMs
+            )
+        }
+        await releaseAgentOperationsSources(
+            worker: worker,
+            ownerRequest: listRequest
+        )
+        return snapshot
+    }
+
+    private func releaseAgentOperationsSources(
+        worker: any AgentToolRuntimeWorkerClientProtocol,
+        ownerRequest: Melix_Worker_V1_ListAgentToolsRequest
+    ) async {
+        guard !mcpToolCatalog.liveSourceConfigs.isEmpty else {
+            return
+        }
+        var release = Melix_Worker_V1_ListAgentToolsRequest()
+        release.id.requestID = "agent-operations-release-\(UUID().uuidString)"
+        release.id.sessionID = ownerRequest.id.sessionID
+        release.id.branchID = ownerRequest.id.branchID
+        release.ownerActorID = ownerRequest.ownerActorID
+        release.releaseSources = true
+        release.leaseTtlMs = 1
+        release.deadlineUnixMs = Int64(Date().timeIntervalSince1970 * 1_000)
+            + 2_000
+        _ = try? await worker.listAgentTools(request: release)
+    }
+
+    private func agentToolSourceStatuses(
+        receipt: Melix_Worker_V1_ToolCatalogReceipt,
+        tools: [Melix_Controlplane_V1_AgentToolDefinitionSummary]
+    ) -> [Melix_Controlplane_V1_AgentToolSourceStatus] {
+        var statusesByID: [String: Melix_Controlplane_V1_AgentToolSourceStatus] = [:]
+        for source in receipt.sources.prefix(128) {
+            let sourceID = Self.boundedAgentOperationsText(
+                source.sourceID,
+                maximumUTF8Bytes: 256
+            )
+            guard !sourceID.isEmpty else {
+                continue
+            }
+            var status = Melix_Controlplane_V1_AgentToolSourceStatus()
+            status.sourceID = sourceID
+            status.transportKind = Self.boundedAgentOperationsText(
+                source.transportKind,
+                maximumUTF8Bytes: 64
+            )
+            status.connectionState = Self.boundedAgentOperationsText(
+                source.connectionState,
+                maximumUTF8Bytes: 64
+            )
+            status.serverName = Self.boundedAgentOperationsText(
+                source.serverName,
+                maximumUTF8Bytes: 128
+            )
+            status.serverVersion = Self.boundedAgentOperationsText(
+                source.serverVersion,
+                maximumUTF8Bytes: 64
+            )
+            status.capabilities = source.capabilities.prefix(32).compactMap {
+                Self.safeAgentCapabilityIdentifier($0)
+            }
+            status.toolCount = source.toolCount
+            status.catalogDigest = Self.boundedAgentOperationsText(
+                source.catalogDigest,
+                maximumUTF8Bytes: 128
+            )
+            status.errorCode = Self.safeAgentCapabilityIdentifier(
+                source.errorCode
+            ) ?? ""
+            statusesByID[sourceID] = status
+        }
+
+        for source in mcpToolCatalog.sources where !source.hasLiveTransport {
+            guard statusesByID[source.sourceID] == nil else {
+                continue
+            }
+            var status = Melix_Controlplane_V1_AgentToolSourceStatus()
+            status.sourceID = source.sourceID
+            status.transportKind = "catalog_only"
+            status.connectionState = source.enabled ? "catalog_only" : "disabled"
+            status.toolCount = UInt32(clamping: source.namespaces.count)
+            status.catalogOnly = true
+            statusesByID[source.sourceID] = status
+        }
+
+        if let configurationErrorCode = mcpToolCatalog.configurationErrorCode {
+            var status = Melix_Controlplane_V1_AgentToolSourceStatus()
+            status.sourceID = "config-discovery"
+            status.transportKind = mcpToolCatalog.discoverySource.rawValue
+            status.connectionState = "failed"
+            status.catalogOnly = true
+            status.errorCode = configurationErrorCode
+            statusesByID[status.sourceID] = status
+        }
+
+        let toolsBySource = Dictionary(grouping: tools, by: \.sourceID)
+        for (sourceID, sourceTools) in toolsBySource
+            where !sourceID.isEmpty && statusesByID[sourceID] == nil
+        {
+            var status = Melix_Controlplane_V1_AgentToolSourceStatus()
+            status.sourceID = sourceID
+            status.toolCount = UInt32(clamping: sourceTools.count)
+            switch sourceID {
+            case "builtin":
+                status.transportKind = "in_process"
+                status.connectionState = "ready"
+                status.serverName = "Melix Worker"
+                status.capabilities = ["deterministic_tools"]
+            case "computer":
+                status.transportKind = "private_uds"
+                status.connectionState = computerUseBrokerConfigured
+                    ? "live"
+                    : "blocked"
+                status.serverName = "Melix Computer Use Broker"
+                status.capabilities = ["ax_semantic_press_only"]
+                if !computerUseBrokerConfigured {
+                    status.errorCode = "computer_authorization_unavailable"
+                }
+            default:
+                status.transportKind = sourceTools.first?.adapterKind ?? "unknown"
+                status.connectionState = "catalog_only"
+                status.catalogOnly = true
+            }
+            statusesByID[sourceID] = status
+        }
+        return statusesByID.values.sorted { $0.sourceID < $1.sourceID }
+    }
+
+    private func baseComputerUseOperationsStatus()
+        -> Melix_Controlplane_V1_AgentComputerUseStatus {
+        var status = Melix_Controlplane_V1_AgentComputerUseStatus()
+        status.brokerConfigured = computerUseBrokerConfigured
+        status.capabilityLevel = computerUseBrokerConfigured
+            ? "permission_probe_unavailable"
+            : "not_configured"
+        status.screenRecordingPermission = "unknown"
+        status.accessibilityPermission = "unknown"
+        status.transportIdentityState = computerUseBrokerConfigured
+            ? "private_uds_signed_authorization_peer_code_identity_unavailable"
+            : "not_configured"
+        status.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryNotRequested
+        return status
+    }
+
+    private func probeComputerUseOperationsStatus(
+        worker: any AgentToolRuntimeWorkerClientProtocol,
+        descriptor: Melix_Worker_V1_AgentToolDefinition,
+        actorID: String,
+        observedAtUnixMs: Int64
+    ) async -> Melix_Controlplane_V1_AgentComputerUseStatus {
+        var status = baseComputerUseOperationsStatus()
+        let runID = "agent-operations-computer-\(UUID().uuidString)"
+        let call = AgentToolCall(
+            callID: "computer-permissions-\(UUID().uuidString)",
+            sourceID: "computer",
+            toolName: "computer_use",
+            title: "Computer Use Permissions",
+            intendedEffect: "Read the broker's current macOS permission state.",
+            riskClass: "low",
+            schemaDigest: descriptor.schemaDigest,
+            argumentsJSON: #"{"operation":"get_permissions"}"#
+        )
+        let binding = AgentApprovalBinding.make(
+            runID: runID,
+            call: call,
+            policyRevision: "agent-operations-read-only-v1",
+            scopeDigest: "operator-read-model"
+        )
+        let admission = AgentToolAdmission(
+            kind: .allow,
+            binding: binding,
+            approvalChoice: nil,
+            grantDigest: Self.agentOperationsAdmissionDigest(binding: binding)
+        )
+        let port = WorkerAgentToolExecutionPort(
+            worker: worker,
+            context: WorkerAgentToolExecutionContext(
+                sessionID: "agent-operations",
+                branchID: "operator-read-model",
+                actorID: actorID,
+                deadlineUnixMs: observedAtUnixMs + 10_000,
+                computerUseAuthorizationSigner: computerUseAuthorizationSigner
+            )
+        )
+        do {
+            let result = try await port.execute(
+                AgentToolExecutionRequest(
+                    runID: runID,
+                    call: call,
+                    admission: admission
+                )
+            )
+            guard let payload = AgentComputerUseSessionProjector
+                .trustedOperatorProjection(
+                call: call,
+                result: result,
+                expectedOperation: "get_permissions"
+            ) else {
+                return status
+            }
+            status.capabilityLevel = "ax_semantic_press_only"
+            status.supportedActions = [
+                "get_permissions",
+                "open_session",
+                "capture_frame",
+                "press_element",
+                "close_session",
+            ]
+            status.screenRecordingPermission = Self.agentPermissionState(
+                payload["screen_recording"]
+            )
+            status.accessibilityPermission = Self.agentPermissionState(
+                payload["accessibility"]
+            )
+            status.maximumFrames = Self.agentOperationsUInt32(
+                payload["maximum_frames"],
+                maximum: 64
+            )
+            status.maximumActions = Self.agentOperationsUInt32(
+                payload["maximum_actions"],
+                maximum: 32
+            )
+            status.maximumArtifactBytes = Self.agentOperationsUInt64(
+                payload["maximum_artifact_bytes"],
+                maximum: 64 * 1_024 * 1_024
+            )
+            status.idleTimeoutSeconds = Self.agentOperationsUInt32(
+                payload["idle_timeout_seconds"],
+                maximum: 300
+            )
+            status.absoluteTimeoutSeconds = Self.agentOperationsUInt32(
+                payload["absolute_timeout_seconds"],
+                maximum: 600
+            )
+            if status.screenRecordingPermission == "granted" {
+                status.targetsObservedAtUnixMs = observedAtUnixMs
+                do {
+                    status.availableTargets = try await discoverComputerUseTargets(
+                        worker: worker,
+                        schemaDigest: descriptor.schemaDigest,
+                        actorID: actorID,
+                        deadlineUnixMs: observedAtUnixMs + 10_000
+                    ).map(\.protocolValue)
+                    status.targetDiscoveryState = status.availableTargets.isEmpty
+                        ? .agentComputerUseTargetDiscoveryEmpty
+                        : .agentComputerUseTargetDiscoveryReady
+                } catch {
+                    status.targetDiscoveryState =
+                        .agentComputerUseTargetDiscoveryFailed
+                    status.targetDiscoveryError =
+                        Self.agentTargetDiscoveryError(error)
+                }
+            }
+        } catch {
+            return status
+        }
+        return status
+    }
+
+    private func discoverComputerUseTargets(
+        worker: any AgentToolRuntimeWorkerClientProtocol,
+        schemaDigest: String,
+        actorID: String,
+        deadlineUnixMs: Int64
+    ) async throws -> [TrustedComputerUseTarget] {
+        let runID = "agent-operations-targets-\(UUID().uuidString)"
+        let call = AgentToolCall(
+            callID: "computer-targets-\(UUID().uuidString)",
+            sourceID: "computer",
+            toolName: "computer_use",
+            title: "Computer Use Window Discovery",
+            intendedEffect: "List bounded live macOS window identities for operator selection.",
+            riskClass: "low",
+            schemaDigest: schemaDigest,
+            argumentsJSON: #"{"operation":"list_targets"}"#
+        )
+        let binding = AgentApprovalBinding.make(
+            runID: runID,
+            call: call,
+            policyRevision: "agent-operations-read-only-v1",
+            scopeDigest: "operator-read-model"
+        )
+        let admission = AgentToolAdmission(
+            kind: .allow,
+            binding: binding,
+            approvalChoice: nil,
+            grantDigest: Self.agentOperationsAdmissionDigest(binding: binding)
+        )
+        let port = WorkerAgentToolExecutionPort(
+            worker: worker,
+            context: WorkerAgentToolExecutionContext(
+                sessionID: "agent-operations",
+                branchID: "operator-read-model",
+                actorID: actorID,
+                deadlineUnixMs: min(
+                    deadlineUnixMs,
+                    Int64(Date().timeIntervalSince1970 * 1_000) + 10_000
+                ),
+                computerUseAuthorizationSigner: computerUseAuthorizationSigner
+            )
+        )
+        let result = try await port.execute(
+            AgentToolExecutionRequest(
+                runID: runID,
+                call: call,
+                admission: admission
+            )
+        )
+        guard let payload = AgentComputerUseSessionProjector
+            .trustedOperatorProjection(
+            call: call,
+            result: result,
+            expectedOperation: "list_targets"
+        ),
+        let rawTargets = payload["targets"] as? [[String: Any]],
+        rawTargets.count <= 128 else {
+            throw ControlPlaneAgentRuntimeError.invalidRequest(
+                "Computer Use target discovery returned an invalid response"
+            )
+        }
+        let targets = try rawTargets.map { rawTarget in
+            guard let bundleID = rawTarget["bundle_id"] as? String,
+                  let processID = Self.agentOperationsInt32(
+                      rawTarget["process_id"]
+                  ),
+                  let launchIdentity = rawTarget[
+                      "process_launch_identity"
+                  ] as? String,
+                  let windowID = Self.agentOperationsUInt32Value(
+                      rawTarget["window_id"]
+                  ),
+                  let windowTitle = rawTarget["window_title"] as? String,
+                  let applicationName = rawTarget["application_name"] as? String
+            else {
+                throw TrustedComputerUseTargetError.invalidIdentity
+            }
+            return try TrustedComputerUseTarget(
+                bundleID: bundleID,
+                processID: processID,
+                processLaunchIdentity: launchIdentity,
+                windowID: windowID,
+                windowTitle: windowTitle,
+                applicationName: applicationName
+            )
+        }
+        guard Set(targets).count == targets.count else {
+            throw ControlPlaneAgentRuntimeError.invalidRequest(
+                "Computer Use target discovery returned duplicate identities"
+            )
+        }
+        return targets.sorted { lhs, rhs in
+            if lhs.applicationName != rhs.applicationName {
+                return lhs.applicationName.localizedCaseInsensitiveCompare(
+                    rhs.applicationName
+                ) == .orderedAscending
+            }
+            if lhs.windowTitle != rhs.windowTitle {
+                return lhs.windowTitle.localizedCaseInsensitiveCompare(
+                    rhs.windowTitle
+                ) == .orderedAscending
+            }
+            return lhs.targetID < rhs.targetID
+        }
+    }
+
+    private static func agentToolDefinitionSummary(
+        _ tool: Melix_Worker_V1_AgentToolDefinition
+    ) -> Melix_Controlplane_V1_AgentToolDefinitionSummary {
+        var summary = Melix_Controlplane_V1_AgentToolDefinitionSummary()
+        summary.sourceID = boundedAgentOperationsText(
+            tool.sourceID,
+            maximumUTF8Bytes: 256
+        )
+        summary.adapterKind = boundedAgentOperationsText(
+            tool.adapterKind,
+            maximumUTF8Bytes: 64
+        )
+        summary.name = boundedAgentOperationsText(
+            tool.name,
+            maximumUTF8Bytes: 256
+        )
+        summary.title = boundedAgentOperationsText(
+            tool.title,
+            maximumUTF8Bytes: 256
+        )
+        summary.schemaDigest = boundedAgentOperationsText(
+            tool.schemaDigest,
+            maximumUTF8Bytes: 128
+        )
+        summary.riskClass = boundedAgentOperationsText(
+            tool.riskClass,
+            maximumUTF8Bytes: 64
+        )
+        summary.replayability = boundedAgentOperationsText(
+            tool.replayability,
+            maximumUTF8Bytes: 64
+        )
+        summary.annotationsUntrusted = tool.annotationsUntrusted
+        return summary
+    }
+
+    private static func unavailableAgentToolRuntimeSource(
+        errorCode: String
+    ) -> Melix_Controlplane_V1_AgentToolSourceStatus {
+        var status = Melix_Controlplane_V1_AgentToolSourceStatus()
+        status.sourceID = "agent-runtime"
+        status.transportKind = "grpc"
+        status.connectionState = "unavailable"
+        status.errorCode = errorCode
+        return status
+    }
+
+    private static func agentPermissionState(_ value: Any?) -> String {
+        guard let value = value as? String else {
+            return "unknown"
+        }
+        switch value {
+        case "not_determined", "denied", "granted", "restart_required", "unavailable":
+            return value
+        default:
+            return "unknown"
+        }
+    }
+
+    private static func agentTargetDiscoveryError(
+        _ error: Error
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        var status = Melix_Controlplane_V1_ErrorStatus()
+        status.message = "Live Computer Use window discovery failed."
+        switch error as? AgentPortFailure {
+        case .timedOut:
+            status.code = "computer_target_discovery_timeout"
+            status.retriable = true
+        case .unavailable, .cancelled:
+            status.code = "computer_target_discovery_unavailable"
+            status.retriable = true
+        case .invalidResponse, .rejected, .internalFailure:
+            status.code = "computer_target_discovery_invalid_response"
+            status.retriable = false
+        case nil:
+            status.code = "computer_target_discovery_invalid_response"
+            status.retriable = false
+        }
+        return status
+    }
+
+    private static func agentOperationsUInt32(
+        _ value: Any?,
+        maximum: UInt32
+    ) -> UInt32 {
+        UInt32(agentOperationsUInt64(value, maximum: UInt64(maximum)))
+    }
+
+    private static func agentOperationsUInt64(
+        _ value: Any?,
+        maximum: UInt64
+    ) -> UInt64 {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID()
+        else {
+            return 0
+        }
+        let signed = number.int64Value
+        guard signed > 0, UInt64(signed) <= maximum else {
+            return 0
+        }
+        return UInt64(signed)
+    }
+
+    private static func agentOperationsInt32(_ value: Any?) -> Int32? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.int64Value > 0,
+              number.int64Value <= Int64(Int32.max) else {
+            return nil
+        }
+        return Int32(number.int64Value)
+    }
+
+    private static func agentOperationsUInt32Value(_ value: Any?) -> UInt32? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.int64Value > 0,
+              UInt64(number.int64Value) <= UInt64(UInt32.max) else {
+            return nil
+        }
+        return UInt32(number.uint64Value)
+    }
+
+    private static func agentOperationsAdmissionDigest(
+        binding: AgentApprovalBinding
+    ) -> String {
+        let fields = [
+            "melix.agent-tool-admission.v1",
+            binding.bindingDigest,
+            "allow",
+            "policy-allow",
+        ]
+        let canonical = fields.map { "\($0.utf8.count):\($0)" }
+            .joined(separator: "|")
+        return SHA256.hash(data: Data(canonical.utf8)).map {
+            String(format: "%02x", $0)
+        }.joined()
+    }
+
+    private static func boundedAgentOperationsText(
+        _ value: String,
+        maximumUTF8Bytes: Int
+    ) -> String {
+        var result = ""
+        result.reserveCapacity(min(value.count, maximumUTF8Bytes))
+        for character in value {
+            let candidate = result + String(character)
+            guard candidate.utf8.count <= maximumUTF8Bytes else {
+                break
+            }
+            result = candidate
+        }
+        return result
+    }
+
+    private static func safeAgentCapabilityIdentifier(
+        _ value: String
+    ) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.utf8.count <= 64,
+              trimmed.unicodeScalars.allSatisfy({ scalar in
+                  CharacterSet.alphanumerics.contains(scalar)
+                      || scalar == "_" || scalar == "-" || scalar == "."
+              })
+        else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private static func agentApprovalPolicySnapshotProto(
+        _ snapshot: AgentApprovalPolicySnapshot
+    ) -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot {
+        Melix_Controlplane_V1_AgentApprovalPolicySnapshot.with {
+            $0.schemaVersion = snapshot.schemaVersion
+            $0.revision = snapshot.revision
+            $0.rules = snapshot.rules.map(agentApprovalPolicyRuleProto)
+        }
+    }
+
+    private static func agentApprovalPolicyRuleProto(
+        _ rule: AgentApprovalPolicyRule
+    ) -> Melix_Controlplane_V1_AgentApprovalPolicyRule {
+        Melix_Controlplane_V1_AgentApprovalPolicyRule.with {
+            $0.id = rule.id
+            $0.effect = switch rule.effect {
+            case .allow: .agentApprovalPolicyAllow
+            case .ask: .agentApprovalPolicyAsk
+            case .deny: .agentApprovalPolicyDeny
+            }
+            $0.sourceID = rule.sourceID ?? ""
+            $0.toolName = rule.toolName ?? ""
+            $0.riskClass = switch rule.riskClass {
+            case .unknown: .unknown
+            case .low: .low
+            case .medium: .medium
+            case .high: .high
+            case .critical: .critical
+            case nil: .unspecified
+            }
+            $0.operationKind = switch rule.operationKind {
+            case .unknown: .agentApprovalOperationUnknown
+            case .read: .agentApprovalOperationRead
+            case .write: .agentApprovalOperationWrite
+            case .credentialAccess: .agentApprovalOperationCredentialAccess
+            case .authentication: .agentApprovalOperationAuthentication
+            case .upload: .agentApprovalOperationUpload
+            case .send: .agentApprovalOperationSend
+            case .purchase: .agentApprovalOperationPurchase
+            case .destructiveMutation: .agentApprovalOperationDestructiveMutation
+            case .processExecution: .agentApprovalOperationProcessExecution
+            case .secureFieldInteraction: .agentApprovalOperationSecureFieldInteraction
+            case nil: .unspecified
+            }
+            $0.workspaceScope = rule.workspaceScope ?? ""
+            $0.appBundleID = rule.appBundleID ?? ""
+            $0.networkHost = rule.networkHost ?? ""
+            $0.schemaDigest = rule.schemaDigest ?? ""
+        }
+    }
+
+    private static func agentApprovalPolicyRule(
+        _ rule: Melix_Controlplane_V1_AgentApprovalPolicyRule
+    ) throws -> AgentApprovalPolicyRule {
+        let effect: AgentApprovalPolicyEffect = switch rule.effect {
+        case .agentApprovalPolicyAllow: .allow
+        case .agentApprovalPolicyAsk: .ask
+        case .agentApprovalPolicyDeny: .deny
+        case .unspecified, .UNRECOGNIZED:
+            throw ApprovalPolicyStoreError.invalidRule(id: rule.id)
+        }
+        let riskClass: AgentApprovalRiskClass? = switch rule.riskClass {
+        case .unknown: .unknown
+        case .low: .low
+        case .medium: .medium
+        case .high: .high
+        case .critical: .critical
+        case .unspecified: nil
+        case .UNRECOGNIZED:
+            throw ApprovalPolicyStoreError.invalidRule(id: rule.id)
+        }
+        let operationKind: AgentApprovalOperationKind? = switch rule.operationKind {
+        case .agentApprovalOperationUnknown: .unknown
+        case .agentApprovalOperationRead: .read
+        case .agentApprovalOperationWrite: .write
+        case .agentApprovalOperationCredentialAccess: .credentialAccess
+        case .agentApprovalOperationAuthentication: .authentication
+        case .agentApprovalOperationUpload: .upload
+        case .agentApprovalOperationSend: .send
+        case .agentApprovalOperationPurchase: .purchase
+        case .agentApprovalOperationDestructiveMutation: .destructiveMutation
+        case .agentApprovalOperationProcessExecution: .processExecution
+        case .agentApprovalOperationSecureFieldInteraction: .secureFieldInteraction
+        case .unspecified: nil
+        case .UNRECOGNIZED:
+            throw ApprovalPolicyStoreError.invalidRule(id: rule.id)
+        }
+        return AgentApprovalPolicyRule(
+            id: rule.id.trimmingCharacters(in: .whitespacesAndNewlines),
+            effect: effect,
+            sourceID: nonemptyPolicyField(rule.sourceID),
+            toolName: nonemptyPolicyField(rule.toolName),
+            riskClass: riskClass,
+            operationKind: operationKind,
+            workspaceScope: nonemptyPolicyField(rule.workspaceScope),
+            appBundleID: nonemptyPolicyField(rule.appBundleID),
+            networkHost: nonemptyPolicyField(rule.networkHost),
+            schemaDigest: nonemptyPolicyField(rule.schemaDigest)
+        )
+    }
+
+    private static func nonemptyPolicyField(_ value: String) -> String? {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
     }
 
     private func mappedChatStream(
@@ -4516,7 +5815,8 @@ public actor ControlPlaneService {
         cache: Melix_Controlplane_V1_CacheReply? = nil,
         session: Melix_Controlplane_V1_SessionReply? = nil,
         ops: Melix_Controlplane_V1_OpsReply? = nil,
-        image: Melix_Controlplane_V1_ImageReply? = nil
+        image: Melix_Controlplane_V1_ImageReply? = nil,
+        agent: Melix_Controlplane_V1_AgentReply? = nil
     ) -> Melix_Controlplane_V1_ControlPlaneResponse {
         var response = baseResponse(for: request)
         response.ok = true
@@ -4533,6 +5833,8 @@ public actor ControlPlaneService {
             response.ops = ops
         } else if let image {
             response.image = image
+        } else if let agent {
+            response.agent = agent
         }
 
         return response
@@ -4563,6 +5865,144 @@ public actor ControlPlaneService {
         response.ok = false
         response.error = error
         return response
+    }
+
+    private func agentErrorResponse(
+        for request: Melix_Controlplane_V1_ControlPlaneRequest,
+        error: ControlPlaneAgentRuntimeError
+    ) -> Melix_Controlplane_V1_ControlPlaneResponse {
+        let code: String = switch error {
+        case .deadlineExceeded:
+            "deadline_exceeded"
+        case .invalidRequest:
+            "invalid_request"
+        case .unknownRun:
+            "agent_run_not_found"
+        case .invalidApprovalBinding:
+            "agent_approval_binding_mismatch"
+        case .approvalNotPending:
+            "agent_approval_not_pending"
+        case .staleApprovalBinding:
+            "agent_approval_binding_stale"
+        case .policyPersistenceFailed:
+            "agent_policy_persistence_failed"
+        case .decisionPersistenceFailed:
+            "agent_approval_decision_persistence_failed"
+        case .journalPersistenceFailed:
+            "agent_run_journal_persistence_failed"
+        }
+        return errorResponse(
+            for: request,
+            code: code,
+            message: "Agent request failed safely."
+        )
+    }
+
+    static func earliestPositiveDeadline(
+        _ envelopeDeadlineUnixMs: Int64,
+        _ commandDeadlineUnixMs: Int64
+    ) -> Int64 {
+        switch (envelopeDeadlineUnixMs > 0, commandDeadlineUnixMs > 0) {
+        case (true, true):
+            min(envelopeDeadlineUnixMs, commandDeadlineUnixMs)
+        case (true, false):
+            envelopeDeadlineUnixMs
+        case (false, true):
+            commandDeadlineUnixMs
+        case (false, false):
+            0
+        }
+    }
+
+    private static func deadlineHasExpired(
+        _ deadlineUnixMs: Int64,
+        now: Date = Date()
+    ) -> Bool {
+        deadlineUnixMs > 0
+            && deadlineUnixMs <= Int64(now.timeIntervalSince1970 * 1_000)
+    }
+
+    private static func resolveComputerUseAuthorizationSigner(
+        injectedSigner: ComputerUseToolAuthorizationSigner?,
+        brokerSocketConfigured: Bool,
+        environment: [String: String]
+    ) -> ComputerUseToolAuthorizationSigner? {
+        let privateKeyDescriptor = inheritedDescriptor(
+            named: "MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_FD",
+            environment: environment
+        )
+        let publicKeyDescriptor = inheritedDescriptor(
+            named: "MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_FD",
+            environment: environment
+        )
+        guard brokerSocketConfigured else {
+            closeInheritedDescriptor(privateKeyDescriptor)
+            closeInheritedDescriptor(publicKeyDescriptor)
+            return nil
+        }
+        let signerWasInjected = injectedSigner != nil
+        var signer = injectedSigner
+        if signer != nil {
+            closeInheritedDescriptor(privateKeyDescriptor)
+        } else if let privateKeyDescriptor {
+            do {
+                let handle = FileHandle(
+                    fileDescriptor: privateKeyDescriptor,
+                    closeOnDealloc: true
+                )
+                let privateKey = try handle.readToEnd() ?? Data()
+                try handle.close()
+                guard privateKey.count == 32 else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                signer = try ComputerUseToolAuthorizationSigner(
+                    privateKeyRawRepresentation: privateKey
+                )
+            } catch {
+                signer = nil
+            }
+        }
+        guard let signer else {
+            closeInheritedDescriptor(publicKeyDescriptor)
+            return nil
+        }
+        guard let publicKeyDescriptor else {
+            return signerWasInjected ? signer : nil
+        }
+        do {
+            let handle = FileHandle(
+                fileDescriptor: publicKeyDescriptor,
+                closeOnDealloc: true
+            )
+            try handle.write(contentsOf: signer.publicKeyRawRepresentation)
+            try handle.close()
+            return signer
+        } catch {
+            return nil
+        }
+    }
+
+    private static func inheritedDescriptor(
+        named name: String,
+        environment: [String: String]
+    ) -> Int32? {
+        guard let rawValue = environment[name],
+              let descriptor = Int32(rawValue),
+              descriptor > 2
+        else {
+            return nil
+        }
+        return descriptor
+    }
+
+    private static func closeInheritedDescriptor(_ descriptor: Int32?) {
+        guard let descriptor else {
+            return
+        }
+        try? FileHandle(
+            fileDescriptor: descriptor,
+            closeOnDealloc: true
+        ).close()
     }
 
     private func baseResponse(

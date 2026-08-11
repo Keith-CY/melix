@@ -1,6 +1,6 @@
 # Melix Current Status
 
-_Last updated: 2026-08-04_
+_Last updated: 2026-08-09_
 
 ---
 
@@ -109,7 +109,8 @@ These are the current limits of the product. They're intentional, not oversights
 |---|---|
 | **Apple Silicon only** | Melix is intentionally scoped to macOS on Apple Silicon. No cross-platform support is planned for the current scope. |
 | **LoRA family coverage** | `llama`, `qwen`, `gemma`, and `kimi` are the stable dense-family path. `mixtral` and `qwen3moe` are experimental via MoE hooks. `deepseek-mla`, `mistral4`, `nemotron-h`, and embedding-family models are not yet productized for `train_lora`. |
-| **Agentic tool providers** | The unified agentic tool runtime is deterministic and fixture-backed. Network search, live browser visit providers, unsafe arbitrary Python execution, and online GRPO optimization remain outside the shipped local runtime closure. |
+| **Agentic tool providers — preview under acceptance** | The current implementation can initialize and execute explicitly configured MCP sources over stdio or streamable HTTP, while the built-in local tools retain deterministic contracts. It is not considered shipped until the serial repository gate and current-build native walkthrough finish. No network-search or browser provider is bundled by default, and unsafe arbitrary Python execution plus online GRPO optimization remain outside this delivery. |
+| **Computer Use — preview under acceptance** | The current native broker implementation is limited to trusted window discovery, bounded capture, and approval-gated Accessibility semantic press. It remains under current-build native acceptance. Text entry, key press, scrolling, pointer or coordinate actions, startup reconciliation of orphaned commit intents, and peer code-sign attestation on the source-tree UDS transport remain outside this delivery. |
 | **Disk-streaming** | Documented and probed, but true SSD-backed runtime execution is not yet shipped. |
 | **Historical plans** | The plan archive is broader than the curated product docs. Archived plans are engineering history — not every plan is equally product-ready. |
 | **Progress log** | `progress.md` tracks active verification notes. Treat it as the operational truth for known local issues. |

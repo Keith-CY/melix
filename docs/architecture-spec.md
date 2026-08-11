@@ -23,19 +23,24 @@ Melix should keep the control plane Swift-first while moving the latency-critica
 │ dashboard, models, tools, settings, logs, bench, chat,    │
 │ image, HuggingFace sync, and operator workflows           │
 └────────────────────────────────────────────────────────────┘
-                            │ XPC
+                            │ XPC (packaged)
+                            │ private typed UDS (source-tree development)
                             ▼
 ┌────────────────────────────────────────────────────────────┐
 │             Melix Control Plane Daemon (Swift)            │
 │  HTTP/SSE gateway, scheduler, EnginePool, CacheIndex,     │
-│  SessionRegistry, WorkerRegistry, metrics, admin          │
+│  SessionRegistry, AgentRunCoordinator, policy, admin      │
 └────────────────────────────────────────────────────────────┘
-                 │ gRPC over Unix Domain Sockets
-                 ▼
+          │ gRPC over Unix Domain Sockets       │ typed local RPC
+          ▼                                     ▼
 ┌────────────────────────────────────────────────────────────┐
 │              Melix Worker Pool (Swift + Python)           │
-│  swift text, python multimodal, maintenance, embeddings   │
+│  swift text, python multimodal, MCP and tool execution    │
 └────────────────────────────────────────────────────────────┘
+                              ┌───────────────────────────────┐
+                              │ Native Computer Use Broker    │
+                              │ ScreenCaptureKit, AX, evidence│
+                              └───────────────────────────────┘
                  │
                  ▼
 ┌────────────────────────────────────────────────────────────┐
@@ -72,7 +77,9 @@ Example socket layout:
 
 The desktop app is a native operations surface. It should:
 
-- Connect only to the control plane through XPC.
+- Connect only to the control plane through XPC in the final signed service
+  boundary, or through the private typed control-plane UDS transport in the
+  source-tree and packaged-preview launchers.
 - Render snapshots and event-driven updates.
 - Offer dashboard, models, tools, settings, logs, bench, chat, and image workflows only where backend support already exists.
 - Offer model pin, warmup, unload, cache purge, quantization, HuggingFace upload or download, and adapter workflows through control-plane commands.
@@ -88,12 +95,69 @@ The control plane is the system coordinator and source of truth. It owns:
 - Ollama-compatible local HTTP APIs where planned by the roadmap
 - Request admission and scheduling
 - Session, branch, and workflow metadata
+- agent-run orchestration, approval policy, budgets, and cancellation truth
 - Model registry and EnginePool
 - Cache metadata index
 - Worker discovery and health state
 - Operational flows such as doctor, bench, logs, diagnostics, quantization jobs, training jobs, and HuggingFace sync
 
 This layer should remain Swift-first because it carries the longest-lived product logic.
+
+There is exactly one control-plane writer for an effective `MELIX_HOME`. The
+daemon acquires a process-lifetime advisory writer lease before constructing
+stores or runtime services. The private lock file is a current-user regular file
+inside the private state directory, and its persisted fencing token is also the
+daemon instance ID. A second daemon for the same home fails fast; after a clean
+release, a replacement daemon receives a new generation token. The desktop app
+must never construct another `ControlPlaneService`, worker registry, model
+catalog, or tool signer in its own process.
+
+CLI in-process fallback obeys the same lease boundary. A missing, stale, or
+invalid active-runtime descriptor may select the standalone route, but the CLI
+must acquire and retain the `MELIX_HOME` writer lease before constructing a
+mutable control plane. If another daemon or CLI owns it, operations fail closed
+with a repairable ownership error instead of creating a second writer.
+
+The final signed distribution keeps the XPC-first app boundary. Source-tree and
+packaged-preview launchers use the schema-generated `ControlPlaneIPCService`
+over a private Unix domain socket so native walkthroughs and preview bundles
+preserve the same one-daemon ownership model before the launchd/XPC package is
+installed. That private transport
+accepts only bounded typed protobuf messages, creates its parent as a
+current-user `0700` directory, seals the socket to the current user with `0600`
+mode, refuses to replace paths it does not own, and removes only the socket it
+validated. Clients independently reject non-private, non-owned, non-socket, or
+non-canonical endpoints. A Chat stream must return start metadata within a
+bounded client deadline; expiry cancels the transport task and therefore the
+server request. It carries handshake, command execution, subscriptions, Chat
+stream and cancellation, and Agent-run start. It does not give the app or CLI
+worker socket paths, the Computer Use broker socket, or the control-plane
+authorization key. A separately invoked CLI uses an explicit control-plane
+socket or the live, validated active-runtime descriptor and otherwise retains
+the standalone in-process fallback; an explicitly malformed socket fails
+closed rather than constructing a second writer. The private UDS does not
+provide XPC audit-token code-sign identity; it is an interim local transport,
+not a claim that packaged XPC validation is complete.
+
+The packaged-preview launcher keeps `MELIX_RUNTIME_DIR` as the home for
+metrics, caches, logs, and the active-runtime descriptor, but it must not derive
+UDS pathnames directly from that potentially long operator-selected path. Each
+launch creates one unpredictable current-user `0700` socket root under `/tmp`,
+validates that the root is a real directory owned by the
+effective user, and verifies every worker, control-plane, and Computer Use
+socket pathname is at most 103 UTF-8 bytes before any service is forked. The
+launcher removes only the files and directory created for that exact launch.
+Root creation, validation, or cleanup failure is explicit and never falls back
+to a shared fixed pathname.
+
+The foreground bundle identifier belongs to exactly one regular AppKit process:
+the desktop UI. An AppKit-linked helper must not inherit or register under the
+foreground bundle identifier. The packaged Computer Use broker therefore lives
+inside its own nested background-only helper bundle with a distinct identifier,
+while the outer app's `Contents/MacOS` UI binary remains the only regular
+application for the foreground identifier. Native acceptance must verify this
+process identity through the current signed bundle before relying on
+Accessibility or window automation evidence.
 
 For model discovery, the control plane owns the typed `ModelCatalog` exposed to XPC and local HTTP clients, but it should synchronize registry-discovered entries from worker-owned snapshots instead of deriving registry state from scattered per-model environment variables.
 
@@ -107,10 +171,51 @@ Workers own:
 - Prefill and decode execution
 - Cache materialization and restoration
 - Tool and reasoning parser glue
+- normalized tool execution, including live MCP client lifecycle
 - Multimodal execution
 - Maintenance flows such as conversion, diagnostics, and benchmarking
 
 Workers should not expose network-facing APIs beyond local RPC.
+
+### Computer Use Broker
+
+Computer Use executes in an independent Swift process attached to the
+active macOS GUI session. It owns only native desktop execution and bounded
+evidence:
+
+- ScreenCaptureKit window capture;
+- AXUIElement inspection and semantic press;
+- broker-local permission state, action commit state, and evidence artifacts.
+
+The broker does not call models, evaluate approval policy, or own agent-run
+state. The control plane supplies a short-lived session capability and an
+approval grant bound to the exact run, tool call, action digest, target, policy
+revision, actor, and expiry. The broker must reject stale frame handles,
+cross-owner capabilities, secure fields, targets outside the allowlist, and any
+action after cancellation or session expiry.
+
+The current transport is a private Unix-domain socket with path owner, mode,
+inode, and device checks, a private caller verification capability, and exact
+Ed25519 request authorization. The current gRPC UDS API does not expose a macOS
+audit token, so the broker cannot attest the peer's code-sign identity. This is
+an explicit advertised boundary, not evidence of a signed peer. Text, key,
+scroll, pointer, and coordinate actions remain unsupported in the current
+semantic-press capability.
+
+Source-tree launchers create distinct per-instance `0700` parents for the
+control-plane and Computer Use sockets under the configured short socket root.
+The broker verification capability is a `0600` regular file in the broker's
+private parent. Launcher path normalization must preserve the operator-selected
+canonical spelling across Python and Foundation; it must not resolve a socket
+root alias into a spelling that the receiving runtime will reject after the
+file exists. The headless broker initializes an AppKit application with the
+prohibited activation policy before serving ScreenCaptureKit requests; this
+establishes the GUI-session connection without presenting a Dock app.
+
+The app must not execute Computer Use directly or infer broker permission from
+the app's own TCC state. The broker reports its own Screen Recording and
+Accessibility state. System permission prompts require an explicit operator
+gesture and must never be triggered by a model tool call.
 
 #### Swift Text Worker
 
@@ -237,6 +342,69 @@ inputs or Melix-owned state: `MELIX_MCP_CONFIG_PATH` first, then
 not configuration sources. Diagnostics must expose the requested/effective MCP
 policy, refused high-risk namespaces, operator override source, and discovery
 receipt.
+
+MCP environment references are worker-only credentials. Development launchers
+must parse the active config through the same discovery order with bounded input
+and validated environment-key names. After trimming, an explicit
+`MELIX_MCP_CONFIG_PATH` must be an absolute path or use current-user `~` /
+`~/...` syntax; relative paths, named-user tilde paths, NUL, and paths over 4096
+UTF-8 bytes fail closed. Current-user tilde expansion accepts `HOME` only when
+it is absolute, otherwise it uses the platform current-user home, and every
+boundary lexically standardizes the result without imposing a different
+symlink-resolution policy. The Python tool worker inherits only the values
+referenced by the active configuration at worker startup so it can resolve
+stdio and HTTP credentials at connection time. An active-config change that
+introduces a new credential source key is restart-required and fails closed in
+the running worker; arbitrary unreferenced parent credentials never enter the
+worker. The app, its CLI children, readiness probes, Swift model workers, control
+plane, and Computer Use broker start from a minimal allowlist whose keys are
+reserved from MCP references; this prevents both current references and values
+that become referenced after an earlier child was forked from crossing the
+boundary. The App/CLI, control plane, Swift workers, probes, broker, and Python
+worker each have an explicit role contract; shared workflow settings are
+declared for every role that consumes them, while gateway credentials remain
+control-plane-only and MCP credential references remain Python-tool-worker-only.
+The Python worker repeats the same reserved-key validation when typed stdio or
+HTTP source configuration enters the runtime, so a caller cannot bypass the
+launcher boundary. Credential source keys, stdio child environment names, and
+static or referenced HTTP header names are bounded to 255 UTF-8 bytes each.
+Credential-bearing headers such as authorization, cookie, token, secret, and
+API-key headers must use environment references and are invalid as static
+values. HTTP names must use RFC token-compatible ASCII syntax and static/referenced
+names within one transport must be unique case-insensitively. A config has at
+most 1,024 credential references across stdio and HTTP, with the raw reference
+target-name list bounded to 32,768 bytes. Independently, all raw static and
+referenced HTTP header-name entries across the config share a 1,024-entry and
+32,768-byte budget; an HTTP credential reference counts against both budgets.
+The deduplicated comma-separated credential source-key list is also bounded to
+32,768 bytes, so valid-looking configuration cannot exhaust child-process
+argument or environment space.
+Launchers freeze one deduplicated, bounded credential-key snapshot from the
+initial active configuration before any child is forked. A later refresh may
+only remove keys from that snapshot; introducing a new key fails closed with a
+restart-required receipt. The Python tool worker receives values only for the
+frozen active snapshot, non-Python roles receive none of those values, and the
+App sentinel carries the same frozen key list for descendant sanitization. The
+control plane independently accepts only a regular configuration file no larger
+than 1 MiB. Launcher, App, and direct-daemon readers resolve the operator-selected
+symlink path, open the final path component with no-follow and non-blocking flags,
+then classify, size-check, and bounded-read that same descriptor. A replacement
+with a FIFO, device, directory, or final-component symlink therefore fails closed
+before any configuration bytes are consumed. Raw JSON admission rejects duplicate
+object keys, non-standard
+numeric constants, every non-integer numeric lexical token, explicit null for
+known fields, nesting deeper than 128,
+more than 16,384 value tokens, or more than 8,192 object members. The config has
+at most 256 sources, source IDs matching the worker's bounded
+64-byte identifier contract with no normalized duplicates, supported transport
+kinds with their required typed fields, and the same reference/header
+cardinality and name limits. Launcher and App preflight enforce that same source
+and transport shape before forking the stack. Direct daemon startup therefore
+cannot bypass launcher preflight or turn a special-file replacement into an
+unbounded read.
+Missing default config means no referenced
+credentials; an explicit unreadable, oversized, or invalid config must stop App
+launch rather than silently passing an unknown credential set through it.
 
 Remote media ingress must pass URL admission before a request can reach any
 future download or worker dereference path. Local paths and `file:` URLs remain
@@ -595,6 +763,43 @@ completed/timeout/failed status metadata, and emits deterministic replay
 fingerprints over the sanitized payload plus call identity. Downstream consumers
 must treat the sanitized observation record as the durable source of truth rather
 than re-reading raw adapter output.
+
+Interactive agent runs extend this deterministic foundation without changing
+its ownership. One control-plane `AgentRunCoordinator` owns the model-turn
+loop, tool admission, approval waits, budgets, cancellation tree, and terminal
+run receipt. The Python worker exposes one deep `ToolExecutionRuntime` boundary
+for deterministic built-ins, live MCP sources, and Computer Use through the
+native broker. The desktop app renders this state and submits typed operator
+decisions; it never invokes a tool adapter directly.
+
+Each active model execution owns one cancellation single-flight gate. Explicit
+Stop and model-stream task cleanup share that gate, so Swift actor reentrancy
+cannot dispatch the same transport cancellation more than once.
+
+The desktop pre-binds an unpredictable run ID before Agent admission. The
+control plane reserves that identity while it loads catalogs and validates
+targets, prepares the coordinator in a suspended state, and resumes model work
+only after the run is durable and addressable by `CancelAgentRun`. Interactive
+admission is two-phase: `StartAgentRun(defer_activation = true)` returns the
+durable suspended snapshot, then a separately authenticated
+`ActivateAgentRun` begins model work. Stop during admission records terminal
+intent immediately. If Stop is reordered ahead of Start, the client retries it
+after the Start reply and withholds activation, so no provider turn or tool
+execution may begin.
+
+Live MCP support must perform protocol initialization and version negotiation,
+discover tools with `tools/list`, execute with `tools/call`, process catalog
+change notifications, and close or cancel transports deterministically. Stdio
+servers use explicit command vectors and a scrubbed environment. Streamable
+HTTP servers use configured URLs and credential references; credential values
+must not enter catalogs, prompts, logs, receipts, or UI read models.
+
+The initial live loop executes tool calls sequentially. It validates completed
+argument fragments as a JSON object, binds every call to one run and schema
+digest, enforces turn and call budgets, projects normalized results as
+untrusted prompt data, and starts another model turn only while the run remains
+non-terminal. Parallel tool execution is not permitted until the same approval
+and cancellation guarantees are proven for a group.
 
 ### Quantization
 

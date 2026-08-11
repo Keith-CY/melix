@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import signal
 import subprocess
@@ -46,6 +47,10 @@ def make_layout(tmp_path: Path):
         python_socket_path=tmp_path / "runtime/python.sock",
         swift_text_worker_socket_path=tmp_path / "runtime/swift.sock",
         swift_vision_worker_socket_path=tmp_path / "runtime/swift-vision.sock",
+        control_plane_socket_path=tmp_path / "runtime/control-plane.sock",
+        computer_broker_socket_path=tmp_path / "runtime/computer.sock",
+        computer_broker_capability_path=tmp_path
+        / "runtime/computer-broker-capability.bin",
         managed_models_dir=tmp_path / "home/models/default-managed",
         audio_runtime_packs_dir=tmp_path / "home/runtime-packs/audio",
         model_ops_jobs_root=tmp_path / "home/jobs/model-ops",
@@ -80,8 +85,8 @@ def test_dev_app_up_shell_wrapper_delegates_help_to_python_entrypoint() -> None:
     assert result.stdout.splitlines() == [
         "Usage: bash scripts/dev_app_up.sh",
         "",
-        "Starts the built Melix backend stack and launches the built melix-menubar app.",
-        "Fails fast when required Swift build artifacts are missing.",
+        "Incrementally builds the current Swift products, starts the Melix backend stack,",
+        "and launches the current melix-menubar app from direct executables.",
     ]
 
 
@@ -107,18 +112,6 @@ def test_parse_args_rejects_unknown_argument(capsys: pytest.CaptureFixture[str])
     assert "Usage: bash scripts/dev_app_up.sh" in captured.err
 
 
-def test_resolve_built_menubar_binary_reports_missing_binary(tmp_path: Path) -> None:
-    dev_app_up = load_dev_app_up_module()
-
-    with pytest.raises(RuntimeError) as exc:
-        dev_app_up.resolve_built_menubar_binary(tmp_path)
-
-    message = str(exc.value)
-    assert "Built Swift product is missing for 'melix-menubar'" in message
-    assert "swift test --package-path" in message
-    assert "apps/macos-menubar" in message
-
-
 def test_start_full_app_launches_menubar_with_console_startup_surface(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -128,15 +121,77 @@ def test_start_full_app_launches_menubar_with_console_startup_surface(
     layout = make_layout(tmp_path)
     menubar_binary = tmp_path / "melix-menubar"
     menubar_binary.write_text("", encoding="utf-8")
+    mcp_config = tmp_path / "mcp-tools.json"
+    mcp_config.write_text(
+        """
+        {
+          "sources": [
+            {
+              "source_id": "stdio-source",
+              "transport": {
+                "kind": "stdio",
+                "command": "/usr/bin/true",
+                "environment_references": {
+                  "SERVICE_TOKEN": "MELIX_TEST_STDIO_MCP_TOKEN"
+                }
+              }
+            },
+            {
+              "source_id": "http-source",
+              "transport": {
+                "kind": "streamable_http",
+                "url": "https://mcp.example.test/rpc",
+                "header_environment_references": {
+                  "Authorization": "MELIX_TEST_HTTP_MCP_AUTHORIZATION"
+                }
+              }
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(dev_app_up, "ROOT", tmp_path)
     monkeypatch.setattr(dev_app_up.dev_up, "compute_runtime_layout", lambda root: layout)
-    monkeypatch.setattr(dev_app_up, "resolve_built_menubar_binary", lambda root: menubar_binary)
+    for private_key in dev_app_up.dev_up.PRIVATE_SERVICE_ENVIRONMENT_KEYS:
+        monkeypatch.setenv(private_key, f"polluted-{private_key}")
+    monkeypatch.setenv("MELIX_MCP_CONFIG_PATH", str(mcp_config))
+    monkeypatch.setenv("MELIX_TEST_STDIO_MCP_TOKEN", "stdio-sensitive-value")
+    monkeypatch.setenv(
+        "MELIX_TEST_HTTP_MCP_AUTHORIZATION",
+        "Bearer http-sensitive-value",
+    )
+    monkeypatch.setenv("MELIX_TEST_ROTATED_MCP_TOKEN", "rotated-sensitive-value")
+
+    def fake_build_swift_launch_command(
+        repo_root: Path,
+        *,
+        package_path: str,
+        product_name: str,
+        prefer_built: bool,
+        build_configuration: str = "debug",
+    ) -> list[str]:
+        seen["menubar_build"] = {
+            "repo_root": repo_root,
+            "package_path": package_path,
+            "product_name": product_name,
+            "prefer_built": prefer_built,
+            "build_configuration": build_configuration,
+        }
+        return [str(menubar_binary)]
+
+    monkeypatch.setattr(
+        dev_app_up.dev_up,
+        "build_swift_launch_command",
+        fake_build_swift_launch_command,
+    )
 
     def fake_start_stack(options):
         seen["options"] = options
         layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+        return b"K" * 32
 
     monkeypatch.setattr(dev_app_up.dev_up, "start_stack", fake_start_stack)
 
@@ -148,21 +203,57 @@ def test_start_full_app_launches_menubar_with_console_startup_surface(
 
     dev_app_up.start_full_app()
 
-    assert getattr(seen["options"], "prefer_built", False) is True
+    assert getattr(seen["options"], "prefer_built", True) is False
+    assert seen["menubar_build"] == {
+        "repo_root": tmp_path,
+        "package_path": "apps/macos-menubar",
+        "product_name": "melix-menubar",
+        "prefer_built": False,
+        "build_configuration": "debug",
+    }
     assert (layout.runtime_dir / "menubar.pid").read_text(encoding="utf-8") == "404"
     spawn = seen["spawn"]
     assert isinstance(spawn, dict)
     assert spawn["command"] == [str(menubar_binary)]
     assert spawn["cwd"] == tmp_path
     assert spawn["log_path"] == layout.runtime_dir / "menubar.log"
+    base_environment = spawn["base_environment"]
+    assert isinstance(base_environment, dict)
+    for private_key in dev_app_up.dev_up.PRIVATE_SERVICE_ENVIRONMENT_KEYS:
+        assert private_key not in base_environment
+    assert "MELIX_TEST_STDIO_MCP_TOKEN" not in base_environment
+    assert "MELIX_TEST_HTTP_MCP_AUTHORIZATION" not in base_environment
+    assert "MELIX_TEST_ROTATED_MCP_TOKEN" not in base_environment
+    assert base_environment["MELIX_MCP_CONFIG_PATH"] == str(mcp_config)
+    assert set(spawn["unset_environment_keys"]) == {
+        *dev_app_up.dev_up.PRIVATE_SERVICE_ENVIRONMENT_KEYS,
+        "MELIX_TEST_STDIO_MCP_TOKEN",
+        "MELIX_TEST_HTTP_MCP_AUTHORIZATION",
+    }
     assert spawn["env_overrides"]["MELIX_MENU_BAR_STARTUP_SURFACE"] == "console"
     assert spawn["env_overrides"]["MELIX_MENU_BAR_PRESENTATION_MODE"] == "dock-and-tray"
     assert spawn["env_overrides"]["MELIX_MENU_BAR_TERMINATION_MODE"] == "dev-down-script"
     assert spawn["env_overrides"]["MELIX_HOME"] == str(layout.melix_home_dir)
     assert spawn["env_overrides"]["MELIX_RUNTIME_DIR"] == str(layout.runtime_dir)
     assert spawn["env_overrides"]["MELIX_REPO_ROOT"] == str(tmp_path)
-    assert spawn["env_overrides"]["MELIX_WORKER_SOCKET_PATH"] == str(layout.python_socket_path)
-    assert spawn["env_overrides"]["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] == str(layout.swift_text_worker_socket_path)
+    assert spawn["env_overrides"]["MELIX_CONTROL_PLANE_SOCKET_PATH"] == str(
+        layout.control_plane_socket_path
+    )
+    assert "MELIX_WORKER_SOCKET_PATH" not in spawn["env_overrides"]
+    assert "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH" not in spawn["env_overrides"]
+    assert "MELIX_COMPUTER_BROKER_SOCKET" not in spawn["env_overrides"]
+    assert spawn["pass_fds"] == ()
+    assert "MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_FD" not in (
+        spawn["env_overrides"]
+    )
+    assert "MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_BASE64" not in (
+        spawn["env_overrides"]
+    )
+    assert (b"K" * 32).hex() not in repr(spawn)
+    assert "polluted-MELIX_COMPUTER_BROKER" not in repr(spawn)
+    assert "stdio-sensitive-value" not in repr(spawn)
+    assert "http-sensitive-value" not in repr(spawn)
+    assert "rotated-sensitive-value" not in repr(spawn)
     assert spawn["env_overrides"]["MELIX_GATEWAY_CONFIG_STORE_PATH"] == str(layout.gateway_config_store_path)
     assert (
         spawn["env_overrides"]["MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH"]
@@ -174,24 +265,118 @@ def test_start_full_app_launches_menubar_with_console_startup_surface(
     assert "Menu bar pid file:" in output
 
 
-def test_start_full_app_fails_before_backend_boot_when_menubar_binary_is_missing(
+def test_start_full_app_requires_restart_when_mcp_config_adds_source_key(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     dev_app_up = load_dev_app_up_module()
+    layout = make_layout(tmp_path)
+    menubar_binary = tmp_path / "melix-menubar"
+    menubar_binary.write_text("", encoding="utf-8")
+    snapshots = iter((
+        ("INITIAL_SECRET",),
+        ("INITIAL_SECRET", "NEW_SECRET"),
+    ))
+    spawned = False
+
+    monkeypatch.setattr(dev_app_up, "ROOT", tmp_path)
+    monkeypatch.setattr(dev_app_up.dev_up, "compute_runtime_layout", lambda root: layout)
+    monkeypatch.setattr(
+        dev_app_up.dev_up,
+        "active_mcp_credential_environment_keys",
+        lambda **kwargs: next(snapshots),
+    )
+    monkeypatch.setattr(
+        dev_app_up.dev_up,
+        "build_swift_launch_command",
+        lambda *args, **kwargs: [str(menubar_binary)],
+    )
+    monkeypatch.setattr(
+        dev_app_up.dev_up,
+        "start_stack",
+        lambda options: layout.runtime_dir.mkdir(parents=True, exist_ok=True),
+    )
+    rolled_back: list[Path] = []
+    monkeypatch.setattr(
+        dev_app_up.dev_up,
+        "rollback_started_stack",
+        lambda current_layout: rolled_back.append(current_layout.runtime_dir),
+    )
+
+    def fake_spawn(**kwargs):
+        nonlocal spawned
+        spawned = True
+        return 404
+
+    monkeypatch.setattr(dev_app_up.dev_up, "spawn_background_process", fake_spawn)
+
+    with pytest.raises(RuntimeError, match="restart Melix"):
+        dev_app_up.start_full_app()
+
+    assert spawned is False
+    assert rolled_back == [layout.runtime_dir]
+
+
+def test_start_full_app_fails_before_backend_boot_when_menubar_build_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dev_app_up = load_dev_app_up_module()
+    layout = make_layout(tmp_path)
     seen: dict[str, int] = {"start_stack": 0}
 
     monkeypatch.setattr(dev_app_up, "ROOT", tmp_path)
+    monkeypatch.setattr(dev_app_up.dev_up, "compute_runtime_layout", lambda root: layout)
+    monkeypatch.setattr(
+        dev_app_up.dev_up,
+        "build_swift_launch_command",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("menubar build failed")
+        ),
+    )
     monkeypatch.setattr(
         dev_app_up.dev_up,
         "start_stack",
         lambda options: seen.__setitem__("start_stack", seen["start_stack"] + 1),
     )
 
-    with pytest.raises(RuntimeError, match="melix-menubar"):
+    with pytest.raises(RuntimeError, match="menubar build failed"):
         dev_app_up.start_full_app()
 
     assert seen["start_stack"] == 0
+
+
+def test_main_fails_closed_before_backend_boot_for_invalid_mcp_config_without_printing_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dev_app_up = load_dev_app_up_module()
+    layout = make_layout(tmp_path)
+    invalid_config = tmp_path / "invalid-mcp.json"
+    invalid_config.write_text("{", encoding="utf-8")
+    sensitive_value = "never-print-this-mcp-secret"
+    start_stack_calls = 0
+
+    monkeypatch.setattr(dev_app_up, "ROOT", tmp_path)
+    monkeypatch.setattr(dev_app_up.dev_up, "compute_runtime_layout", lambda root: layout)
+    monkeypatch.setenv("MELIX_MCP_CONFIG_PATH", str(invalid_config))
+    monkeypatch.setenv("MELIX_TEST_MCP_TOKEN", sensitive_value)
+
+    def fake_start_stack(options):
+        nonlocal start_stack_calls
+        _ = options
+        start_stack_calls += 1
+        return b"K" * 32
+
+    monkeypatch.setattr(dev_app_up.dev_up, "start_stack", fake_start_stack)
+
+    assert dev_app_up.main([]) == 1
+    captured = capsys.readouterr()
+    assert start_stack_calls == 0
+    assert "Active MCP config is invalid" in captured.err
+    assert sensitive_value not in captured.out
+    assert sensitive_value not in captured.err
 
 
 def test_start_full_app_rejects_existing_menubar_pid(
@@ -205,8 +390,14 @@ def test_start_full_app_rejects_existing_menubar_pid(
     seen: dict[str, int] = {"start_stack": 0}
 
     monkeypatch.setattr(dev_app_up, "ROOT", tmp_path)
-    monkeypatch.setattr(dev_app_up, "resolve_built_menubar_binary", lambda root: tmp_path / "melix-menubar")
     monkeypatch.setattr(dev_app_up.dev_up, "compute_runtime_layout", lambda root: layout)
+    monkeypatch.setattr(
+        dev_app_up.dev_up,
+        "build_swift_launch_command",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("running stack must be rejected before building")
+        ),
+    )
     monkeypatch.setattr(
         dev_app_up.dev_up,
         "start_stack",

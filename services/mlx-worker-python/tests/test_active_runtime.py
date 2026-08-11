@@ -19,8 +19,10 @@ def test_write_active_runtime_descriptor_is_atomic_private_and_complete(tmp_path
         control_plane_process_id=202,
         python_worker_process_id=303,
         swift_text_worker_process_id=404,
+        computer_broker_process_id=505,
         python_worker_socket_path="/tmp/python.sock",
         swift_text_worker_socket_path="/tmp/swift.sock",
+        control_plane_socket_path="/tmp/control-plane.sock",
         service_base_url="http://127.0.0.1:12436/v1",
         now_unix_ms=lambda: 123_456,
     )
@@ -31,8 +33,10 @@ def test_write_active_runtime_descriptor_is_atomic_private_and_complete(tmp_path
         "control_plane_process_id": 202,
         "python_worker_process_id": 303,
         "swift_text_worker_process_id": 404,
+        "computer_broker_process_id": 505,
         "python_worker_socket_path": "/tmp/python.sock",
         "swift_text_worker_socket_path": "/tmp/swift.sock",
+        "control_plane_socket_path": "/tmp/control-plane.sock",
         "service_base_url": "http://127.0.0.1:12436/v1",
         "updated_at_unix_ms": 123_456,
     }
@@ -58,6 +62,8 @@ def test_active_runtime_cli_replaces_existing_descriptor(tmp_path: Path) -> None
             "33",
             "--swift-text-worker-process-id",
             "44",
+            "--computer-broker-process-id",
+            "55",
             "--python-worker-socket-path",
             "/tmp/python.sock",
             "--swift-text-worker-socket-path",
@@ -73,6 +79,7 @@ def test_active_runtime_cli_replaces_existing_descriptor(tmp_path: Path) -> None
     assert payload["control_plane_process_id"] == 22
     assert payload["python_worker_process_id"] == 33
     assert payload["swift_text_worker_process_id"] == 44
+    assert payload["computer_broker_process_id"] == 55
     assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
 
 

@@ -22,6 +22,15 @@ enum DesktopChatCapabilityGlyphMetrics {
     static let maximumClusterHeight: CGFloat = 30
 }
 
+enum DesktopChatAgentCardPlacement {
+    static func shouldRenderFallback(
+        activeRunID: String,
+        transcriptRunIDs: Set<String>
+    ) -> Bool {
+        !activeRunID.isEmpty && !transcriptRunIDs.contains(activeRunID)
+    }
+}
+
 struct DesktopChatModelIdentityPresentation: Equatable {
     let canonicalID: String
     let displayName: String
@@ -160,6 +169,11 @@ enum DesktopChatTranscriptAutoScroll {
         case bottom = "desktop-chat-transcript-bottom"
     }
 
+    enum Destination: Equatable {
+        case none
+        case bottom
+    }
+
     struct Snapshot: Equatable {
         let entryCount: Int
         let lastEntryID: String
@@ -167,6 +181,7 @@ enum DesktopChatTranscriptAutoScroll {
         let lastEntryDetail: String
         let isStreaming: Bool
         let statusText: String
+        let destination: Destination
     }
 
     static func snapshot(
@@ -175,13 +190,17 @@ enum DesktopChatTranscriptAutoScroll {
         statusText: String
     ) -> Snapshot {
         let lastEntry = transcript.last
+        let lastEntryIsAgentRun = lastEntry?.kind == .agentRun
         return Snapshot(
             entryCount: transcript.count,
             lastEntryID: lastEntry?.id ?? "",
             lastEntryBody: lastEntry?.body ?? "",
             lastEntryDetail: lastEntry?.detail ?? "",
-            isStreaming: isStreaming,
-            statusText: isStreaming ? statusText : ""
+            isStreaming: lastEntryIsAgentRun ? false : isStreaming,
+            statusText: isStreaming && !lastEntryIsAgentRun ? statusText : "",
+            destination: lastEntryIsAgentRun
+                ? .none
+                : .bottom
         )
     }
 }
@@ -497,16 +516,15 @@ struct DesktopChatSessionSidebar: View {
                                     viewModel.selectChatSession(id: session.id)
                                 },
                                 onFork: {
-                                    viewModel.selectChatSession(id: session.id)
-                                    viewModel.forkSelectedChatSession()
+                                    viewModel.forkChatSession(id: session.id)
                                 },
                                 onExport: {
-                                    viewModel.selectChatSession(id: session.id)
-                                    _ = viewModel.exportSelectedChatSession()
+                                    _ = viewModel.exportChatSession(id: session.id)
                                 },
                                 onClear: {
-                                    viewModel.selectChatSession(id: session.id)
-                                    viewModel.clearChatTranscript()
+                                    viewModel.clearChatTranscript(
+                                        sessionID: session.id
+                                    )
                                 },
                                 onDelete: {
                                     viewModel.deleteChatSession(id: session.id)
@@ -532,8 +550,8 @@ struct DesktopChatSessionWorkspace: View {
 
     private var isSendDisabled: Bool {
         viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        || viewModel.isChatStreaming
-        || viewModel.isSelectedChatProviderReady == false
+        || viewModel.isChatBusy
+        || viewModel.isSelectedChatInteractionReady == false
     }
 
     private var selectedChatModelNeedsAttachment: Bool {
@@ -596,7 +614,7 @@ struct DesktopChatSessionWorkspace: View {
     private var chatTranscriptScrollSnapshot: DesktopChatTranscriptAutoScroll.Snapshot {
         DesktopChatTranscriptAutoScroll.snapshot(
             transcript: viewModel.chatTranscript,
-            isStreaming: viewModel.isChatStreaming,
+            isStreaming: viewModel.isChatGenerationInProgress,
             statusText: viewModel.chatStatusText
         )
     }
@@ -611,14 +629,23 @@ struct DesktopChatSessionWorkspace: View {
         }
     }
 
-    private func scrollChatTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+    private var chatTranscriptAgentRunIDs: Set<String> {
+        Set(chatTranscriptPresentationRows.compactMap(\.entry.agentRunID))
+    }
+
+    private func scrollChatTranscript(
+        _ proxy: ScrollViewProxy,
+        destination: DesktopChatTranscriptAutoScroll.Destination
+    ) {
         DispatchQueue.main.async {
-            if animated {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    proxy.scrollTo(DesktopChatTranscriptAutoScroll.Anchor.bottom, anchor: .bottom)
-                }
-            } else {
-                proxy.scrollTo(DesktopChatTranscriptAutoScroll.Anchor.bottom, anchor: .bottom)
+            switch destination {
+            case .none:
+                return
+            case .bottom:
+                proxy.scrollTo(
+                    DesktopChatTranscriptAutoScroll.Anchor.bottom,
+                    anchor: .bottom
+                )
             }
         }
     }
@@ -660,25 +687,50 @@ struct DesktopChatSessionWorkspace: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            DesktopChatAgentModeBar(viewModel: viewModel)
+
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 12) {
                         if viewModel.chatTranscript.isEmpty == false {
                             ForEach(chatTranscriptPresentationRows) { presentationRow in
                                 let index = presentationRow.index
                                 let entry = presentationRow.entry
-                                DesktopChatTranscriptRowView(
-                                    entry: entry,
-                                    isPending: viewModel.isPendingAssistantTranscriptEntry(entry),
-                                    isStreaming: viewModel.isStreamingChatTranscriptEntry(entry),
-                                    showsAssistantRole: showsAssistantRole(at: index),
-                                    pendingStatusText: viewModel.chatStatusText,
-                                    onPreviewArtifact: onPreviewArtifact
-                                )
+                                Group {
+                                    if let runID = entry.agentRunID,
+                                       let run = viewModel.agentRunSnapshot(
+                                        for: runID
+                                       ) {
+                                        DesktopAgentLiveRunCard(
+                                            viewModel: viewModel,
+                                            run: run
+                                        )
+                                    } else {
+                                        DesktopChatTranscriptRowView(
+                                            entry: entry,
+                                            isPending: viewModel.isPendingAssistantTranscriptEntry(entry),
+                                            isStreaming: viewModel.isStreamingChatTranscriptEntry(entry),
+                                            showsAssistantRole: showsAssistantRole(at: index),
+                                            pendingStatusText: viewModel.chatStatusText,
+                                            onPreviewArtifact: onPreviewArtifact
+                                        )
+                                    }
+                                }
                                 .id(entry.id)
                             }
                         } else {
                             DesktopChatEmptyStateView(viewModel: viewModel)
+                        }
+                        if let run = viewModel.currentChatAgentRun,
+                           viewModel.isActiveAgentRun(run),
+                           DesktopChatAgentCardPlacement.shouldRenderFallback(
+                            activeRunID: run.runID,
+                            transcriptRunIDs: chatTranscriptAgentRunIDs
+                           ) {
+                            DesktopAgentLiveRunCard(
+                                viewModel: viewModel,
+                                run: run
+                            )
                         }
                         Color.clear
                             .frame(height: 1)
@@ -688,13 +740,13 @@ struct DesktopChatSessionWorkspace: View {
                     .frame(maxWidth: .infinity)
                 }
                 .onAppear {
-                    scrollChatTranscriptToBottom(proxy, animated: false)
-                }
-                .onChange(of: chatTranscriptScrollSnapshot) { _, _ in
-                    scrollChatTranscriptToBottom(
+                    scrollChatTranscript(
                         proxy,
-                        animated: accessibilityReduceMotion == false
+                        destination: chatTranscriptScrollSnapshot.destination
                     )
+                }
+                .onChange(of: chatTranscriptScrollSnapshot) { _, snapshot in
+                    scrollChatTranscript(proxy, destination: snapshot.destination)
                 }
             }
 
@@ -707,10 +759,10 @@ struct DesktopChatSessionWorkspace: View {
                     get: { viewModel.chatThinkingEnabled },
                     set: { viewModel.chatThinkingEnabled = $0 }
                 ),
-                isSubmitAvailable: viewModel.isChatStreaming == false
-                && viewModel.isSelectedChatProviderReady,
+                isSubmitAvailable: viewModel.isChatBusy == false
+                && viewModel.isSelectedChatInteractionReady,
                 isSendDisabled: isSendDisabled,
-                isStreaming: viewModel.isChatStreaming,
+                isStreaming: viewModel.isChatGenerationInProgress,
                 serverSession: viewModel.selectedChatServerSession,
                 providerTarget: viewModel.selectedChatProviderTarget,
                 isProviderReady: viewModel.isSelectedChatProviderReady,
@@ -748,7 +800,7 @@ struct DesktopChatSessionInspector: View {
             providerTarget: viewModel.selectedChatProviderTarget,
             isProviderReady: viewModel.isSelectedChatProviderReady,
             capabilities: viewModel.chatCapabilities,
-            isStreaming: viewModel.isChatStreaming,
+            isStreaming: viewModel.isChatGenerationInProgress,
             usageText: viewModel.lastChatUsageText,
             actions: inspectorActions,
             onStartProvider: startSelectedProvider,
@@ -1304,7 +1356,7 @@ private struct DesktopChatServerPicker: View {
             .pickerStyle(.menu)
             .controlSize(.small)
             .frame(maxWidth: 132)
-            .disabled(viewModel.isChatStreaming)
+            .disabled(viewModel.isChatBusy)
             .help("Choose the provider for this chat session")
             .accessibilityLabel("Chat Provider")
         }
@@ -2937,6 +2989,16 @@ struct DesktopChatTranscriptRowView: View {
                     isStreaming: isStreaming
                 )
             }
+        case .agentRun:
+            DesktopChatAssistantTurnEnvelope(showsRole: showsAssistantRole) {
+                DesktopChatActivityBlockView(
+                    kind: .tool,
+                    title: sanitizedTitle,
+                    messageBody: sanitizedBody,
+                    detail: sanitizedDetail,
+                    isStreaming: false
+                )
+            }
         case .error:
             DesktopChatAssistantTurnEnvelope(showsRole: showsAssistantRole) {
                 DesktopChatErrorBlockView(
@@ -3110,7 +3172,7 @@ struct DesktopChatUserBubbleView: View {
                     RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
                         .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
                 )
-                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: 560, alignment: .trailing)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .combine)
