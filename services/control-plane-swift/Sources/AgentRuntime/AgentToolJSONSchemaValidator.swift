@@ -10,9 +10,9 @@ enum AgentToolJSONSchemaValidationError: Error, Sendable, Equatable {
 /// built-ins and commonly returned by MCP servers. Unknown assertion keywords
 /// make the catalog invalid instead of being silently ignored.
 struct AgentToolJSONSchemaValidator: Sendable {
-    // A schema chain at the semantic depth limit (64) occupies 129 raw JSON
-    // containers. Reject the next chain before Foundation recursively decodes it.
-    private static let maximumRawJSONNestingDepth = 130
+    // Foundation recursively materializes JSON containers before the semantic
+    // schema budget runs. Keep that parser-facing recursion independently bounded.
+    private static let maximumRawJSONNestingDepth = 64
     private let allowRegularExpressions: Bool
 
     init(allowRegularExpressions: Bool = true) {

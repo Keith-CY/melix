@@ -109,13 +109,6 @@ struct AgentToolJSONSchemaValidatorTests {
             try validator.validateSchemaDefinition(deeplyNested)
         }
 
-        var semanticallyDeep = #"{"type":"string"}"#
-        for _ in 0..<66 {
-            semanticallyDeep = #"{"additionalProperties":\#(semanticallyDeep)}"#
-        }
-        expectValidationError(.invalidSchema) {
-            try validator.validateSchemaDefinition(semanticallyDeep)
-        }
         expectValidationError(.invalidSchema) {
             try AgentToolJSONSchemaValidator(allowRegularExpressions: false)
                 .validateSchemaDefinition(#"{"pattern":"x"}"#)
