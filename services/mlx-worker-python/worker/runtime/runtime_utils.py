@@ -94,6 +94,16 @@ def _callable_accepts_kwarg_cached(
     return keyword in signature.keyword_accessible_params or signature.accepts_var_keyword
 
 
+@lru_cache(maxsize=1024)
+def _callable_declares_kwarg_cached(
+    callable_obj: Any,
+    skip_first_parameter: bool,
+    keyword: str,
+) -> bool:
+    signature = _callable_kwarg_signature_cached(callable_obj, skip_first_parameter)
+    return keyword in signature.keyword_accessible_params
+
+
 def callable_kwarg_signature(callable_obj: Any) -> CallableKwargSignature:
     if type(callable_obj) is MethodType:
         return _callable_kwarg_signature_cached(callable_obj.__func__, True)
@@ -105,7 +115,15 @@ def callable_kwarg_signature(callable_obj: Any) -> CallableKwargSignature:
 
 
 def callable_declares_kwarg(callable_obj: Any, keyword: str) -> bool:
-    return keyword in callable_kwarg_signature(callable_obj).keyword_accessible_params
+    if type(callable_obj) is FunctionType:
+        return _callable_declares_kwarg_cached(callable_obj, False, keyword)
+    if type(callable_obj) is MethodType:
+        return _callable_declares_kwarg_cached(callable_obj.__func__, True, keyword)
+    cache_callable, skip_first_parameter = _callable_cache_target(callable_obj)
+    try:
+        return _callable_declares_kwarg_cached(cache_callable, skip_first_parameter, keyword)
+    except TypeError:
+        return keyword in _callable_kwarg_signature_uncached(callable_obj).keyword_accessible_params
 
 
 def callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
@@ -132,6 +150,7 @@ def first_declared_kwarg(callable_obj: Any, keywords: tuple[str, ...]) -> str:
 def clear_callable_kwarg_signature_cache() -> None:
     _callable_kwarg_signature_cached.cache_clear()
     _callable_accepts_kwarg_cached.cache_clear()
+    _callable_declares_kwarg_cached.cache_clear()
 
 
 _INSTALLED_PACKAGE_VERSION_CACHE: dict[str, str] = {}

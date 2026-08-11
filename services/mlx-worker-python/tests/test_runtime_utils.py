@@ -49,9 +49,44 @@ def test_callable_kwarg_signature_caches_structured_lookup(monkeypatch: pytest.M
     accepts_cache = runtime_utils._callable_accepts_kwarg_cached.cache_info()
     assert accepts_cache.misses == 2
     assert accepts_cache.hits == 1
+    declares_cache = runtime_utils._callable_declares_kwarg_cached.cache_info()
+    assert declares_cache.misses == 2
+    assert declares_cache.hits == 0
 
     runtime_utils.clear_callable_kwarg_signature_cache()
     assert runtime_utils._callable_accepts_kwarg_cached.cache_info().currsize == 0
+    assert runtime_utils._callable_declares_kwarg_cached.cache_info().currsize == 0
+
+
+def test_callable_declares_kwarg_caches_repeated_keyword_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_utils.clear_callable_kwarg_signature_cache()
+    original_signature = inspect.signature
+    signature_calls = 0
+
+    def tracked_signature(callable_obj: Any) -> inspect.Signature:
+        nonlocal signature_calls
+        signature_calls += 1
+        return original_signature(callable_obj)
+
+    def sample(*, temperature: float = 0.0) -> None:
+        _ = temperature
+
+    sample()
+    monkeypatch.setattr(runtime_utils.inspect, "signature", tracked_signature)
+
+    assert runtime_utils.callable_declares_kwarg(sample, "temperature") is True
+    assert runtime_utils.callable_declares_kwarg(sample, "temperature") is True
+    assert runtime_utils.callable_declares_kwarg(sample, "top_p") is False
+    assert runtime_utils.callable_declares_kwarg(sample, "top_p") is False
+    assert signature_calls == 1
+
+    declares_cache = runtime_utils._callable_declares_kwarg_cached.cache_info()
+    assert declares_cache.misses == 2
+    assert declares_cache.hits == 2
+
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_callable_cache_target_fast_paths_plain_functions() -> None:
@@ -205,6 +240,32 @@ def test_callable_accepts_kwarg_falls_back_for_unhashable_callable(monkeypatch: 
     assert runtime_utils.callable_accepts_kwarg(callable_obj, "temperature") is True
     assert runtime_utils.callable_accepts_kwarg(callable_obj, "temperature") is True
     assert signature_calls == 2
+
+
+def test_callable_declares_kwarg_falls_back_for_unhashable_callable(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_utils.clear_callable_kwarg_signature_cache()
+    original_signature = inspect.signature
+    signature_calls = 0
+
+    class UnhashableCallable:
+        __hash__ = None  # type: ignore[assignment]
+
+        def __call__(self, *, temperature: float = 0.0, **kwargs: object) -> None:
+            _ = (temperature, kwargs)
+
+    def tracked_signature(callable_obj: Any) -> inspect.Signature:
+        nonlocal signature_calls
+        signature_calls += 1
+        return original_signature(callable_obj)
+
+    callable_obj = UnhashableCallable()
+    monkeypatch.setattr(runtime_utils.inspect, "signature", tracked_signature)
+
+    assert runtime_utils.callable_declares_kwarg(callable_obj, "temperature") is True
+    assert runtime_utils.callable_declares_kwarg(callable_obj, "missing") is False
+    assert signature_calls == 2
+
+    runtime_utils.clear_callable_kwarg_signature_cache()
 
 
 def test_installed_package_version_returns_empty_for_missing_package(monkeypatch: pytest.MonkeyPatch) -> None:
