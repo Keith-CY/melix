@@ -378,7 +378,7 @@ class _LiveBrokerFixture:
 
 
 async def _start_broker() -> _LiveBrokerFixture:
-    root = Path(tempfile.mkdtemp(prefix="mcu-py-", dir="/private/tmp"))
+    root = Path(tempfile.mkdtemp(prefix="mcu-py-", dir="/tmp"))
     root.chmod(0o700)
     socket_path = str(root / "broker.sock")
     server = grpc.aio.server()
@@ -1061,7 +1061,7 @@ def test_client_rejects_non_private_socket_before_handshake() -> None:
 
 def test_client_rejects_non_socket_and_broad_parent_paths() -> None:
     async def exercise() -> None:
-        root = Path(tempfile.mkdtemp(prefix="mcu-path-", dir="/private/tmp"))
+        root = Path(tempfile.mkdtemp(prefix="mcu-path-", dir="/tmp"))
         root.chmod(0o700)
         ordinary_file = root / "not-a-socket"
         ordinary_file.write_text("no", encoding="utf-8")
