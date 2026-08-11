@@ -491,18 +491,15 @@ class ToolExecutionRuntime:
         *,
         lease_ttl_seconds: float = 300.0,
     ) -> MCPServerCapabilities:
-        try:
-            capabilities = await self._mcp_manager.initialize(
-                source,
-                owner,
-                lease_ttl_seconds=lease_ttl_seconds,
-            )
-            catalog = await self._mcp_manager.list_tools(
-                source.source_id,
-                owner,
-            )
-        except BaseException:
-            raise
+        capabilities = await self._mcp_manager.initialize(
+            source,
+            owner,
+            lease_ttl_seconds=lease_ttl_seconds,
+        )
+        catalog = await self._mcp_manager.list_tools(
+            source.source_id,
+            owner,
+        )
         self._mcp_capabilities[source.source_id] = capabilities
         self._mcp_catalogs[source.source_id] = catalog
         self._mcp_owner_source_ids.setdefault(owner.key, set()).add(
