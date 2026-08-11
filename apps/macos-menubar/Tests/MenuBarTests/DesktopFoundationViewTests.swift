@@ -13517,6 +13517,95 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         }
     }
 
+    @Test("phase 8 export retries fail closed when the response path or artifact stays missing")
+    @MainActor
+    func phase8ExportRetriesFailClosedForMissingOutput() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("phase8-export-retry-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let missingArtifactPath = tempRoot.appendingPathComponent("missing-matrix-summary.csv").path
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .benchExportCSV(let options):
+                return .success(
+                    makeCLIExportResponseJSON(jobID: options.jobID, outputPath: "", rowCount: 0)
+                )
+            case .benchMatrixExportSummaryCSV(let options):
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: missingArtifactPath,
+                        rowCount: 1
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+            }
+        }
+
+        let client = FakeControlPlaneXPCClient()
+        let runner = try Phase8WindowUIAcceptanceRunner(
+            viewModel: RuntimeViewModel(client: client, cliWorkflowRunner: workflowRunner),
+            cliWorkflowRunner: workflowRunner,
+            config: .init(
+                repoRoot: tempRoot.path,
+                melixHome: tempRoot.path,
+                modelID: "fixture-model",
+                localModelPath: tempRoot.appendingPathComponent("fixture-model").path,
+                trainingFixture: "fixture-dataset",
+                benchSuites: ["smoke"],
+                matrixSuites: ["smoke"],
+                evaluationSuites: ["mmlu"],
+                evaluationDataset: "mmlu.dev.v1",
+                serverSessionID: "server-session-1",
+                cliEvidenceBundlePath: tempRoot.appendingPathComponent("bundle.json").path,
+                timestamp: "2026-08-12T000000Z"
+            ),
+            renderer: RecordingPhase8WindowUIRenderer()
+        )
+
+        do {
+            _ = try await runner.runExport(
+                command: .benchExportCSV(.init(jobID: "bench-missing-path", outputPath: "", json: true)),
+                description: "benchmark csv"
+            )
+            Issue.record("expected an empty export path to fail after one retry")
+        } catch let error as Phase8WindowUIAcceptanceError {
+            guard case .workflowFailed(let detail) = error else {
+                Issue.record("expected workflowFailed, got \(error)")
+                return
+            }
+            #expect(detail == "Window UI acceptance did not produce benchmark csv.")
+        }
+
+        do {
+            _ = try await runner.runExport(
+                command: .benchMatrixExportSummaryCSV(
+                    .init(jobID: "matrix-missing-artifact", outputPath: missingArtifactPath, json: true)
+                ),
+                description: "benchmark matrix summary csv"
+            )
+            Issue.record("expected a missing export artifact to fail after one retry")
+        } catch let error as Phase8WindowUIAcceptanceError {
+            guard case .workflowFailed(let detail) = error else {
+                Issue.record("expected workflowFailed, got \(error)")
+                return
+            }
+            #expect(
+                detail == "Window UI acceptance expected benchmark matrix summary csv at \(missingArtifactPath), but the file was missing."
+            )
+        }
+
+        let commands = await workflowRunner.snapshotRecordedCommands()
+        #expect(commands.count == 4)
+        #expect(commands.filter { if case .benchExportCSV = $0 { true } else { false } }.count == 2)
+        #expect(commands.filter { if case .benchMatrixExportSummaryCSV = $0 { true } else { false } }.count == 2)
+    }
+
     @Test("phase 8 window ui acceptance runner writes a screenshot and evidence bundle")
     @MainActor
     func phase8WindowUIAcceptanceRunnerWritesEvidenceBundle() async throws {
@@ -13556,6 +13645,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         await configurePhase8ReadyRegistrySnapshot(client, modelID: materializedModelID)
 
         let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        let matrixSummaryExportAttempts = Phase8FixtureExportAttemptCounter()
         await workflowRunner.configureHandler { command in
             switch command {
             case .modelImport(let options):
@@ -13633,6 +13723,15 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                     contents: "metric,value\nbench,1\n"
                 )
             case .benchMatrixExportSummaryCSV(let options):
+                if matrixSummaryExportAttempts.incrementAndRead() == 1 {
+                    return .success(
+                        makeCLIExportResponseJSON(
+                            jobID: options.jobID,
+                            outputPath: options.outputPath,
+                            rowCount: 1
+                        )
+                    )
+                }
                 return makePhase8FixtureExportResponse(
                     command: command,
                     jobID: options.jobID,
@@ -13701,6 +13800,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
 
         let result = try await runner.run()
 
+        #expect(matrixSummaryExportAttempts.value == 2)
         #expect(FileManager.default.fileExists(atPath: result.bundlePath))
         #expect(FileManager.default.fileExists(atPath: result.screenshotPath))
         #expect((try Data(contentsOf: URL(fileURLWithPath: result.screenshotPath))).isEmpty == false)
@@ -14387,6 +14487,24 @@ private final class RecordingPhase8WindowUIRenderer: Phase8WindowUIRendering {
             withIntermediateDirectories: true
         )
         try Data("png".utf8).write(to: outputURL)
+    }
+}
+
+private final class Phase8FixtureExportAttemptCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func incrementAndRead() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+        return count
     }
 }
 

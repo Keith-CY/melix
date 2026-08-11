@@ -1017,11 +1017,10 @@ public final class Phase8WindowUIAcceptanceRunner {
     }
 
     private func exportBenchCSV(jobID: String, outputURL: URL) async throws -> String {
-        let response = try await cliWorkflowRunner.decodeJSON(
-            MelixCLIExportResponse.self,
-            command: .benchExportCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true))
+        try await runExport(
+            command: .benchExportCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true)),
+            description: "benchmark csv"
         )
-        return try resolveExportPath(response.outputPath, description: "benchmark csv")
     }
 
     private func runBenchMatrix(modelID: String) async throws -> MelixCLIBenchmarkMatrixRunPayload {
@@ -1050,19 +1049,17 @@ public final class Phase8WindowUIAcceptanceRunner {
     }
 
     private func exportBenchMatrixSummaryCSV(jobID: String, outputURL: URL) async throws -> String {
-        let response = try await cliWorkflowRunner.decodeJSON(
-            MelixCLIExportResponse.self,
-            command: .benchMatrixExportSummaryCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true))
+        try await runExport(
+            command: .benchMatrixExportSummaryCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true)),
+            description: "benchmark matrix summary csv"
         )
-        return try resolveExportPath(response.outputPath, description: "benchmark matrix summary csv")
     }
 
     private func exportBenchMatrixRequestsCSV(jobID: String, outputURL: URL) async throws -> String {
-        let response = try await cliWorkflowRunner.decodeJSON(
-            MelixCLIExportResponse.self,
-            command: .benchMatrixExportRequestsCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true))
+        try await runExport(
+            command: .benchMatrixExportRequestsCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true)),
+            description: "benchmark matrix requests csv"
         )
-        return try resolveExportPath(response.outputPath, description: "benchmark matrix requests csv")
     }
 
     private func runEvaluation(modelID: String) async throws -> String {
@@ -1088,39 +1085,54 @@ public final class Phase8WindowUIAcceptanceRunner {
     }
 
     private func exportEvaluationSummaryCSV(jobID: String, outputURL: URL) async throws -> String {
-        let response = try await cliWorkflowRunner.decodeJSON(
-            MelixCLIExportResponse.self,
-            command: .evalExportSummaryCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true))
+        try await runExport(
+            command: .evalExportSummaryCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true)),
+            description: "evaluation summary csv"
         )
-        return try resolveExportPath(response.outputPath, description: "evaluation summary csv")
     }
 
     private func exportEvaluationSamplesCSV(jobID: String, outputURL: URL) async throws -> String {
-        let response = try await cliWorkflowRunner.decodeJSON(
-            MelixCLIExportResponse.self,
-            command: .evalExportSamplesCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true))
+        try await runExport(
+            command: .evalExportSamplesCSV(.init(jobID: jobID, outputPath: outputURL.path, json: true)),
+            description: "evaluation samples csv"
         )
-        return try resolveExportPath(response.outputPath, description: "evaluation samples csv")
     }
 
     private func exportEvaluationSamplesJSONL(jobID: String, outputURL: URL) async throws -> String {
-        let response = try await cliWorkflowRunner.decodeJSON(
-            MelixCLIExportResponse.self,
-            command: .evalExportSamplesJSONL(.init(jobID: jobID, outputPath: outputURL.path, json: true))
+        try await runExport(
+            command: .evalExportSamplesJSONL(.init(jobID: jobID, outputPath: outputURL.path, json: true)),
+            description: "evaluation samples jsonl"
         )
-        return try resolveExportPath(response.outputPath, description: "evaluation samples jsonl")
     }
 
-    private func resolveExportPath(_ outputPath: String, description: String) throws -> String {
-        guard let normalized = normalizedString(outputPath) else {
-            throw Phase8WindowUIAcceptanceError.workflowFailed("Window UI acceptance did not produce \(description).")
-        }
-        guard fileManager.fileExists(atPath: normalized) else {
-            throw Phase8WindowUIAcceptanceError.workflowFailed(
-                "Window UI acceptance expected \(description) at \(normalized), but the file was missing."
+    func runExport(command: MelixCLICommand, description: String) async throws -> String {
+        var lastResolvedPath: String?
+
+        // Export commands are idempotent and their success contract includes the
+        // artifact. Retry once if a successful response has no observable file,
+        // then fail closed with the exact path from the final response.
+        for attempt in 1...2 {
+            let response = try await cliWorkflowRunner.decodeJSON(
+                MelixCLIExportResponse.self,
+                command: command
             )
+            guard let normalized = normalizedString(response.outputPath) else {
+                if attempt == 2 {
+                    throw Phase8WindowUIAcceptanceError.workflowFailed(
+                        "Window UI acceptance did not produce \(description)."
+                    )
+                }
+                continue
+            }
+            lastResolvedPath = normalized
+            if fileManager.fileExists(atPath: normalized) {
+                return normalized
+            }
         }
-        return normalized
+
+        throw Phase8WindowUIAcceptanceError.workflowFailed(
+            "Window UI acceptance expected \(description) at \(lastResolvedPath ?? "<missing>"), but the file was missing."
+        )
     }
 
     private func waitFor(
