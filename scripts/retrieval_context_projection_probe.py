@@ -78,6 +78,34 @@ def _build_store_records(entries: Iterable[rc.RetrievalContextEntry]) -> list[di
     ]
 
 
+class _CountingStoreRecord(Mapping[str, Any]):
+    def __init__(self, data: Mapping[str, Any]) -> None:
+        self._data = dict(data)
+        self.get_calls = 0
+
+    def __getitem__(self, key: str) -> Any:  # pragma: no cover - Mapping protocol
+        return self._data[key]
+
+    def __iter__(self) -> Any:  # pragma: no cover - Mapping protocol
+        return iter(self._data)
+
+    def __len__(self) -> int:  # pragma: no cover - Mapping protocol
+        return len(self._data)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        self.get_calls += 1
+        return self._data.get(key, default)
+
+    def reset(self) -> None:
+        self.get_calls = 0
+
+
+def _build_counting_store_records(
+    records: Iterable[Mapping[str, Any]],
+) -> list[_CountingStoreRecord]:
+    return [_CountingStoreRecord(record) for record in records]
+
+
 def _build_lookup_payload(count: int) -> dict[str, Any]:
     return {
         f"retrieved_context_{index}": {
@@ -397,6 +425,29 @@ def _measure_store(func: Any, records: list[dict[str, Any]], iterations: int) ->
     return elapsed_ms / iterations
 
 
+def _measure_store_mapping_gets(
+    func: Any,
+    records: list[_CountingStoreRecord],
+    iterations: int,
+) -> float:
+    get_calls = 0
+    projected_count = 0
+    receipt_count = 0
+    for _ in range(iterations):
+        for record in records:
+            record.reset()
+        projection = func(records)
+        projected_count += len(projection.user_payload)
+        receipt_count += projection.untrusted_context_receipt_count
+        get_calls += sum(record.get_calls for record in records)
+    expected = len(records) * iterations
+    if projected_count != expected or receipt_count != expected:  # pragma: no cover - probe integrity guard
+        raise AssertionError(
+            f"store mapping projection drift: projected={projected_count} receipts={receipt_count} expected={expected}"
+        )
+    return get_calls / expected if expected else 0.0
+
+
 def _baseline_copy_lookup_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(dict(payload))
 
@@ -528,6 +579,7 @@ def main() -> int:
     iteration_count = _iterations()
     entries = _build_entries(entry_count)
     records = _build_store_records(entries)
+    counting_records = _build_counting_store_records(records)
     lookup_payload = _build_lookup_payload(entry_count)
     admissions = _build_admissions(entries)
     original_admit_entry = rc._admit_entry  # type: ignore[attr-defined]
@@ -554,6 +606,7 @@ def main() -> int:
         # Warm store/lookup variants once before sampling.
         _measure_store(_baseline_project_retrieval_store_records, records, 1)
         _measure_store(rc.project_retrieval_store_records, records, 1)
+        _measure_store_mapping_gets(rc.project_retrieval_store_records, counting_records, 1)
         _measure_lookup_copy(_baseline_copy_lookup_payload, lookup_payload, 1)
         _measure_lookup_copy(rc._copy_payload, lookup_payload, 1)  # type: ignore[attr-defined]
         _measure_lookup_records_gets(_baseline_lookup_adapter, 1)
@@ -564,6 +617,14 @@ def main() -> int:
         ]
         store_optimized = [
             _measure_store(rc.project_retrieval_store_records, records, iteration_count)
+            for _ in range(sample_count)
+        ]
+        store_mapping_get_calls = [
+            _measure_store_mapping_gets(
+                rc.project_retrieval_store_records,
+                counting_records,
+                iteration_count,
+            )
             for _ in range(sample_count)
         ]
         lookup_copy_baseline = [
@@ -589,6 +650,7 @@ def main() -> int:
     optimized_mean = _mean(optimized)
     store_baseline_mean = _mean(store_baseline)
     store_optimized_mean = _mean(store_optimized)
+    store_mapping_get_calls_mean = _mean(store_mapping_get_calls)
     lookup_copy_baseline_mean = _mean(lookup_copy_baseline)
     lookup_copy_optimized_mean = _mean(lookup_copy_optimized)
     lookup_records_baseline_elapsed_mean = _mean([sample[0] for sample in lookup_records_baseline])
@@ -615,6 +677,7 @@ def main() -> int:
         "store_optimized_elapsed_ms_mean": store_optimized_mean,
         "store_delta_ms": store_delta_ms,
         "store_speedup": store_speedup,
+        "store_mapping_get_calls_mean": store_mapping_get_calls_mean,
         "lookup_copy_baseline_elapsed_ms_mean": lookup_copy_baseline_mean,
         "lookup_copy_optimized_elapsed_ms_mean": lookup_copy_optimized_mean,
         "lookup_copy_delta_ms": lookup_copy_delta_ms,

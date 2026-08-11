@@ -1080,7 +1080,16 @@ def test_project_retrieval_store_records_complete_dict_fast_path_avoids_isinstan
 
 
 def test_project_retrieval_store_records_preserves_mapping_subclass_fallback() -> None:
-    record = UserDict(
+    class CountingRecord(UserDict[str, object]):
+        def __init__(self, data: dict[str, object]) -> None:
+            super().__init__(data)
+            self.get_calls: list[str] = []
+
+        def get(self, key: str, default: object = None) -> object:
+            self.get_calls.append(key)
+            return super().get(key, default)
+
+    record = CountingRecord(
         {
             "context_kind": "retrieved_document",
             "source_id": "doc:mapping-subclass",
@@ -1100,6 +1109,16 @@ def test_project_retrieval_store_records_preserves_mapping_subclass_fallback() -
     }
     assert projection.refusal_receipts == []
     assert projection.untrusted_context_receipts[0]["source_id"] == "doc:mapping-subclass"
+    assert record.get_calls == [
+        "context_kind",
+        "source_id",
+        "payload",
+        "owner_scope_checked",
+        "segment_id",
+        "source_field",
+        "reason",
+        "corrective_action",
+    ]
 
 
 def test_project_retrieval_store_records_falls_back_for_source_prefixed_public_text_ids() -> None:

@@ -446,19 +446,17 @@ def project_retrieval_store_records(records: Any) -> RetrievalContextProjection:
                     receipts_append(receipt)
                     continue
 
-        if record_is_dict:
-            record_get = record.get
         try:
             admission = admit_entry(
                 entry_type(
                     context_kind=context_kind,
-                    source_id=record_get("source_id"),
-                    payload=record_get("payload"),
-                    owner_scope_checked=record_get("owner_scope_checked"),
-                    segment_id=record_get("segment_id", ""),
-                    source_field=record_get("source_field", ""),
-                    reason=record_get("reason", ""),
-                    corrective_action=record_get("corrective_action", ""),
+                    source_id=source_id,
+                    payload=payload,
+                    owner_scope_checked=owner_scope_checked,
+                    segment_id=segment_id,
+                    source_field=source_field,
+                    reason=reason,
+                    corrective_action=corrective_action,
                 )
             )
         except RetrievalContextAdmissionError as exc:

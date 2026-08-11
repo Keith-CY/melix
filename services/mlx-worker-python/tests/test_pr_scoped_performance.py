@@ -630,6 +630,7 @@ def test_retrieval_context_projection_probe_script_emits_metrics(
     assert metrics["lookup_copy_baseline_elapsed_ms_mean"] >= 0.0
     assert metrics["lookup_copy_optimized_elapsed_ms_mean"] >= 0.0
     assert metrics["lookup_copy_speedup"] >= 0.0
+    assert metrics["store_mapping_get_calls_mean"] == 8.0
 
 
 def test_retrieval_context_projection_probe_prefers_head_script_for_comparable_inputs() -> None:
