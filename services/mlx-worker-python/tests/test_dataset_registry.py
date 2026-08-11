@@ -248,6 +248,53 @@ def test_dataset_catalog_dataset_files_reuse_scanned_file_format(
     ]
 
 
+def test_dataset_catalog_snapshot_scan_skips_unsupported_file_stat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+
+    class FakeStat:
+        st_size = 7
+
+    class FakeEntry:
+        def __init__(self, name: str, *, is_dir: bool = False, is_file: bool = True) -> None:
+            self.name = name
+            self.path = str(snapshot_dir / name)
+            self._is_dir = is_dir
+            self._is_file = is_file
+            self.stat_calls = 0
+
+        def is_dir(self) -> bool:
+            return self._is_dir
+
+        def is_file(self) -> bool:
+            return self._is_file
+
+        def stat(self) -> FakeStat:
+            self.stat_calls += 1
+            if self.name == "notes.txt":
+                raise AssertionError("unsupported dataset sidecar should not be statted")
+            return FakeStat()
+
+    class FakeScandir:
+        def __init__(self, _path: str) -> None:
+            self.entries = [FakeEntry("notes.txt"), FakeEntry("train.jsonl")]
+
+        def __enter__(self) -> list[FakeEntry]:
+            return self.entries
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr(catalog.os, "scandir", FakeScandir)
+
+    records = tuple(catalog._iter_supported_dataset_file_stat_records(snapshot_dir))
+
+    assert records == (("train.jsonl", "jsonl", 7),)
+
+
 def test_dataset_catalog_split_alias_prefix_scan_matches_legacy_delimiters() -> None:
     assert catalog._split_alias_from_candidate("train-00000-of-00001") == "train"
     assert catalog._split_alias_from_candidate("validation_shard_00000") == "validation"

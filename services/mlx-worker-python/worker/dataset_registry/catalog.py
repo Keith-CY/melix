@@ -1033,14 +1033,13 @@ def _iter_supported_dataset_file_stat_records(
                     Path(entry.path), f"{relative_path}/"
                 )
                 continue
-            if not entry.is_file():
+            file_format = _dataset_file_format_name(name)
+            if not file_format or not entry.is_file():
                 continue
             stat_result = entry.stat()
         except OSError:
             continue
-        file_format = _dataset_file_format_name(name)
-        if file_format:
-            yield relative_path, file_format, stat_result.st_size
+        yield relative_path, file_format, stat_result.st_size
 
 
 def _iter_supported_dataset_files(snapshot_dir: Path) -> Iterator[Path]:
