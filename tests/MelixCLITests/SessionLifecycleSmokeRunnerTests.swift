@@ -310,21 +310,29 @@ struct SessionLifecycleSmokeRunnerTests {
 
     @Test("local runtime factory honors explicit repo root and makeClient")
     func localRuntimeFactoryHonorsExplicitRepoRoot() async throws {
-        let melixHome = FileManager.default.temporaryDirectory.appendingPathComponent(
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "melix-local-runtime-factory-\(UUID().uuidString)",
             isDirectory: true
         )
-        defer { try? FileManager.default.removeItem(at: melixHome) }
-        let environment = [
+        defer { try? FileManager.default.removeItem(at: root) }
+        let contextEnvironment = [
             "MELIX_REPO_ROOT": "/tmp/melix-explicit-root",
-            "MELIX_HOME": melixHome.path,
+            "MELIX_HOME": root.appendingPathComponent("context-home", isDirectory: true).path,
         ]
-        _ = MelixLocalRuntimeFactory.makeContext(
-            environment: environment
+        let context = MelixLocalRuntimeFactory.makeContext(
+            environment: contextEnvironment
         )
+        let contextHandshake = try await context.service.handshake(
+            Melix_Controlplane_V1_HandshakeRequest()
+        )
+        #expect(!contextHandshake.serverVersion.isEmpty)
 
+        let clientEnvironment = [
+            "MELIX_REPO_ROOT": "/tmp/melix-explicit-root",
+            "MELIX_HOME": root.appendingPathComponent("client-home", isDirectory: true).path,
+        ]
         let client = MelixLocalRuntimeFactory.makeClient(
-            environment: environment
+            environment: clientEnvironment
         )
         let handshake = try await client.handshake()
         #expect(!handshake.serverVersion.isEmpty)
