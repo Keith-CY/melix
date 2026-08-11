@@ -45,6 +45,9 @@ from worker.productization.run_records import (
 )
 
 
+_COMPACT_JSONL_ENCODER = json.JSONEncoder(separators=(",", ":")).encode
+
+
 def _is_serving_text_request_context(row: dict[str, object]) -> bool:
     return (
         row.get("schema_version") == "melix.serving_benchmark_context_row.v1"
@@ -621,14 +624,14 @@ class BenchmarkStore:
             csv_writer = csv.writer(csv_handle)
             csv_writer.writerow(fieldnames)
             write_jsonl = jsonl_handle.write
-            dump_json = json.JSONEncoder(separators=(",", ":")).encode
+            dump_json = _COMPACT_JSONL_ENCODER
             normalize_csv_value = _csv_value
             write_csv_row = csv_writer.writerow
             for row in rows:
                 payload = row.to_dict()
                 write_jsonl(dump_json(payload) + "\n")
                 payload_get = payload.get
-                write_csv_row(normalize_csv_value(payload_get(field, "")) for field in fieldnames)
+                write_csv_row([normalize_csv_value(payload_get(field, "")) for field in fieldnames])
 
     @staticmethod
     def _attach_matrix_tool_turn_summary_fields(
