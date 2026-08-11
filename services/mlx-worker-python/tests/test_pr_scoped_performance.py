@@ -1380,6 +1380,17 @@ def test_new_python_probe_commands_distinguish_base_and_head_repositories(
 ) -> None:
     base_root = tmp_path / "base"
     base_root.mkdir()
+    base_project = base_root / "services/mlx-worker-python"
+    base_project.mkdir(parents=True)
+    (base_project / "pyproject.toml").write_text(
+        """[project]
+name = "melix-probe-base-fixture"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []
+""",
+        encoding="utf-8",
+    )
     head_link = tmp_path / "head"
     head_link.symlink_to(REPO_ROOT, target_is_directory=True)
     probe = next(

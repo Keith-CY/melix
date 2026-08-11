@@ -14516,9 +14516,9 @@ struct RuntimeViewModelTests {
         #expect(viewModel.isChatBusy == false)
     }
 
-    @Test("Deleting a Chat is unavailable until permanent Agent session close is enabled")
+    @Test("Deleting an ordinary selected Chat remains available with Agent runtime enabled")
     @MainActor
-    func deletingSelectedChatRequiresPermanentAgentSessionClose() async throws {
+    func deletingOrdinarySelectedChatRemainsAvailable() async throws {
         let client = FakeControlPlaneXPCClient()
         await client.configureHandshakeFeatures([
             "xpc",
@@ -14539,22 +14539,19 @@ struct RuntimeViewModelTests {
         ) {
             viewModel.agentRunReconciliationInProgress == false
         }
+        #expect(
+            viewModel.chatSessionDestructiveActionsRequireAgentClose(
+                sessionID: sessionA.id
+            ) == false
+        )
 
         viewModel.deleteChatSession(id: sessionA.id)
 
-        #expect(viewModel.selectedChatSession?.id == sessionA.id)
-        #expect(viewModel.chatSessions.contains { $0.id == sessionA.id })
+        #expect(viewModel.selectedChatSession?.id == sessionB.id)
+        #expect(viewModel.chatSessions.contains { $0.id == sessionA.id } == false)
         #expect(viewModel.chatSessions.contains { $0.id == sessionB.id })
-        #expect(viewModel.selectedSurface == .agents)
-        #expect(
-            viewModel.lastError?.contains(
-                "permanent Agent session closing is not enabled"
-            ) == true
-        )
-        #expect(
-            viewModel.chatSessions.first { $0.id == sessionA.id }?.statusText
-                == "Delete Chat Unavailable • Session Close Required"
-        )
+        #expect(viewModel.selectedSurface == .chat)
+        #expect(viewModel.lastError == nil)
     }
 
     @Test("Act remains available with the builtin catalog when MCP and Computer Use are absent")
@@ -15451,21 +15448,18 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedChatSession?.id == activeSessionID)
         #expect(await client.recordedAgentCancellations.isEmpty)
 
-        let targetTranscriptBeforeClear = try #require(
-            viewModel.chatSessions.first { $0.id == targetSessionID }
-        ).transcript
+        #expect(
+            viewModel.chatSessionDestructiveActionsRequireAgentClose(
+                sessionID: targetSessionID
+            ) == false
+        )
         viewModel.clearChatTranscript(sessionID: targetSessionID)
         #expect(
             viewModel.chatSessions.first(where: { $0.id == targetSessionID })?
-                .transcript == targetTranscriptBeforeClear
+                .transcript.isEmpty == true
         )
         #expect(viewModel.selectedChatSession?.id == activeSessionID)
         #expect(await client.recordedAgentCancellations.isEmpty)
-        #expect(
-            viewModel.lastError?.contains(
-                "permanent Agent session closing is not enabled"
-            ) == true
-        )
 
         viewModel.forkChatSession(id: targetSessionID)
         try await waitForRuntimeViewModelCondition(
@@ -15483,6 +15477,53 @@ struct RuntimeViewModelTests {
         )
         #expect(cancellation.runID == activeRunID)
         #expect(cancellation.reason == "chat_context_changed")
+    }
+
+    @Test("Ordinary Ask Chats remain clearable and deletable with Agent runtime available")
+    @MainActor
+    func ordinaryChatDestructiveActionsRemainAvailable() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let retainedSessionID = try #require(viewModel.selectedChatSession?.id)
+
+        viewModel.createChatSession()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let ordinarySessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.chatComposerText = "Keep ordinary Chat actions working."
+        await viewModel.submitChatPrompt()
+        viewModel.selectChatSession(id: retainedSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "the retained Chat should finish Agent reconciliation"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+        }
+
+        #expect(
+            viewModel.chatSessionDestructiveActionsRequireAgentClose(
+                sessionID: ordinarySessionID
+            ) == false
+        )
+        viewModel.clearChatTranscript(sessionID: ordinarySessionID)
+        #expect(
+            viewModel.chatSessions.first(where: { $0.id == ordinarySessionID })?
+                .transcript.isEmpty == true
+        )
+
+        viewModel.deleteChatSession(id: ordinarySessionID)
+        #expect(
+            viewModel.chatSessions.contains(where: { $0.id == ordinarySessionID })
+                == false
+        )
+        #expect(viewModel.selectedChatSession?.id == retainedSessionID)
+        #expect(viewModel.selectedSurface == .chat)
     }
 
     @Test("Off-session Clear and Delete fail closed until Agent session close is implemented")
@@ -15522,6 +15563,7 @@ struct RuntimeViewModelTests {
         )
         clearRun.state = "tool_running"
         await client.configureAgentSnapshot(clearRun)
+        await viewModel.refreshAgentRunsForOperator()
 
         viewModel.clearChatTranscript(sessionID: clearTarget.id)
 
@@ -15552,6 +15594,7 @@ struct RuntimeViewModelTests {
         )
         deleteRun.state = "waiting_for_approval"
         await client.configureAgentSnapshot(deleteRun)
+        await viewModel.refreshAgentRunsForOperator()
 
         viewModel.deleteChatSession(id: deleteTarget.id)
 
@@ -15593,6 +15636,7 @@ struct RuntimeViewModelTests {
         )
         active.state = "model_turn"
         await client.configureAgentSnapshot(active)
+        await viewModel.refreshAgentRunsForOperator()
         var mismatched = Melix_Controlplane_V1_AgentRunCancellationReceipt()
         mismatched.runID = "another-agent-run"
         mismatched.disposition = "accepted"
@@ -15610,7 +15654,7 @@ struct RuntimeViewModelTests {
             })
         )
         #expect(viewModel.selectedChatSession?.id == selectedSession.id)
-        #expect(viewModel.selectedSurface == .agents)
+        #expect(viewModel.selectedSurface == .chat)
         #expect(await client.recordedAgentCancellations.isEmpty)
         #expect(
             viewModel.lastError?.contains(
@@ -15653,6 +15697,7 @@ struct RuntimeViewModelTests {
             active.state = "tool_running"
             await client.configureAgentSnapshot(active)
         }
+        await viewModel.refreshAgentRunsForOperator()
 
         viewModel.clearChatTranscript(sessionID: targetSession.id)
 
@@ -15664,7 +15709,7 @@ struct RuntimeViewModelTests {
         )
         #expect(await client.recordedAgentCancellations.isEmpty)
         #expect(viewModel.selectedChatSession?.id == selectedSession.id)
-        #expect(viewModel.selectedSurface == .agents)
+        #expect(viewModel.selectedSurface == .chat)
         #expect(
             viewModel.lastError?.contains(
                 "permanent Agent session closing is not enabled"

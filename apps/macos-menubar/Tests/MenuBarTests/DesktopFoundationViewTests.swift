@@ -11959,6 +11959,8 @@ struct DesktopFoundationViewTests {
         #expect(composerSource.contains(".disabled(canSubmit == false)"))
         #expect(source.contains(".accessibilityLabel(\"Thinking\")"))
         #expect(source.contains("Button(\"Clear Conversation\", role: .destructive"))
+        #expect(source.contains(".disabled(destructiveActionsDisabled)"))
+        #expect(source.contains("Agent-backed Chats require permanent session closing"))
         #expect(source.contains("DesktopChatModelIdentityButton(providerTarget: providerTarget)"))
         #expect(source.contains("canonical ID \\(identity.canonicalID)"))
         #expect(composerSource.contains("statusText") == false)

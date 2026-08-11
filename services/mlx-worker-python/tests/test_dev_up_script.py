@@ -2883,8 +2883,13 @@ def test_dev_down_sources_runtime_env_for_socket_cleanup(tmp_path: Path) -> None
     python_socket = tmp_path / "short-python.sock"
     swift_socket = tmp_path / "short-swift.sock"
     swift_vision_socket = tmp_path / "short-swift-vision.sock"
-    computer_socket = tmp_path / "short-computer.sock"
-    computer_capability = tmp_path / "computer-capability.bin"
+    control_plane_socket = tmp_path / "short-control-plane.sock"
+    computer_dir = tmp_path / "short-computer"
+    computer_dir.mkdir()
+    computer_socket = computer_dir / "broker.sock"
+    computer_capability = computer_dir / "verification-capability.bin"
+    control_plane_lock = Path(f"{control_plane_socket}.lock")
+    computer_lock = Path(f"{computer_socket}.lock")
     control_metrics = tmp_path / "control-plane-metrics.json"
     swift_metrics = tmp_path / "swift-text-worker-metrics.json"
     swift_vision_metrics = tmp_path / "swift-vision-worker-metrics.json"
@@ -2893,7 +2898,10 @@ def test_dev_down_sources_runtime_env_for_socket_cleanup(tmp_path: Path) -> None
         python_socket,
         swift_socket,
         swift_vision_socket,
+        control_plane_socket,
+        control_plane_lock,
         computer_socket,
+        computer_lock,
         computer_capability,
         control_metrics,
         swift_metrics,
@@ -2908,8 +2916,8 @@ def test_dev_down_sources_runtime_env_for_socket_cleanup(tmp_path: Path) -> None
                 f"export MELIX_WORKER_SOCKET_PATH={shlex.quote(os.fspath(python_socket))}",
                 f"export MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH={shlex.quote(os.fspath(swift_socket))}",
                 f"export MELIX_SWIFT_VISION_WORKER_SOCKET_PATH={shlex.quote(os.fspath(swift_vision_socket))}",
+                f"export MELIX_CONTROL_PLANE_SOCKET_PATH={shlex.quote(os.fspath(control_plane_socket))}",
                 f"export MELIX_COMPUTER_BROKER_SOCKET={shlex.quote(os.fspath(computer_socket))}",
-                f"export MELIX_COMPUTER_BROKER_VERIFICATION_CAPABILITY_FILE={shlex.quote(os.fspath(computer_capability))}",
                 f"export MELIX_CONTROL_PLANE_METRICS_PATH={shlex.quote(os.fspath(control_metrics))}",
                 f"export MELIX_SWIFT_TEXT_WORKER_METRICS_PATH={shlex.quote(os.fspath(swift_metrics))}",
                 f"export MELIX_SWIFT_VISION_WORKER_METRICS_PATH={shlex.quote(os.fspath(swift_vision_metrics))}",
@@ -2934,8 +2942,12 @@ def test_dev_down_sources_runtime_env_for_socket_cleanup(tmp_path: Path) -> None
     assert not python_socket.exists()
     assert not swift_socket.exists()
     assert not swift_vision_socket.exists()
+    assert not control_plane_socket.exists()
+    assert not control_plane_lock.exists()
     assert not computer_socket.exists()
+    assert not computer_lock.exists()
     assert not computer_capability.exists()
+    assert not computer_dir.exists()
     assert not control_metrics.exists()
     assert not swift_metrics.exists()
     assert not swift_vision_metrics.exists()

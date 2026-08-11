@@ -637,6 +637,8 @@ def test_render_launcher_script_fails_closed_and_removes_broker_trust_material()
     assert "info.st_uid == os.geteuid()" in script
     assert "stat.S_IMODE(info.st_mode) == 0o600" in script
     assert 'terminate_private_process "${MELIX_COMPUTER_BROKER_PID:-}"' in script
+    assert 'private_process_state="$(/bin/ps -o stat= -p "$private_pid"' in script
+    assert 'wait "$private_pid" >/dev/null 2>&1 || true' in script
     assert '"${MELIX_COMPUTER_BROKER_SOCKET:-}"' in script
     assert '"$MELIX_COMPUTER_BROKER_CAPABILITY_FILE"' in script
     assert '"$MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE"' in script
@@ -1053,7 +1055,7 @@ while True: time.sleep(1)
             pass_fds=(inherited_fd,),
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=60 if os.environ.get("CI") else 30,
         )
     finally:
         os.close(inherited_fd)

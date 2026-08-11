@@ -198,9 +198,14 @@ The current transport is a private Unix-domain socket with path owner, mode,
 inode, and device checks, a private caller verification capability, and exact
 Ed25519 request authorization. The current gRPC UDS API does not expose a macOS
 audit token, so the broker cannot attest the peer's code-sign identity. This is
-an explicit advertised boundary, not evidence of a signed peer. Text, key,
-scroll, pointer, and coordinate actions remain unsupported in the current
-semantic-press capability.
+an explicit advertised boundary, not evidence of a signed peer. A process
+running as the same user that can read the capability file can pass transport
+admission; the signed envelope still binds every operation to its exact run,
+call, arguments, target, generation, policy revision, and expiry. Final
+distribution requires an XPC or equivalent boundary that exposes a macOS audit
+token before the broker may claim signed-peer identity. Text, key, scroll,
+pointer, and coordinate actions remain unsupported in the current semantic-
+press capability.
 
 Source-tree launchers create distinct per-instance `0700` parents for the
 control-plane and Computer Use sockets under the configured short socket root.

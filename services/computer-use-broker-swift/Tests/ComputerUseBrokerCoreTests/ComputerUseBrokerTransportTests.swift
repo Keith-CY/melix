@@ -1752,6 +1752,35 @@ struct ComputerUseBrokerTransportTests {
         _ = Darwin.unlink(replacementFixture.socketPath)
         replacementFixture.removeFiles()
 
+        let stagingFailureFixture = try await LiveComputerBrokerFixture.start()
+        let stagingFailureParent = URL(fileURLWithPath: stagingFailureFixture.socketPath)
+            .deletingLastPathComponent().path
+        var stagingFailureDescriptor: Int32 = -1
+        do {
+            #expect(Darwin.unlink(stagingFailureFixture.socketPath) == 0)
+            stagingFailureDescriptor = try bindTestUnixSocket(
+                at: stagingFailureFixture.socketPath,
+                listening: true
+            )
+            #expect(Darwin.chmod(stagingFailureParent, 0o500) == 0)
+
+            await stagingFailureFixture.stop()
+
+            #expect(await stagingFailureFixture.isRunning() == false)
+        } catch {
+            _ = Darwin.chmod(stagingFailureParent, 0o700)
+            _ = Darwin.unlink(stagingFailureFixture.socketPath)
+            await stagingFailureFixture.stop()
+            stagingFailureFixture.removeFiles()
+            throw error
+        }
+        #expect(Darwin.chmod(stagingFailureParent, 0o700) == 0)
+        if stagingFailureDescriptor >= 0 {
+            _ = Darwin.close(stagingFailureDescriptor)
+        }
+        _ = Darwin.unlink(stagingFailureFixture.socketPath)
+        stagingFailureFixture.removeFiles()
+
         let staleFixture = try LiveComputerBrokerFixture.makeUnstarted()
         var staleDescriptor: Int32 = -1
         do {
@@ -2442,6 +2471,10 @@ private final class LiveComputerBrokerFixture: @unchecked Sendable {
 
     func stop() async {
         await server.stop()
+    }
+
+    func isRunning() async -> Bool {
+        await server.isRunning
     }
 
     func startAgain() async throws {

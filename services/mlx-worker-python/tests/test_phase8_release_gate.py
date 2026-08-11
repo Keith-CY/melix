@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import runpy
 import sys
 from pathlib import Path
@@ -37,6 +38,30 @@ def test_make_phase8_release_gate_keeps_redirected_output_json_clean() -> None:
         line.startswith('\t@PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python"')
         for line in target_lines
     )
+
+
+def test_make_swift_control_plane_shards_include_every_top_level_suite() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    configured_suites = {
+        suite
+        for assignment in re.findall(
+            r"(?m)^CONTROL_PLANE_TEST_FILTER_[A-Z_]+\s*:=\s*(.+)$",
+            makefile,
+        )
+        for suite in assignment.split("|")
+    }
+    test_root = ROOT / "services/control-plane-swift/Tests/ControlPlaneTests"
+    missing: list[str] = []
+    for test_path in sorted(test_root.glob("*Tests.swift")):
+        source = test_path.read_text(encoding="utf-8")
+        for suite in re.findall(
+            r"(?m)^(?:struct|final class|class|actor)\s+(\w+Tests)\b",
+            source,
+        ):
+            if suite not in configured_suites:
+                missing.append(f"{test_path.name}:{suite}")
+
+    assert missing == []
 
 
 def test_phase8_release_gate_main_emits_json_and_passes(

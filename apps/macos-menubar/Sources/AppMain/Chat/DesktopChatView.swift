@@ -512,6 +512,10 @@ struct DesktopChatSessionSidebar: View {
                             DesktopChatSessionRow(
                                 session: session,
                                 isSelected: viewModel.selectedChatSession?.id == session.id,
+                                destructiveActionsDisabled: viewModel
+                                    .chatSessionDestructiveActionsRequireAgentClose(
+                                        sessionID: session.id
+                                    ),
                                 onSelect: {
                                     viewModel.selectChatSession(id: session.id)
                                 },
@@ -1595,6 +1599,7 @@ struct DesktopChatCapabilityGlyphButton: View {
 private struct DesktopChatSessionRow: View {
     let session: DesktopChatSessionState
     let isSelected: Bool
+    let destructiveActionsDisabled: Bool
     let onSelect: () -> Void
     let onFork: () -> Void
     let onExport: () -> Void
@@ -1628,6 +1633,7 @@ private struct DesktopChatSessionRow: View {
             .buttonStyle(.plain)
 
             DesktopChatSessionRowActions(
+                destructiveActionsDisabled: destructiveActionsDisabled,
                 onFork: onFork,
                 onExport: onExport,
                 onClear: onClear,
@@ -1640,6 +1646,7 @@ private struct DesktopChatSessionRow: View {
 }
 
 private struct DesktopChatSessionRowActions: View {
+    let destructiveActionsDisabled: Bool
     let onFork: () -> Void
     let onExport: () -> Void
     let onClear: () -> Void
@@ -1651,7 +1658,11 @@ private struct DesktopChatSessionRowActions: View {
             Button("Export", action: onExport)
             Divider()
             Button("Clear Conversation", role: .destructive, action: onClear)
+                .disabled(destructiveActionsDisabled)
+                .help("Agent-backed Chats require permanent session closing before they can be cleared.")
             Button("Delete", role: .destructive, action: onDelete)
+                .disabled(destructiveActionsDisabled)
+                .help("Agent-backed Chats require permanent session closing before they can be deleted.")
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.body)

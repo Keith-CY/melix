@@ -3507,6 +3507,23 @@ public final class RuntimeViewModel {
         features.contains("agent-runtime")
     }
 
+    public func chatSessionDestructiveActionsRequireAgentClose(
+        sessionID: String
+    ) -> Bool {
+        guard isAgentRuntimeAvailable, sessionID.isEmpty == false else {
+            return false
+        }
+        if agentRuns.contains(where: { $0.sessionID == sessionID }) {
+            return true
+        }
+        if sessionID == selectedChatSessionID,
+           chatTranscript.contains(where: { $0.agentRunID != nil }) {
+            return true
+        }
+        return chatSessions.first(where: { $0.id == sessionID })?
+            .transcript.contains(where: { $0.agentRunID != nil }) == true
+    }
+
     public var isAgentRunning: Bool {
         guard let run = agentRuns.first(where: { $0.runID == activeAgentRunID }) else {
             return false
@@ -10055,7 +10072,9 @@ public final class RuntimeViewModel {
         sessionID: String,
         actionTitle: String
     ) -> Bool {
-        guard isAgentRuntimeAvailable else {
+        guard chatSessionDestructiveActionsRequireAgentClose(
+            sessionID: sessionID
+        ) else {
             return false
         }
         let status = "\(actionTitle) Unavailable • Session Close Required"
@@ -10066,7 +10085,6 @@ public final class RuntimeViewModel {
             session.statusText = status
             session.updatedAt = Date()
         }
-        selectedSurface = .agents
         setLastError(
             "\(actionTitle) is unavailable while permanent Agent session closing is not enabled. Review Agent runs before continuing."
         )

@@ -309,6 +309,10 @@ public actor ComputerUseBrokerUDSServer {
     private let server: GRPCServer<HTTP2ServerTransport.Posix>
     private var serveTask: Task<Void, Error>?
 
+    var isRunning: Bool {
+        serveTask != nil
+    }
+
     public init(
         socket: SecureUnixDomainSocketPath,
         service: any RegistrableRPCService
@@ -367,11 +371,7 @@ public actor ComputerUseBrokerUDSServer {
             try? socket.removeOwnedSocket()
             return
         }
-        do {
-            try socket.stageReplacementForServerShutdown()
-        } catch {
-            return
-        }
+        try? socket.stageReplacementForServerShutdown()
         server.beginGracefulShutdown()
         _ = try? await serveTask.value
         try? socket.restoreReplacementAfterServerShutdown()
