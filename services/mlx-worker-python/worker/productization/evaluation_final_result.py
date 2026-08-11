@@ -313,7 +313,9 @@ def _last_nonblank_text_line(raw_response: str) -> str:
     if end == 0:
         return ""
     line_start = raw_response.rfind("\n", 0, end) + 1
-    return raw_response[line_start:end].strip()
+    # The scan above already trimmed all trailing whitespace from the selected
+    # tail line, so only the leading edge still needs normalization.
+    return raw_response[line_start:end].lstrip()
 
 
 def _score_json_result(

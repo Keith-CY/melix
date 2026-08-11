@@ -34,3 +34,13 @@ Register `evaluation-final-result-text-fallback-tail-scan` in
 
 This slice is Python-only and fully locally verifiable on Linux. GitHub Actions
 remains the merge gate for the PR-scoped registered probe report.
+
+## 2026-08-11 follow-up: tail-line leading trim only
+
+This follow-up keeps the same `_last_nonblank_text_line(...)` boundary and the
+registered `evaluation-final-result-text-fallback-tail-scan` probe. The tail scan
+already walks `end` backward over all trailing whitespace before slicing the last
+nonblank line, so the returned slice no longer needs a second right-side strip.
+The implementation now applies `lstrip()` only to the selected line, preserving
+empty-input, trailing-whitespace, and indented-answer behavior while avoiding the
+redundant trailing scan in the hot fallback path.
