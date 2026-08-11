@@ -650,6 +650,21 @@ def test_assert_prescan_handles_boundary_and_literal_edges() -> None:
     assert code_eval_runner._may_contain_assert_statement("if ready: assert value") is True
 
 
+def test_assert_prescan_common_followers_skip_isalnum() -> None:
+    def fail_isalnum(_value: str) -> bool:
+        raise AssertionError(  # pragma: no cover - regression-only failure path
+            "common assert followers should use direct membership"
+        )
+
+    assert (
+        code_eval_runner._may_contain_assert_statement(
+            "setup(); assert value\nassert\tother",
+            _isalnum=fail_isalnum,
+        )
+        is True
+    )
+
+
 def test_assert_prescan_absent_token_uses_single_find_pass() -> None:
     class NoContainsString(str):
         def __contains__(self, value: object) -> bool:  # pragma: no cover - sentinel
