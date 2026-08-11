@@ -578,15 +578,12 @@ struct AXUIElementAccessibilityAdapterTests {
             }
         }
         let nativeSystem = SystemAXUIElementSystem()
-        let liveApplication = try #require(
-            NSWorkspace.shared.runningApplications.first(where: {
-                $0.activationPolicy == .regular
-                    && $0.bundleIdentifier != nil
-                    && MacOSProcessIdentity.launchIdentity(
-                        processIdentifier: $0.processIdentifier
-                    ) != nil
-            })
-        )
+        guard let liveApplication = nativeFocusApplication(
+            from: NSWorkspace.shared.runningApplications
+        ) else {
+            try await assertExactWindowFocusFallback()
+            return
+        }
         let liveTarget = ComputerWindowTarget(
             bundleIdentifier: try #require(liveApplication.bundleIdentifier),
             processIdentifier: liveApplication.processIdentifier,
@@ -607,12 +604,7 @@ struct AXUIElementAccessibilityAdapterTests {
         #expect(nativeSystem.focusedWindow(of: impossibleElement) == nil)
 
         guard nativeSystem.isProcessTrusted() else {
-            let fixture = AXSystemFixture()
-            try await assertExactWindowFocus(
-                system: fixture.system,
-                target: fixture.target,
-                validateLiveTarget: { _ in }
-            )
+            try await assertExactWindowFocusFallback()
             return
         }
         let targets = try await ScreenCaptureKitFrameCaptureAdapter().listTargets()
@@ -641,6 +633,35 @@ struct AXUIElementAccessibilityAdapterTests {
             }
         )
     }
+
+    @Test("native focus acceptance falls back when no GUI application is available")
+    @MainActor
+    func nativeFocusActivationAcceptanceWithoutGUIApplication() async throws {
+        #expect(nativeFocusApplication(from: []) == nil)
+        try await assertExactWindowFocusFallback()
+    }
+}
+
+private func nativeFocusApplication(
+    from runningApplications: [NSRunningApplication]
+) -> NSRunningApplication? {
+    runningApplications.first(where: {
+        $0.activationPolicy == .regular
+            && $0.bundleIdentifier != nil
+            && MacOSProcessIdentity.launchIdentity(
+                processIdentifier: $0.processIdentifier
+            ) != nil
+    })
+}
+
+@MainActor
+private func assertExactWindowFocusFallback() async throws {
+    let fixture = AXSystemFixture()
+    try await assertExactWindowFocus(
+        system: fixture.system,
+        target: fixture.target,
+        validateLiveTarget: { _ in }
+    )
 }
 
 @MainActor
