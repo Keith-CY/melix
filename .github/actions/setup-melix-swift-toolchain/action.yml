@@ -1,0 +1,51 @@
+name: Setup Melix Swift toolchain
+description: Select and verify the Xcode and Swift baseline used by Melix CI.
+
+outputs:
+  cache_key:
+    description: Stable cache namespace for the selected compiler toolchain.
+    value: ${{ steps.select.outputs.cache_key }}
+
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode 26.5 and verify Swift 6.3
+      id: select
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [[ "${RUNNER_OS:-}" != "macOS" ]]; then
+          printf 'fatal: the Melix Swift toolchain action requires a macOS runner\n' >&2
+          exit 1
+        fi
+
+        xcode_version="26.5"
+        swift_version_prefix="6.3"
+        developer_dir="/Applications/Xcode_${xcode_version}.app/Contents/Developer"
+
+        if [[ ! -d "$developer_dir" ]]; then
+          printf 'fatal: required Xcode developer directory is missing: %s\n' "$developer_dir" >&2
+          exit 1
+        fi
+
+        swift_version="$(DEVELOPER_DIR="$developer_dir" xcrun swift --version)"
+        if [[ "$swift_version" != *"Apple Swift version ${swift_version_prefix}"* ]]; then
+          printf 'fatal: expected Apple Swift %s.x from %s, got:\n%s\n' \
+            "$swift_version_prefix" \
+            "$developer_dir" \
+            "$swift_version" >&2
+          exit 1
+        fi
+
+        printf 'DEVELOPER_DIR=%s\n' "$developer_dir" >> "$GITHUB_ENV"
+        printf 'cache_key=xcode-26-5-swift-6-3\n' >> "$GITHUB_OUTPUT"
+
+        {
+          printf '### Melix Swift toolchain\n\n'
+          printf -- '- Xcode: `%s`\n' "$xcode_version"
+          printf -- '- Developer directory: `%s`\n' "$developer_dir"
+          printf -- '- Swift: `%s`\n' "${swift_version//$'\n'/; }"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        printf '%s\n' "$swift_version"

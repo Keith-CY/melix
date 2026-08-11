@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   report:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 120
 
     env:
@@ -41,6 +41,9 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           path: head
+
+      - name: Select Melix Swift toolchain
+        uses: ./head/.github/actions/setup-melix-swift-toolchain
 
       - uses: actions/setup-python@v7
         with:

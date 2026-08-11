@@ -76,6 +76,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 
 | Plan | What It Covers |
 |---|---|
+| [Swift 6.3 CI Toolchain Baseline](plans/2026-08-07-swift-6-3-ci-toolchain-baseline.md) | Repository-owned Xcode 26.5 selection, Swift 6.3 verification, and compiler-isolated caches across macOS CI workflows |
 | [Open Issue Completion Wave](plans/2026-07-30-open-issue-completion-wave.md) | Living ordered completion, review, verification, and merge contract for the open issue queue |
 | [Backend Model Identity Enforcement](plans/2026-07-31-backend-model-identity-enforcement.md) | Backend-owned loaded identity, route generations, fail-closed inference guards, replay-safe recovery, diagnostics, and performance evidence for issue #2945 |
 | [Remote Provider Usage-Only SSE Compatibility](plans/2026-08-01-remote-provider-usage-only-sse.md) | Strict compatibility for OpenAI-style terminal usage chunks whose `choices` array is empty |
