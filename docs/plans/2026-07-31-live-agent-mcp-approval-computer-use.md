@@ -538,8 +538,9 @@ decisions must be recorded in
   before tool-budget accounting, approval evaluation, or execution;
 - accept schema and argument matching through 64 semantic levels, with a
   parser-facing budget of 129 raw JSON containers for the worst-case supported
-  schema shape; convert Foundation JSON trees iteratively so rejecting deeper
-  untrusted input does not depend on the process stack;
+  schema shape; parse and validate schema trees with explicit work stacks so
+  accepting the supported limit or rejecting deeper untrusted input never
+  depends on Foundation's recursive parser or the process stack;
 - return recoverable malformed calls to the provider with a fixed user-role
   guardrail nudge that contains no rejected arguments, tool output, paths,
   URLs, or provider error text; the third rejection after two nudges is a

@@ -92,6 +92,26 @@ struct AgentToolJSONSchemaValidatorTests {
             #"{"pattern":7}"#,
             #"{"pattern":"["}"#,
             #"{"uniqueItems":"yes"}"#,
+            #"{"type":"string","type":"object"}"#,
+            #"{"type":"string",}"#,
+            #"{"type":"string" "nullable":true}"#,
+            #"{"const":01}"#,
+            #"{"const":true} trailing"#,
+            #"{"const":"\uD800"}"#,
+            #"{"type":"string""#,
+            #"{{}}"#,
+            #"[}"#,
+            #"{]"#,
+            #"[1,]"#,
+            #"{:}"#,
+            ",",
+            #"{"x":1,,"y":2}"#,
+            #"[,1]"#,
+            #""root""#,
+            "true false",
+            #"[1 2]"#,
+            "{\"const\":\"line\nbreak\"}",
+            #"{"const":1e400}"#,
         ]
         let validator = AgentToolJSONSchemaValidator()
 
@@ -114,6 +134,16 @@ struct AgentToolJSONSchemaValidatorTests {
             maximumDepthProperties = #"{"type":"object","properties":{"value":\#(maximumDepthProperties)}}"#
         }
         try validator.validateSchemaDefinition(maximumDepthProperties)
+        var maximumDepthArguments = #""leaf""#
+        for _ in 0..<64 {
+            maximumDepthArguments = #"{"value":\#(maximumDepthArguments)}"#
+        }
+        try validator.validate(
+            argumentsJSON: maximumDepthArguments,
+            schemaJSON: maximumDepthProperties
+        )
+
+        try validator.validateSchemaDefinition(#"{"const":1e2}"#)
 
         var semanticallyDeep = #"{"type":"string"}"#
         for _ in 0..<66 {

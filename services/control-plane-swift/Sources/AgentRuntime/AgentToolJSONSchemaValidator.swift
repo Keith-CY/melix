@@ -68,7 +68,10 @@ struct AgentToolJSONSchemaValidator: Sendable {
     ) throws -> StructuredJSONValue {
         try validateRawJSONNesting(json, invalidAs: mappedError)
         do {
-            return try StructuredJSONValue.parse(text: json)
+            return try IterativeStructuredJSONParser.parse(
+                json,
+                maximumNestingDepth: Self.maximumRawJSONNestingDepth
+            )
         } catch {
             throw mappedError
         }
@@ -111,152 +114,211 @@ struct AgentToolJSONSchemaValidator: Sendable {
         }
     }
 
+    private struct SchemaValidationWorkItem {
+        let schema: StructuredJSONValue
+        let visitedRefs: Set<String>
+        let depth: Int
+    }
+
     private func validateSchemaNode(
         _ schema: StructuredJSONValue,
         root: StructuredJSONValue,
         visitedRefs: Set<String>,
         depth: Int
     ) throws {
-        guard depth <= Self.maximumSchemaDepth else {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        }
-        if case .bool = schema {
-            return
-        }
-        guard let object = schema.objectValue else {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        }
-        if !allowRegularExpressions,
-           object["pattern"] != nil || object["patternProperties"] != nil {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        }
-        for keyword in object.keys where
-            !Self.annotationKeywords.contains(keyword)
-                && !Self.assertionKeywords.contains(keyword) {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        }
+        var work = [SchemaValidationWorkItem(
+            schema: schema,
+            visitedRefs: visitedRefs,
+            depth: depth
+        )]
+        while let item = work.popLast() {
+            guard item.depth <= Self.maximumSchemaDepth else {
+                throw AgentToolJSONSchemaValidationError.invalidSchema
+            }
+            if case .bool = item.schema {
+                continue
+            }
+            guard let object = item.schema.objectValue else {
+                throw AgentToolJSONSchemaValidationError.invalidSchema
+            }
+            if !allowRegularExpressions,
+               object["pattern"] != nil || object["patternProperties"] != nil {
+                throw AgentToolJSONSchemaValidationError.invalidSchema
+            }
+            for keyword in object.keys where
+                !Self.annotationKeywords.contains(keyword)
+                    && !Self.assertionKeywords.contains(keyword) {
+                throw AgentToolJSONSchemaValidationError.invalidSchema
+            }
 
-        if let type = object["type"] {
-            let types: [String]
-            if let value = type.stringValue {
-                types = [value]
-            } else if let values = type.arrayValue,
-                      values.allSatisfy({ $0.stringValue != nil }) {
-                types = values.compactMap(\.stringValue)
-            } else {
-                throw AgentToolJSONSchemaValidationError.invalidSchema
-            }
-            let supported = Set(["array", "boolean", "integer", "null", "number", "object", "string"])
-            guard !types.isEmpty, Set(types).count == types.count,
-                  types.allSatisfy(supported.contains) else {
-                throw AgentToolJSONSchemaValidationError.invalidSchema
-            }
-        }
-        if let nullable = object["nullable"], bool(nullable) == nil {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        }
-        if let values = object["enum"]?.arrayValue, values.isEmpty {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        } else if object["enum"] != nil, object["enum"]?.arrayValue == nil {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        }
-
-        for key in ["properties", "patternProperties", "$defs", "definitions"] {
-            guard let value = object[key] else { continue }
-            guard let children = value.objectValue else {
-                throw AgentToolJSONSchemaValidationError.invalidSchema
-            }
-            for (name, child) in children {
-                if key == "patternProperties" {
-                    guard validRegex(name) else {
-                        throw AgentToolJSONSchemaValidationError.invalidSchema
-                    }
+            if let type = object["type"] {
+                let types: [String]
+                if let value = type.stringValue {
+                    types = [value]
+                } else if let values = type.arrayValue,
+                          values.allSatisfy({ $0.stringValue != nil }) {
+                    types = values.compactMap(\.stringValue)
+                } else {
+                    throw AgentToolJSONSchemaValidationError.invalidSchema
                 }
-                try validateSchemaNode(
-                    child,
-                    root: root,
-                    visitedRefs: visitedRefs,
-                    depth: depth + 1
-                )
-            }
-        }
-        for key in ["additionalProperties", "items", "contains", "not", "propertyNames", "if", "then", "else"] {
-            guard let child = object[key] else { continue }
-            try validateSchemaNode(
-                child,
-                root: root,
-                visitedRefs: visitedRefs,
-                depth: depth + 1
-            )
-        }
-        if let prefixItems = object["prefixItems"] {
-            guard let children = prefixItems.arrayValue else {
-                throw AgentToolJSONSchemaValidationError.invalidSchema
-            }
-            for child in children {
-                try validateSchemaNode(child, root: root, visitedRefs: visitedRefs, depth: depth + 1)
-            }
-        }
-        for key in ["allOf", "anyOf", "oneOf"] {
-            guard let value = object[key] else { continue }
-            guard let children = value.arrayValue, !children.isEmpty else {
-                throw AgentToolJSONSchemaValidationError.invalidSchema
-            }
-            for child in children {
-                try validateSchemaNode(child, root: root, visitedRefs: visitedRefs, depth: depth + 1)
-            }
-        }
-        if let ref = object["$ref"] {
-            guard let reference = ref.stringValue,
-                  reference.hasPrefix("#"),
-                  let target = resolve(reference: reference, root: root) else {
-                throw AgentToolJSONSchemaValidationError.invalidSchema
-            }
-            if !visitedRefs.contains(reference) {
-                var refs = visitedRefs
-                refs.insert(reference)
-                try validateSchemaNode(target, root: root, visitedRefs: refs, depth: depth + 1)
-            }
-        }
-        if let required = object["required"] {
-            guard let values = required.arrayValue,
-                  values.allSatisfy({ $0.stringValue != nil }),
-                  Set(values.compactMap(\.stringValue)).count == values.count else {
-                throw AgentToolJSONSchemaValidationError.invalidSchema
-            }
-        }
-        if let dependent = object["dependentRequired"] {
-            guard let dependencies = dependent.objectValue else {
-                throw AgentToolJSONSchemaValidationError.invalidSchema
-            }
-            for value in dependencies.values {
-                guard let names = value.arrayValue,
-                      names.allSatisfy({ $0.stringValue != nil }) else {
+                let supported = Set(["array", "boolean", "integer", "null", "number", "object", "string"])
+                guard !types.isEmpty, Set(types).count == types.count,
+                      types.allSatisfy(supported.contains) else {
                     throw AgentToolJSONSchemaValidationError.invalidSchema
                 }
             }
-        }
-        for key in ["minLength", "maxLength", "minItems", "maxItems", "minContains", "maxContains", "minProperties", "maxProperties"] {
-            if let value = object[key], nonnegativeInteger(value) == nil {
+            if let nullable = object["nullable"], bool(nullable) == nil {
+                throw AgentToolJSONSchemaValidationError.invalidSchema
+            }
+            if let values = object["enum"]?.arrayValue, values.isEmpty {
+                throw AgentToolJSONSchemaValidationError.invalidSchema
+            } else if object["enum"] != nil, object["enum"]?.arrayValue == nil {
+                throw AgentToolJSONSchemaValidationError.invalidSchema
+            }
+
+            for key in ["properties", "patternProperties", "$defs", "definitions"] {
+                guard let value = object[key] else { continue }
+                guard let children = value.objectValue else {
+                    throw AgentToolJSONSchemaValidationError.invalidSchema
+                }
+                for (name, child) in children {
+                    if key == "patternProperties" {
+                        guard validRegex(name) else {
+                            throw AgentToolJSONSchemaValidationError.invalidSchema
+                        }
+                    }
+                    work.append(SchemaValidationWorkItem(
+                        schema: child,
+                        visitedRefs: item.visitedRefs,
+                        depth: item.depth + 1
+                    ))
+                }
+            }
+            for key in ["additionalProperties", "items", "contains", "not", "propertyNames", "if", "then", "else"] {
+                guard let child = object[key] else { continue }
+                work.append(SchemaValidationWorkItem(
+                    schema: child,
+                    visitedRefs: item.visitedRefs,
+                    depth: item.depth + 1
+                ))
+            }
+            if let prefixItems = object["prefixItems"] {
+                guard let children = prefixItems.arrayValue else {
+                    throw AgentToolJSONSchemaValidationError.invalidSchema
+                }
+                for child in children {
+                    work.append(SchemaValidationWorkItem(
+                        schema: child,
+                        visitedRefs: item.visitedRefs,
+                        depth: item.depth + 1
+                    ))
+                }
+            }
+            for key in ["allOf", "anyOf", "oneOf"] {
+                guard let value = object[key] else { continue }
+                guard let children = value.arrayValue, !children.isEmpty else {
+                    throw AgentToolJSONSchemaValidationError.invalidSchema
+                }
+                for child in children {
+                    work.append(SchemaValidationWorkItem(
+                        schema: child,
+                        visitedRefs: item.visitedRefs,
+                        depth: item.depth + 1
+                    ))
+                }
+            }
+            if let ref = object["$ref"] {
+                guard let reference = ref.stringValue,
+                      reference.hasPrefix("#"),
+                      let target = resolve(reference: reference, root: root) else {
+                    throw AgentToolJSONSchemaValidationError.invalidSchema
+                }
+                if !item.visitedRefs.contains(reference) {
+                    var refs = item.visitedRefs
+                    refs.insert(reference)
+                    work.append(SchemaValidationWorkItem(
+                        schema: target,
+                        visitedRefs: refs,
+                        depth: item.depth + 1
+                    ))
+                }
+            }
+            if let required = object["required"] {
+                guard let values = required.arrayValue,
+                      values.allSatisfy({ $0.stringValue != nil }),
+                      Set(values.compactMap(\.stringValue)).count == values.count else {
+                    throw AgentToolJSONSchemaValidationError.invalidSchema
+                }
+            }
+            if let dependent = object["dependentRequired"] {
+                guard let dependencies = dependent.objectValue else {
+                    throw AgentToolJSONSchemaValidationError.invalidSchema
+                }
+                for value in dependencies.values {
+                    guard let names = value.arrayValue,
+                          names.allSatisfy({ $0.stringValue != nil }) else {
+                        throw AgentToolJSONSchemaValidationError.invalidSchema
+                    }
+                }
+            }
+            for key in ["minLength", "maxLength", "minItems", "maxItems", "minContains", "maxContains", "minProperties", "maxProperties"] {
+                if let value = object[key], nonnegativeInteger(value) == nil {
+                    throw AgentToolJSONSchemaValidationError.invalidSchema
+                }
+            }
+            for key in ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"] {
+                if let value = object[key], number(value) == nil {
+                    throw AgentToolJSONSchemaValidationError.invalidSchema
+                }
+            }
+            if let multiple = object["multipleOf"],
+               !(number(multiple).map { $0 > 0 } ?? false) {
+                throw AgentToolJSONSchemaValidationError.invalidSchema
+            }
+            if let pattern = object["pattern"],
+               !(pattern.stringValue.map(validRegex) ?? false) {
+                throw AgentToolJSONSchemaValidationError.invalidSchema
+            }
+            if let unique = object["uniqueItems"], bool(unique) == nil {
                 throw AgentToolJSONSchemaValidationError.invalidSchema
             }
         }
-        for key in ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"] {
-            if let value = object[key], number(value) == nil {
-                throw AgentToolJSONSchemaValidationError.invalidSchema
-            }
-        }
-        if let multiple = object["multipleOf"],
-           !(number(multiple).map { $0 > 0 } ?? false) {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        }
-        if let pattern = object["pattern"],
-           !(pattern.stringValue.map(validRegex) ?? false) {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        }
-        if let unique = object["uniqueItems"], bool(unique) == nil {
-            throw AgentToolJSONSchemaValidationError.invalidSchema
-        }
+    }
+
+    private struct MatchEvaluation {
+        let value: StructuredJSONValue
+        let schema: StructuredJSONValue
+        let root: StructuredJSONValue
+        let depth: Int
+    }
+
+    private enum MatchWorkItem {
+        case evaluate(MatchEvaluation)
+        case all([MatchEvaluation])
+        case any([MatchEvaluation])
+        case exactlyOne([MatchEvaluation])
+        case negated(MatchEvaluation)
+        case conditional(
+            value: StructuredJSONValue,
+            condition: StructuredJSONValue,
+            thenSchema: StructuredJSONValue?,
+            elseSchema: StructuredJSONValue?,
+            root: StructuredJSONValue,
+            depth: Int
+        )
+        case countMatches([MatchEvaluation], minimum: Int, maximum: Int)
+        case combineAll(Int)
+        case combineAny(Int)
+        case combineExactlyOne(Int)
+        case combineCount(Int, minimum: Int, maximum: Int)
+        case invert
+        case resolveConditional(
+            value: StructuredJSONValue,
+            thenSchema: StructuredJSONValue?,
+            elseSchema: StructuredJSONValue?,
+            root: StructuredJSONValue,
+            depth: Int
+        )
     }
 
     private func matches(
@@ -265,134 +327,361 @@ struct AgentToolJSONSchemaValidator: Sendable {
         root: StructuredJSONValue,
         depth: Int
     ) throws -> Bool {
-        guard depth <= Self.maximumSchemaDepth else { return false }
-        if case .bool(let allowed) = schema { return allowed }
-        guard let object = schema.objectValue else { return false }
+        var work: [MatchWorkItem] = [.evaluate(MatchEvaluation(
+            value: value,
+            schema: schema,
+            root: root,
+            depth: depth
+        ))]
+        var results: [Bool] = []
 
-        if object["nullable"].flatMap(bool) == true, case .null = value {
-            return true
-        }
-        if let reference = object["$ref"]?.stringValue,
-           let target = resolve(reference: reference, root: root),
-           try !matches(value, schema: target, root: root, depth: depth + 1) {
-            return false
-        }
-        if let type = object["type"], !matchesType(value, declaration: type) {
-            return false
-        }
-        if let constant = object["const"], constant != value { return false }
-        if let choices = object["enum"]?.arrayValue, !choices.contains(value) { return false }
+        while let item = work.popLast() {
+            switch item {
+            case .evaluate(let evaluation):
+                guard evaluation.depth <= Self.maximumSchemaDepth else {
+                    results.append(false)
+                    continue
+                }
+                if case .bool(let allowed) = evaluation.schema {
+                    results.append(allowed)
+                    continue
+                }
+                guard let object = evaluation.schema.objectValue else {
+                    results.append(false)
+                    continue
+                }
 
-        if let schemas = object["allOf"]?.arrayValue {
-            for child in schemas where try !matches(value, schema: child, root: root, depth: depth + 1) {
-                return false
-            }
-        }
-        if let schemas = object["anyOf"]?.arrayValue {
-            var matched = false
-            for child in schemas where try matches(value, schema: child, root: root, depth: depth + 1) {
-                matched = true
-            }
-            if !matched { return false }
-        }
-        if let schemas = object["oneOf"]?.arrayValue {
-            var count = 0
-            for child in schemas where try matches(value, schema: child, root: root, depth: depth + 1) {
-                count += 1
-            }
-            if count != 1 { return false }
-        }
-        if let child = object["not"], try matches(value, schema: child, root: root, depth: depth + 1) {
-            return false
-        }
-        if let condition = object["if"] {
-            let conditionMatched = try matches(value, schema: condition, root: root, depth: depth + 1)
-            if conditionMatched, let thenSchema = object["then"],
-               try !matches(value, schema: thenSchema, root: root, depth: depth + 1) {
-                return false
-            }
-            if !conditionMatched, let elseSchema = object["else"],
-               try !matches(value, schema: elseSchema, root: root, depth: depth + 1) {
-                return false
+                if object["nullable"].flatMap(bool) == true,
+                   case .null = evaluation.value {
+                    results.append(true)
+                    continue
+                }
+                if let type = object["type"],
+                   !matchesType(evaluation.value, declaration: type) {
+                    results.append(false)
+                    continue
+                }
+                if let constant = object["const"], constant != evaluation.value {
+                    results.append(false)
+                    continue
+                }
+                if let choices = object["enum"]?.arrayValue,
+                   !choices.contains(evaluation.value) {
+                    results.append(false)
+                    continue
+                }
+                if let string = evaluation.value.stringValue {
+                    if let minimum = object["minLength"].flatMap(nonnegativeInteger),
+                       string.count < minimum {
+                        results.append(false)
+                        continue
+                    }
+                    if let maximum = object["maxLength"].flatMap(nonnegativeInteger),
+                       string.count > maximum {
+                        results.append(false)
+                        continue
+                    }
+                    if let pattern = object["pattern"]?.stringValue,
+                       !regex(pattern, matches: string) {
+                        results.append(false)
+                        continue
+                    }
+                }
+                if let numeric = number(evaluation.value) {
+                    if let minimum = object["minimum"].flatMap(number), numeric < minimum {
+                        results.append(false)
+                        continue
+                    }
+                    if let maximum = object["maximum"].flatMap(number), numeric > maximum {
+                        results.append(false)
+                        continue
+                    }
+                    if let minimum = object["exclusiveMinimum"].flatMap(number), numeric <= minimum {
+                        results.append(false)
+                        continue
+                    }
+                    if let maximum = object["exclusiveMaximum"].flatMap(number), numeric >= maximum {
+                        results.append(false)
+                        continue
+                    }
+                    if let multiple = object["multipleOf"].flatMap(number) {
+                        let quotient = numeric / multiple
+                        if abs(quotient.rounded() - quotient) > 1e-10 {
+                            results.append(false)
+                            continue
+                        }
+                    }
+                }
+
+                var clauses: [MatchWorkItem] = []
+                let childDepth = evaluation.depth + 1
+                if let reference = object["$ref"]?.stringValue,
+                   let target = resolve(reference: reference, root: evaluation.root) {
+                    clauses.append(.evaluate(MatchEvaluation(
+                        value: evaluation.value,
+                        schema: target,
+                        root: evaluation.root,
+                        depth: childDepth
+                    )))
+                }
+                if let schemas = object["allOf"]?.arrayValue {
+                    clauses.append(.all(schemas.map {
+                        MatchEvaluation(
+                            value: evaluation.value,
+                            schema: $0,
+                            root: evaluation.root,
+                            depth: childDepth
+                        )
+                    }))
+                }
+                if let schemas = object["anyOf"]?.arrayValue {
+                    clauses.append(.any(schemas.map {
+                        MatchEvaluation(
+                            value: evaluation.value,
+                            schema: $0,
+                            root: evaluation.root,
+                            depth: childDepth
+                        )
+                    }))
+                }
+                if let schemas = object["oneOf"]?.arrayValue {
+                    clauses.append(.exactlyOne(schemas.map {
+                        MatchEvaluation(
+                            value: evaluation.value,
+                            schema: $0,
+                            root: evaluation.root,
+                            depth: childDepth
+                        )
+                    }))
+                }
+                if let child = object["not"] {
+                    clauses.append(.negated(MatchEvaluation(
+                        value: evaluation.value,
+                        schema: child,
+                        root: evaluation.root,
+                        depth: childDepth
+                    )))
+                }
+                if let condition = object["if"] {
+                    clauses.append(.conditional(
+                        value: evaluation.value,
+                        condition: condition,
+                        thenSchema: object["then"],
+                        elseSchema: object["else"],
+                        root: evaluation.root,
+                        depth: childDepth
+                    ))
+                }
+
+                if let array = evaluation.value.arrayValue {
+                    if let minimum = object["minItems"].flatMap(nonnegativeInteger),
+                       array.count < minimum {
+                        results.append(false)
+                        continue
+                    }
+                    if let maximum = object["maxItems"].flatMap(nonnegativeInteger),
+                       array.count > maximum {
+                        results.append(false)
+                        continue
+                    }
+                    if object["uniqueItems"].flatMap(bool) == true {
+                        let canonical = try array.map(canonicalJSON)
+                        if Set(canonical).count != canonical.count {
+                            results.append(false)
+                            continue
+                        }
+                    }
+                    let prefixes = object["prefixItems"]?.arrayValue ?? []
+                    for (index, child) in prefixes.enumerated() where index < array.count {
+                        clauses.append(.evaluate(MatchEvaluation(
+                            value: array[index],
+                            schema: child,
+                            root: evaluation.root,
+                            depth: childDepth
+                        )))
+                    }
+                    if let items = object["items"] {
+                        for arrayItem in array.dropFirst(prefixes.count) {
+                            clauses.append(.evaluate(MatchEvaluation(
+                                value: arrayItem,
+                                schema: items,
+                                root: evaluation.root,
+                                depth: childDepth
+                            )))
+                        }
+                    }
+                    if let contains = object["contains"] {
+                        let minimum = object["minContains"].flatMap(nonnegativeInteger) ?? 1
+                        let maximum = object["maxContains"].flatMap(nonnegativeInteger) ?? Int.max
+                        clauses.append(.countMatches(array.map {
+                            MatchEvaluation(
+                                value: $0,
+                                schema: contains,
+                                root: evaluation.root,
+                                depth: childDepth
+                            )
+                        }, minimum: minimum, maximum: maximum))
+                    }
+                }
+                if let dictionary = evaluation.value.objectValue {
+                    if let minimum = object["minProperties"].flatMap(nonnegativeInteger),
+                       dictionary.count < minimum {
+                        results.append(false)
+                        continue
+                    }
+                    if let maximum = object["maxProperties"].flatMap(nonnegativeInteger),
+                       dictionary.count > maximum {
+                        results.append(false)
+                        continue
+                    }
+                    let properties = object["properties"]?.objectValue ?? [:]
+                    let patterns = object["patternProperties"]?.objectValue ?? [:]
+                    let required = Set(object["required"]?.arrayValue?.compactMap(\.stringValue) ?? [])
+                    if !required.isSubset(of: Set(dictionary.keys)) {
+                        results.append(false)
+                        continue
+                    }
+                    var dependencyFailed = false
+                    if let dependencies = object["dependentRequired"]?.objectValue {
+                        for (key, dependency) in dependencies where dictionary[key] != nil {
+                            let requiredKeys = Set(dependency.arrayValue?.compactMap(\.stringValue) ?? [])
+                            if !requiredKeys.isSubset(of: Set(dictionary.keys)) {
+                                dependencyFailed = true
+                                break
+                            }
+                        }
+                    }
+                    if dependencyFailed {
+                        results.append(false)
+                        continue
+                    }
+                    for (key, dictionaryValue) in dictionary {
+                        if let property = properties[key] {
+                            clauses.append(.evaluate(MatchEvaluation(
+                                value: dictionaryValue,
+                                schema: property,
+                                root: evaluation.root,
+                                depth: childDepth
+                            )))
+                        }
+                        var matchedPattern = false
+                        for (pattern, child) in patterns where regex(pattern, matches: key) {
+                            matchedPattern = true
+                            clauses.append(.evaluate(MatchEvaluation(
+                                value: dictionaryValue,
+                                schema: child,
+                                root: evaluation.root,
+                                depth: childDepth
+                            )))
+                        }
+                        if properties[key] == nil,
+                           !matchedPattern,
+                           let additional = object["additionalProperties"] {
+                            clauses.append(.evaluate(MatchEvaluation(
+                                value: dictionaryValue,
+                                schema: additional,
+                                root: evaluation.root,
+                                depth: childDepth
+                            )))
+                        }
+                        if let propertyNames = object["propertyNames"] {
+                            clauses.append(.evaluate(MatchEvaluation(
+                                value: .string(key),
+                                schema: propertyNames,
+                                root: evaluation.root,
+                                depth: childDepth
+                            )))
+                        }
+                    }
+                }
+
+                if clauses.isEmpty {
+                    results.append(true)
+                } else {
+                    work.append(.combineAll(clauses.count))
+                    work.append(contentsOf: clauses.reversed())
+                }
+
+            case .all(let evaluations):
+                work.append(.combineAll(evaluations.count))
+                work.append(contentsOf: evaluations.reversed().map(MatchWorkItem.evaluate))
+            case .any(let evaluations):
+                work.append(.combineAny(evaluations.count))
+                work.append(contentsOf: evaluations.reversed().map(MatchWorkItem.evaluate))
+            case .exactlyOne(let evaluations):
+                work.append(.combineExactlyOne(evaluations.count))
+                work.append(contentsOf: evaluations.reversed().map(MatchWorkItem.evaluate))
+            case .negated(let evaluation):
+                work.append(.invert)
+                work.append(.evaluate(evaluation))
+            case .conditional(let value, let condition, let thenSchema, let elseSchema, let root, let depth):
+                work.append(.resolveConditional(
+                    value: value,
+                    thenSchema: thenSchema,
+                    elseSchema: elseSchema,
+                    root: root,
+                    depth: depth
+                ))
+                work.append(.evaluate(MatchEvaluation(
+                    value: value,
+                    schema: condition,
+                    root: root,
+                    depth: depth
+                )))
+            case .countMatches(let evaluations, let minimum, let maximum):
+                work.append(.combineCount(
+                    evaluations.count,
+                    minimum: minimum,
+                    maximum: maximum
+                ))
+                work.append(contentsOf: evaluations.reversed().map(MatchWorkItem.evaluate))
+            case .combineAll(let count):
+                guard let values = removeLast(count, from: &results) else { return false }
+                results.append(values.allSatisfy { $0 })
+            case .combineAny(let count):
+                guard let values = removeLast(count, from: &results) else { return false }
+                results.append(values.contains(true))
+            case .combineExactlyOne(let count):
+                guard let values = removeLast(count, from: &results) else { return false }
+                results.append(values.lazy.filter { $0 }.count == 1)
+            case .combineCount(let count, let minimum, let maximum):
+                guard let values = removeLast(count, from: &results) else { return false }
+                let matched = values.lazy.filter { $0 }.count
+                results.append(matched >= minimum && matched <= maximum)
+            case .invert:
+                guard let result = results.popLast() else { return false }
+                results.append(!result)
+            case .resolveConditional(let value, let thenSchema, let elseSchema, let root, let depth):
+                guard let conditionMatched = results.popLast() else { return false }
+                if conditionMatched, let thenSchema {
+                    work.append(.evaluate(MatchEvaluation(
+                        value: value,
+                        schema: thenSchema,
+                        root: root,
+                        depth: depth
+                    )))
+                } else if !conditionMatched, let elseSchema {
+                    work.append(.evaluate(MatchEvaluation(
+                        value: value,
+                        schema: elseSchema,
+                        root: root,
+                        depth: depth
+                    )))
+                } else {
+                    results.append(true)
+                }
             }
         }
 
-        if let string = value.stringValue {
-            if let minimum = object["minLength"].flatMap(nonnegativeInteger), string.count < minimum { return false }
-            if let maximum = object["maxLength"].flatMap(nonnegativeInteger), string.count > maximum { return false }
-            if let pattern = object["pattern"]?.stringValue, !regex(pattern, matches: string) { return false }
-        }
-        if let numeric = number(value) {
-            if let minimum = object["minimum"].flatMap(number), numeric < minimum { return false }
-            if let maximum = object["maximum"].flatMap(number), numeric > maximum { return false }
-            if let minimum = object["exclusiveMinimum"].flatMap(number), numeric <= minimum { return false }
-            if let maximum = object["exclusiveMaximum"].flatMap(number), numeric >= maximum { return false }
-            if let multiple = object["multipleOf"].flatMap(number) {
-                let quotient = numeric / multiple
-                if abs(quotient.rounded() - quotient) > 1e-10 { return false }
-            }
-        }
-        if let array = value.arrayValue {
-            if let minimum = object["minItems"].flatMap(nonnegativeInteger), array.count < minimum { return false }
-            if let maximum = object["maxItems"].flatMap(nonnegativeInteger), array.count > maximum { return false }
-            if object["uniqueItems"].flatMap(bool) == true {
-                let canonical = try array.map(canonicalJSON)
-                if Set(canonical).count != canonical.count { return false }
-            }
-            let prefixes = object["prefixItems"]?.arrayValue ?? []
-            for (index, child) in prefixes.enumerated() where index < array.count {
-                if try !matches(array[index], schema: child, root: root, depth: depth + 1) { return false }
-            }
-            if let items = object["items"] {
-                for item in array.dropFirst(prefixes.count) where
-                    try !matches(item, schema: items, root: root, depth: depth + 1) {
-                    return false
-                }
-            }
-            if let contains = object["contains"] {
-                var count = 0
-                for item in array where try matches(item, schema: contains, root: root, depth: depth + 1) {
-                    count += 1
-                }
-                let minimum = object["minContains"].flatMap(nonnegativeInteger) ?? 1
-                let maximum = object["maxContains"].flatMap(nonnegativeInteger) ?? Int.max
-                if count < minimum || count > maximum { return false }
-            }
-        }
-        if let dictionary = value.objectValue {
-            if let minimum = object["minProperties"].flatMap(nonnegativeInteger), dictionary.count < minimum { return false }
-            if let maximum = object["maxProperties"].flatMap(nonnegativeInteger), dictionary.count > maximum { return false }
-            let properties = object["properties"]?.objectValue ?? [:]
-            let patterns = object["patternProperties"]?.objectValue ?? [:]
-            let required = Set(object["required"]?.arrayValue?.compactMap(\.stringValue) ?? [])
-            if !required.isSubset(of: Set(dictionary.keys)) { return false }
-            for (key, item) in dictionary {
-                if let property = properties[key],
-                   try !matches(item, schema: property, root: root, depth: depth + 1) {
-                    return false
-                }
-                var matchedPattern = false
-                for (pattern, child) in patterns where regex(pattern, matches: key) {
-                    matchedPattern = true
-                    if try !matches(item, schema: child, root: root, depth: depth + 1) { return false }
-                }
-                if properties[key] == nil, !matchedPattern, let additional = object["additionalProperties"],
-                   try !matches(item, schema: additional, root: root, depth: depth + 1) {
-                    return false
-                }
-                if let propertyNames = object["propertyNames"],
-                   try !matches(.string(key), schema: propertyNames, root: root, depth: depth + 1) {
-                    return false
-                }
-            }
-            if let dependencies = object["dependentRequired"]?.objectValue {
-                for (key, dependency) in dependencies where dictionary[key] != nil {
-                    let requiredKeys = Set(dependency.arrayValue?.compactMap(\.stringValue) ?? [])
-                    if !requiredKeys.isSubset(of: Set(dictionary.keys)) { return false }
-                }
-            }
-        }
-        return true
+        return results.count == 1 && results[0]
+    }
+
+    private func removeLast(_ count: Int, from results: inout [Bool]) -> [Bool]? {
+        guard count >= 0, results.count >= count else { return nil }
+        let start = results.count - count
+        let values = Array(results[start...])
+        results.removeSubrange(start...)
+        return values
     }
 
     private func matchesType(_ value: StructuredJSONValue, declaration: StructuredJSONValue) -> Bool {
@@ -467,5 +756,288 @@ struct AgentToolJSONSchemaValidator: Sendable {
             }
         }
         return current
+    }
+}
+
+private struct IterativeStructuredJSONParser {
+    private enum ParserError: Error {
+        case invalidJSON
+    }
+
+    private enum ObjectExpectation {
+        case keyOrEnd
+        case key
+        case colon
+        case value
+        case commaOrEnd
+    }
+
+    private enum ArrayExpectation {
+        case valueOrEnd
+        case value
+        case commaOrEnd
+    }
+
+    private struct ObjectFrame {
+        var values: [String: StructuredJSONValue] = [:]
+        var pendingKey: String?
+        var expectation: ObjectExpectation = .keyOrEnd
+    }
+
+    private struct ArrayFrame {
+        var values: [StructuredJSONValue] = []
+        var expectation: ArrayExpectation = .valueOrEnd
+    }
+
+    private enum ContainerFrame {
+        case object(ObjectFrame)
+        case array(ArrayFrame)
+    }
+
+    private let bytes: [UInt8]
+    private let maximumNestingDepth: Int
+    private var index = 0
+    private var containers: [ContainerFrame] = []
+    private var root: StructuredJSONValue?
+
+    static func parse(
+        _ text: String,
+        maximumNestingDepth: Int
+    ) throws -> StructuredJSONValue {
+        var parser = IterativeStructuredJSONParser(
+            bytes: Array(text.utf8),
+            maximumNestingDepth: maximumNestingDepth
+        )
+        return try parser.parseDocument()
+    }
+
+    private mutating func parseDocument() throws -> StructuredJSONValue {
+        while true {
+            skipWhitespace()
+            guard index < bytes.count else {
+                break
+            }
+            switch bytes[index] {
+            case UInt8(ascii: "{"):
+                try beginContainer(.object(ObjectFrame()))
+                index += 1
+            case UInt8(ascii: "["):
+                try beginContainer(.array(ArrayFrame()))
+                index += 1
+            case UInt8(ascii: "}"):
+                index += 1
+                try finishObject()
+            case UInt8(ascii: "]"):
+                index += 1
+                try finishArray()
+            case UInt8(ascii: ":"):
+                index += 1
+                try consumeColon()
+            case UInt8(ascii: ","):
+                index += 1
+                try consumeComma()
+            case UInt8(ascii: "\""):
+                let string = try parseString()
+                if !setObjectKeyIfExpected(string) {
+                    try acceptValue(.string(string))
+                }
+            default:
+                try acceptValue(parsePrimitive())
+            }
+        }
+
+        guard containers.isEmpty, let root else {
+            throw ParserError.invalidJSON
+        }
+        return root
+    }
+
+    private mutating func beginContainer(_ frame: ContainerFrame) throws {
+        guard canAcceptValue(), containers.count < maximumNestingDepth else {
+            throw ParserError.invalidJSON
+        }
+        containers.append(frame)
+    }
+
+    private mutating func finishObject() throws {
+        guard let frame = containers.popLast(), case .object(let object) = frame else {
+            throw ParserError.invalidJSON
+        }
+        guard object.expectation == .keyOrEnd || object.expectation == .commaOrEnd else {
+            throw ParserError.invalidJSON
+        }
+        try acceptValue(.object(object.values))
+    }
+
+    private mutating func finishArray() throws {
+        guard let frame = containers.popLast(), case .array(let array) = frame else {
+            throw ParserError.invalidJSON
+        }
+        guard array.expectation == .valueOrEnd || array.expectation == .commaOrEnd else {
+            throw ParserError.invalidJSON
+        }
+        try acceptValue(.array(array.values))
+    }
+
+    private mutating func consumeColon() throws {
+        guard let frame = containers.popLast(), case .object(var object) = frame,
+              object.expectation == .colon else {
+            throw ParserError.invalidJSON
+        }
+        object.expectation = .value
+        containers.append(.object(object))
+    }
+
+    private mutating func consumeComma() throws {
+        guard let frame = containers.popLast() else {
+            throw ParserError.invalidJSON
+        }
+        switch frame {
+        case .object(var object):
+            guard object.expectation == .commaOrEnd else {
+                throw ParserError.invalidJSON
+            }
+            object.expectation = .key
+            containers.append(.object(object))
+        case .array(var array):
+            guard array.expectation == .commaOrEnd else {
+                throw ParserError.invalidJSON
+            }
+            array.expectation = .value
+            containers.append(.array(array))
+        }
+    }
+
+    private mutating func setObjectKeyIfExpected(_ key: String) -> Bool {
+        guard let frame = containers.popLast() else {
+            return false
+        }
+        guard case .object(var object) = frame,
+              object.expectation == .keyOrEnd || object.expectation == .key else {
+            containers.append(frame)
+            return false
+        }
+        guard object.values[key] == nil else {
+            containers.append(frame)
+            return false
+        }
+        object.pendingKey = key
+        object.expectation = .colon
+        containers.append(.object(object))
+        return true
+    }
+
+    private func canAcceptValue() -> Bool {
+        guard let frame = containers.last else {
+            return root == nil
+        }
+        switch frame {
+        case .object(let object):
+            return object.expectation == .value
+        case .array(let array):
+            return array.expectation == .valueOrEnd || array.expectation == .value
+        }
+    }
+
+    private mutating func acceptValue(_ value: StructuredJSONValue) throws {
+        guard let frame = containers.popLast() else {
+            guard root == nil else {
+                throw ParserError.invalidJSON
+            }
+            root = value
+            return
+        }
+        switch frame {
+        case .object(var object):
+            guard object.expectation == .value, let key = object.pendingKey,
+                  object.values[key] == nil else {
+                throw ParserError.invalidJSON
+            }
+            object.values[key] = value
+            object.pendingKey = nil
+            object.expectation = .commaOrEnd
+            containers.append(.object(object))
+        case .array(var array):
+            guard array.expectation == .valueOrEnd || array.expectation == .value else {
+                throw ParserError.invalidJSON
+            }
+            array.values.append(value)
+            array.expectation = .commaOrEnd
+            containers.append(.array(array))
+        }
+    }
+
+    private mutating func parseString() throws -> String {
+        let start = index
+        index += 1
+        while index < bytes.count {
+            switch bytes[index] {
+            case UInt8(ascii: "\""):
+                index += 1
+                return try JSONDecoder().decode(
+                    String.self,
+                    from: Data(bytes[start..<index])
+                )
+            case UInt8(ascii: "\\"):
+                index += 2
+                guard index <= bytes.count else {
+                    throw ParserError.invalidJSON
+                }
+            case 0x00...0x1F:
+                throw ParserError.invalidJSON
+            default:
+                index += 1
+            }
+        }
+        throw ParserError.invalidJSON
+    }
+
+    private mutating func parsePrimitive() throws -> StructuredJSONValue {
+        let start = index
+        while index < bytes.count, !Self.isTokenDelimiter(bytes[index]) {
+            index += 1
+        }
+        guard start < index else {
+            throw ParserError.invalidJSON
+        }
+        let token = bytes[start..<index]
+        switch token.elementsEqual([UInt8]("true".utf8)) {
+        case true:
+            return .bool(true)
+        case false:
+            break
+        }
+        if token.elementsEqual([UInt8]("false".utf8)) {
+            return .bool(false)
+        }
+        if token.elementsEqual([UInt8]("null".utf8)) {
+            return .null
+        }
+        let number = try JSONDecoder().decode(Double.self, from: Data(token))
+        guard number.isFinite else {
+            throw ParserError.invalidJSON
+        }
+        return .number(number)
+    }
+
+    private mutating func skipWhitespace() {
+        while index < bytes.count {
+            switch bytes[index] {
+            case UInt8(ascii: " "), UInt8(ascii: "\t"), UInt8(ascii: "\n"), UInt8(ascii: "\r"):
+                index += 1
+            default:
+                return
+            }
+        }
+    }
+
+    private static func isTokenDelimiter(_ byte: UInt8) -> Bool {
+        switch byte {
+        case UInt8(ascii: ","), UInt8(ascii: "]"), UInt8(ascii: "}"),
+             UInt8(ascii: " "), UInt8(ascii: "\t"), UInt8(ascii: "\n"), UInt8(ascii: "\r"):
+            return true
+        default:
+            return false
+        }
     }
 }
