@@ -82,30 +82,67 @@ public enum StructuredJSONValue: Sendable, Codable, Equatable {
     }
 
     init(any value: Any) throws {
-        switch value {
-        case let value as [String: Any]:
-            self = .object(try value.mapValues(StructuredJSONValue.init(any:)))
-        case let value as [Any]:
-            self = .array(try value.map(StructuredJSONValue.init(any:)))
-        case let value as String:
-            self = .string(value)
-        case let value as NSNumber:
-            if CFGetTypeID(value) == CFBooleanGetTypeID() {
-                self = .bool(value.boolValue)
-            } else {
-                self = .number(value.doubleValue)
-            }
-        case let value as Bool:
-            self = .bool(value)
-        case _ as NSNull:
-            self = .null
-        default:
-            throw StructuredOutputValidationFailure(
+        self = try Self.convertFoundationJSON(value)
+    }
+
+    private static func convertFoundationJSON(_ root: Any) throws -> StructuredJSONValue {
+        enum WorkItem {
+            case value(Any)
+            case finishArray(Int)
+            case finishObject([String])
+        }
+
+        func invalidJSONValue() -> StructuredOutputValidationFailure {
+            StructuredOutputValidationFailure(
                 code: "invalid_json_output",
                 message: "Model output did not produce valid JSON.",
                 details: ["reason": "Unsupported JSON root value."]
             )
         }
+
+        var work: [WorkItem] = [.value(root)]
+        var converted: [StructuredJSONValue] = []
+        while let item = work.popLast() {
+            switch item {
+            case let .value(value):
+                switch value {
+                case let object as [String: Any]:
+                    let entries = Array(object)
+                    work.append(.finishObject(entries.map { $0.key }))
+                    for entry in entries.reversed() {
+                        work.append(.value(entry.value))
+                    }
+                case let array as [Any]:
+                    work.append(.finishArray(array.count))
+                    for child in array.reversed() {
+                        work.append(.value(child))
+                    }
+                case let string as String:
+                    converted.append(.string(string))
+                case let number as NSNumber:
+                    if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                        converted.append(.bool(number.boolValue))
+                    } else {
+                        converted.append(.number(number.doubleValue))
+                    }
+                case _ as NSNull:
+                    converted.append(.null)
+                default:
+                    throw invalidJSONValue()
+                }
+            case let .finishArray(count):
+                let start = converted.count - count
+                let children = Array(converted[start...])
+                converted.removeSubrange(start...)
+                converted.append(.array(children))
+            case let .finishObject(keys):
+                let start = converted.count - keys.count
+                let children = converted[start...]
+                converted.removeSubrange(start...)
+                converted.append(.object(Dictionary(uniqueKeysWithValues: zip(keys, children))))
+            }
+        }
+        return converted.removeLast()
     }
 
     var jsonObject: Any {

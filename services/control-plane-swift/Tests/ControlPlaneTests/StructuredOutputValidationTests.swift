@@ -17,6 +17,9 @@ struct StructuredOutputValidationTests {
             "false": .bool(false),
             "true": .bool(true),
         ]))
+        #expect(throws: StructuredOutputValidationFailure.self) {
+            _ = try StructuredJSONValue(any: Date())
+        }
     }
 
     @Test("structured output request contracts decode across endpoint variants")

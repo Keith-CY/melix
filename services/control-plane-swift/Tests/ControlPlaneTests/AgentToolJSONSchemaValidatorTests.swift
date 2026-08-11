@@ -109,6 +109,20 @@ struct AgentToolJSONSchemaValidatorTests {
             try validator.validateSchemaDefinition(deeplyNested)
         }
 
+        var maximumDepthProperties = #"{"type":"string"}"#
+        for _ in 0..<64 {
+            maximumDepthProperties = #"{"type":"object","properties":{"value":\#(maximumDepthProperties)}}"#
+        }
+        try validator.validateSchemaDefinition(maximumDepthProperties)
+
+        var semanticallyDeep = #"{"type":"string"}"#
+        for _ in 0..<66 {
+            semanticallyDeep = #"{"additionalProperties":\#(semanticallyDeep)}"#
+        }
+        expectValidationError(.invalidSchema) {
+            try validator.validateSchemaDefinition(semanticallyDeep)
+        }
+
         expectValidationError(.invalidSchema) {
             try AgentToolJSONSchemaValidator(allowRegularExpressions: false)
                 .validateSchemaDefinition(#"{"pattern":"x"}"#)

@@ -536,6 +536,10 @@ decisions must be recorded in
   active tool at a time;
 - validate every complete argument object against the selected catalog schema
   before tool-budget accounting, approval evaluation, or execution;
+- accept schema and argument matching through 64 semantic levels, with a
+  parser-facing budget of 129 raw JSON containers for the worst-case supported
+  schema shape; convert Foundation JSON trees iteratively so rejecting deeper
+  untrusted input does not depend on the process stack;
 - return recoverable malformed calls to the provider with a fixed user-role
   guardrail nudge that contains no rejected arguments, tool output, paths,
   URLs, or provider error text; the third rejection after two nudges is a
