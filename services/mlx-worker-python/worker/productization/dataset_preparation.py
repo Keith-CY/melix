@@ -932,16 +932,27 @@ def _partition_failed_segments(
     failed_segments: list[dict[str, Any]] = []
     successful_segments_append = successful_segments.append
     failed_segments_append = failed_segments.append
-    for segment in segments:
-        try:
-            segment_id = segment["segment_id"]
-        except KeyError:
-            successful_segments_append(segment)
-            continue
-        if segment_id in failed_id_set:
-            failed_segments_append(segment)
-        else:
-            successful_segments_append(segment)
+    try:
+        for segment in segments:
+            if segment["segment_id"] in failed_id_set:
+                failed_segments_append(segment)
+            else:
+                successful_segments_append(segment)
+    except KeyError:
+        successful_segments = []
+        failed_segments = []
+        successful_segments_append = successful_segments.append
+        failed_segments_append = failed_segments.append
+        for segment in segments:
+            try:
+                segment_id = segment["segment_id"]
+            except KeyError:
+                successful_segments_append(segment)
+                continue
+            if segment_id in failed_id_set:
+                failed_segments_append(segment)
+            else:
+                successful_segments_append(segment)
     return successful_segments, failed_segments
 
 
