@@ -19,6 +19,7 @@ from worker.productization.dataset_preparation import (
     _iter_source_file_paths,
     _language_for_suffix,
     _normalize_line_endings,
+    _partition_failed_segments,
     _record,
     _record_content_digest_and_size,
     _record_source_id,
@@ -39,6 +40,21 @@ WORKSPACE_FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "fixtures/workspace/m-courtyard-smoke.dev.v1/workspace-manifest.json"
 )
+
+
+def test_dataset_failed_segment_partition_preserves_keyerror_fallback() -> None:
+    failed_segment = {"segment_id": "failed-1", "text": "retry"}
+    successful_segment = {"segment_id": "ok-1", "text": "keep"}
+    missing_id_segment = {"text": "legacy"}
+    trailing_successful_segment = {"segment_id": "ok-2", "text": "keep too"}
+
+    successful, failed = _partition_failed_segments(
+        [failed_segment, successful_segment, missing_id_segment, trailing_successful_segment],
+        ("failed-1",),
+    )
+
+    assert successful == [successful_segment, missing_id_segment, trailing_successful_segment]
+    assert failed == [failed_segment]
 
 
 def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
