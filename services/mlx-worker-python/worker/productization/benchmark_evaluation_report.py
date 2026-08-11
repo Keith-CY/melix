@@ -3001,7 +3001,10 @@ def _build_benchmark_label(key: _BenchmarkLabelCacheKey) -> str:
 def _label_part(value: object) -> str:
     if isinstance(value, (int, float, bool)):
         return str(value)
-    return str(value).replace(" ", "_")
+    text = str(value)
+    if " " not in text:
+        return text
+    return text.replace(" ", "_")
 
 
 def _report_rows(report: dict[str, object]) -> Iterator[dict[str, object]]:
