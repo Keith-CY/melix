@@ -276,11 +276,12 @@ def _release_matrix_rows(
         {
             "role": role,
             "required": bool(rule.get("required", True)),
-            "present": bool(evidence_by_role.get(role)),
-            "evidence_ids": sorted(evidence_by_role.get(role, ())),
+            "present": evidence_ids is not None,
+            "evidence_ids": sorted(evidence_ids) if evidence_ids is not None else [],
             "description": str(rule.get("description", "")),
         }
         for role, rule in matrix.items()
+        for evidence_ids in (evidence_by_role.get(role),)
     ]
 
 
