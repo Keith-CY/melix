@@ -2070,6 +2070,132 @@ struct ComputerUseBrokerTransportTests {
         waitFixture.removeFiles()
     }
 
+    @Test("socket lifecycle failures preserve replacements and exact ownership")
+    func secureUnixDomainSocketFailureBoundaries() throws {
+        let root = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent(
+                "mcb-lifecycle-\(UUID().uuidString.prefix(8))",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: 0o700)]
+        )
+        defer {
+            _ = Darwin.chmod(root.path, 0o700)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let occupiedPath = root.appendingPathComponent("occupied.sock")
+            .standardizedFileURL.path
+        let occupiedLifecycle = try SecureUnixDomainSocketPath(path: occupiedPath)
+        try occupiedLifecycle.prepareForBinding()
+        let occupiedOriginalDescriptor = try bindTestUnixSocket(
+            at: occupiedPath,
+            listening: false
+        )
+        try occupiedLifecycle.sealBoundSocket()
+        #expect(Darwin.unlink(occupiedPath) == 0)
+        let occupiedReplacementDescriptor = try bindTestUnixSocket(
+            at: occupiedPath,
+            listening: false
+        )
+        try occupiedLifecycle.stageReplacementForServerShutdown()
+        try Data("occupied".utf8).write(to: URL(fileURLWithPath: occupiedPath))
+        #expect(throws: SecureUnixDomainSocketError.self) {
+            try occupiedLifecycle.restoreReplacementAfterServerShutdown()
+        }
+        #expect(Darwin.unlink(occupiedPath) == 0)
+        try occupiedLifecycle.restoreReplacementAfterServerShutdown()
+        try occupiedLifecycle.removeOwnedSocket()
+        _ = Darwin.close(occupiedOriginalDescriptor)
+        _ = Darwin.close(occupiedReplacementDescriptor)
+        #expect(Darwin.unlink(occupiedPath) == 0)
+
+        let missingPath = root.appendingPathComponent("missing.sock")
+            .standardizedFileURL.path
+        let missingLifecycle = try SecureUnixDomainSocketPath(path: missingPath)
+        try missingLifecycle.prepareForBinding()
+        let missingOriginalDescriptor = try bindTestUnixSocket(
+            at: missingPath,
+            listening: false
+        )
+        try missingLifecycle.sealBoundSocket()
+        #expect(Darwin.unlink(missingPath) == 0)
+        let missingReplacementDescriptor = try bindTestUnixSocket(
+            at: missingPath,
+            listening: false
+        )
+        try missingLifecycle.stageReplacementForServerShutdown()
+        let stagedName = try #require(
+            FileManager.default.contentsOfDirectory(atPath: root.path)
+                .first { $0.hasPrefix("missing.sock.preserved-") }
+        )
+        #expect(Darwin.unlink(root.appendingPathComponent(stagedName).path) == 0)
+        #expect(throws: SecureUnixDomainSocketError.self) {
+            try missingLifecycle.restoreReplacementAfterServerShutdown()
+        }
+        try missingLifecycle.removeOwnedSocket()
+        _ = Darwin.close(missingOriginalDescriptor)
+        _ = Darwin.close(missingReplacementDescriptor)
+
+        let cleanupPath = root.appendingPathComponent("cleanup.sock")
+            .standardizedFileURL.path
+        let cleanupLifecycle = try SecureUnixDomainSocketPath(path: cleanupPath)
+        try cleanupLifecycle.prepareForBinding()
+        let cleanupDescriptor = try bindTestUnixSocket(
+            at: cleanupPath,
+            listening: false
+        )
+        try cleanupLifecycle.sealBoundSocket()
+        #expect(Darwin.chmod(root.path, 0o500) == 0)
+        #expect(throws: SecureUnixDomainSocketError.self) {
+            try cleanupLifecycle.removeOwnedSocket()
+        }
+        #expect(Darwin.chmod(root.path, 0o700) == 0)
+        _ = Darwin.close(cleanupDescriptor)
+        #expect(Darwin.unlink(cleanupPath) == 0)
+
+        let stalePath = root.appendingPathComponent("stale.sock")
+            .standardizedFileURL.path
+        let staleLockPath = stalePath + ".lock"
+        let staleLifecycle = try SecureUnixDomainSocketPath(path: stalePath)
+        try Data().write(to: URL(fileURLWithPath: staleLockPath))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o600)],
+            ofItemAtPath: staleLockPath
+        )
+        let staleDescriptor = try bindTestUnixSocket(at: stalePath, listening: false)
+        _ = Darwin.close(staleDescriptor)
+        #expect(Darwin.chmod(root.path, 0o500) == 0)
+        #expect(throws: SecureUnixDomainSocketError.self) {
+            try staleLifecycle.prepareForBinding()
+        }
+        #expect(Darwin.chmod(root.path, 0o700) == 0)
+        #expect(Darwin.unlink(stalePath) == 0)
+
+        let inaccessibleRoot = root.appendingPathComponent(
+            "inaccessible",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: inaccessibleRoot,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: NSNumber(value: 0o700)]
+        )
+        let inaccessiblePath = inaccessibleRoot.appendingPathComponent("broker.sock")
+            .standardizedFileURL.path
+        let inaccessibleLifecycle = try SecureUnixDomainSocketPath(path: inaccessiblePath)
+        try inaccessibleLifecycle.prepareForBinding()
+        #expect(Darwin.chmod(inaccessibleRoot.path, 0o000) == 0)
+        #expect(throws: SecureUnixDomainSocketError.self) {
+            try inaccessibleLifecycle.sealBoundSocket()
+        }
+        #expect(Darwin.chmod(inaccessibleRoot.path, 0o700) == 0)
+        try inaccessibleLifecycle.removeOwnedSocket()
+    }
+
     @Test("socket and capability helpers reject broad or non-private paths")
     func privatePathValidation() throws {
         let root = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent(
