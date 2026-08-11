@@ -31,6 +31,9 @@ _ORD_OBJECT_START = ord("{")
 _ORD_OBJECT_END = ord("}")
 _ASSERT_PRECEDING_BOUNDARIES = frozenset("\n\r;:")
 _ASSERT_LINE_SPACING = frozenset(" \t")
+_ASSERT_NON_IDENTIFIER_FOLLOWERS = frozenset(
+    " \t\n\r\v\f\x1c\x1d\x1e\x1f!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~"
+)
 _OS_OPEN = os.open
 _OS_FSTAT = os.fstat
 _OS_PREAD = os.pread
@@ -397,6 +400,7 @@ def _may_contain_assert_statement(
     _isalnum=str.isalnum,
     _line_spacing=_ASSERT_LINE_SPACING,
     _preceding_boundaries=_ASSERT_PRECEDING_BOUNDARIES,
+    _non_identifier_followers=_ASSERT_NON_IDENTIFIER_FOLLOWERS,
 ) -> bool:
     cursor = _find(test_code, "assert")
     if cursor < 0:
@@ -405,7 +409,7 @@ def _may_contain_assert_statement(
     while cursor >= 0:
         after_index = cursor + 6
         after = test_code[after_index] if after_index < text_length else "\n"
-        if after != "_" and not _isalnum(after):
+        if after in _non_identifier_followers or (after != "_" and not _isalnum(after)):
             before_index = cursor - 1
             while before_index >= 0 and test_code[before_index] in _line_spacing:
                 before_index -= 1

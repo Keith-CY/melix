@@ -64,3 +64,13 @@ separator counts before falling back to the existing line walk for indented,
 blank-line, mixed-statement, or identifier-boundary cases. The behavior remains
 identical while reducing Python-loop overhead for the uniform assert payloads
 measured by the registered probe.
+
+## 2026-08-11 follow-up slice: assert pre-scan ASCII follower fast path
+
+This follow-up keeps the registered `code-eval-assert-mention-prescan` probe and
+stays limited to `_may_contain_assert_statement()`. The assert-token pre-scan now
+checks common ASCII identifier followers with ordinal comparisons before falling
+back to Unicode-aware `str.isalnum()`. This preserves keyword-boundary behavior
+for comments, string literals, inline statements, ASCII identifiers, and Unicode
+identifier followers while reducing method-dispatch overhead in the assert-mention
+probe workload.
