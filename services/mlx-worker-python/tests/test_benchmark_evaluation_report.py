@@ -1760,6 +1760,14 @@ def test_benchmark_probe_label_cache_preserves_stringified_shape_boundaries() ->
     )
 
 
+def test_label_part_returns_no_space_strings_without_copying() -> None:
+    label = "already_normalized"
+
+    assert _label_part(label) is label
+    assert _label_part("needs normalization") == "needs_normalization"
+    assert _label_part(128) == "128"
+
+
 def test_row_iterators_filter_invalid_entries_without_materializing_copies() -> None:
     report = {"rows": [{"metric": "bench.smoke.ttft_ms"}, "skip", {"metric": "eval.mmlu.score"}]}
     payload = [{"suite_id": "mmlu"}, None, {"suite_id": "gsm8k"}]
