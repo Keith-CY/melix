@@ -330,3 +330,22 @@ empty, singleton, three-item, five-or-more-item, tuple, scalar `.state`, and
 Success is accepted only if focused tests, changed-scope coverage, and the local
 registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
 probe completes successfully before merge.
+
+## Follow-up Slice: Single State Type Lookup
+
+The 2026-08-11 follow-up keeps the same registered probe and narrows to exact
+list/tuple `.state` type dispatch inside `estimate_cache_snapshot_bytes()`. The
+previous inline branch shape resolves `type(state)` once for the list comparison
+and again for the tuple comparison on non-list states. This slice stores the
+exact `type(state)` result in a local before the two comparisons, preserving the
+same exact list/tuple, scalar `.state`, and `.keys` / `.values` behavior while
+avoiding the second `type()` call for tuple and scalar state objects.
+
+This slice intentionally re-checks the earlier inline-check assumption against
+the current probe workload; acceptance depends on the registered Linux probe
+showing lower elapsed time for the same base/head workload and on the CI
+PR-scoped probe completing successfully before merge.
+
+Success is accepted only if focused tests, changed-scope coverage, and the local
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
