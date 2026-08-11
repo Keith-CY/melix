@@ -341,6 +341,131 @@ struct ComputerUseBrokerTransportTests {
         fixture.removeFiles()
     }
 
+    @Test("concurrent OpenSession reuses one pending broker admission")
+    func concurrentOpenSessionReusesPendingAdmission() async throws {
+        let identityGenerator = BlockingComputerUseIdentityGenerator()
+        let fixture = try await LiveComputerBrokerFixture.start(
+            identityGenerator: identityGenerator
+        )
+        do {
+            let transport = try HTTP2ClientTransport.Posix(
+                target: .unixDomainSocket(path: fixture.socketPath),
+                transportSecurity: .plaintext
+            )
+            try await withGRPCClient(transport: transport) { client in
+                let rpc = Melix_Computer_V1_ComputerUseBrokerService.Client(
+                    wrapping: client
+                )
+                _ = try await rpc.handshake(
+                    makeHandshake(capability: fixture.verificationCapability)
+                )
+                let open = try authorizeOpen(
+                    makeOpenRequest(),
+                    fixture: fixture
+                )
+                let first = Task {
+                    try await rpc.openSession(open)
+                }
+                identityGenerator.waitUntilFirstIDRequested()
+
+                let replayStarted = TestLatch()
+                let replay = Task {
+                    await replayStarted.signal()
+                    return try await rpc.openSession(open)
+                }
+                await replayStarted.wait()
+
+                var conflict = open
+                conflict.artifactRoot = "different-concurrent-namespace"
+                conflict.authorization = try fixture.authorization(
+                    callID: conflict.identity.toolCallID,
+                    arguments: [
+                        "operation": "open_session",
+                        "allowed_targets": conflict.allowedTargets.map(targetPayload),
+                    ],
+                    approvalGrantDigest: conflict.idempotencyKey,
+                    artifactRoot: conflict.artifactRoot
+                )
+                await expectRPCError(.alreadyExists) {
+                    try await rpc.openSession(conflict)
+                }
+
+                identityGenerator.releaseFirstID()
+                let firstLease = try await first.value
+                let replayLease = try await replay.value
+                #expect(replayLease.identity.sessionID == firstLease.identity.sessionID)
+                #expect(identityGenerator.requestCount() == 2)
+            }
+        } catch {
+            identityGenerator.releaseFirstID()
+            await fixture.stop()
+            fixture.removeFiles()
+            throw error
+        }
+        await fixture.stop()
+        fixture.removeFiles()
+    }
+
+    @Test("failed concurrent OpenSession clears pending admission for retry")
+    func failedConcurrentOpenSessionClearsPendingAdmission() async throws {
+        let identityGenerator = BlockingComputerUseIdentityGenerator()
+        let fixture = try await LiveComputerBrokerFixture.start(
+            identityGenerator: identityGenerator,
+            failOpenEvidence: true
+        )
+        do {
+            let transport = try HTTP2ClientTransport.Posix(
+                target: .unixDomainSocket(path: fixture.socketPath),
+                transportSecurity: .plaintext
+            )
+            try await withGRPCClient(transport: transport) { client in
+                let rpc = Melix_Computer_V1_ComputerUseBrokerService.Client(
+                    wrapping: client
+                )
+                _ = try await rpc.handshake(
+                    makeHandshake(capability: fixture.verificationCapability)
+                )
+                let open = try authorizeOpen(
+                    makeOpenRequest(),
+                    fixture: fixture
+                )
+                let first = Task {
+                    try await rpc.openSession(open)
+                }
+                identityGenerator.waitUntilFirstIDRequested()
+
+                let replayStarted = TestLatch()
+                let replay = Task {
+                    await replayStarted.signal()
+                    return try await rpc.openSession(open)
+                }
+                await replayStarted.wait()
+                try await Task.sleep(for: .milliseconds(50))
+                identityGenerator.releaseFirstID()
+
+                await expectRPCError(.internalError) {
+                    try await first.value
+                }
+                await expectRPCError(.internalError) {
+                    try await replay.value
+                }
+                #expect(identityGenerator.requestCount() == 2)
+
+                await expectRPCError(.internalError) {
+                    try await rpc.openSession(open)
+                }
+                #expect(identityGenerator.requestCount() == 4)
+            }
+        } catch {
+            identityGenerator.releaseFirstID()
+            await fixture.stop()
+            fixture.removeFiles()
+            throw error
+        }
+        await fixture.stop()
+        fixture.removeFiles()
+    }
+
     @Test("real private UDS maps handshake, session, capture, execute cancellation, and close")
     func realUnixDomainSocketContract() async throws {
         let fixture = try await LiveComputerBrokerFixture.start()
@@ -925,6 +1050,125 @@ struct ComputerUseBrokerTransportTests {
         }
         await rollbackFixture.stop()
         rollbackFixture.removeFiles()
+    }
+
+    @Test("closing a session rolls back an in-flight capture over the real UDS")
+    func closeSessionRollsBackInFlightCapture() async throws {
+        let captureRelease = TestLatch()
+        let frames = FakeFrameCaptureAdapter(captureRelease: captureRelease)
+        let fixture = try await LiveComputerBrokerFixture.start(
+            frameCapture: frames
+        )
+        do {
+            let transport = try HTTP2ClientTransport.Posix(
+                target: .unixDomainSocket(path: fixture.socketPath),
+                transportSecurity: .plaintext
+            )
+            try await withGRPCClient(transport: transport) { client in
+                let rpc = Melix_Computer_V1_ComputerUseBrokerService.Client(
+                    wrapping: client
+                )
+                _ = try await rpc.handshake(
+                    makeHandshake(capability: fixture.verificationCapability)
+                )
+                let open = try authorizeOpen(makeOpenRequest(), fixture: fixture)
+                let lease = try await rpc.openSession(open)
+                let target = try #require(open.allowedTargets.first)
+                var capture = makeCaptureRequest(
+                    lease: lease,
+                    target: target,
+                    callID: "capture-close-race"
+                )
+                capture = try authorizeCapture(
+                    capture,
+                    callID: "capture-close-race",
+                    fixture: fixture
+                )
+
+                let captureTask = Task {
+                    try await rpc.captureFrame(capture)
+                }
+                await frames.captureStarted.wait()
+
+                var close = Melix_Computer_V1_CloseComputerSessionRequest()
+                close.identity = lease.identity
+                close.sessionCapability = lease.sessionCapability
+                close.reason = "capture_in_flight"
+                close.closeID = "close-capture-close-race"
+                close.callerVerificationCapability = fixture.verificationCapability
+                close.authorization = try fixture.authorization(
+                    callID: "capture-close-race",
+                    arguments: [
+                        "operation": "close_session",
+                        "session_id": lease.identity.sessionID,
+                        "reason": close.reason,
+                    ]
+                )
+                let receipt = try await rpc.closeSession(close)
+                #expect(receipt.closed)
+                #expect(receipt.sessionID == lease.identity.sessionID)
+
+                await captureRelease.signal()
+                await expectRPCError(.failedPrecondition) {
+                    try await captureTask.value
+                }
+                #expect(await frames.captureCount() == 1)
+            }
+        } catch {
+            await captureRelease.signal()
+            await fixture.stop()
+            fixture.removeFiles()
+            throw error
+        }
+        await fixture.stop()
+        fixture.removeFiles()
+    }
+
+    @Test("transport rejects a core artifact outside its configured root")
+    func transportRejectsArtifactRootDrift() async throws {
+        let frames = FakeFrameCaptureAdapter()
+        let fixture = try await LiveComputerBrokerFixture.start(
+            frameCapture: frames,
+            mismatchedTransportArtifactRoot: true
+        )
+        do {
+            let transport = try HTTP2ClientTransport.Posix(
+                target: .unixDomainSocket(path: fixture.socketPath),
+                transportSecurity: .plaintext
+            )
+            try await withGRPCClient(transport: transport) { client in
+                let rpc = Melix_Computer_V1_ComputerUseBrokerService.Client(
+                    wrapping: client
+                )
+                _ = try await rpc.handshake(
+                    makeHandshake(capability: fixture.verificationCapability)
+                )
+                let open = try authorizeOpen(makeOpenRequest(), fixture: fixture)
+                let lease = try await rpc.openSession(open)
+                let target = try #require(open.allowedTargets.first)
+                var capture = makeCaptureRequest(
+                    lease: lease,
+                    target: target,
+                    callID: "artifact-root-drift"
+                )
+                capture = try authorizeCapture(
+                    capture,
+                    callID: "artifact-root-drift",
+                    fixture: fixture
+                )
+
+                await expectRPCError(.internalError) {
+                    try await rpc.captureFrame(capture)
+                }
+                #expect(await frames.captureCount() == 1)
+            }
+        } catch {
+            await fixture.stop()
+            fixture.removeFiles()
+            throw error
+        }
+        await fixture.stop()
+        fixture.removeFiles()
     }
 
     @Test("authenticated transport rejects invalid bindings and lifecycle transitions")
@@ -1900,6 +2144,29 @@ struct ComputerUseBrokerTransportTests {
             try lifecycle.prepareForBinding()
         }
         try lifecycle.removeOwnedSocket()
+
+        let unboundPath = privateRoot.appendingPathComponent("unbound.sock")
+        let unbound = try SecureUnixDomainSocketPath(
+            path: unboundPath.standardizedFileURL.path
+        )
+        try unbound.prepareForBinding()
+        #expect(throws: SecureUnixDomainSocketError.self) {
+            try unbound.sealBoundSocket()
+        }
+        try unbound.removeOwnedSocket()
+
+        let regularBoundPath = privateRoot.appendingPathComponent("regular-bound.sock")
+        let regularBound = try SecureUnixDomainSocketPath(
+            path: regularBoundPath.standardizedFileURL.path
+        )
+        try regularBound.prepareForBinding()
+        try Data("not-a-socket".utf8).write(to: regularBoundPath)
+        #expect(throws: SecureUnixDomainSocketError.self) {
+            try regularBound.sealBoundSocket()
+        }
+        #expect(Darwin.unlink(regularBoundPath.path) == 0)
+        try regularBound.removeOwnedSocket()
+
         let validCapability = privateRoot.appendingPathComponent("valid.bin")
         let validCapabilityData = Data(repeating: 0xCC, count: 32)
         try validCapabilityData.write(to: validCapability)
@@ -2344,6 +2611,52 @@ private struct TargetInventoryFrameCaptureAdapter: FrameCaptureAdapter {
     }
 }
 
+private final class BlockingComputerUseIdentityGenerator:
+    ComputerUseIdentityGenerator,
+    @unchecked Sendable
+{
+    private let condition = NSCondition()
+    private var firstIDRequested = false
+    private var firstIDReleased = false
+    private var requests = 0
+
+    func nextID(prefix: String) -> String {
+        condition.lock()
+        requests += 1
+        let sequence = requests
+        if sequence == 1 {
+            firstIDRequested = true
+            condition.broadcast()
+            while !firstIDReleased {
+                condition.wait()
+            }
+        }
+        condition.unlock()
+        return "\(prefix)-blocked-\(sequence)"
+    }
+
+    func waitUntilFirstIDRequested() {
+        condition.lock()
+        while !firstIDRequested {
+            condition.wait()
+        }
+        condition.unlock()
+    }
+
+    func releaseFirstID() {
+        condition.lock()
+        firstIDReleased = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func requestCount() -> Int {
+        condition.lock()
+        defer { condition.unlock() }
+        return requests
+    }
+}
+
 private final class LiveComputerBrokerFixture: @unchecked Sendable {
     let socketPath: String
     let verificationCapability: Data
@@ -2379,7 +2692,11 @@ private final class LiveComputerBrokerFixture: @unchecked Sendable {
     }
 
     static func makeUnstarted(
-        frameCapture: any FrameCaptureAdapter = FakeFrameCaptureAdapter()
+        frameCapture: any FrameCaptureAdapter = FakeFrameCaptureAdapter(),
+        identityGenerator: any ComputerUseIdentityGenerator =
+            TestComputerUseIdentityGenerator(),
+        failOpenEvidence: Bool = false,
+        mismatchedTransportArtifactRoot: Bool = false
     ) throws -> LiveComputerBrokerFixture {
         let root = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent(
             "mcb-uds-\(UUID().uuidString.prefix(8))",
@@ -2391,6 +2708,12 @@ private final class LiveComputerBrokerFixture: @unchecked Sendable {
             attributes: [.posixPermissions: NSNumber(value: 0o700)]
         )
         let artifactRoot = root.appendingPathComponent("artifacts", isDirectory: true)
+        if failOpenEvidence {
+            try Data("blocked artifact root".utf8).write(
+                to: artifactRoot,
+                options: .atomic
+            )
+        }
         let socketPath = root
             .appendingPathComponent("private-runtime", isDirectory: true)
             .appendingPathComponent("broker.sock")
@@ -2410,17 +2733,20 @@ private final class LiveComputerBrokerFixture: @unchecked Sendable {
                 ),
             ]
         )
-        let broker = DefaultComputerUseBroker(
+        let defaultBroker = DefaultComputerUseBroker(
             frameCapture: frameCapture,
             accessibility: accessibility,
             clock: clock,
-            identityGenerator: TestComputerUseIdentityGenerator(),
+            identityGenerator: identityGenerator,
             artifactRoot: artifactRoot
         )
+        let transportArtifactRoot = mismatchedTransportArtifactRoot
+            ? root.appendingPathComponent("transport-artifacts", isDirectory: true)
+            : artifactRoot
         let verificationCapability = testVerificationCapability
         let authorizationPrivateKey = Curve25519.Signing.PrivateKey()
         let provider = ComputerUseBrokerGRPCProvider(
-            broker: broker,
+            broker: defaultBroker,
             configuration: try BrokerTransportConfiguration(
                 handshake: BrokerHandshakePolicy(
                     protocolVersion: "1",
@@ -2435,7 +2761,7 @@ private final class LiveComputerBrokerFixture: @unchecked Sendable {
                 ),
                 brokerVersion: "0.2.0-test",
                 brokerInstanceID: "broker-uds-test",
-                artifactRoot: artifactRoot
+                artifactRoot: transportArtifactRoot
             )
         )
         let server = ComputerUseBrokerUDSServer(
@@ -2456,9 +2782,18 @@ private final class LiveComputerBrokerFixture: @unchecked Sendable {
     }
 
     static func start(
-        frameCapture: any FrameCaptureAdapter = FakeFrameCaptureAdapter()
+        frameCapture: any FrameCaptureAdapter = FakeFrameCaptureAdapter(),
+        identityGenerator: any ComputerUseIdentityGenerator =
+            TestComputerUseIdentityGenerator(),
+        failOpenEvidence: Bool = false,
+        mismatchedTransportArtifactRoot: Bool = false
     ) async throws -> LiveComputerBrokerFixture {
-        let fixture = try makeUnstarted(frameCapture: frameCapture)
+        let fixture = try makeUnstarted(
+            frameCapture: frameCapture,
+            identityGenerator: identityGenerator,
+            failOpenEvidence: failOpenEvidence,
+            mismatchedTransportArtifactRoot: mismatchedTransportArtifactRoot
+        )
         do {
             try await fixture.server.start()
             return fixture

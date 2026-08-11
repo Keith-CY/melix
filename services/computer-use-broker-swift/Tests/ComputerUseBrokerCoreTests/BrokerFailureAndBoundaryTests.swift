@@ -438,6 +438,21 @@ struct BrokerFailureAndBoundaryTests {
         )
         #expect(terminal.disposition == .alreadyTerminal)
         #expect(terminal.terminalReceipt?.state == .completed)
+
+        let replayEvents = await collectEvents(
+            try await context.broker.performAction(request)
+        )
+        #expect(replayEvents.last?.state == .completed)
+
+        await expectBrokerError(.sessionNotFound) {
+            try await context.broker.captureFrame(
+                CaptureComputerFrameRequest(
+                    sessionID: "missing",
+                    capability: context.session.capability,
+                    target: context.target
+                )
+            )
+        }
     }
 
     @Test("closing a session cancels pre-commit work and reports committing work as too late")

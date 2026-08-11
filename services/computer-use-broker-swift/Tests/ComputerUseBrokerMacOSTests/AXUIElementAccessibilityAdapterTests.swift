@@ -531,6 +531,8 @@ struct AXUIElementAccessibilityAdapterTests {
 
         let element = system.applicationElement(processIdentifier: Int32.max)
         system.setMessagingTimeout(0.01, for: element)
+        #expect(!system.focusWindow(element, target: impossibleTarget))
+        #expect(system.focusedWindow(of: element) == nil)
         _ = system.stringAttribute(kAXTitleAttribute as CFString, of: element)
         _ = system.boolAttribute(kAXEnabledAttribute as CFString, of: element)
         _ = system.elementArrayAttribute(kAXWindowsAttribute as CFString, of: element)
