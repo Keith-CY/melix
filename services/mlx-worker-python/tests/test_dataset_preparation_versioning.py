@@ -506,6 +506,38 @@ def test_dataset_version_listing_handles_missing_versions_root(tmp_path: Path) -
     assert listing["metrics"]["dataset_version_count"] == 0
 
 
+def test_dataset_version_listing_does_not_follow_symlinked_version_dirs(tmp_path: Path) -> None:
+    versions_root = tmp_path / "datasets" / "support-chat" / "versions"
+    outside_version_dir = tmp_path / "outside-version"
+    outside_version_dir.mkdir(parents=True)
+    (outside_version_dir / "dataset-version.json").write_text(
+        json.dumps(
+            {
+                "dataset_id": "support-chat",
+                "version_id": "outside-v1",
+                "created_at": "2026-05-24T01:00:00Z",
+                "status": "ready",
+            }
+        ),
+        encoding="utf-8",
+    )
+    versions_root.mkdir(parents=True)
+    symlink_dir = versions_root / "linked-version"
+    try:
+        symlink_dir.symlink_to(outside_version_dir, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:  # pragma: no cover - platform guard
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    listing = list_dataset_versions(
+        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        output_root=tmp_path / "datasets",
+        dataset_id="support-chat",
+    )
+
+    assert listing["versions"] == []
+    assert listing["metrics"]["dataset_version_count"] == 0
+
+
 def test_dataset_version_listing_preserves_non_string_sort_key_fallback(tmp_path: Path) -> None:
     versions_root = tmp_path / "datasets" / "support-chat" / "versions"
     for version_id, created_at in [

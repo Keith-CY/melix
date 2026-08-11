@@ -1178,7 +1178,7 @@ def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
     try:
         with scandir(os.fspath(versions_root)) as entries:
             for entry in entries:
-                if not entry.is_dir(follow_symlinks=False):
+                if entry.is_symlink():
                     continue
                 yield entry.path + manifest_suffix
     except OSError:
