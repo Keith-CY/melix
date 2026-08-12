@@ -13,8 +13,12 @@ from worker.runtime.untrusted_context import (
 
 
 TOOL_OBSERVATION_SCHEMA_VERSION = "melix.agentic_tool_observation.v1"
+TOOL_OBSERVATION_TRUNCATION_SCHEMA_VERSION = (
+    "melix.agentic_tool_observation_truncation.v1"
+)
 SUPPORTED_TOOL_OBSERVATION_STATUSES = ("completed", "timeout", "failed")
 DEFAULT_TOOL_OBSERVATION_TEXT_BYTE_LIMIT = 8192
+DEFAULT_TOOL_OBSERVATION_SERIALIZED_BYTE_LIMIT = 1_048_576
 
 ToolObservationStatus = Literal["completed", "timeout", "failed"]
 
@@ -32,6 +36,7 @@ class ToolObservationError(ValueError):
 @dataclass(frozen=True)
 class ToolObservationPolicy:
     max_text_bytes: int = DEFAULT_TOOL_OBSERVATION_TEXT_BYTE_LIMIT
+    max_serialized_bytes: int = DEFAULT_TOOL_OBSERVATION_SERIALIZED_BYTE_LIMIT
     redaction_terms: tuple[str, ...] = ()
     timeout_ms: int | None = None
     replay_seed: str = "melix.tool_observation.v1"
@@ -39,6 +44,10 @@ class ToolObservationPolicy:
     def __post_init__(self) -> None:
         if self.max_text_bytes <= 0:
             raise ToolObservationError("Tool observation max_text_bytes must be positive.")
+        if not 4_096 <= self.max_serialized_bytes <= DEFAULT_TOOL_OBSERVATION_SERIALIZED_BYTE_LIMIT:
+            raise ToolObservationError(
+                "Tool observation max_serialized_bytes must be between 4096 and 1048576."
+            )
         if self.timeout_ms is not None and self.timeout_ms <= 0:
             raise ToolObservationError("Tool observation timeout_ms must be positive when set.")
         normalized_terms = tuple(
@@ -56,6 +65,7 @@ class ToolObservationPolicy:
     def fingerprint_payload(self) -> dict[str, Any]:
         return {
             "max_text_bytes": self.max_text_bytes,
+            "max_serialized_bytes": self.max_serialized_bytes,
             "redaction_term_count": len(self.redaction_terms),
             "redaction_terms_hash": _sha256_json(self.redaction_terms),
             "timeout_ms": self.timeout_ms,
@@ -113,6 +123,7 @@ class ToolObservationRecord:
     replay: ToolObservationReplayMetadata
     _untrusted_context_receipts: tuple[dict[str, object], ...]
     timeout_ms: int | None = None
+    globally_truncated: bool = False
 
     @property
     def untrusted_context_receipts(self) -> list[dict[str, object]]:
@@ -134,6 +145,8 @@ class ToolObservationRecord:
         }
         if self.timeout_ms is not None:
             observation["timeout_ms"] = self.timeout_ms
+        if self.globally_truncated:
+            observation["globally_truncated"] = True
         return observation
 
 
@@ -279,7 +292,7 @@ def normalize_tool_observation(
         original_bytes=sanitized.original_bytes,
         emitted_bytes=sanitized.emitted_bytes,
     )
-    replay = _build_replay_metadata(
+    return _bounded_tool_observation_record(
         schema_version=normalized_schema_version,
         policy=observation_policy,
         tool_name=normalized_tool_name,
@@ -287,22 +300,152 @@ def normalize_tool_observation(
         observation_kind=normalized_observation_kind,
         status=normalized_status,
         payload=normalized_payload,
+        metrics=metrics,
+        timeout_ms=timeout_ms,
+        source_untrusted_context_receipts=source_untrusted_context_receipts,
+    )
+
+
+def _make_tool_observation_record(
+    *,
+    schema_version: str,
+    policy: ToolObservationPolicy,
+    tool_name: str,
+    tool_call_id: str,
+    observation_kind: str,
+    status: ToolObservationStatus,
+    payload: dict[str, Any],
+    metrics: ToolObservationMetrics,
+    timeout_ms: int | None,
+    source_untrusted_context_receipts: list[dict[str, object]] | tuple[
+        dict[str, object], ...
+    ],
+    globally_truncated: bool,
+) -> ToolObservationRecord:
+    replay = _build_replay_metadata(
+        schema_version=schema_version,
+        policy=policy,
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        observation_kind=observation_kind,
+        status=status,
+        payload=payload,
     )
     untrusted_context_receipts = _build_untrusted_context_receipts(
-        tool_call_id=normalized_tool_call_id,
-        payload=normalized_payload,
+        tool_call_id=tool_call_id,
+        payload=payload,
         source_untrusted_context_receipts=source_untrusted_context_receipts,
     )
     return ToolObservationRecord(
-        tool_name=normalized_tool_name,
-        tool_call_id=normalized_tool_call_id,
-        observation_kind=normalized_observation_kind,
-        status=normalized_status,
-        payload=normalized_payload,
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        observation_kind=observation_kind,
+        status=status,
+        payload=payload,
         metrics=metrics,
         replay=replay,
         _untrusted_context_receipts=untrusted_context_receipts,
         timeout_ms=timeout_ms,
+        globally_truncated=globally_truncated,
+    )
+
+
+def _bounded_tool_observation_record(
+    *,
+    schema_version: str,
+    policy: ToolObservationPolicy,
+    tool_name: str,
+    tool_call_id: str,
+    observation_kind: str,
+    status: ToolObservationStatus,
+    payload: dict[str, Any],
+    metrics: ToolObservationMetrics,
+    timeout_ms: int | None,
+    source_untrusted_context_receipts: list[dict[str, object]] | tuple[
+        dict[str, object], ...
+    ],
+) -> ToolObservationRecord:
+    record = _make_tool_observation_record(
+        schema_version=schema_version,
+        policy=policy,
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        observation_kind=observation_kind,
+        status=status,
+        payload=payload,
+        metrics=metrics,
+        timeout_ms=timeout_ms,
+        source_untrusted_context_receipts=source_untrusted_context_receipts,
+        globally_truncated=False,
+    )
+    if _serialized_observation_bytes(record) <= policy.max_serialized_bytes:
+        return record
+
+    original_payload_json = _COMPACT_SORTED_JSON_ENCODER.encode(payload)
+    original_payload_bytes = original_payload_json.encode("utf-8")
+    original_payload_sha256 = hashlib.sha256(original_payload_bytes).hexdigest()
+
+    def truncated_candidate(preview_byte_limit: int) -> ToolObservationRecord:
+        preview_json, _ = _truncate_utf8(
+            original_payload_json,
+            preview_byte_limit,
+        )
+        truncated_payload = {
+            "melix_truncation": {
+                "schema_version": TOOL_OBSERVATION_TRUNCATION_SCHEMA_VERSION,
+                "reason": "serialized_observation_limit",
+                "original_payload_bytes": len(original_payload_bytes),
+                "original_payload_sha256": original_payload_sha256,
+                "preview_json": preview_json,
+            }
+        }
+        truncated_metrics = ToolObservationMetrics(
+            record_count=metrics.record_count,
+            redacted_value_count=metrics.redacted_value_count,
+            truncated_count=metrics.truncated_count + 1,
+            timeout_count=metrics.timeout_count,
+            original_bytes=metrics.original_bytes,
+            emitted_bytes=len(preview_json.encode("utf-8")),
+        )
+        return _make_tool_observation_record(
+            schema_version=schema_version,
+            policy=policy,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            observation_kind=observation_kind,
+            status=status,
+            payload=truncated_payload,
+            metrics=truncated_metrics,
+            timeout_ms=timeout_ms,
+            source_untrusted_context_receipts=source_untrusted_context_receipts,
+            globally_truncated=True,
+        )
+
+    # Preserve the largest deterministic UTF-8-safe canonical preview that
+    # keeps the complete typed observation inside the Swift adapter contract.
+    lower = 0
+    upper = len(original_payload_bytes)
+    best: ToolObservationRecord | None = None
+    while lower <= upper:
+        midpoint = (lower + upper) // 2
+        candidate = truncated_candidate(midpoint)
+        if _serialized_observation_bytes(candidate) <= policy.max_serialized_bytes:
+            best = candidate
+            lower = midpoint + 1
+        else:
+            upper = midpoint - 1
+    if best is None:
+        raise ToolObservationError(
+            "Tool observation metadata exceeds max_serialized_bytes."
+        )
+    return best
+
+
+def _serialized_observation_bytes(record: ToolObservationRecord) -> int:
+    return len(
+        _COMPACT_SORTED_JSON_ENCODER.encode(
+            record.as_agentic_trace_observation()
+        ).encode("utf-8")
     )
 
 
@@ -472,9 +615,11 @@ def _sha256_json(payload: Any) -> str:
 
 
 __all__ = [
+    "DEFAULT_TOOL_OBSERVATION_SERIALIZED_BYTE_LIMIT",
     "DEFAULT_TOOL_OBSERVATION_TEXT_BYTE_LIMIT",
     "SUPPORTED_TOOL_OBSERVATION_STATUSES",
     "TOOL_OBSERVATION_SCHEMA_VERSION",
+    "TOOL_OBSERVATION_TRUNCATION_SCHEMA_VERSION",
     "ToolObservationError",
     "ToolObservationMetrics",
     "ToolObservationPolicy",

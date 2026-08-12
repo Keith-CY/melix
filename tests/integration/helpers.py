@@ -56,6 +56,9 @@ class LiveMelixStack:
         self.swift_vision_worker_metrics_path = Path("/tmp") / f"melix-swift-vision-metrics-{token}.json"
         self.python_worker_metrics_path = Path("/tmp") / f"melix-python-metrics-{token}.json"
         self.runtime_state_root = Path("/tmp") / f"melix-home-{token}"
+        self.control_plane_socket_path = (
+            self.runtime_state_root / "run" / "controlplane.sock"
+        )
         self.gateway_config_store_path = self.runtime_state_root / "state" / "gateway-config.json"
         self.gateway_serving_defaults_store_path = (
             self.runtime_state_root / "state" / "gateway-serving-defaults.json"
@@ -198,6 +201,9 @@ class LiveMelixStack:
                     self.gateway_serving_defaults_store_path
                 )
             control_plane_env["MELIX_HTTP_PORT"] = str(self.http_port)
+            control_plane_env["MELIX_CONTROL_PLANE_SOCKET_PATH"] = os.fspath(
+                self.control_plane_socket_path
+            )
             control_plane_env["MELIX_WORKER_SOCKET_PATH"] = os.fspath(self.python_socket_path)
             control_plane_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
             control_plane_env["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] = os.fspath(self.swift_vision_socket_path)

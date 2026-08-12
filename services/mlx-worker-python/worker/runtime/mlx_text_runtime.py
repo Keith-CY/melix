@@ -746,10 +746,10 @@ def _first_present(*values: Any) -> Any:
 
 
 def _normalize_chat_template_messages(
-    chat_messages: list[dict[str, str]],
-) -> tuple[list[dict[str, str]], int]:
+    chat_messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
     instruction_parts: list[str] = []
-    normalized_messages: list[dict[str, str]] = []
+    normalized_messages: list[dict[str, Any]] = []
     saw_non_instruction = False
     non_leading_instruction_count = 0
 
@@ -2107,15 +2107,29 @@ class MLXTextRuntime:
         if isinstance(loaded_model, dict):
             tokenizer = loaded_model.get("tokenizer")
         if tokenizer is not None and hasattr(tokenizer, "apply_chat_template"):
-            chat_messages: list[dict[str, str]] = []
+            chat_messages: list[dict[str, Any]] = []
             for message in messages:
                 text_parts = [part.text for part in message.parts if part.WhichOneof("part") == "text"]
-                chat_message = {
+                chat_message: dict[str, Any] = {
                     "role": message.role,
                     "content": "\n".join(text_parts),
                 }
                 if message.name:
                     chat_message["name"] = message.name
+                if message.tool_calls:
+                    chat_message["tool_calls"] = [
+                        {
+                            "id": tool_call.id,
+                            "type": tool_call.type or "function",
+                            "function": {
+                                "name": tool_call.name,
+                                "arguments": tool_call.arguments_json,
+                            },
+                        }
+                        for tool_call in message.tool_calls
+                    ]
+                if message.tool_call_id:
+                    chat_message["tool_call_id"] = message.tool_call_id
                 chat_messages.append(chat_message)
             chat_messages, normalized_count = _normalize_chat_template_messages(chat_messages)
             if execution_ext is not None:

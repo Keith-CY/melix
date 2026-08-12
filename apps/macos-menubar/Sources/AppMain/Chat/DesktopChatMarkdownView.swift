@@ -469,7 +469,7 @@ enum DesktopChatMarkdownRenderer {
         switch kind {
         case .assistant, .reasoning:
             return true
-        case .user, .tool, .error:
+        case .user, .tool, .agentRun, .error:
             return false
         }
     }

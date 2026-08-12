@@ -20,8 +20,10 @@ def write_active_runtime_descriptor(
     control_plane_process_id: int,
     python_worker_process_id: int,
     swift_text_worker_process_id: int,
+    computer_broker_process_id: int = 0,
     python_worker_socket_path: str,
     swift_text_worker_socket_path: str,
+    control_plane_socket_path: str = "",
     service_base_url: str,
     now_unix_ms: Callable[[], int] = lambda: int(time.time() * 1_000),
 ) -> dict[str, Any]:
@@ -38,6 +40,11 @@ def write_active_runtime_descriptor(
         "service_base_url": service_base_url,
         "updated_at_unix_ms": int(now_unix_ms()),
     }
+    normalized_control_plane_socket_path = control_plane_socket_path.strip()
+    if normalized_control_plane_socket_path:
+        payload["control_plane_socket_path"] = normalized_control_plane_socket_path
+    if computer_broker_process_id > 0:
+        payload["computer_broker_process_id"] = int(computer_broker_process_id)
 
     descriptor_file = None
     temporary_path: Path | None = None
@@ -75,8 +82,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--control-plane-process-id", required=True, type=int)
     parser.add_argument("--python-worker-process-id", required=True, type=int)
     parser.add_argument("--swift-text-worker-process-id", required=True, type=int)
+    parser.add_argument("--computer-broker-process-id", type=int, default=0)
     parser.add_argument("--python-worker-socket-path", required=True)
     parser.add_argument("--swift-text-worker-socket-path", required=True)
+    parser.add_argument("--control-plane-socket-path", default="")
     parser.add_argument("--service-base-url", required=True)
     return parser
 
@@ -89,8 +98,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         control_plane_process_id=args.control_plane_process_id,
         python_worker_process_id=args.python_worker_process_id,
         swift_text_worker_process_id=args.swift_text_worker_process_id,
+        computer_broker_process_id=args.computer_broker_process_id,
         python_worker_socket_path=args.python_worker_socket_path,
         swift_text_worker_socket_path=args.swift_text_worker_socket_path,
+        control_plane_socket_path=args.control_plane_socket_path,
         service_base_url=args.service_base_url,
     )
     return 0

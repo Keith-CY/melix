@@ -353,6 +353,7 @@ def test_cli_chat_run_rebinds_primary_session_without_dev_text_model_path(tmp_pa
         env = {
             "MELIX_HOME": str(melix_home),
             "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            "MELIX_CONTROL_PLANE_SOCKET_PATH": str(stack.control_plane_socket_path),
             "MELIX_WORKER_SOCKET_PATH": str(stack.python_socket_path),
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(stack.swift_socket_path),
         }
@@ -486,6 +487,7 @@ def test_phase8_acceptance_bundle_closes_lora_bench_eval_and_export_paths(tmp_pa
         env = {
             "MELIX_HOME": str(melix_home),
             "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
+            "MELIX_CONTROL_PLANE_SOCKET_PATH": str(stack.control_plane_socket_path),
             "MELIX_WORKER_SOCKET_PATH": str(stack.python_socket_path),
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(stack.swift_socket_path),
             "MELIX_CLI": str(build_cli_binary(repo_root)),
@@ -601,6 +603,7 @@ def test_phase8_acceptance_bundle_real_small_model_profile_closes_real_lora_chai
             "MELIX_HOME": str(melix_home),
             "MELIX_MANAGED_MODEL_ROOT": str(managed_root),
             "MELIX_MODEL_OPS_JOBS_ROOT": str(jobs_root),
+            "MELIX_CONTROL_PLANE_SOCKET_PATH": str(stack.control_plane_socket_path),
             "MELIX_WORKER_SOCKET_PATH": str(stack.python_socket_path),
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(stack.swift_socket_path),
             "MELIX_CLI": str(build_cli_binary(repo_root)),

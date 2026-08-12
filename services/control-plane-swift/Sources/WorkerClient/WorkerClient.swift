@@ -54,6 +54,32 @@ public protocol WorkerClient: Sendable {
     func abort(requestID: String) async throws -> Bool
 }
 
+public protocol AgentToolRuntimeWorkerClientProtocol: Sendable {
+    func listAgentTools(
+        request: Melix_Worker_V1_ListAgentToolsRequest
+    ) async throws -> Melix_Worker_V1_ToolCatalogReceipt
+
+    func executeAgentTool(
+        request: Melix_Worker_V1_ExecuteAgentToolRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_AgentToolExecutionEvent, Error>
+
+    func cancelAgentTool(
+        request: Melix_Worker_V1_CancelAgentToolRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentToolResponse
+
+    func cancelAgentRunTools(
+        request: Melix_Worker_V1_CancelAgentRunToolsRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentRunToolsResponse
+}
+
+public extension AgentToolRuntimeWorkerClientProtocol {
+    func cancelAgentRunTools(
+        request _: Melix_Worker_V1_CancelAgentRunToolsRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentRunToolsResponse {
+        throw WorkerClientError.unavailable
+    }
+}
+
 public protocol NonTextInferenceWorkerClientProtocol: WorkerClient {
     func embed(
         request: Melix_Worker_V1_EmbedRequest

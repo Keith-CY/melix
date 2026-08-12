@@ -1,9 +1,26 @@
+import CryptoKit
+import Darwin
 import Foundation
 import Testing
 
 @testable import MelixControlPlaneCore
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
+
+private func makeServiceComputerUseTarget(
+    processID: Int32,
+    launchIdentity: String,
+    windowID: UInt32
+) throws -> TrustedComputerUseTarget {
+    try TrustedComputerUseTarget(
+        bundleID: "io.melix.fixture",
+        processID: processID,
+        processLaunchIdentity: launchIdentity,
+        windowID: windowID,
+        windowTitle: "Fixture Window \(windowID)",
+        applicationName: "Fixture"
+    )
+}
 
 @Suite("Control Plane Service")
 struct ControlPlaneServiceTests {
@@ -29,6 +46,1057 @@ struct ControlPlaneServiceTests {
         #expect(response.features.contains("session-graph"))
         #expect(response.features.contains("server-session-runtime"))
         #expect(response.features.contains("image-jobs"))
+    }
+
+    @Test("one selected Computer Use window remains valid among multiple live windows")
+    func selectedComputerUseWindowMayBeOneOfManyLiveWindows() throws {
+        let selected = try makeServiceComputerUseTarget(
+            processID: 41,
+            launchIdentity: "launch-41",
+            windowID: 7
+        )
+        let other = try makeServiceComputerUseTarget(
+            processID: 42,
+            launchIdentity: "launch-42",
+            windowID: 8
+        )
+
+        try ControlPlaneService.validateSelectedComputerUseTargets(
+            [selected],
+            liveTargets: [other, selected]
+        )
+    }
+
+    @Test("Computer Use target validation rejects a stale launch identity")
+    func selectedComputerUseWindowRejectsStaleIdentity() throws {
+        let selected = try makeServiceComputerUseTarget(
+            processID: 41,
+            launchIdentity: "launch-old",
+            windowID: 7
+        )
+        let relaunched = try makeServiceComputerUseTarget(
+            processID: 41,
+            launchIdentity: "launch-new",
+            windowID: 7
+        )
+
+        #expect(
+            throws: ControlPlaneAgentRuntimeError.invalidRequest(
+                "The selected Computer Use window is stale; refresh and select it again"
+            )
+        ) {
+            try ControlPlaneService.validateSelectedComputerUseTargets(
+                [selected],
+                liveTargets: [relaunched]
+            )
+        }
+    }
+
+    @Test("Computer Use target validation rejects zero or multiple selections")
+    func selectedComputerUseWindowRequiresExactlyOneSelection() throws {
+        let first = try makeServiceComputerUseTarget(
+            processID: 41,
+            launchIdentity: "launch-41",
+            windowID: 7
+        )
+        let second = try makeServiceComputerUseTarget(
+            processID: 42,
+            launchIdentity: "launch-42",
+            windowID: 8
+        )
+        let expected = ControlPlaneAgentRuntimeError.invalidRequest(
+            "Computer Use requires exactly one selected window"
+        )
+
+        #expect(throws: expected) {
+            try ControlPlaneService.validateSelectedComputerUseTargets(
+                [],
+                liveTargets: [first, second]
+            )
+        }
+        #expect(throws: expected) {
+            try ControlPlaneService.validateSelectedComputerUseTargets(
+                [first, second],
+                liveTargets: [first, second]
+            )
+        }
+    }
+
+    @Test("computer authorization seed is consumed from an inherited descriptor and publishes only its public key")
+    func computerAuthorizationDescriptorBootstrap() async throws {
+        let privateKey = Curve25519.Signing.PrivateKey()
+        let privatePipe = try makeDescriptorPipe(
+            payload: privateKey.rawRepresentation
+        )
+        let publicPipe = try makeDescriptorPipe()
+        defer { Darwin.close(publicPipe.readDescriptor) }
+
+        let service = ControlPlaneService(
+            environment: [
+                "MELIX_COMPUTER_BROKER_SOCKET": "/tmp/melix-computer-test.sock",
+                "MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_FD": String(
+                    privatePipe.readDescriptor
+                ),
+                "MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_FD": String(
+                    publicPipe.writeDescriptor
+                ),
+            ]
+        )
+        let published = try FileHandle(
+            fileDescriptor: publicPipe.readDescriptor,
+            closeOnDealloc: false
+        ).readToEnd()
+        #expect(published == privateKey.publicKey.rawRepresentation)
+
+        let response = try await service.handshake(
+            Melix_Controlplane_V1_HandshakeRequest()
+        )
+        #expect(response.features.contains("computer-use-semantic-press"))
+    }
+
+    @Test("invalid computer authorization seed fails closed and closes the public-key channel")
+    func invalidComputerAuthorizationSeedFailsClosed() async throws {
+        let privatePipe = try makeDescriptorPipe(
+            payload: Data(repeating: 0xA5, count: 31)
+        )
+        let publicPipe = try makeDescriptorPipe()
+        defer { Darwin.close(publicPipe.readDescriptor) }
+
+        let service = ControlPlaneService(
+            environment: [
+                "MELIX_COMPUTER_BROKER_SOCKET": "/tmp/melix-computer-test.sock",
+                "MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_FD": String(
+                    privatePipe.readDescriptor
+                ),
+                "MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_FD": String(
+                    publicPipe.writeDescriptor
+                ),
+            ]
+        )
+        let published = try FileHandle(
+            fileDescriptor: publicPipe.readDescriptor,
+            closeOnDealloc: false
+        ).readToEnd()
+        #expect(published?.isEmpty != false)
+
+        let response = try await service.handshake(
+            Melix_Controlplane_V1_HandshakeRequest()
+        )
+        #expect(!response.features.contains("computer-use-semantic-press"))
+    }
+
+    @Test("computer authorization bootstrap requires a public-key publication channel")
+    func computerAuthorizationBootstrapRequiresPublicKeyChannel() async throws {
+        let privateKey = Curve25519.Signing.PrivateKey()
+        let privatePipe = try makeDescriptorPipe(
+            payload: privateKey.rawRepresentation
+        )
+
+        let service = ControlPlaneService(
+            environment: [
+                "MELIX_COMPUTER_BROKER_SOCKET": "/tmp/melix-computer-test.sock",
+                "MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_FD": String(
+                    privatePipe.readDescriptor
+                ),
+            ]
+        )
+        let response = try await service.handshake(
+            Melix_Controlplane_V1_HandshakeRequest()
+        )
+
+        #expect(!response.features.contains("computer-use-semantic-press"))
+    }
+
+    @Test("Agent operations returns live catalog receipts and a signed Computer permission probe")
+    func agentOperationsReturnsLiveRuntimeReadModel() async throws {
+        let worker = AgentOperationsWorkerClient()
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: worker
+            ),
+            computerUseAuthorizationSigner: ComputerUseToolAuthorizationSigner(),
+            environment: [
+                "MELIX_COMPUTER_BROKER_SOCKET": "/tmp/melix-computer-test.sock",
+            ]
+        )
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "agent-operations-test"
+        request.commandType = "agent.get_operations"
+        request.actorID = "test-operator"
+        request.agent = Melix_Controlplane_V1_AgentCommand()
+        request.agent.getOperations = Melix_Controlplane_V1_GetAgentOperations()
+
+        let response = try await service.execute(request)
+
+        #expect(response.ok)
+        #expect(response.agent.operations.catalogDigest == "catalog-live-1")
+        #expect(response.agent.operations.tools.map(\.name) == [
+            "computer_use",
+            "environment_info",
+            "search_docs",
+        ])
+        #expect(response.agent.operations.toolSources.map(\.sourceID) == [
+            "builtin",
+            "computer",
+            "docs",
+        ])
+        let docs = try #require(
+            response.agent.operations.toolSources.first {
+                $0.sourceID == "docs"
+            }
+        )
+        #expect(docs.connectionState == "live")
+        #expect(docs.transportKind == "streamable_http")
+        #expect(docs.toolCount == 1)
+        let computer = response.agent.operations.computerUse
+        #expect(computer.brokerConfigured)
+        #expect(computer.capabilityLevel == "ax_semantic_press_only")
+        #expect(computer.screenRecordingPermission == "granted")
+        #expect(computer.accessibilityPermission == "denied")
+        #expect(computer.maximumFrames == 16)
+        #expect(computer.maximumActions == 8)
+        #expect(computer.maximumArtifactBytes == 16_777_216)
+        #expect(computer.idleTimeoutSeconds == 60)
+        #expect(computer.absoluteTimeoutSeconds == 300)
+        #expect(
+            computer.targetDiscoveryState
+                == .agentComputerUseTargetDiscoveryReady
+        )
+        #expect(computer.availableTargets.count == 1)
+        let target = try #require(computer.availableTargets.first)
+        #expect(target.bundleID == "com.example.Target")
+        #expect(target.windowID == 7)
+        #expect(computer.targetsObservedAtUnixMs > 0)
+        #expect(!computer.hasTargetDiscoveryError)
+        #expect(
+            computer.transportIdentityState
+                == "private_uds_signed_authorization_peer_code_identity_unavailable"
+        )
+
+        let listRequest = try #require(await worker.capturedListRequest())
+        #expect(listRequest.id.sessionID == "agent-operations")
+        #expect(listRequest.id.branchID == "operator-read-model")
+        #expect(listRequest.ownerActorID == "test-operator")
+        #expect(listRequest.leaseTtlMs == 30_000)
+        #expect(listRequest.refreshSources)
+        let executeRequests = await worker.capturedExecuteRequests()
+        #expect(executeRequests.map(\.argumentsJson) == [
+            #"{"operation":"get_permissions"}"#,
+            #"{"operation":"list_targets"}"#,
+        ])
+        let executeRequest = try #require(executeRequests.first)
+        #expect(executeRequest.context.actorID == "test-operator")
+        #expect(!executeRequest.context.controlPlaneAuthorizationKeyID.isEmpty)
+        #expect(!executeRequest.context.controlPlaneAuthorizationPayload.isEmpty)
+        #expect(!executeRequest.context.controlPlaneAuthorizationSignature.isEmpty)
+    }
+
+    @Test("Agent operations distinguishes an empty Computer target set")
+    func agentOperationsReportsEmptyComputerTargetDiscovery() async throws {
+        let worker = AgentOperationsWorkerClient(targetsJSON: "[]")
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: worker
+            ),
+            computerUseAuthorizationSigner: ComputerUseToolAuthorizationSigner(),
+            environment: [
+                "MELIX_COMPUTER_BROKER_SOCKET": "/tmp/melix-computer-test.sock",
+            ]
+        )
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "agent-operations-empty-targets"
+        request.commandType = "agent.get_operations"
+        request.actorID = "test-operator"
+        request.agent.getOperations = Melix_Controlplane_V1_GetAgentOperations()
+
+        let response = try await service.execute(request)
+        let computer = response.agent.operations.computerUse
+
+        #expect(response.ok)
+        #expect(
+            computer.targetDiscoveryState
+                == .agentComputerUseTargetDiscoveryEmpty
+        )
+        #expect(computer.availableTargets.isEmpty)
+        #expect(!computer.hasTargetDiscoveryError)
+    }
+
+    @Test("Agent operations does not request targets before Screen Recording is granted")
+    func agentOperationsReportsComputerTargetDiscoveryNotRequested() async throws {
+        let worker = AgentOperationsWorkerClient(
+            screenRecordingPermission: "denied"
+        )
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: worker
+            ),
+            computerUseAuthorizationSigner: ComputerUseToolAuthorizationSigner(),
+            environment: [
+                "MELIX_COMPUTER_BROKER_SOCKET": "/tmp/melix-computer-test.sock",
+            ]
+        )
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "agent-operations-targets-not-requested"
+        request.commandType = "agent.get_operations"
+        request.actorID = "test-operator"
+        request.agent.getOperations = Melix_Controlplane_V1_GetAgentOperations()
+
+        let response = try await service.execute(request)
+        let computer = response.agent.operations.computerUse
+
+        #expect(response.ok)
+        #expect(
+            computer.targetDiscoveryState
+                == .agentComputerUseTargetDiscoveryNotRequested
+        )
+        #expect(computer.screenRecordingPermission == "denied")
+        #expect(computer.availableTargets.isEmpty)
+        #expect(!computer.hasTargetDiscoveryError)
+        #expect(
+            await worker.capturedExecuteRequests().map(\.argumentsJson)
+                == [#"{"operation":"get_permissions"}"#]
+        )
+    }
+
+    @Test("Agent operations preserves a retriable Computer target discovery failure")
+    func agentOperationsReportsComputerTargetDiscoveryFailure() async throws {
+        let worker = AgentOperationsWorkerClient(
+            targetDiscoveryFailure: AgentPortFailure.timedOut
+        )
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: worker
+            ),
+            computerUseAuthorizationSigner: ComputerUseToolAuthorizationSigner(),
+            environment: [
+                "MELIX_COMPUTER_BROKER_SOCKET": "/tmp/melix-computer-test.sock",
+            ]
+        )
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "agent-operations-target-timeout"
+        request.commandType = "agent.get_operations"
+        request.actorID = "test-operator"
+        request.agent.getOperations = Melix_Controlplane_V1_GetAgentOperations()
+
+        let response = try await service.execute(request)
+        let computer = response.agent.operations.computerUse
+
+        #expect(response.ok)
+        #expect(
+            computer.targetDiscoveryState
+                == .agentComputerUseTargetDiscoveryFailed
+        )
+        #expect(computer.availableTargets.isEmpty)
+        #expect(computer.hasTargetDiscoveryError)
+        #expect(
+            computer.targetDiscoveryError.code
+                == "computer_target_discovery_timeout"
+        )
+        #expect(computer.targetDiscoveryError.retriable)
+    }
+
+    @Test("Agent operations exposes malformed MCP configuration as a failed source")
+    func agentOperationsExposesMalformedMCPConfiguration() async throws {
+        let worker = AgentOperationsWorkerClient()
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: worker
+            ),
+            mcpToolCatalog: MCPToolCatalog(
+                configPath: "/tmp/broken-mcp-tools.json",
+                discoverySource: .explicit,
+                configurationState: .invalid
+            )
+        )
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "agent-operations-invalid-mcp-config"
+        request.commandType = "agent.get_operations"
+        request.actorID = "test-operator"
+        request.agent.getOperations = Melix_Controlplane_V1_GetAgentOperations()
+
+        let response = try await service.execute(request)
+
+        #expect(response.ok)
+        let failedDiscovery = try #require(
+            response.agent.operations.toolSources.first {
+                $0.sourceID == "config-discovery"
+            }
+        )
+        #expect(failedDiscovery.connectionState == "failed")
+        #expect(failedDiscovery.transportKind == "explicit")
+        #expect(failedDiscovery.catalogOnly)
+        #expect(failedDiscovery.errorCode == "config_invalid")
+    }
+
+    @Test("Agent operations fail closed across unavailable, malformed, and bounded Computer receipts")
+    func agentOperationsBoundaryReceiptsStayTypedAndBounded() async throws {
+        let actorRequired = try await ControlPlaneService().execute(
+            agentOperationsBoundaryRequest(actorID: " ", suffix: "actor")
+        )
+        #expect(
+            actorRequired.agent.operations.toolSources.first?.errorCode
+                == "agent_actor_required"
+        )
+        let workerRequired = try await ControlPlaneService().execute(
+            agentOperationsBoundaryRequest(actorID: "operator", suffix: "worker")
+        )
+        #expect(
+            workerRequired.agent.operations.toolSources.first?.errorCode
+                == "agent_worker_unavailable"
+        )
+
+        let liveCatalog = MCPToolCatalog(
+            configPath: "/tmp/agent-operations-boundary.json",
+            sources: [
+                .init(
+                    sourceID: "live-boundary",
+                    transport: .stdio(.init(command: "/usr/bin/false"))
+                ),
+            ]
+        )
+        let catalogFailureWorker = AgentOperationsWorkerClient(
+            listFailure: AgentOperationsBoundaryError.fixture
+        )
+        let catalogFailureService = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: catalogFailureWorker
+            ),
+            mcpToolCatalog: liveCatalog
+        )
+        let catalogFailure = try await catalogFailureService.execute(
+            agentOperationsBoundaryRequest(actorID: "operator", suffix: "catalog")
+        )
+        #expect(
+            catalogFailure.agent.operations.toolSources.first?.errorCode
+                == "agent_tool_catalog_unavailable"
+        )
+
+        var emptySource = Melix_Worker_V1_AgentToolSourceReceipt()
+        emptySource.sourceID = ""
+        var unsafeSource = Melix_Worker_V1_AgentToolSourceReceipt()
+        unsafeSource.sourceID = "receipt-source"
+        unsafeSource.transportKind = String(repeating: "t", count: 80)
+        unsafeSource.connectionState = "ready"
+        unsafeSource.capabilities = ["tools", "bad capability", String(repeating: "x", count: 65)]
+        unsafeSource.errorCode = "bad error"
+        var customTool = Melix_Worker_V1_AgentToolDefinition()
+        customTool.sourceID = "custom-source"
+        customTool.adapterKind = "mcp"
+        customTool.name = "custom_tool"
+        customTool.title = "Custom"
+        customTool.inputSchemaJson = #"{"type":"object"}"#
+        customTool.schemaDigest = String(repeating: "d", count: 64)
+        customTool.riskClass = "unknown"
+        var customReceipt = Melix_Worker_V1_ToolCatalogReceipt()
+        customReceipt.catalogDigest = String(repeating: "c", count: 180)
+        customReceipt.sources = [emptySource, unsafeSource]
+        customReceipt.tools = [customTool]
+        let statusWorker = AgentOperationsWorkerClient(
+            listReceiptOverride: customReceipt
+        )
+        let statusService = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: statusWorker
+            ),
+            mcpToolCatalog: MCPToolCatalog(
+                configPath: "/tmp/agent-operations-status.json",
+                sources: [
+                    .init(
+                        sourceID: "catalog-only",
+                        enabled: false,
+                        namespaces: ["fixture.read"]
+                    ),
+                    .init(
+                        sourceID: "receipt-source",
+                        namespaces: ["fixture.collision"]
+                    ),
+                ]
+            )
+        )
+        let statuses = try await statusService.execute(
+            agentOperationsBoundaryRequest(actorID: "operator", suffix: "statuses")
+        ).agent.operations
+        #expect(statuses.catalogDigest.utf8.count == 128)
+        #expect(statuses.toolSources.map(\.sourceID) == [
+            "catalog-only",
+            "custom-source",
+            "receipt-source",
+        ])
+        #expect(
+            statuses.toolSources.first { $0.sourceID == "catalog-only" }?
+                .connectionState == "disabled"
+        )
+        #expect(
+            statuses.toolSources.first { $0.sourceID == "custom-source" }?
+                .catalogOnly == true
+        )
+        let boundedReceipt = try #require(
+            statuses.toolSources.first { $0.sourceID == "receipt-source" }
+        )
+        #expect(boundedReceipt.transportKind.utf8.count == 64)
+        #expect(boundedReceipt.capabilities == ["tools"])
+        #expect(boundedReceipt.errorCode.isEmpty)
+
+        let malformedPermissions = AgentOperationsWorkerClient(
+            permissionObservationJSON: #"{"schema_version":"wrong","status":"completed","payload":{}}"#
+        )
+        let malformedPermissionsStatus = try await agentOperationsService(
+            worker: malformedPermissions
+        ).execute(
+            agentOperationsBoundaryRequest(actorID: "operator", suffix: "permissions-envelope")
+        ).agent.operations.computerUse
+        #expect(malformedPermissionsStatus.capabilityLevel == "permission_probe_unavailable")
+
+        let invalidPermissionValues = AgentOperationsWorkerClient(
+            permissionObservationJSON: #"{"schema_version":"melix.agentic_tool_observation.v1","status":"completed","payload":{"operation":"get_permissions","screen_recording":true,"accessibility":"unexpected","maximum_frames":true,"maximum_actions":-1,"maximum_artifact_bytes":999999999,"idle_timeout_seconds":0,"absolute_timeout_seconds":700}}"#
+        )
+        let boundedPermissions = try await agentOperationsService(
+            worker: invalidPermissionValues
+        ).execute(
+            agentOperationsBoundaryRequest(actorID: "operator", suffix: "permission-values")
+        ).agent.operations.computerUse
+        #expect(boundedPermissions.screenRecordingPermission == "unknown")
+        #expect(boundedPermissions.accessibilityPermission == "unknown")
+        #expect(boundedPermissions.maximumFrames == 0)
+        #expect(boundedPermissions.maximumActions == 0)
+        #expect(boundedPermissions.maximumArtifactBytes == 0)
+        #expect(boundedPermissions.idleTimeoutSeconds == 0)
+        #expect(boundedPermissions.absoluteTimeoutSeconds == 0)
+
+        let sortedTargets = #"[{"bundle_id":"com.example.B","application_name":"Beta","process_id":30,"process_launch_identity":"launch-b","window_id":3,"window_title":"Window"},{"bundle_id":"com.example.A","application_name":"Alpha","process_id":20,"process_launch_identity":"launch-a2","window_id":2,"window_title":"Zulu"},{"bundle_id":"com.example.A","application_name":"Alpha","process_id":10,"process_launch_identity":"launch-a1","window_id":1,"window_title":"Alpha"}]"#
+        let sortedWorker = AgentOperationsWorkerClient(targetsJSON: sortedTargets)
+        let sorted = try await agentOperationsService(worker: sortedWorker).execute(
+            agentOperationsBoundaryRequest(actorID: "operator", suffix: "sorted-targets")
+        ).agent.operations.computerUse.availableTargets
+        #expect(sorted.map(\.windowTitle) == ["Alpha", "Zulu", "Window"])
+
+        let duplicateTargets = #"[{"bundle_id":"com.example.Duplicate","application_name":"Duplicate","process_id":42,"process_launch_identity":"launch-duplicate","window_id":7,"window_title":"Same"},{"bundle_id":"com.example.Duplicate","application_name":"Duplicate","process_id":42,"process_launch_identity":"launch-duplicate","window_id":7,"window_title":"Same"}]"#
+        let duplicateWorker = AgentOperationsWorkerClient(targetsJSON: duplicateTargets)
+        let duplicateStatus = try await agentOperationsService(
+            worker: duplicateWorker
+        ).execute(
+            agentOperationsBoundaryRequest(actorID: "operator", suffix: "duplicate-targets")
+        ).agent.operations.computerUse
+        #expect(
+            duplicateStatus.targetDiscoveryError.code
+                == "computer_target_discovery_invalid_response"
+        )
+
+        let invalidTargetWorker = AgentOperationsWorkerClient(
+            targetsJSON: #"[{"bundle_id":"com.example.Invalid","application_name":"Invalid","process_id":true,"process_launch_identity":"launch","window_id":false,"window_title":"Invalid"}]"#
+        )
+        let invalidTargetStatus = try await agentOperationsService(
+            worker: invalidTargetWorker
+        ).execute(
+            agentOperationsBoundaryRequest(actorID: "operator", suffix: "invalid-target")
+        ).agent.operations.computerUse
+        #expect(
+            invalidTargetStatus.targetDiscoveryError.code
+                == "computer_target_discovery_invalid_response"
+        )
+
+        let oversizedTarget = [
+            "bundle_id": "com.example.Many",
+            "application_name": "Many",
+            "process_id": 42,
+            "process_launch_identity": "launch-many",
+            "window_id": 7,
+            "window_title": "Many",
+        ] as [String: Any]
+        let oversizedData = try JSONSerialization.data(
+            withJSONObject: Array(repeating: oversizedTarget, count: 129),
+            options: [.sortedKeys]
+        )
+        let oversizedWorker = AgentOperationsWorkerClient(
+            targetsJSON: String(decoding: oversizedData, as: UTF8.self)
+        )
+        let oversizedStatus = try await agentOperationsService(
+            worker: oversizedWorker
+        ).execute(
+            agentOperationsBoundaryRequest(actorID: "operator", suffix: "oversized-targets")
+        ).agent.operations.computerUse
+        #expect(
+            oversizedStatus.targetDiscoveryError.code
+                == "computer_target_discovery_invalid_response"
+        )
+
+        let discoveryFailures: [((any Error & Sendable), String, Bool)] = [
+            (AgentPortFailure.unavailable, "computer_target_discovery_unavailable", true),
+            (AgentPortFailure.cancelled, "computer_target_discovery_unavailable", true),
+            (AgentPortFailure.invalidResponse, "computer_target_discovery_invalid_response", false),
+            (AgentPortFailure.rejected, "computer_target_discovery_invalid_response", false),
+            (AgentPortFailure.internalFailure, "computer_target_discovery_invalid_response", false),
+            (AgentOperationsBoundaryError.fixture, "computer_target_discovery_invalid_response", false),
+        ]
+        for (index, failure) in discoveryFailures.enumerated() {
+            let worker = AgentOperationsWorkerClient(
+                targetDiscoveryFailure: failure.0
+            )
+            let status = try await agentOperationsService(worker: worker).execute(
+                agentOperationsBoundaryRequest(
+                    actorID: "operator",
+                    suffix: "discovery-failure-\(index)"
+                )
+            ).agent.operations.computerUse.targetDiscoveryError
+            #expect(status.code == failure.1)
+            #expect(status.retriable == failure.2)
+        }
+    }
+
+    @Test("agent command family is routed through the live runtime read model")
+    func agentCommandFamilyRoutesToRuntime() async throws {
+        let service = ControlPlaneService()
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "agent-list-1"
+        request.actorID = "local-operator"
+        request.agent.list = Melix_Controlplane_V1_ListAgentRuns()
+        request.agent.list.limit = 10
+        request.agent.list.nonterminalOnly = true
+
+        let response = try await service.execute(request)
+
+        #expect(response.ok)
+        #expect(response.agent.runs.isEmpty)
+        #expect(response.agent.runsComplete)
+    }
+
+    @Test("authoritative Agent inventory fails closed on a foreign journal entry")
+    func authoritativeAgentInventoryRejectsCorruptDirectoryEntry() async throws {
+        let temporaryHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "melix-agent-inventory-corrupt-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: temporaryHome) }
+        let service = ControlPlaneService(
+            environment: ["MELIX_HOME": temporaryHome.path]
+        )
+        let runsDirectory = temporaryHome
+            .appendingPathComponent("state/agent-runtime/runs", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: runsDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("foreign".utf8).write(
+            to: runsDirectory.appendingPathComponent(".foreign")
+        )
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "agent-list-corrupt"
+        request.actorID = "local-operator"
+        request.agent.list = Melix_Controlplane_V1_ListAgentRuns()
+        request.agent.list.nonterminalOnly = true
+
+        let response = try await service.execute(request)
+
+        #expect(!response.ok)
+        #expect(response.error.code == "agent_run_journal_persistence_failed")
+        #expect(!response.agent.runsComplete)
+    }
+
+    @Test("Agent runtime metrics receive typed change kinds from the service")
+    func agentRuntimeMetricsReceiveTypedChangeKinds() async throws {
+        let temporaryHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "melix-agent-metrics-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: temporaryHome) }
+
+        let metrics = MetricsStore()
+        let worker = AgentOperationsWorkerClient()
+        let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .tokenDelta("done"),
+            .completed(finishReason: "stop", assistantText: "done"),
+        ])
+        let service = ControlPlaneService(
+            metricsStore: metrics,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: worker
+            ),
+            remoteProviderClient: remoteClient,
+            environment: ["MELIX_HOME": temporaryHome.path]
+        )
+        var command = Melix_Controlplane_V1_StartAgentRun()
+        command.sessionID = "metrics-session"
+        command.branchID = "metrics-branch"
+        command.serverSessionID = "metrics-server"
+        command.modelID = "remote-model"
+        command.mode = .act
+        command.messages = [
+            .with {
+                $0.role = "user"
+                $0.content = "Reply once."
+            },
+        ]
+
+        let started = try await service.startAgentRun(
+            command,
+            actorID: "metrics-operator",
+            remoteTarget: .init(
+                serverID: "metrics-remote",
+                providerKind: "openai-compatible",
+                baseURL: "https://remote.example/v1",
+                apiKey: "test-key",
+                modelID: "remote-model"
+            )
+        )
+        var terminalState = ""
+        for _ in 0..<300 {
+            var get = Melix_Controlplane_V1_ControlPlaneRequest()
+            get.requestID = "metrics-get"
+            get.actorID = "metrics-operator"
+            get.agent.get.runID = started.runID
+            let response = try await service.execute(get)
+            terminalState = response.agent.run.state
+            if ["completed", "failed", "cancelled"].contains(terminalState) {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(terminalState == "completed")
+        var values = await metrics.snapshot().values
+        for _ in 0..<300 {
+            if values["agent.run.terminal_count"] == 1,
+               values["agent.run.completed_count"] == 1
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+            values = await metrics.snapshot().values
+        }
+        #expect(values["agent.run.started_count"] == 1)
+        #expect(values["agent.run.terminal_count"] == 1)
+        #expect(values["agent.run.completed_count"] == 1)
+        #expect(values["agent.run.terminal_duplicate_event_count"] == 0)
+    }
+
+    @Test("Agent start honors the earliest envelope or command deadline")
+    func agentStartHonorsEarliestDeadline() async throws {
+        #expect(ControlPlaneService.earliestPositiveDeadline(200, 100) == 100)
+        #expect(ControlPlaneService.earliestPositiveDeadline(200, 0) == 200)
+        #expect(ControlPlaneService.earliestPositiveDeadline(0, 100) == 100)
+        #expect(ControlPlaneService.earliestPositiveDeadline(0, 0) == 0)
+
+        let worker = AgentOperationsWorkerClient()
+        let service = ControlPlaneService(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                pythonCompatibilityClient: worker
+            )
+        )
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "agent-expired-envelope"
+        request.actorID = "local-operator"
+        request.deadlineUnixMs = Int64(Date().timeIntervalSince1970 * 1_000) - 1
+        request.agent.start.modelID = "fixture-model"
+        request.agent.start.sessionID = "fixture-session"
+        request.agent.start.branchID = "fixture-branch"
+        request.agent.start.mode = .act
+        request.agent.start.deadlineUnixMs = request.deadlineUnixMs + 60_000
+        request.agent.start.messages = [
+            .with {
+                $0.role = "user"
+                $0.content = "Do not start after the envelope deadline."
+            },
+        ]
+
+        let response = try await service.execute(request)
+
+        #expect(!response.ok)
+        #expect(response.error.code == "deadline_exceeded")
+        #expect(await worker.capturedListRequest() == nil)
+    }
+
+    @Test("expired Agent mutations have no durable side effects while cancellation remains admissible")
+    func expiredAgentMutationsFailClosedButCancellationRemainsAdmissible() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "melix-agent-envelope-deadline-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtimeStore = AgentRunDurableStore(
+            rootURL: root.appendingPathComponent("runtime", isDirectory: true)
+        )
+        let policyURL = root.appendingPathComponent(
+            "agent-approval-policy.json",
+            isDirectory: false
+        )
+        let policyStore = ApprovalPolicyStore(
+            fileURL: policyURL,
+            contextProvider: AgentApprovalContextRegistry()
+        )
+        let service = ControlPlaneService(
+            agentRuntime: ControlPlaneAgentRuntime(durableStore: runtimeStore),
+            agentApprovalPolicy: policyStore
+        )
+        let expiredDeadline = Int64(Date().timeIntervalSince1970 * 1_000) - 1
+
+        var decision = Melix_Controlplane_V1_ControlPlaneRequest()
+        decision.requestID = "agent-expired-decision"
+        decision.actorID = "local-operator"
+        decision.deadlineUnixMs = expiredDeadline
+        decision.agent.decideApproval.binding.runID = "missing-run"
+        decision.agent.decideApproval.choice = .agentApprovalAllowOnce
+
+        let rejectedDecision = try await service.execute(decision)
+
+        #expect(!rejectedDecision.ok)
+        #expect(rejectedDecision.error.code == "deadline_exceeded")
+        let decisions = try await runtimeStore.approvalDecisions(
+            runID: "missing-run"
+        )
+        #expect(decisions.isEmpty)
+
+        var replacement = Melix_Controlplane_V1_ControlPlaneRequest()
+        replacement.requestID = "agent-expired-policy-replacement"
+        replacement.actorID = "local-operator"
+        replacement.deadlineUnixMs = expiredDeadline
+        replacement.agent.replaceApprovalPolicy.expectedRevision = 0
+        replacement.agent.replaceApprovalPolicy.rules = [
+            .with {
+                $0.id = "expired-rule"
+                $0.effect = .agentApprovalPolicyDeny
+            },
+        ]
+
+        let rejectedReplacement = try await service.execute(replacement)
+
+        #expect(!rejectedReplacement.ok)
+        #expect(rejectedReplacement.error.code == "deadline_exceeded")
+        #expect(!FileManager.default.fileExists(atPath: policyURL.path))
+        let policySnapshot = try await policyStore.snapshot()
+        #expect(policySnapshot.revision == 0)
+
+        var cancellation = Melix_Controlplane_V1_ControlPlaneRequest()
+        cancellation.requestID = "agent-expired-cancellation"
+        cancellation.actorID = "local-operator"
+        cancellation.deadlineUnixMs = expiredDeadline
+        cancellation.agent.cancel.runID = "missing-run"
+        cancellation.agent.cancel.reason = "operator_requested"
+
+        let acceptedCancellation = try await service.execute(cancellation)
+
+        #expect(acceptedCancellation.ok)
+        #expect(acceptedCancellation.agent.cancellation.disposition == "not_found")
+    }
+
+    @Test("agent approval policies support typed read, CAS replacement, and conflict receipts")
+    func agentApprovalPolicyManagementUsesRevisionCAS() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: tempDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let policyStore = ApprovalPolicyStore(
+            fileURL: tempDirectory.appendingPathComponent("agent-policy.json"),
+            contextProvider: AgentApprovalContextRegistry()
+        )
+        let service = ControlPlaneService(agentApprovalPolicy: policyStore)
+
+        var rule = Melix_Controlplane_V1_AgentApprovalPolicyRule()
+        rule.id = "allow-filesystem-read"
+        rule.effect = .agentApprovalPolicyAllow
+        rule.sourceID = "filesystem"
+        rule.toolName = "read_file"
+        rule.riskClass = .low
+        rule.operationKind = .agentApprovalOperationRead
+        rule.workspaceScope = "/workspace"
+        rule.schemaDigest = String(repeating: "a", count: 64)
+
+        var replace = Melix_Controlplane_V1_ControlPlaneRequest()
+        replace.requestID = "agent-policy-replace-1"
+        replace.actorID = "local-operator"
+        replace.agent.replaceApprovalPolicy.expectedRevision = 0
+        replace.agent.replaceApprovalPolicy.rules = [rule]
+
+        let replaced = try await service.execute(replace)
+        #expect(replaced.ok)
+        #expect(replaced.agent.approvalPolicyMutation.revision == 1)
+        #expect(replaced.agent.approvalPolicyMutation.ruleCount == 1)
+        #expect(replaced.agent.approvalPolicy.revision == 1)
+        #expect(replaced.agent.approvalPolicy.rules == [rule])
+
+        var get = Melix_Controlplane_V1_ControlPlaneRequest()
+        get.requestID = "agent-policy-get-1"
+        get.actorID = "local-operator"
+        get.agent.getApprovalPolicy =
+            Melix_Controlplane_V1_GetAgentApprovalPolicy()
+
+        let fetched = try await service.execute(get)
+        #expect(fetched.ok)
+        #expect(fetched.agent.approvalPolicy.revision == 1)
+        #expect(fetched.agent.approvalPolicy.rules == [rule])
+
+        replace.requestID = "agent-policy-replace-stale"
+        let stale = try await service.execute(replace)
+        #expect(!stale.ok)
+        #expect(stale.error.code == "agent_policy_revision_conflict")
+        #expect(stale.error.message.contains("refresh"))
+    }
+
+    @Test("Agent command boundaries return stable typed errors without side effects")
+    func agentCommandBoundariesReturnStableTypedErrors() async throws {
+        let admin = ServiceBoundaryApprovalPolicy()
+        let handshake = try await ControlPlaneService(
+            agentApprovalPolicy: admin
+        ).handshake(Melix_Controlplane_V1_HandshakeRequest())
+        #expect(handshake.features.contains("agent-runtime"))
+
+        await #expect(throws: ControlPlaneAgentRuntimeError.self) {
+            _ = try await ControlPlaneService().startAgentRun(
+                serviceBoundaryStartCommand(),
+                actorID: "operator"
+            )
+        }
+        await #expect(throws: ControlPlaneAgentAdapterError.unavailableWorker) {
+            _ = try await ControlPlaneService(
+                agentApprovalPolicy: admin
+            ).startAgentRun(
+                serviceBoundaryStartCommand(),
+                actorID: "operator"
+            )
+        }
+
+        var remoteStart = serviceBoundaryAgentRequest(kind: "start-remote")
+        remoteStart.agent.start = serviceBoundaryStartCommand()
+        remoteStart.agent.start.providerServerID = "remote-provider"
+        let missingRemoteTarget = try await ControlPlaneService(
+            agentApprovalPolicy: admin
+        ).execute(remoteStart)
+        #expect(missingRemoteTarget.error.code == "agent_remote_target_required")
+
+        let adapterErrors: [(ControlPlaneAgentAdapterError, String)] = [
+            (.unavailableWorker, "agent_worker_unavailable"),
+            (.emptyCatalog, "agent_tool_catalog_empty"),
+            (.duplicateToolName("fixture"), "agent_tool_catalog_ambiguous"),
+            (.invalidToolSchema("fixture"), "agent_tool_schema_invalid"),
+            (.unknownTool("fixture"), "agent_unknown_tool"),
+            (.incompleteModelTurn, "agent_model_turn_incomplete"),
+            (.invalidToolResult, "agent_tool_result_invalid"),
+        ]
+        for (adapterError, expectedCode) in adapterErrors {
+            let worker = ServiceBoundaryAgentWorker(listError: adapterError)
+            let service = ControlPlaneService(
+                workerRegistry: WorkerRegistry(
+                    defaultTextClient: NullWorkerClient(),
+                    pythonCompatibilityClient: worker
+                ),
+                agentApprovalPolicy: admin
+            )
+            var request = serviceBoundaryAgentRequest(kind: expectedCode)
+            request.agent.start = serviceBoundaryStartCommand()
+            let response = try await service.execute(request)
+            #expect(response.error.code == expectedCode)
+        }
+
+        var emptyCommand = serviceBoundaryAgentRequest(kind: "empty-command")
+        emptyCommand.agent = Melix_Controlplane_V1_AgentCommand()
+        #expect(
+            try await ControlPlaneService().execute(emptyCommand).error.code
+                == "invalid_request"
+        )
+
+        let nonAdmin = ServiceBoundaryNonAdminPolicy()
+        let nonAdminService = ControlPlaneService(agentApprovalPolicy: nonAdmin)
+        var getPolicy = serviceBoundaryAgentRequest(kind: "get-policy")
+        getPolicy.agent.getApprovalPolicy = .init()
+        #expect(
+            try await nonAdminService.execute(getPolicy).error.code
+                == "agent_policy_management_unavailable"
+        )
+        var replacePolicy = serviceBoundaryAgentRequest(kind: "replace-policy")
+        replacePolicy.agent.replaceApprovalPolicy.expectedRevision = 0
+        #expect(
+            try await nonAdminService.execute(replacePolicy).error.code
+                == "agent_policy_management_unavailable"
+        )
+
+        var oversized = serviceBoundaryAgentRequest(kind: "oversized-policy")
+        oversized.agent.replaceApprovalPolicy.expectedRevision = 0
+        oversized.agent.replaceApprovalPolicy.rules = (0...1_000).map { index in
+            .with {
+                $0.id = "rule-\(index)"
+                $0.effect = .agentApprovalPolicyAllow
+            }
+        }
+        #expect(
+            try await ControlPlaneService(
+                agentApprovalPolicy: admin
+            ).execute(oversized).error.code == "agent_policy_rule_limit_exceeded"
+        )
+
+        var invalidEffect = serviceBoundaryPolicyReplacement(id: "invalid-effect")
+        invalidEffect.agent.replaceApprovalPolicy.rules[0].effect = .UNRECOGNIZED(99)
+        var invalidRisk = serviceBoundaryPolicyReplacement(id: "invalid-risk")
+        invalidRisk.agent.replaceApprovalPolicy.rules[0].riskClass = .UNRECOGNIZED(99)
+        var invalidOperation = serviceBoundaryPolicyReplacement(id: "invalid-operation")
+        invalidOperation.agent.replaceApprovalPolicy.rules[0].operationKind = .UNRECOGNIZED(99)
+        for request in [invalidEffect, invalidRisk, invalidOperation] {
+            #expect(
+                try await ControlPlaneService(
+                    agentApprovalPolicy: admin
+                ).execute(request).error.code == "agent_policy_invalid_rule"
+            )
+        }
+
+        let policyErrors: [(ApprovalPolicyStoreError, String)] = [
+            (.deadlineExceeded, "deadline_exceeded"),
+            (.invalidDocument, "agent_policy_invalid_document"),
+            (.invalidRule(id: "fixture"), "agent_policy_invalid_rule"),
+            (.duplicateRuleID(id: "fixture"), "agent_policy_duplicate_rule"),
+            (.revisionMismatch(expected: 1, actual: 2), "agent_policy_revision_conflict"),
+            (.revisionExhausted, "agent_policy_revision_exhausted"),
+            (.approvalContextMismatch, "agent_policy_context_mismatch"),
+            (.ioFailure(operation: "fixture", code: EIO), "agent_policy_persistence_failed"),
+        ]
+        for (policyError, expectedCode) in policyErrors {
+            let policy = ServiceBoundaryApprovalPolicy(failure: .policy(policyError))
+            let response = try await ControlPlaneService(
+                agentApprovalPolicy: policy
+            ).execute(serviceBoundaryPolicyReplacement(id: expectedCode))
+            #expect(response.error.code == expectedCode)
+        }
+        let genericPolicy = ServiceBoundaryApprovalPolicy(failure: .generic)
+        #expect(
+            try await ControlPlaneService(
+                agentApprovalPolicy: genericPolicy
+            ).execute(
+                serviceBoundaryPolicyReplacement(id: "generic")
+            ).error.code == "agent_runtime_error"
+        )
+
+        var unknownRun = serviceBoundaryAgentRequest(kind: "unknown-run")
+        unknownRun.agent.get.runID = "missing-run"
+        #expect(
+            try await ControlPlaneService().execute(unknownRun).error.code
+                == "agent_run_not_found"
+        )
+        var invalidDecision = serviceBoundaryAgentRequest(kind: "invalid-decision")
+        invalidDecision.actorID = " "
+        invalidDecision.agent.decideApproval.binding.runID = "missing-run"
+        invalidDecision.agent.decideApproval.choice = .agentApprovalAllowOnce
+        #expect(
+            try await ControlPlaneService().execute(invalidDecision).error.code
+                == "invalid_request"
+        )
+        for reason in ["deadline_exceeded", "maintenance"] {
+            var cancellation = serviceBoundaryAgentRequest(kind: reason)
+            cancellation.agent.cancel.runID = "missing-run"
+            cancellation.agent.cancel.reason = reason
+            #expect(try await ControlPlaneService().execute(cancellation).ok)
+        }
     }
 
     @Test("handshake exposes MCP tool catalog state in features and snapshot")
@@ -68,7 +1136,7 @@ struct ControlPlaneServiceTests {
         #expect(response.snapshot.mcpTools.sources.count == 3)
         #expect(response.snapshot.mcpTools.sources[0].sourceID == "config-discovery")
         #expect(response.snapshot.mcpTools.sources[0].namespaces == ["explicit"])
-        #expect(response.snapshot.mcpTools.sources[0].policyState == "explicit_or_melix_home_only")
+        #expect(response.snapshot.mcpTools.sources[0].policyState == "loaded")
         #expect(response.snapshot.mcpTools.sources[1].sourceID == "disabled-search")
         #expect(response.snapshot.mcpTools.sources[2].sourceID == "filesystem")
         #expect(response.snapshot.mcpTools.sources[2].namespaces == ["tools.fs.read", "tools.fs.write"])
@@ -7218,6 +8286,83 @@ struct ControlPlaneServiceTests {
         }
 
         let client = FallbackClient()
+        let startAgent = Melix_Controlplane_V1_StartAgentRun.with {
+            $0.sessionID = "fallback-session"
+            $0.branchID = "fallback-branch"
+            $0.modelID = "fallback-model"
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent runs are not implemented for this control-plane client."
+        )) {
+            _ = try await client.startAgentRun(startAgent)
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent activation is not implemented for this control-plane client."
+        )) {
+            _ = try await client.activateAgentRun(runID: "fallback-run")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent approvals are not implemented for this control-plane client."
+        )) {
+            _ = try await client.decideAgentApproval(.init())
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent cancellation is not implemented for this control-plane client."
+        )) {
+            _ = try await client.cancelAgentRun(
+                runID: "fallback-run",
+                reason: "operator_requested"
+            )
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent run lookup is not implemented for this control-plane client."
+        )) {
+            _ = try await client.agentRun(runID: "fallback-run")
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent run listing is not implemented for this control-plane client."
+        )) {
+            _ = try await client.agentRuns(
+                sessionID: "fallback-session",
+                limit: 7
+            )
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Authoritative Agent run inventory is not implemented for this control-plane client."
+        )) {
+            _ = try await client.nonterminalAgentRuns(
+                sessionID: "fallback-session",
+                limit: 7
+            )
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent approval policy lookup is not implemented for this control-plane client."
+        )) {
+            _ = try await client.agentApprovalPolicy()
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent approval policy mutation is not implemented for this control-plane client."
+        )) {
+            _ = try await client.replaceAgentApprovalPolicy(
+                rules: [],
+                expectedRevision: 3
+            )
+        }
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent operations lookup is not implemented for this control-plane client."
+        )) {
+            _ = try await client.agentOperations()
+        }
 
         await #expect(throws: ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
@@ -7307,6 +8452,56 @@ struct ControlPlaneServiceTests {
             memoryBudgetBytes: 98_304
         )
         #expect(loaded.modelID == "")
+    }
+
+    @Test("control-plane executor default rejects Agent starts explicitly")
+    func controlPlaneExecutorDefaultRejectsAgentStartsExplicitly() async throws {
+        actor FallbackExecution: ControlPlaneExecuting {
+            func handshake(
+                _: Melix_Controlplane_V1_HandshakeRequest
+            ) async throws -> Melix_Controlplane_V1_HandshakeResponse {
+                .init()
+            }
+
+            func subscribe(
+                _: Melix_Controlplane_V1_SubscribeRequest
+            ) async -> ControlPlaneSubscription {
+                ControlPlaneSubscription(
+                    subscriptionID: "fallback-execution",
+                    stream: AsyncStream { continuation in
+                        continuation.finish()
+                    }
+                )
+            }
+
+            func unsubscribe(_: String) async {}
+
+            func startChat(
+                _ request: ControlPlaneChatRequest
+            ) async throws -> ControlPlaneChatExecution {
+                ControlPlaneChatExecution(
+                    requestID: "fallback-chat",
+                    modelID: request.modelID,
+                    stream: AsyncThrowingStream { continuation in
+                        continuation.finish()
+                    }
+                )
+            }
+
+            func execute(
+                _: Melix_Controlplane_V1_ControlPlaneRequest
+            ) async throws -> Melix_Controlplane_V1_ControlPlaneResponse {
+                .init()
+            }
+        }
+
+        let client = LocalControlPlaneXPCClient(service: FallbackExecution())
+        await #expect(throws: ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent runs are not implemented for this control-plane service."
+        )) {
+            _ = try await client.startAgentRun(.init())
+        }
     }
 
     @Test("execute rejects canonical bench request validation failures")
@@ -9095,6 +10290,21 @@ struct ControlPlaneServiceTests {
     func startChatRoutesRemoteServerTargetsThroughTheRemoteProviderClient() async throws {
         let remoteClient = ScriptedRemoteProviderChatClient(events: [
             .reasoningDelta("remote reasoning"),
+            .toolCallDelta(
+                RemoteProviderToolCallDelta(
+                    index: 0,
+                    callID: "call-search",
+                    toolName: "search",
+                    argumentsFragment: "{\"query\":\""
+                )
+            ),
+            .toolCallsCompleted([
+                RemoteProviderToolCall(
+                    callID: "call-search",
+                    toolName: "search",
+                    argumentsJSON: #"{"query":"melix"}"#
+                ),
+            ]),
             .tokenDelta("remote"),
             .usage(promptTokens: 11, completionTokens: 3),
             .completed(finishReason: "stop", assistantText: "remote"),
@@ -9104,7 +10314,37 @@ struct ControlPlaneServiceTests {
         let execution = try await service.startChat(
             ControlPlaneChatRequest(
                 modelID: "",
-                messages: [.init(role: "user", content: "hello")],
+                messages: [
+                    .init(role: "system", content: "Use tools.", name: "policy"),
+                    .init(
+                        role: "assistant",
+                        content: "",
+                        name: "planner",
+                        toolCalls: [
+                            .init(
+                                callID: "call-previous",
+                                toolName: "search",
+                                argumentsJSON: #"{"query":"before"}"#
+                            ),
+                        ]
+                    ),
+                    .init(
+                        role: "tool",
+                        content: #"{"hits":1}"#,
+                        name: "search",
+                        toolCallID: "call-previous"
+                    ),
+                    .init(role: "user", content: "hello"),
+                ],
+                tools: [
+                    .init(
+                        name: "search",
+                        description: "Search locally",
+                        parametersJSON: #"{"type":"object"}"#
+                    ),
+                ],
+                toolChoice: #"{"type":"function","function":{"name":"search"}}"#,
+                parallelToolCalls: true,
                 enableThinking: false,
                 reasoningEffort: "none",
                 temperature: 0.2,
@@ -9125,6 +10365,7 @@ struct ControlPlaneServiceTests {
         for try await event in execution.stream {
             events.append(event)
         }
+        let terminalCancellation = await execution.cancel()
 
         let lastRequest = try #require(await remoteClient.lastRequest)
         #expect(execution.modelID == "gemini-2.5-flash")
@@ -9137,8 +10378,43 @@ struct ControlPlaneServiceTests {
         #expect(lastRequest.temperature == 0.2)
         #expect(lastRequest.topP == 0.9)
         #expect(lastRequest.maxTokens == 128)
+        #expect(lastRequest.messages.count == 4)
+        #expect(lastRequest.messages[0].name == "policy")
+        #expect(lastRequest.messages[1].name == "planner")
+        #expect(lastRequest.messages[1].toolCalls == [
+            RemoteProviderToolCall(
+                callID: "call-previous",
+                toolName: "search",
+                argumentsJSON: #"{"query":"before"}"#
+            ),
+        ])
+        #expect(lastRequest.messages[2].name == "search")
+        #expect(lastRequest.messages[2].toolCallID == "call-previous")
+        #expect(lastRequest.tools == [
+            RemoteProviderToolDefinition(
+                name: "search",
+                description: "Search locally",
+                parametersJSON: #"{"type":"object"}"#
+            ),
+        ])
+        #expect(
+            lastRequest.toolChoice
+                == #"{"type":"function","function":{"name":"search"}}"#
+        )
+        #expect(lastRequest.parallelToolCalls)
+        #expect(terminalCancellation.disposition == .alreadyTerminal)
         #expect(events == [
             .reasoningDelta("remote reasoning"),
+            .toolCallDelta(
+                callID: "call-search",
+                toolName: "search",
+                argumentsFragment: "{\"query\":\""
+            ),
+            .toolCallDelta(
+                callID: "call-search",
+                toolName: "search",
+                argumentsFragment: "melix\"}"
+            ),
             .tokenDelta("remote"),
             .usage(
                 promptTokens: 11,
@@ -9155,6 +10431,308 @@ struct ControlPlaneServiceTests {
                 reasoningText: "remote reasoning"
             ),
         ])
+    }
+
+    @Test("startChat cancellation stops an active remote provider stream")
+    func startChatCancellationStopsActiveRemoteProviderStream() async throws {
+        let remoteClient = BlockingRemoteProviderChatClient()
+        let service = ControlPlaneService(remoteProviderClient: remoteClient)
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "",
+                messages: [.init(role: "user", content: "keep streaming")],
+                remoteTarget: .init(
+                    serverID: "remote-cancel",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://remote.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "remote-model"
+                )
+            )
+        )
+        let consumer = Task {
+            for try await _ in execution.stream {
+            }
+        }
+
+        let firstReceipt = await execution.cancel()
+        try await waitForControlPlaneCondition(
+            "expected remote stream cancellation to propagate"
+        ) {
+            await remoteClient.cancellationObserved
+        }
+        _ = await consumer.result
+        let secondReceipt = await execution.cancel()
+
+        #expect(firstReceipt.requestID == execution.requestID)
+        #expect(firstReceipt.disposition == .accepted)
+        #expect(secondReceipt.disposition == .alreadyTerminal)
+    }
+
+    @Test("chat cancellation retries stay accepted until the stream is terminal")
+    func chatCancellationRetriesStayAcceptedUntilTerminal() async {
+        let controller = ControlPlaneChatCancellationController()
+        await controller.install {}
+
+        let first = await controller.cancel(requestID: "chat-cancel-retry")
+        let retry = await controller.cancel(requestID: "chat-cancel-retry")
+        await controller.markTerminal()
+        let terminal = await controller.cancel(
+            requestID: "chat-cancel-retry"
+        )
+
+        #expect(first.disposition == .accepted)
+        #expect(retry.disposition == .accepted)
+        #expect(terminal.disposition == .alreadyTerminal)
+    }
+
+    @Test("startChat reconciles remote tool arguments at a Unicode grapheme boundary")
+    func startChatReconcilesRemoteToolArgumentsAtUnicodeBoundary() async throws {
+        let streamedPrefix = #"{"query":"e"#
+        let terminalArguments = "{\"query\":\"e\u{301}x\"}"
+        let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .toolCallDelta(
+                RemoteProviderToolCallDelta(
+                    index: 0,
+                    callID: "call-unicode",
+                    toolName: "search",
+                    argumentsFragment: streamedPrefix
+                )
+            ),
+            .toolCallsCompleted([
+                RemoteProviderToolCall(
+                    callID: "call-unicode",
+                    toolName: "search",
+                    argumentsJSON: terminalArguments
+                ),
+            ]),
+            .completed(finishReason: "tool_calls", assistantText: ""),
+        ])
+        let service = ControlPlaneService(remoteProviderClient: remoteClient)
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "",
+                messages: [.init(role: "user", content: "search")],
+                remoteTarget: .init(
+                    serverID: "remote-unicode",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://remote.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "remote-model"
+                )
+            )
+        )
+
+        var fragments: [String] = []
+        for try await event in execution.stream {
+            if case .toolCallDelta(_, _, let fragment) = event {
+                fragments.append(fragment)
+            }
+        }
+
+        #expect(fragments.count == 2)
+        #expect(fragments.joined() == terminalArguments)
+    }
+
+    @Test("startChat rejects remote data after terminal completion")
+    func startChatRejectsRemoteDataAfterTerminalCompletion() async throws {
+        let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .completed(finishReason: "stop", assistantText: "done"),
+            .tokenDelta("late"),
+        ])
+        let service = ControlPlaneService(remoteProviderClient: remoteClient)
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "",
+                messages: [.init(role: "user", content: "hello")],
+                remoteTarget: .init(
+                    serverID: "remote-post-terminal",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://remote.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "remote-model"
+                )
+            )
+        )
+
+        await #expect(
+            throws: RemoteProviderError.invalidResponse(
+                "remote provider emitted data after terminal completion"
+            )
+        ) {
+            for try await _ in execution.stream {
+            }
+        }
+    }
+
+    @Test("startChat requires one remote terminal completion")
+    func startChatRejectsRemoteStreamWithoutTerminalCompletion() async throws {
+        let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .tokenDelta("partial"),
+        ])
+        let service = ControlPlaneService(remoteProviderClient: remoteClient)
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "",
+                messages: [.init(role: "user", content: "hello")],
+                remoteTarget: .init(
+                    serverID: "remote-no-terminal",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://remote.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "remote-model"
+                )
+            )
+        )
+
+        await #expect(
+            throws: RemoteProviderError.invalidResponse(
+                "remote provider stream ended before terminal completion"
+            )
+        ) {
+            for try await _ in execution.stream {
+            }
+        }
+    }
+
+    @Test("startChat rejects a remote terminal tool call that diverges from streamed arguments")
+    func startChatRejectsDivergentRemoteTerminalToolCall() async throws {
+        let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .toolCallDelta(
+                RemoteProviderToolCallDelta(
+                    index: 0,
+                    callID: "call-divergent",
+                    toolName: "search",
+                    argumentsFragment: "{\"query\":"
+                )
+            ),
+            .toolCallsCompleted([
+                RemoteProviderToolCall(
+                    callID: "call-divergent",
+                    toolName: "search",
+                    argumentsJSON: #"{"other":"value"}"#
+                ),
+            ]),
+        ])
+        let service = ControlPlaneService(remoteProviderClient: remoteClient)
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "",
+                messages: [.init(role: "user", content: "search")],
+                remoteTarget: .init(
+                    serverID: "remote-divergent",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://remote.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "remote-model"
+                )
+            )
+        )
+
+        await #expect(
+            throws: RemoteProviderError.invalidResponse(
+                "remote provider streamed inconsistent tool arguments"
+            )
+        ) {
+            for try await _ in execution.stream {
+            }
+        }
+    }
+
+    @Test("startChat rejects a terminal tool name that rewrites streamed identity")
+    func startChatRejectsRewrittenRemoteToolIdentity() async throws {
+        let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .toolCallDelta(
+                RemoteProviderToolCallDelta(
+                    index: 0,
+                    callID: "call-rewritten",
+                    toolName: "search",
+                    argumentsFragment: #"{"query":"melix"}"#
+                )
+            ),
+            .toolCallsCompleted([
+                RemoteProviderToolCall(
+                    callID: "call-rewritten",
+                    toolName: "delete_file",
+                    argumentsJSON: #"{"query":"melix"}"#
+                ),
+            ]),
+        ])
+        let service = ControlPlaneService(remoteProviderClient: remoteClient)
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "",
+                messages: [.init(role: "user", content: "search")],
+                remoteTarget: .init(
+                    serverID: "remote-rewritten",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://remote.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "remote-model"
+                )
+            )
+        )
+
+        await #expect(
+            throws: RemoteProviderError.invalidResponse(
+                "remote provider streamed inconsistent tool identity"
+            )
+        ) {
+            for try await _ in execution.stream {
+            }
+        }
+    }
+
+    @Test("startChat requires terminal reconciliation for every streamed tool call")
+    func startChatRejectsOmittedRemoteTerminalToolCall() async throws {
+        let remoteClient = ScriptedRemoteProviderChatClient(events: [
+            .toolCallDelta(
+                RemoteProviderToolCallDelta(
+                    index: 0,
+                    callID: "call-present",
+                    toolName: "search",
+                    argumentsFragment: #"{"query":"melix"}"#
+                )
+            ),
+            .toolCallDelta(
+                RemoteProviderToolCallDelta(
+                    index: 1,
+                    callID: "call-omitted",
+                    toolName: "read_file",
+                    argumentsFragment: #"{"path":"README.md"}"#
+                )
+            ),
+            .toolCallsCompleted([
+                RemoteProviderToolCall(
+                    callID: "call-present",
+                    toolName: "search",
+                    argumentsJSON: #"{"query":"melix"}"#
+                ),
+            ]),
+        ])
+        let service = ControlPlaneService(remoteProviderClient: remoteClient)
+        let execution = try await service.startChat(
+            ControlPlaneChatRequest(
+                modelID: "",
+                messages: [.init(role: "user", content: "search")],
+                remoteTarget: .init(
+                    serverID: "remote-omitted",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://remote.example/v1",
+                    apiKey: "sk-secret",
+                    modelID: "remote-model"
+                )
+            )
+        )
+
+        await #expect(
+            throws: RemoteProviderError.invalidResponse(
+                "remote provider omitted streamed tool calls from terminal reconciliation"
+            )
+        ) {
+            for try await _ in execution.stream {
+            }
+        }
     }
 
     @Test("startChat can resume a disconnected request through resumeRequestID")
@@ -11791,7 +13369,7 @@ private func makeWorkerArtifact(
 
 private func waitForControlPlaneCondition(
     _ description: String,
-    timeout: Duration = .milliseconds(500),
+    timeout: Duration = .seconds(2),
     pollInterval: Duration = .milliseconds(10),
     condition: @escaping @Sendable () async -> Bool
 ) async throws {
@@ -12334,6 +13912,348 @@ private actor ScriptedChatWorkerClient: WorkerRoutingClient, ControlPlaneTestWor
     }
 }
 
+private enum AgentOperationsBoundaryError: Error, Sendable {
+    case fixture
+}
+
+private func agentOperationsJSONString(_ value: Any) throws -> String {
+    let data = try JSONSerialization.data(
+        withJSONObject: value,
+        options: [.sortedKeys]
+    )
+    guard let string = String(data: data, encoding: .utf8) else {
+        throw AgentOperationsBoundaryError.fixture
+    }
+    return string
+}
+
+private func agentOperationsObservationJSON(
+    callID: String,
+    operation: String,
+    payload: [String: Any]
+) throws -> String {
+    try agentOperationsJSONString([
+        "schema_version": "melix.agentic_tool_observation.v1",
+        "tool_name": "computer_use",
+        "tool_call_id": callID,
+        "observation_kind": "computer_use_result",
+        "status": "completed",
+        "payload": payload,
+        "metrics": [String: Any](),
+    ])
+}
+
+private func agentOperationsComputerReceiptJSON(
+    observationJSON: String,
+    operation: String,
+    operatorProjection: [String: Any]
+) throws -> String {
+    let digest = SHA256.hash(data: Data(observationJSON.utf8))
+        .map { String(format: "%02x", $0) }
+        .joined()
+    return try agentOperationsJSONString([
+        "schema_version": "melix.computer_use_adapter_receipt.v1",
+        "adapter_kind": "computer",
+        "source_id": "computer",
+        "operation": operation,
+        "status": "completed",
+        "observation_binding_schema_version":
+            "melix.computer_use_observation_binding.v1",
+        "observation_sha256": digest,
+        "operator_projection_schema_version":
+            "melix.computer_use_operator_projection.v1",
+        "operator_projection": operatorProjection,
+    ])
+}
+
+private func agentOperationsBoundaryRequest(
+    actorID: String,
+    suffix: String
+) -> Melix_Controlplane_V1_ControlPlaneRequest {
+    var request = Melix_Controlplane_V1_ControlPlaneRequest()
+    request.requestID = "agent-operations-boundary-\(suffix)"
+    request.commandType = "agent.get_operations"
+    request.actorID = actorID
+    request.agent.getOperations = Melix_Controlplane_V1_GetAgentOperations()
+    return request
+}
+
+private func agentOperationsService(
+    worker: AgentOperationsWorkerClient
+) -> ControlPlaneService {
+    ControlPlaneService(
+        workerRegistry: WorkerRegistry(
+            defaultTextClient: NullWorkerClient(),
+            pythonCompatibilityClient: worker
+        ),
+        computerUseAuthorizationSigner: ComputerUseToolAuthorizationSigner(),
+        environment: [
+            "MELIX_COMPUTER_BROKER_SOCKET": "/tmp/melix-computer-test.sock",
+        ]
+    )
+}
+
+private actor AgentOperationsWorkerClient:
+    WorkerRoutingClient,
+    AgentToolRuntimeWorkerClientProtocol
+{
+    private var listRequest: Melix_Worker_V1_ListAgentToolsRequest?
+    private var executeRequests: [Melix_Worker_V1_ExecuteAgentToolRequest] = []
+    private let targetsJSON: String
+    private let targetDiscoveryFailure: (any Error & Sendable)?
+    private let screenRecordingPermission: String
+    private let listFailure: (any Error & Sendable)?
+    private let permissionObservationJSON: String?
+    private let listReceiptOverride: Melix_Worker_V1_ToolCatalogReceipt?
+
+    init(
+        targetsJSON: String = #"[{"bundle_id":"com.example.Target","application_name":"Example Target","process_id":42,"process_launch_identity":"launch-1","window_id":7,"window_title":"Document"}]"#,
+        targetDiscoveryFailure: (any Error & Sendable)? = nil,
+        screenRecordingPermission: String = "granted",
+        listFailure: (any Error & Sendable)? = nil,
+        permissionObservationJSON: String? = nil,
+        listReceiptOverride: Melix_Worker_V1_ToolCatalogReceipt? = nil
+    ) {
+        self.targetsJSON = targetsJSON
+        self.targetDiscoveryFailure = targetDiscoveryFailure
+        self.screenRecordingPermission = screenRecordingPermission
+        self.listFailure = listFailure
+        self.permissionObservationJSON = permissionObservationJSON
+        self.listReceiptOverride = listReceiptOverride
+    }
+
+    func capturedListRequest() -> Melix_Worker_V1_ListAgentToolsRequest? {
+        listRequest
+    }
+
+    func capturedExecuteRequests() -> [Melix_Worker_V1_ExecuteAgentToolRequest] {
+        executeRequests
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        return AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        _ = request
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        return response
+    }
+
+    func listAgentTools(
+        request: Melix_Worker_V1_ListAgentToolsRequest
+    ) async throws -> Melix_Worker_V1_ToolCatalogReceipt {
+        listRequest = request
+        if let listFailure {
+            throw listFailure
+        }
+        if let listReceiptOverride {
+            return listReceiptOverride
+        }
+        var builtin = Melix_Worker_V1_AgentToolDefinition()
+        builtin.sourceID = "builtin"
+        builtin.adapterKind = "builtin"
+        builtin.name = "environment_info"
+        builtin.title = "Environment Info"
+        builtin.inputSchemaJson = #"{"type":"object"}"#
+        builtin.schemaDigest = String(repeating: "a", count: 64)
+        builtin.riskClass = "low"
+        builtin.replayability = "deterministic"
+
+        var computer = Melix_Worker_V1_AgentToolDefinition()
+        computer.sourceID = "computer"
+        computer.adapterKind = "computer"
+        computer.name = "computer_use"
+        computer.title = "Computer Use"
+        computer.inputSchemaJson = #"{"type":"object"}"#
+        computer.schemaDigest = String(repeating: "b", count: 64)
+        computer.riskClass = "computer_control"
+        computer.replayability = "evidence_only"
+        computer.annotationsUntrusted = true
+
+        var mcp = Melix_Worker_V1_AgentToolDefinition()
+        mcp.sourceID = "docs"
+        mcp.adapterKind = "mcp"
+        mcp.name = "search_docs"
+        mcp.title = "search_docs"
+        mcp.inputSchemaJson = #"{"type":"object"}"#
+        mcp.schemaDigest = String(repeating: "c", count: 64)
+        mcp.riskClass = "unknown"
+        mcp.replayability = "evidence_only"
+        mcp.annotationsUntrusted = true
+
+        var source = Melix_Worker_V1_AgentToolSourceReceipt()
+        source.sourceID = "docs"
+        source.transportKind = "streamable_http"
+        source.connectionState = "live"
+        source.serverName = "Docs MCP"
+        source.serverVersion = "1.0"
+        source.capabilities = ["tools"]
+        source.toolCount = 1
+        source.catalogDigest = "docs-catalog-1"
+
+        var receipt = Melix_Worker_V1_ToolCatalogReceipt()
+        receipt.schemaVersion = "melix.tool_execution_catalog.v1"
+        receipt.tools = [computer, builtin, mcp]
+        receipt.sources = [source]
+        receipt.catalogDigest = "catalog-live-1"
+        receipt.sourceCount = 3
+        receipt.liveSourceCount = 2
+        return receipt
+    }
+
+    func executeAgentTool(
+        request: Melix_Worker_V1_ExecuteAgentToolRequest
+    ) async throws -> AsyncThrowingStream<
+        Melix_Worker_V1_AgentToolExecutionEvent,
+        Error
+    > {
+        executeRequests.append(request)
+        let isTargetDiscovery = request.argumentsJson
+            == #"{"operation":"list_targets"}"#
+        if isTargetDiscovery, let targetDiscoveryFailure {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: targetDiscoveryFailure)
+            }
+        }
+        let operation = isTargetDiscovery
+            ? "list_targets"
+            : "get_permissions"
+        let observation: String
+        let operatorProjection: [String: Any]?
+        if isTargetDiscovery,
+           let targetsData = targetsJSON.data(using: .utf8),
+           let targets = try? JSONSerialization.jsonObject(
+               with: targetsData
+           ) as? [Any] {
+            let payload: [String: Any] = [
+                "operation": operation,
+                "targets": targets,
+            ]
+            observation = try agentOperationsObservationJSON(
+                callID: request.callID,
+                operation: operation,
+                payload: payload
+            )
+            operatorProjection = payload
+        } else if isTargetDiscovery {
+            observation = #"{"schema_version":"melix.agentic_tool_observation.v1","status":"completed","payload":{"operation":"list_targets","targets":\#(targetsJSON)}}"#
+            operatorProjection = nil
+        } else if let permissionObservationJSON {
+            observation = permissionObservationJSON
+            if let data = permissionObservationJSON.data(using: .utf8),
+               let root = try? JSONSerialization.jsonObject(with: data)
+                as? [String: Any],
+               root["schema_version"] as? String
+                == "melix.agentic_tool_observation.v1",
+               root["status"] as? String == "completed",
+               var payload = root["payload"] as? [String: Any],
+               payload["operation"] as? String == operation {
+                payload["operation"] = operation
+                operatorProjection = payload
+            } else {
+                operatorProjection = nil
+            }
+        } else {
+            let payload: [String: Any] = [
+                "operation": operation,
+                "screen_recording": screenRecordingPermission,
+                "accessibility": "denied",
+                "maximum_frames": 16,
+                "maximum_actions": 8,
+                "maximum_artifact_bytes": 16_777_216,
+                "idle_timeout_seconds": 60,
+                "absolute_timeout_seconds": 300,
+            ]
+            observation = try agentOperationsObservationJSON(
+                callID: request.callID,
+                operation: operation,
+                payload: payload
+            )
+            operatorProjection = payload
+        }
+        let receiptJSON = try operatorProjection.map {
+            try agentOperationsComputerReceiptJSON(
+                observationJSON: observation,
+                operation: operation,
+                operatorProjection: $0
+            )
+        } ?? "{}"
+        return AsyncThrowingStream { continuation in
+            for (sequence, phase) in [
+                Melix_Worker_V1_AgentToolExecutionPhase.agentToolExecutionQueued,
+                .agentToolExecutionStarted,
+            ].enumerated() {
+                var event = Melix_Worker_V1_AgentToolExecutionEvent()
+                event.runID = request.context.runID
+                event.callID = request.callID
+                event.seq = UInt64(sequence + 1)
+                event.phase = phase
+                event.emittedAtUnixMs = 1_800_000_000_000 + Int64(sequence)
+                continuation.yield(event)
+            }
+            var completed = Melix_Worker_V1_AgentToolExecutionEvent()
+            completed.runID = request.context.runID
+            completed.callID = request.callID
+            completed.seq = 3
+            completed.phase = .agentToolExecutionCompleted
+            completed.emittedAtUnixMs = 1_800_000_000_002
+            completed.result.runID = request.context.runID
+            completed.result.callID = request.callID
+            completed.result.toolName = request.toolName
+            completed.result.sourceID = request.sourceID
+            completed.result.adapterKind = "computer"
+            completed.result.status = "completed"
+            completed.result.observationJson = observation
+            completed.result.durationMs = 1
+            completed.result.receiptJson = receiptJSON
+            continuation.yield(completed)
+            continuation.finish()
+        }
+    }
+
+    func cancelAgentTool(
+        request: Melix_Worker_V1_CancelAgentToolRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentToolResponse {
+        var response = Melix_Worker_V1_CancelAgentToolResponse()
+        response.runID = request.runID
+        response.callID = request.callID
+        response.cancellationID = request.cancellationID
+        response.disposition = .toolCancellationAlreadyTerminal
+        response.sideEffectState = .toolSideEffectNone
+        return response
+    }
+
+    func cancelAgentRunTools(
+        request: Melix_Worker_V1_CancelAgentRunToolsRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentRunToolsResponse {
+        var response = Melix_Worker_V1_CancelAgentRunToolsResponse()
+        response.runID = request.runID
+        response.cancellationID = request.cancellationID
+        response.disposition = .toolCancellationAccepted
+        response.sideEffectState = .toolSideEffectNone
+        response.computerUseDisposition = .toolCancellationAccepted
+        return response
+    }
+}
+
 private actor ScriptedRemoteProviderChatClient: RemoteProviderChatClient {
     private let events: [RemoteProviderChatStreamEvent]
     private(set) var lastRequest: RemoteProviderChatRequest?
@@ -12351,6 +14271,8 @@ private actor ScriptedRemoteProviderChatClient: RemoteProviderChatClient {
             case .tokenDelta(let text):
                 assistantText += text
             case .reasoningDelta:
+                break
+            case .toolCallDelta, .toolCallsCompleted:
                 break
             case .completed(let completedFinishReason, let completedAssistantText):
                 finishReason = completedFinishReason
@@ -12378,6 +14300,34 @@ private actor ScriptedRemoteProviderChatClient: RemoteProviderChatClient {
             }
             continuation.finish()
         }
+    }
+}
+
+private actor BlockingRemoteProviderChatClient: RemoteProviderChatClient {
+    private(set) var cancellationObserved = false
+
+    func complete(
+        _ request: RemoteProviderChatRequest
+    ) async throws -> RemoteProviderChatCompletion {
+        _ = request
+        throw ControlPlaneChatExecutionError.unavailable
+    }
+
+    func stream(
+        _ request: RemoteProviderChatRequest
+    ) async throws -> AsyncThrowingStream<RemoteProviderChatStreamEvent, Error> {
+        _ = request
+        return AsyncThrowingStream { continuation in
+            continuation.onTermination = { [weak self] _ in
+                Task {
+                    await self?.recordCancellation()
+                }
+            }
+        }
+    }
+
+    private func recordCancellation() {
+        cancellationObserved = true
     }
 }
 
@@ -12471,4 +14421,223 @@ private func makeCompletedExecuteEvent(
 
 private struct TestWorkerError: Error, CustomStringConvertible {
     let description: String
+}
+
+private struct DescriptorPipe {
+    let readDescriptor: Int32
+    let writeDescriptor: Int32
+}
+
+private func makeDescriptorPipe(payload: Data? = nil) throws -> DescriptorPipe {
+    var descriptors = [Int32](repeating: -1, count: 2)
+    guard Darwin.pipe(&descriptors) == 0 else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+    if let payload {
+        let written = payload.withUnsafeBytes { bytes in
+            Darwin.write(
+                descriptors[1],
+                bytes.baseAddress,
+                payload.count
+            )
+        }
+        guard written == payload.count else {
+            Darwin.close(descriptors[0])
+            Darwin.close(descriptors[1])
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))
+        }
+        Darwin.close(descriptors[1])
+    }
+    return DescriptorPipe(
+        readDescriptor: descriptors[0],
+        writeDescriptor: payload == nil ? descriptors[1] : -1
+    )
+}
+
+private func serviceBoundaryStartCommand()
+    -> Melix_Controlplane_V1_StartAgentRun
+{
+    .with {
+        $0.sessionID = "service-boundary-session"
+        $0.branchID = "service-boundary-branch"
+        $0.modelID = "service-boundary-model"
+        $0.mode = .act
+        $0.messages = [
+            .with {
+                $0.role = "user"
+                $0.content = "Run the boundary fixture."
+            },
+        ]
+    }
+}
+
+private func serviceBoundaryAgentRequest(
+    kind: String
+) -> Melix_Controlplane_V1_ControlPlaneRequest {
+    .with {
+        $0.requestID = "service-boundary-\(kind)"
+        $0.commandType = "agent.\(kind)"
+        $0.actorID = "service-boundary-operator"
+        $0.agent = Melix_Controlplane_V1_AgentCommand()
+    }
+}
+
+private func serviceBoundaryPolicyReplacement(
+    id: String
+) -> Melix_Controlplane_V1_ControlPlaneRequest {
+    var request = serviceBoundaryAgentRequest(kind: "replace-\(id)")
+    request.agent.replaceApprovalPolicy.expectedRevision = 1
+    request.agent.replaceApprovalPolicy.rules = [
+        .with {
+            $0.id = id
+            $0.effect = .agentApprovalPolicyAllow
+            $0.riskClass = .low
+            $0.operationKind = .agentApprovalOperationRead
+        },
+    ]
+    return request
+}
+
+private enum ServiceBoundaryPolicyFailure: Sendable {
+    case policy(ApprovalPolicyStoreError)
+    case generic
+}
+
+private enum ServiceBoundaryError: Error {
+    case generic
+}
+
+private actor ServiceBoundaryApprovalPolicy:
+    AgentApprovalPolicyAdministering
+{
+    private let failure: ServiceBoundaryPolicyFailure?
+
+    init(failure: ServiceBoundaryPolicyFailure? = nil) {
+        self.failure = failure
+    }
+
+    func approvalEvaluation(
+        for _: AgentToolCall,
+        runID _: String
+    ) -> AgentApprovalPolicyEvaluation {
+        AgentApprovalPolicyEvaluation(
+            requirement: .notRequired,
+            policyRevision: "1"
+        )
+    }
+
+    func persistAlwaysAllow(
+        for _: AgentToolCall,
+        runID _: String
+    ) -> String {
+        "1"
+    }
+
+    func persistAlwaysAllow(
+        for _: AgentToolCall,
+        runID _: String,
+        expectedRevision _: String
+    ) -> String {
+        "1"
+    }
+
+    func snapshot() throws -> AgentApprovalPolicySnapshot {
+        AgentApprovalPolicySnapshot(revision: 1, rules: [])
+    }
+
+    func replaceRules(
+        _ rules: [AgentApprovalPolicyRule],
+        expectedRevision _: UInt64,
+        deadlineUnixMs _: Int64
+    ) throws -> AgentApprovalPolicyMutationReceipt {
+        switch failure {
+        case .policy(let error):
+            throw error
+        case .generic:
+            throw ServiceBoundaryError.generic
+        case nil:
+            return AgentApprovalPolicyMutationReceipt(
+                revision: 2,
+                ruleCount: rules.count
+            )
+        }
+    }
+}
+
+private actor ServiceBoundaryNonAdminPolicy: AgentApprovalPolicyManaging {
+    func approvalEvaluation(
+        for _: AgentToolCall,
+        runID _: String
+    ) -> AgentApprovalPolicyEvaluation {
+        AgentApprovalPolicyEvaluation(
+            requirement: .notRequired,
+            policyRevision: "1"
+        )
+    }
+
+    func persistAlwaysAllow(
+        for _: AgentToolCall,
+        runID _: String
+    ) -> String {
+        "1"
+    }
+
+    func persistAlwaysAllow(
+        for _: AgentToolCall,
+        runID _: String,
+        expectedRevision _: String
+    ) -> String {
+        "1"
+    }
+}
+
+private actor ServiceBoundaryAgentWorker:
+    WorkerRoutingClient,
+    AgentToolRuntimeWorkerClientProtocol
+{
+    private let listError: ControlPlaneAgentAdapterError
+
+    init(listError: ControlPlaneAgentAdapterError) {
+        self.listError = listError
+    }
+
+    func canDispatchRequests() async -> Bool { true }
+
+    func generate(
+        request _: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<
+        Melix_Worker_V1_ExecuteEvent,
+        Error
+    > {
+        AsyncThrowingStream { $0.finish() }
+    }
+
+    func abort(requestID _: String) async throws -> Bool { false }
+
+    func loadModel(
+        request _: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        .with { $0.ok = true }
+    }
+
+    func listAgentTools(
+        request _: Melix_Worker_V1_ListAgentToolsRequest
+    ) async throws -> Melix_Worker_V1_ToolCatalogReceipt {
+        throw listError
+    }
+
+    func executeAgentTool(
+        request _: Melix_Worker_V1_ExecuteAgentToolRequest
+    ) async throws -> AsyncThrowingStream<
+        Melix_Worker_V1_AgentToolExecutionEvent,
+        Error
+    > {
+        throw listError
+    }
+
+    func cancelAgentTool(
+        request _: Melix_Worker_V1_CancelAgentToolRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentToolResponse {
+        throw listError
+    }
 }

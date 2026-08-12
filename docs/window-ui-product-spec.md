@@ -88,9 +88,9 @@ This specification does not define:
 A desktop implementation conforms to this specification only when these
 conditions are true:
 
-- the routable IA is exactly the 10 domains defined in this document;
-- the titlebar primary navigation exposes only Chat, Providers, Models, and
-  Workflows;
+- the routable IA is exactly the 11 domains defined in this document;
+- the titlebar primary navigation exposes only Chat, Agents, Providers, Models,
+  and Workflows;
 - page labels, header actions, secondary tabs, selected-object state, and
   Inspector modules are driven from typed route metadata or an equivalent
   single source of truth;
@@ -140,6 +140,7 @@ The production desktop window uses these routable domains:
 
 ```text
 Chat
+Agents
 Command Center
 Providers
 Models
@@ -151,8 +152,8 @@ Image
 Settings
 ```
 
-Do not add another routable domain in the first implementation phase. In
-particular, do not add a routable Artifacts domain yet. Artifact lineage should
+Do not add another routable domain without amending this canonical route table.
+In particular, do not add a routable Artifacts domain yet. Artifact lineage should
 be visible through Jobs, owner domains, Inspector evidence links, and command
 palette or search results first.
 
@@ -160,6 +161,7 @@ The titlebar primary navigation is intentionally smaller than the routable IA:
 
 ```text
 Chat
+Agents
 Providers
 Models
 Workflows
@@ -177,6 +179,7 @@ Each routable domain owns secondary pages inside the shared desktop shell:
 | Domain | Secondary pages |
 |---|---|
 | Chat | Session; Inspector Collapsed |
+| Agents | Runs |
 | Command Center | Overview; Menu Bar Command Center |
 | Providers | Overview; Local Providers; Remote Providers; Create Local Provider; Add Remote Provider; Capability Receipts |
 | Models | Library; Downloads & Imports |
@@ -229,6 +232,7 @@ IDs should not change without a migration.
 | Domain label | Route domain | Page IDs |
 |---|---|---|
 | Chat | `chat` | `session`, `inspector-collapsed` |
+| Agents | `agents` | `runs` |
 | Command Center | `command` | `overview`, `menu-bar` |
 | Providers | `providers` | `overview`, `local`, `remote`, `create-local`, `add-remote`, `receipts` |
 | Models | `models` | `library`, `downloads-imports` |
@@ -762,6 +766,123 @@ progress indicator or expose a Stop action until runtime cancellation exists.
 The keyboard hint is contextual: show it only for an empty, focused editor, and
 hide it once a draft exists.
 
+Chat adds a session-scoped `Ask` / `Act` control only after the live Agent
+runtime is available. `Ask` uses ordinary model generation and never executes a
+tool. `Act` advertises the admitted tool catalog, enters the bounded Agent loop,
+and may execute only calls admitted by the control-plane policy. Every newly
+created Chat session starts in `Ask`; an existing session retains its current
+mode until it is closed.
+
+When `Act` is selected, compact capability chips disclose Tools, Computer,
+Local or Remote execution, and data-egress state. They are execution receipts,
+not decorative badges. The transcript renders every tool call as a timeline
+card with trusted source, canonical tool name, intended effect, risk, state,
+duration, and a bounded redacted evidence reference. Model-provided tool
+metadata must never replace trusted catalog values.
+
+Terminal tool evidence references remain selectable and expose their complete
+value to accessibility and help presentation, but the Chat transcript bounds
+the visible value to two middle-truncated lines. It must not nest a horizontal
+scroll view inside the transcript's vertical scrolling container; terminal
+layout and accessibility traversal must remain responsive after the run
+completes.
+
+A pending approval card presents the exact effect before three independent
+actions: `Allow Once`, `Always Allow This Tool`, and `Deny`. The persistent
+action is available directly on the card, but it must show the source, tool,
+schema, and scope that will be stored. New arguments, a changed schema, a
+different scope, or a policy revision require a new decision.
+Validated redacted arguments use a bounded collapsed or expanded text
+presentation with the complete value available through selection, help, and
+accessibility. The approval card must not add a nested vertical scrolling
+container inside the transcript; repeated long approvals must remain responsive.
+Ordinary Ask transcript bottom-follow is an unanimated placement update. Agent
+run markers preserve the transcript's current viewport instead of issuing a
+programmatic scroll command. Dynamic Agent cards can change height repeatedly
+while approval, evidence, and cancellation truth is arriving, so marker,
+status, and card-height changes must not enter the transcript's programmatic
+scroll path. The transcript content uses one non-lazy vertical stack so SwiftUI
+does not repeatedly mount and unmount height-changing Agent cards at the scroll
+viewport boundary; two consecutive completed and active Agent cards must remain
+responsive to pointer, keyboard, and accessibility traversal. If transcript
+scale later requires virtualization, it must first freeze terminal card layout
+or compact historical rows and repeat this consecutive-run acceptance rather
+than restoring a lazy stack around live cards. Reasoning-specific motion remains
+governed separately by Reduce Motion.
+The card labels durable `policy:` scope separately from the current
+`call target:` summary so a path, window, or executable used only by the
+one-time binding is not mistaken for a persisted allow boundary.
+The persistent action requires a complete trusted binding and is limited to
+known `read` or `write` operations. It is unavailable for untrusted metadata,
+critical risk, and safety-floor operations such as upload or send because those
+operations must keep their explicit-decision requirement.
+If an Always Allow decision approves the current call but its policy mutation
+cannot be persisted, Chat keeps the run moving and shows `Allowed This Call ·
+Always Allow Not Saved` plus the bounded persistence error. A subsequent live
+run snapshot must not overwrite that decision outcome with a generic tool-state
+label.
+
+Once end-to-end cancellation is available, generation exposes an independent
+`Stop` action. Stop closes admission first, then propagates to the active model
+turn, approval waiter, worker tool RPC, MCP request, and Computer Use session.
+The UI remains in `Stopping` until a typed receipt arrives and must disclose
+`too late` or committed-side-effect outcomes instead of claiming cancellation.
+The app pre-binds a run ID before calling `StartAgentRun`, so Stop is sent
+immediately during admission rather than being deferred until the start reply
+returns. The App asks Start to defer activation, verifies the bound durable
+snapshot, and only then sends `ActivateAgentRun`. If Stop or session ownership
+wins first, the App confirms cancellation after Start returns and never
+activates the run. Send remains a separate control.
+
+An orphaned Agent run whose Chat is no longer known blocks new `Act` admission
+and keeps `Review Agents` visible, but it does not disable ordinary `Ask`, New
+Chat, or Chat switching. If an Ask response is active at the same time, Chat
+shows both `Review Agents` and the exact Ask `Stop`. A conflict owned by the
+selected Chat still blocks transcript mutation until its ownership is resolved.
+
+Clear Chat and Delete Chat require a durable control-plane session-close
+receipt before they may mutate an Agent-aware Chat. While that close boundary
+is unavailable, the actions fail closed, preserve the Chat and transcript,
+open Agents for review, and say `Session Close Required`. A client-side
+list/cancel/list sequence must not be presented as atomic or safe.
+
+Computer Use defaults to one explicitly allowlisted window. The current
+semantic-press slice exposes only `Stop`, backed by a typed run-and-session
+cancellation receipt; it must not label generic cancellation as `Pause` or
+`Take Over`. Those controls require a dedicated resumable session state machine
+before they may ship. Its card discloses current app, window, frame, action and
+artifact budget, idle and absolute deadline, and permission state. Expanding
+scope from a window to an app is a separate operator decision; missing Screen
+Recording or Accessibility permission is a repair state rather than an
+implicit prompt loop.
+
+The target picker consumes the typed discovery state in addition to the target
+array. A successful empty result says that no eligible on-screen windows were
+found. A timeout, unavailable transport, or invalid response instead says that
+window refresh failed, preserves retryability, and offers an explicit refresh;
+it must never reuse the empty-result copy. Discovery that has not run remains a
+separate permission or probe state.
+
+Immediately before an Act run that includes a selected Computer Use target,
+Chat refreshes the live target inventory and verifies that exact target again.
+If the window closed, restarted, or otherwise disappeared, Chat clears the stale
+selection, preserves the draft, and asks the operator to choose a live window;
+it must not submit a run with the cached target. A failed refresh also blocks
+submission rather than treating cached discovery as current truth.
+
+The card is backed by the receipt-derived
+`AgentRunSnapshot.computer_use_session` projection, not by whichever tool call
+is currently running. It therefore remains visible when a Computer Use call
+has completed and the same run enters its next model turn, then disappears when
+the run becomes terminal. The projection never exposes the private session
+capability. Target, budget, deadline, permission, restart, and last-action
+fields that are not present as trusted typed values render as `Unavailable`;
+the app must not infer them from model text, tool arguments, or status copy.
+Only an `accepted` cancellation with side-effect state `none` may use safe
+stopped copy. `already_terminal` and `too_late` remain explicit receipt states,
+and `committed`, `unknown`, unspecified, or unrecognized side-effect state uses
+warning copy that tells the operator to verify the target.
+
 Blocking states add a compact warning-tinted repair strip above the still-
 editable message plane. Send remains unavailable until repair, each repair
 action remains independently focusable, and focus returns to the editor once
@@ -771,6 +892,42 @@ Providers. While Chat presents a Provider-lifecycle or missing-model repair in
 the Composer, the shell must suppress an equivalent global banner so the same
 condition is not announced twice or allowed to push the Composer below the
 minimum-height viewport. Unrelated critical global banners remain visible.
+
+### Agents
+
+`Agents` is the operator destination for Tool Sources, Tool Sets, Approval
+Policies, Computer Use permissions and limits, and Run History. Catalog-only
+MCP entries are visibly distinct from initialized callable sources. Saved
+approval policies expose their match scope and revision, can be revoked without
+opening a Chat session, and never display credentials or raw tool arguments.
+Tool Sources, Tool Sets, permissions, and limits come from the typed live
+`GetAgentOperations` read model. They must not be reconstructed from historical
+tool calls or inferred from feature flags.
+
+When the broker reports a repairable Screen Recording or Accessibility state,
+Agents exposes a separate operator-gesture button for each missing macOS
+permission plus a refresh action for the live broker probe. Melix must not open
+System Settings or trigger a TCC prompt from a model call, and an unavailable
+permission probe must not be mislabeled as a permission-denied repair.
+`restart_required` is a distinct state: it does not show permission-grant
+buttons. It explains that the newly granted permission is pending process
+restart and offers an explicit full-stack Quit action; the operator must then
+reopen Melix. The UI must not claim that a settings link restarted the broker.
+Target-discovery failure is a separate repair strip with a live retry action;
+it must not be collapsed into the permission probe or an empty target list.
+
+Run History is backed by control-plane snapshots and receipts. It shows terminal
+truth, cancellation disposition, tool source, duration, bounded evidence, and
+failure stage; it must not reconstruct state from transcript prose. Computer
+Use settings show Screen Recording and Accessibility independently and default
+new sessions to a single window.
+Tool cards show the bounded receipt-derived result summary and disclose both
+field-level and global truncation. A real execution error is labeled with its
+typed failure stage and error code. A completed call with
+`agent_tool_evidence_unavailable` instead uses a warning labeled `Evidence
+unavailable`; it must not contradict the completed state with a red failure
+label. Run cancellation history comes from each snapshot's durable bound
+receipt, not only the current process's last Stop response.
 
 ### Command Center
 
@@ -1101,6 +1258,7 @@ Domain visual signatures:
 |---|---|
 | Command Center | status dashboard, next-action first, recovery-first |
 | Chat | conversational, minimal chrome, provider-aware composer |
+| Agents | operational run history, approvals, tool scope, and cancellation evidence |
 | Models | inventory/table/detail-drawer behavior |
 | Workflows | form plus pipeline or job-output context |
 | Jobs | queue, history, timeline, lineage |
@@ -1170,8 +1328,8 @@ window implementation slice governed by this specification.
 
 ### IA And Route Metadata
 
-- The visible titlebar primary navigation contains only Chat, Providers, Models,
-  and Workflows.
+- The visible titlebar primary navigation contains only Chat, Agents, Providers,
+  Models, and Workflows.
 - Command Center, Jobs, Diagnostics, API, Image, and Settings remain routable
   domains even when hidden from the titlebar.
 - Secondary pages use canonical route IDs from this document.

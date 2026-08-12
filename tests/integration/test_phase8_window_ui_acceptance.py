@@ -79,6 +79,9 @@ def test_window_ui_acceptance_writes_bundle_and_screenshot(tmp_path: Path) -> No
                 "MELIX_HOME": str(melix_home),
                 "MELIX_REPO_ROOT": str(repo_root),
                 "MELIX_CLI": str(build_cli_binary(repo_root)),
+                "MELIX_CONTROL_PLANE_SOCKET_PATH": str(
+                    stack.control_plane_socket_path
+                ),
                 "MELIX_WORKER_SOCKET_PATH": str(stack.python_socket_path),
                 "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(stack.swift_socket_path),
                 "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE": "1",
@@ -122,6 +125,9 @@ def test_window_ui_acceptance_rejects_missing_cli_bundle_path(tmp_path: Path) ->
                 "MELIX_HOME": str(melix_home),
                 "MELIX_REPO_ROOT": str(repo_root),
                 "MELIX_CLI": str(build_cli_binary(repo_root)),
+                "MELIX_CONTROL_PLANE_SOCKET_PATH": str(
+                    stack.control_plane_socket_path
+                ),
                 "MELIX_WORKER_SOCKET_PATH": str(stack.python_socket_path),
                 "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": str(stack.swift_socket_path),
                 "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE": "1",

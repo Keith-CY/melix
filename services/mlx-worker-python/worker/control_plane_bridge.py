@@ -17,6 +17,8 @@ from packages.protocol.python.worker.v1 import (
     maintenance_pb2_grpc,
     runtime_pb2,
     runtime_pb2_grpc,
+    tool_runtime_pb2,
+    tool_runtime_pb2_grpc,
 )
 
 
@@ -53,6 +55,10 @@ def main() -> None:
             "export-results",
             "export-results-stream",
             "submit-results",
+            "list-agent-tools",
+            "execute-agent-tool",
+            "cancel-agent-tool",
+            "cancel-agent-run-tools",
         ],
     )
     parser.add_argument("--socket-path", required=True)
@@ -188,6 +194,27 @@ def main() -> None:
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.SubmitResultsRequest.FromString(request_bytes)
                 emit_message(stub.SubmitResults(request).SerializeToString())
+            elif args.command == "list-agent-tools":
+                stub = tool_runtime_pb2_grpc.ToolRuntimeServiceStub(channel)
+                request = tool_runtime_pb2.ListAgentToolsRequest.FromString(request_bytes)
+                emit_message(stub.ListAgentTools(request).SerializeToString())
+            elif args.command == "execute-agent-tool":
+                stub = tool_runtime_pb2_grpc.ToolRuntimeServiceStub(channel)
+                request = tool_runtime_pb2.ExecuteAgentToolRequest.FromString(request_bytes)
+                for event in stub.ExecuteAgentTool(request):
+                    emit_message(event.SerializeToString())
+            elif args.command == "cancel-agent-tool":
+                stub = tool_runtime_pb2_grpc.ToolRuntimeServiceStub(channel)
+                request = tool_runtime_pb2.CancelAgentToolRequest.FromString(request_bytes)
+                emit_message(stub.CancelAgentTool(request).SerializeToString())
+            elif args.command == "cancel-agent-run-tools":
+                stub = tool_runtime_pb2_grpc.ToolRuntimeServiceStub(channel)
+                request = tool_runtime_pb2.CancelAgentRunToolsRequest.FromString(
+                    request_bytes
+                )
+                emit_message(
+                    stub.CancelAgentRunTools(request).SerializeToString()
+                )
             else:
                 stub = inference_pb2_grpc.InferenceServiceStub(channel)
                 request = inference_pb2.AbortRequest.FromString(request_bytes)

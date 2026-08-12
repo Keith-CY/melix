@@ -29,6 +29,72 @@ struct PythonBridgeWorkerClientTests {
         #expect(await client.canDispatchRequests())
     }
 
+    @Test("agent tool runtime RPCs preserve catalog execution and cancellation messages")
+    func agentToolRuntimeRPCsPreserveTypedMessages() async throws {
+        var catalog = Melix_Worker_V1_ToolCatalogReceipt()
+        catalog.schemaVersion = "melix.tool_execution_catalog.v1"
+        catalog.catalogDigest = "catalog-digest"
+        catalog.tools = [Melix_Worker_V1_AgentToolDefinition.with {
+            $0.sourceID = "fixture"
+            $0.name = "mcp__fixture__echo"
+            $0.schemaDigest = "schema-digest"
+        }]
+
+        var completed = Melix_Worker_V1_AgentToolExecutionEvent()
+        completed.runID = "run-1"
+        completed.callID = "call-1"
+        completed.seq = 1
+        completed.phase = .agentToolExecutionCompleted
+        completed.result.status = "completed"
+        completed.result.observationJson = #"{"text":"ok"}"#
+
+        var cancelled = Melix_Worker_V1_CancelAgentToolResponse()
+        cancelled.runID = "run-1"
+        cancelled.callID = "call-1"
+        cancelled.cancellationID = "cancel-1"
+        cancelled.disposition = .toolCancellationAccepted
+
+        let runner = ScriptedBridgeRunner()
+        await runner.setUnaryResponse(
+            .listAgentTools,
+            line: bridgeMessageLine(message: try catalog.serializedData())
+        )
+        await runner.setStreamResponse(
+            .executeAgentTool,
+            lines: [bridgeMessageLine(message: try completed.serializedData())]
+        )
+        await runner.setUnaryResponse(
+            .cancelAgentTool,
+            line: bridgeMessageLine(message: try cancelled.serializedData())
+        )
+        let client = PythonBridgeWorkerClient(
+            socketPath: "/tmp/melix-tool-runtime.sock",
+            runner: runner
+        )
+
+        let listed = try await client.listAgentTools(
+            request: Melix_Worker_V1_ListAgentToolsRequest()
+        )
+        #expect(listed.catalogDigest == "catalog-digest")
+        #expect(listed.tools.first?.name == "mcp__fixture__echo")
+
+        var executeRequest = Melix_Worker_V1_ExecuteAgentToolRequest()
+        executeRequest.context.runID = "run-1"
+        executeRequest.callID = "call-1"
+        let events = try await collect(
+            try await client.executeAgentTool(request: executeRequest)
+        )
+        #expect(events.map(\.phase) == [.agentToolExecutionCompleted])
+        #expect(events.first?.result.observationJson == #"{"text":"ok"}"#)
+
+        var cancelRequest = Melix_Worker_V1_CancelAgentToolRequest()
+        cancelRequest.runID = "run-1"
+        cancelRequest.callID = "call-1"
+        cancelRequest.cancellationID = "cancel-1"
+        let receipt = try await client.cancelAgentTool(request: cancelRequest)
+        #expect(receipt.disposition == .toolCancellationAccepted)
+    }
+
     @Test("default initializer bridges worker RPCs over a unix domain socket without a process bridge")
     func defaultInitializerBridgesWorkerRPCsOverUnixDomainSocket() async throws {
         let fixture = try await LivePythonWorkerFixture.start(

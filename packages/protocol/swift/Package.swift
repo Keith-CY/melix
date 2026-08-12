@@ -8,6 +8,7 @@ let package = Package(
         .macOS(.v15),
     ],
     products: [
+        .library(name: "MelixComputerProtocol", targets: ["MelixComputerProtocol"]),
         .library(name: "MelixControlPlaneProtocol", targets: ["MelixControlPlaneProtocol"]),
         .library(name: "MelixWorkspaceProtocol", targets: ["MelixWorkspaceProtocol"]),
         .library(name: "MelixWorkerProtocol", targets: ["MelixWorkerProtocol"]),
@@ -24,9 +25,20 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "MelixComputerProtocol",
+            dependencies: [
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+                .product(name: "GRPCCore", package: "grpc-swift-2"),
+                .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf"),
+            ],
+            path: "computer/v1"
+        ),
+        .target(
             name: "MelixControlPlaneProtocol",
             dependencies: [
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+                .product(name: "GRPCCore", package: "grpc-swift-2"),
+                .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf"),
             ],
             path: "controlplane/v1"
         ),

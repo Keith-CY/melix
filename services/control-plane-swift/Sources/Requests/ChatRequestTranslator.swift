@@ -88,17 +88,41 @@ public struct HarmonyMessageMetadata: Sendable, Equatable {
     }
 }
 
+public struct NormalizedToolCall: Sendable, Equatable {
+    public let id: String
+    public let type: String
+    public let name: String
+    public let argumentsJSON: String
+
+    public init(
+        id: String,
+        type: String = "function",
+        name: String,
+        argumentsJSON: String
+    ) {
+        self.id = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedType = type.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.type = normalizedType.isEmpty ? "function" : normalizedType
+        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.argumentsJSON = argumentsJSON
+    }
+}
+
 public struct NormalizedTextMessage: Sendable, Equatable {
     public let role: String
     public let name: String?
     public let parts: [Melix_Worker_V1_MessagePart]
     public let harmonyMetadata: HarmonyMessageMetadata?
+    public let toolCalls: [NormalizedToolCall]
+    public let toolCallID: String?
 
     public init(
         role: String,
         name: String? = nil,
         content: String,
-        harmonyMetadata: HarmonyMessageMetadata? = nil
+        harmonyMetadata: HarmonyMessageMetadata? = nil,
+        toolCalls: [NormalizedToolCall] = [],
+        toolCallID: String? = nil
     ) {
         self.role = role
         self.name = Self.normalize(name)
@@ -106,18 +130,24 @@ public struct NormalizedTextMessage: Sendable, Equatable {
         part.text = content
         self.parts = [part]
         self.harmonyMetadata = harmonyMetadata?.isEmpty == false ? harmonyMetadata : nil
+        self.toolCalls = toolCalls
+        self.toolCallID = Self.normalize(toolCallID)
     }
 
     public init(
         role: String,
         name: String? = nil,
         parts: [Melix_Worker_V1_MessagePart],
-        harmonyMetadata: HarmonyMessageMetadata? = nil
+        harmonyMetadata: HarmonyMessageMetadata? = nil,
+        toolCalls: [NormalizedToolCall] = [],
+        toolCallID: String? = nil
     ) {
         self.role = role
         self.name = Self.normalize(name)
         self.parts = parts
         self.harmonyMetadata = harmonyMetadata?.isEmpty == false ? harmonyMetadata : nil
+        self.toolCalls = toolCalls
+        self.toolCallID = Self.normalize(toolCallID)
     }
 
     public var content: String {
@@ -679,36 +709,101 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     }
 
     public struct Message: Codable, Sendable, Equatable {
+        public struct ToolCall: Codable, Sendable, Equatable {
+            public struct Function: Codable, Sendable, Equatable {
+                public let name: String
+                public let arguments: String
+
+                public init(name: String, arguments: String) {
+                    self.name = name
+                    self.arguments = arguments
+                }
+            }
+
+            public let id: String
+            public let type: String
+            public let function: Function
+
+            public init(
+                id: String,
+                type: String = "function",
+                function: Function
+            ) {
+                self.id = id
+                self.type = type
+                self.function = function
+            }
+
+            var normalized: NormalizedToolCall {
+                NormalizedToolCall(
+                    id: id,
+                    type: type,
+                    name: function.name,
+                    argumentsJSON: function.arguments
+                )
+            }
+        }
+
         public let role: String
         public let name: String?
         public let content: String
         public let contentParts: [OpenAIMultimodalContentPart]?
+        public let toolCalls: [ToolCall]?
+        public let toolCallID: String?
 
         enum CodingKeys: String, CodingKey {
             case role
             case name
             case content
+            case toolCalls = "tool_calls"
+            case toolCallID = "tool_call_id"
         }
 
-        public init(role: String, name: String? = nil, content: String) {
+        public init(
+            role: String,
+            name: String? = nil,
+            content: String,
+            toolCalls: [ToolCall]? = nil,
+            toolCallID: String? = nil
+        ) {
             self.role = role
             self.name = name
             self.content = content
             self.contentParts = nil
+            self.toolCalls = toolCalls
+            self.toolCallID = toolCallID
         }
 
-        public init(role: String, name: String? = nil, contentParts: [OpenAIMultimodalContentPart]) {
+        public init(
+            role: String,
+            name: String? = nil,
+            contentParts: [OpenAIMultimodalContentPart],
+            toolCalls: [ToolCall]? = nil,
+            toolCallID: String? = nil
+        ) {
             self.role = role
             self.name = name
             self.content = contentParts.compactMap(\.text).joined(separator: "\n")
             self.contentParts = contentParts
+            self.toolCalls = toolCalls
+            self.toolCallID = toolCallID
         }
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             role = try container.decode(String.self, forKey: .role)
             name = try container.decodeIfPresent(String.self, forKey: .name)
-            if let text = try? container.decode(String.self, forKey: .content) {
+            toolCalls = try container.decodeIfPresent([ToolCall].self, forKey: .toolCalls)
+            toolCallID = try container.decodeIfPresent(String.self, forKey: .toolCallID)
+            let contentIsNil = if container.contains(.content) {
+                try container.decodeNil(forKey: .content)
+            } else {
+                true
+            }
+            if contentIsNil {
+                content = ""
+                contentParts = nil
+            } else if let text = try? container.decode(String.self, forKey: .content) {
                 content = text
                 contentParts = nil
             } else {
@@ -724,9 +819,13 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
             try container.encodeIfPresent(name, forKey: .name)
             if let contentParts {
                 try container.encode(contentParts, forKey: .content)
+            } else if toolCalls?.isEmpty == false && content.isEmpty {
+                try container.encodeNil(forKey: .content)
             } else {
                 try container.encode(content, forKey: .content)
             }
+            try container.encodeIfPresent(toolCalls, forKey: .toolCalls)
+            try container.encodeIfPresent(toolCallID, forKey: .toolCallID)
         }
 
         public var hasMultimodalContent: Bool {
@@ -1470,7 +1569,12 @@ public struct OpenAIResponsesRequest: Codable, Sendable {
                     harmonyMetadata: message.harmonyMetadata
                 )
             case .functionCallOutput(let callID, let output):
-                return NormalizedTextMessage(role: "tool", name: callID, content: output)
+                return NormalizedTextMessage(
+                    role: "tool",
+                    name: callID,
+                    content: output,
+                    toolCallID: callID
+                )
             }
         }
     }
@@ -2245,7 +2349,13 @@ public struct ChatRequestTranslator: Sendable {
         let fallbackInjection = injectLegacyTopLevelImageFallback(
             legacyFallback,
             into: request.messages.map {
-                NormalizedTextMessage(role: $0.role, name: $0.name, content: $0.content)
+                NormalizedTextMessage(
+                    role: $0.role,
+                    name: $0.name,
+                    content: $0.content,
+                    toolCalls: $0.toolCalls?.map(\.normalized) ?? [],
+                    toolCallID: $0.toolCallID
+                )
             }
         )
         return makeNormalizedRequest(
@@ -2299,9 +2409,21 @@ public struct ChatRequestTranslator: Sendable {
                     content: contentParts
                 )
                 let normalized = try normalizer.normalize(multimodalMessage)
-                return NormalizedTextMessage(role: normalized.role, name: normalized.name, parts: Array(normalized.parts))
+                return NormalizedTextMessage(
+                    role: normalized.role,
+                    name: normalized.name,
+                    parts: Array(normalized.parts),
+                    toolCalls: message.toolCalls?.map(\.normalized) ?? [],
+                    toolCallID: message.toolCallID
+                )
             }
-            return NormalizedTextMessage(role: message.role, name: message.name, content: message.content)
+            return NormalizedTextMessage(
+                role: message.role,
+                name: message.name,
+                content: message.content,
+                toolCalls: message.toolCalls?.map(\.normalized) ?? [],
+                toolCallID: message.toolCallID
+            )
         }
         let legacyFallback = try legacyTopLevelImageFallback(
             for: request,
@@ -2638,7 +2760,9 @@ public struct ChatRequestTranslator: Sendable {
                 role: message.role,
                 name: message.name,
                 parts: message.parts + [fallback],
-                harmonyMetadata: message.harmonyMetadata
+                harmonyMetadata: message.harmonyMetadata,
+                toolCalls: message.toolCalls,
+                toolCallID: message.toolCallID
             )
         }
         return (injectedMessages, true)
@@ -3010,6 +3134,15 @@ public struct ChatRequestTranslator: Sendable {
             chatMessage.role = message.role
             chatMessage.name = message.name ?? ""
             chatMessage.parts = message.parts
+            chatMessage.toolCalls = message.toolCalls.map { toolCall in
+                var generatedToolCall = Melix_Worker_V1_ChatToolCall()
+                generatedToolCall.id = toolCall.id
+                generatedToolCall.type = toolCall.type
+                generatedToolCall.name = toolCall.name
+                generatedToolCall.argumentsJson = toolCall.argumentsJSON
+                return generatedToolCall
+            }
+            chatMessage.toolCallID = message.toolCallID ?? ""
             return chatMessage
         }
 

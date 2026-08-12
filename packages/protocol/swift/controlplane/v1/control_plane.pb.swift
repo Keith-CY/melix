@@ -25,6 +25,134 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+public nonisolated enum Melix_Controlplane_V1_ControlPlaneIPCChatDeltaKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case controlPlaneIpcChatQueued // = 1
+  case controlPlaneIpcChatAdmitted // = 2
+  case controlPlaneIpcChatPrefillStarted // = 3
+  case controlPlaneIpcChatDecodeStarted // = 4
+  case controlPlaneIpcChatToken // = 5
+  case controlPlaneIpcChatReasoning // = 6
+  case controlPlaneIpcChatToolCall // = 7
+  case controlPlaneIpcChatAnnotation // = 8
+  case controlPlaneIpcChatToolResult // = 9
+  case controlPlaneIpcChatUsage // = 10
+  case controlPlaneIpcChatCompleted // = 11
+  case controlPlaneIpcChatFailed // = 12
+  case controlPlaneIpcChatHeartbeat // = 13
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .controlPlaneIpcChatQueued
+    case 2: self = .controlPlaneIpcChatAdmitted
+    case 3: self = .controlPlaneIpcChatPrefillStarted
+    case 4: self = .controlPlaneIpcChatDecodeStarted
+    case 5: self = .controlPlaneIpcChatToken
+    case 6: self = .controlPlaneIpcChatReasoning
+    case 7: self = .controlPlaneIpcChatToolCall
+    case 8: self = .controlPlaneIpcChatAnnotation
+    case 9: self = .controlPlaneIpcChatToolResult
+    case 10: self = .controlPlaneIpcChatUsage
+    case 11: self = .controlPlaneIpcChatCompleted
+    case 12: self = .controlPlaneIpcChatFailed
+    case 13: self = .controlPlaneIpcChatHeartbeat
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .controlPlaneIpcChatQueued: return 1
+    case .controlPlaneIpcChatAdmitted: return 2
+    case .controlPlaneIpcChatPrefillStarted: return 3
+    case .controlPlaneIpcChatDecodeStarted: return 4
+    case .controlPlaneIpcChatToken: return 5
+    case .controlPlaneIpcChatReasoning: return 6
+    case .controlPlaneIpcChatToolCall: return 7
+    case .controlPlaneIpcChatAnnotation: return 8
+    case .controlPlaneIpcChatToolResult: return 9
+    case .controlPlaneIpcChatUsage: return 10
+    case .controlPlaneIpcChatCompleted: return 11
+    case .controlPlaneIpcChatFailed: return 12
+    case .controlPlaneIpcChatHeartbeat: return 13
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_ControlPlaneIPCChatDeltaKind] = [
+    .unspecified,
+    .controlPlaneIpcChatQueued,
+    .controlPlaneIpcChatAdmitted,
+    .controlPlaneIpcChatPrefillStarted,
+    .controlPlaneIpcChatDecodeStarted,
+    .controlPlaneIpcChatToken,
+    .controlPlaneIpcChatReasoning,
+    .controlPlaneIpcChatToolCall,
+    .controlPlaneIpcChatAnnotation,
+    .controlPlaneIpcChatToolResult,
+    .controlPlaneIpcChatUsage,
+    .controlPlaneIpcChatCompleted,
+    .controlPlaneIpcChatFailed,
+    .controlPlaneIpcChatHeartbeat,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_ControlPlaneIPCChatCancellationDisposition: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case controlPlaneIpcChatCancellationAccepted // = 1
+  case controlPlaneIpcChatCancellationAlreadyTerminal // = 2
+  case controlPlaneIpcChatCancellationNotFound // = 3
+  case controlPlaneIpcChatCancellationUnavailable // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .controlPlaneIpcChatCancellationAccepted
+    case 2: self = .controlPlaneIpcChatCancellationAlreadyTerminal
+    case 3: self = .controlPlaneIpcChatCancellationNotFound
+    case 4: self = .controlPlaneIpcChatCancellationUnavailable
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .controlPlaneIpcChatCancellationAccepted: return 1
+    case .controlPlaneIpcChatCancellationAlreadyTerminal: return 2
+    case .controlPlaneIpcChatCancellationNotFound: return 3
+    case .controlPlaneIpcChatCancellationUnavailable: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_ControlPlaneIPCChatCancellationDisposition] = [
+    .unspecified,
+    .controlPlaneIpcChatCancellationAccepted,
+    .controlPlaneIpcChatCancellationAlreadyTerminal,
+    .controlPlaneIpcChatCancellationNotFound,
+    .controlPlaneIpcChatCancellationUnavailable,
+  ]
+
+}
+
 public nonisolated enum Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -63,6 +191,658 @@ public nonisolated enum Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf.Enum,
     .edit,
     .variation,
     .iterate,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentInteractionMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case ask // = 1
+  case act // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .ask
+    case 2: self = .act
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .ask: return 1
+    case .act: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentInteractionMode] = [
+    .unspecified,
+    .ask,
+    .act,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentApprovalChoice: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentApprovalAllowOnce // = 1
+  case agentApprovalAlwaysAllow // = 2
+  case agentApprovalDeny // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentApprovalAllowOnce
+    case 2: self = .agentApprovalAlwaysAllow
+    case 3: self = .agentApprovalDeny
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentApprovalAllowOnce: return 1
+    case .agentApprovalAlwaysAllow: return 2
+    case .agentApprovalDeny: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentApprovalChoice] = [
+    .unspecified,
+    .agentApprovalAllowOnce,
+    .agentApprovalAlwaysAllow,
+    .agentApprovalDeny,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentApprovalPolicyPersistenceDisposition: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentApprovalPolicyPersistenceNotRequested // = 1
+  case agentApprovalPolicyPersistenceApplied // = 2
+  case agentApprovalPolicyPersistenceNotApplied // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentApprovalPolicyPersistenceNotRequested
+    case 2: self = .agentApprovalPolicyPersistenceApplied
+    case 3: self = .agentApprovalPolicyPersistenceNotApplied
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentApprovalPolicyPersistenceNotRequested: return 1
+    case .agentApprovalPolicyPersistenceApplied: return 2
+    case .agentApprovalPolicyPersistenceNotApplied: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentApprovalPolicyPersistenceDisposition] = [
+    .unspecified,
+    .agentApprovalPolicyPersistenceNotRequested,
+    .agentApprovalPolicyPersistenceApplied,
+    .agentApprovalPolicyPersistenceNotApplied,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentApprovalPolicyEffect: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentApprovalPolicyAllow // = 1
+  case agentApprovalPolicyAsk // = 2
+  case agentApprovalPolicyDeny // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentApprovalPolicyAllow
+    case 2: self = .agentApprovalPolicyAsk
+    case 3: self = .agentApprovalPolicyDeny
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentApprovalPolicyAllow: return 1
+    case .agentApprovalPolicyAsk: return 2
+    case .agentApprovalPolicyDeny: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentApprovalPolicyEffect] = [
+    .unspecified,
+    .agentApprovalPolicyAllow,
+    .agentApprovalPolicyAsk,
+    .agentApprovalPolicyDeny,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentApprovalRiskClass: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case unknown // = 1
+  case low // = 2
+  case medium // = 3
+  case high // = 4
+  case critical // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .unknown
+    case 2: self = .low
+    case 3: self = .medium
+    case 4: self = .high
+    case 5: self = .critical
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .unknown: return 1
+    case .low: return 2
+    case .medium: return 3
+    case .high: return 4
+    case .critical: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentApprovalRiskClass] = [
+    .unspecified,
+    .unknown,
+    .low,
+    .medium,
+    .high,
+    .critical,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentApprovalOperationKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentApprovalOperationUnknown // = 1
+  case agentApprovalOperationRead // = 2
+  case agentApprovalOperationWrite // = 3
+  case agentApprovalOperationCredentialAccess // = 4
+  case agentApprovalOperationAuthentication // = 5
+  case agentApprovalOperationUpload // = 6
+  case agentApprovalOperationSend // = 7
+  case agentApprovalOperationPurchase // = 8
+  case agentApprovalOperationDestructiveMutation // = 9
+  case agentApprovalOperationProcessExecution // = 10
+  case agentApprovalOperationSecureFieldInteraction // = 11
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentApprovalOperationUnknown
+    case 2: self = .agentApprovalOperationRead
+    case 3: self = .agentApprovalOperationWrite
+    case 4: self = .agentApprovalOperationCredentialAccess
+    case 5: self = .agentApprovalOperationAuthentication
+    case 6: self = .agentApprovalOperationUpload
+    case 7: self = .agentApprovalOperationSend
+    case 8: self = .agentApprovalOperationPurchase
+    case 9: self = .agentApprovalOperationDestructiveMutation
+    case 10: self = .agentApprovalOperationProcessExecution
+    case 11: self = .agentApprovalOperationSecureFieldInteraction
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentApprovalOperationUnknown: return 1
+    case .agentApprovalOperationRead: return 2
+    case .agentApprovalOperationWrite: return 3
+    case .agentApprovalOperationCredentialAccess: return 4
+    case .agentApprovalOperationAuthentication: return 5
+    case .agentApprovalOperationUpload: return 6
+    case .agentApprovalOperationSend: return 7
+    case .agentApprovalOperationPurchase: return 8
+    case .agentApprovalOperationDestructiveMutation: return 9
+    case .agentApprovalOperationProcessExecution: return 10
+    case .agentApprovalOperationSecureFieldInteraction: return 11
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentApprovalOperationKind] = [
+    .unspecified,
+    .agentApprovalOperationUnknown,
+    .agentApprovalOperationRead,
+    .agentApprovalOperationWrite,
+    .agentApprovalOperationCredentialAccess,
+    .agentApprovalOperationAuthentication,
+    .agentApprovalOperationUpload,
+    .agentApprovalOperationSend,
+    .agentApprovalOperationPurchase,
+    .agentApprovalOperationDestructiveMutation,
+    .agentApprovalOperationProcessExecution,
+    .agentApprovalOperationSecureFieldInteraction,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentComputerUseTargetDiscoveryState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentComputerUseTargetDiscoveryNotRequested // = 1
+  case agentComputerUseTargetDiscoveryReady // = 2
+  case agentComputerUseTargetDiscoveryEmpty // = 3
+  case agentComputerUseTargetDiscoveryFailed // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentComputerUseTargetDiscoveryNotRequested
+    case 2: self = .agentComputerUseTargetDiscoveryReady
+    case 3: self = .agentComputerUseTargetDiscoveryEmpty
+    case 4: self = .agentComputerUseTargetDiscoveryFailed
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentComputerUseTargetDiscoveryNotRequested: return 1
+    case .agentComputerUseTargetDiscoveryReady: return 2
+    case .agentComputerUseTargetDiscoveryEmpty: return 3
+    case .agentComputerUseTargetDiscoveryFailed: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentComputerUseTargetDiscoveryState] = [
+    .unspecified,
+    .agentComputerUseTargetDiscoveryNotRequested,
+    .agentComputerUseTargetDiscoveryReady,
+    .agentComputerUseTargetDiscoveryEmpty,
+    .agentComputerUseTargetDiscoveryFailed,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentComputerUseFieldAvailability: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentComputerUseFieldUnavailable // = 1
+  case agentComputerUseFieldAvailable // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentComputerUseFieldUnavailable
+    case 2: self = .agentComputerUseFieldAvailable
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentComputerUseFieldUnavailable: return 1
+    case .agentComputerUseFieldAvailable: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentComputerUseFieldAvailability] = [
+    .unspecified,
+    .agentComputerUseFieldUnavailable,
+    .agentComputerUseFieldAvailable,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentComputerUseSessionState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentComputerUseSessionUnavailable // = 1
+  case agentComputerUseSessionOpen // = 2
+  case agentComputerUseSessionClosed // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentComputerUseSessionUnavailable
+    case 2: self = .agentComputerUseSessionOpen
+    case 3: self = .agentComputerUseSessionClosed
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentComputerUseSessionUnavailable: return 1
+    case .agentComputerUseSessionOpen: return 2
+    case .agentComputerUseSessionClosed: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentComputerUseSessionState] = [
+    .unspecified,
+    .agentComputerUseSessionUnavailable,
+    .agentComputerUseSessionOpen,
+    .agentComputerUseSessionClosed,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentComputerUsePermissionState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentComputerUsePermissionUnavailable // = 1
+  case agentComputerUsePermissionNotDetermined // = 2
+  case agentComputerUsePermissionDenied // = 3
+  case agentComputerUsePermissionGranted // = 4
+  case agentComputerUsePermissionRestartRequired // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentComputerUsePermissionUnavailable
+    case 2: self = .agentComputerUsePermissionNotDetermined
+    case 3: self = .agentComputerUsePermissionDenied
+    case 4: self = .agentComputerUsePermissionGranted
+    case 5: self = .agentComputerUsePermissionRestartRequired
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentComputerUsePermissionUnavailable: return 1
+    case .agentComputerUsePermissionNotDetermined: return 2
+    case .agentComputerUsePermissionDenied: return 3
+    case .agentComputerUsePermissionGranted: return 4
+    case .agentComputerUsePermissionRestartRequired: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentComputerUsePermissionState] = [
+    .unspecified,
+    .agentComputerUsePermissionUnavailable,
+    .agentComputerUsePermissionNotDetermined,
+    .agentComputerUsePermissionDenied,
+    .agentComputerUsePermissionGranted,
+    .agentComputerUsePermissionRestartRequired,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentComputerUseRestartState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentComputerUseRestartUnavailable // = 1
+  case agentComputerUseRestartNotRequired // = 2
+  case agentComputerUseRestartRequired // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentComputerUseRestartUnavailable
+    case 2: self = .agentComputerUseRestartNotRequired
+    case 3: self = .agentComputerUseRestartRequired
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentComputerUseRestartUnavailable: return 1
+    case .agentComputerUseRestartNotRequired: return 2
+    case .agentComputerUseRestartRequired: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentComputerUseRestartState] = [
+    .unspecified,
+    .agentComputerUseRestartUnavailable,
+    .agentComputerUseRestartNotRequired,
+    .agentComputerUseRestartRequired,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentComputerUseOperation: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case unavailable // = 1
+  case agentComputerUseGetPermissions // = 2
+  case agentComputerUseOpenSession // = 3
+  case agentComputerUseCaptureFrame // = 4
+  case agentComputerUsePressElement // = 5
+  case agentComputerUseCloseSession // = 6
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .unavailable
+    case 2: self = .agentComputerUseGetPermissions
+    case 3: self = .agentComputerUseOpenSession
+    case 4: self = .agentComputerUseCaptureFrame
+    case 5: self = .agentComputerUsePressElement
+    case 6: self = .agentComputerUseCloseSession
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .unavailable: return 1
+    case .agentComputerUseGetPermissions: return 2
+    case .agentComputerUseOpenSession: return 3
+    case .agentComputerUseCaptureFrame: return 4
+    case .agentComputerUsePressElement: return 5
+    case .agentComputerUseCloseSession: return 6
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentComputerUseOperation] = [
+    .unspecified,
+    .unavailable,
+    .agentComputerUseGetPermissions,
+    .agentComputerUseOpenSession,
+    .agentComputerUseCaptureFrame,
+    .agentComputerUsePressElement,
+    .agentComputerUseCloseSession,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentComputerUseResultState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentComputerUseResultUnavailable // = 1
+  case agentComputerUseResultCompleted // = 2
+  case agentComputerUseResultFailed // = 3
+  case agentComputerUseResultCancelled // = 4
+  case agentComputerUseResultTimeout // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentComputerUseResultUnavailable
+    case 2: self = .agentComputerUseResultCompleted
+    case 3: self = .agentComputerUseResultFailed
+    case 4: self = .agentComputerUseResultCancelled
+    case 5: self = .agentComputerUseResultTimeout
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentComputerUseResultUnavailable: return 1
+    case .agentComputerUseResultCompleted: return 2
+    case .agentComputerUseResultFailed: return 3
+    case .agentComputerUseResultCancelled: return 4
+    case .agentComputerUseResultTimeout: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentComputerUseResultState] = [
+    .unspecified,
+    .agentComputerUseResultUnavailable,
+    .agentComputerUseResultCompleted,
+    .agentComputerUseResultFailed,
+    .agentComputerUseResultCancelled,
+    .agentComputerUseResultTimeout,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_AgentToolSideEffectState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case agentToolSideEffectNone // = 1
+  case agentToolSideEffectCommitted // = 2
+  case agentToolSideEffectUnknown // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .agentToolSideEffectNone
+    case 2: self = .agentToolSideEffectCommitted
+    case 3: self = .agentToolSideEffectUnknown
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .agentToolSideEffectNone: return 1
+    case .agentToolSideEffectCommitted: return 2
+    case .agentToolSideEffectUnknown: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_AgentToolSideEffectState] = [
+    .unspecified,
+    .agentToolSideEffectNone,
+    .agentToolSideEffectCommitted,
+    .agentToolSideEffectUnknown,
   ]
 
 }
@@ -1824,6 +2604,512 @@ public nonisolated struct Melix_Controlplane_V1_HandshakeResponse: Sendable {
   fileprivate var _snapshot: Melix_Controlplane_V1_ServerSnapshot? = nil
 }
 
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCChatToolCall: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var callID: String = String()
+
+  public var type: String = String()
+
+  public var toolName: String = String()
+
+  public var argumentsJson: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCChatMessage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var role: String = String()
+
+  public var content: String = String()
+
+  public var name: String = String()
+
+  public var hasName_p: Bool = false
+
+  public var toolCalls: [Melix_Controlplane_V1_ControlPlaneIPCChatToolCall] = []
+
+  public var toolCallID: String = String()
+
+  public var hasToolCallID_p: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCChatToolDefinition: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var name: String = String()
+
+  public var description_p: String = String()
+
+  public var parametersJson: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var serverID: String = String()
+
+  public var providerKind: String = String()
+
+  public var baseURL: String = String()
+
+  public var apiKey: String = String()
+
+  public var modelID: String = String()
+
+  public var timeoutSeconds: UInt32 = 0
+
+  public var rateLimitPerMinute: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCChatRequest: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var modelID: String {
+    get {_storage._modelID}
+    set {_uniqueStorage()._modelID = newValue}
+  }
+
+  public var serverSessionID: String {
+    get {_storage._serverSessionID}
+    set {_uniqueStorage()._serverSessionID = newValue}
+  }
+
+  public var messages: [Melix_Controlplane_V1_ControlPlaneIPCChatMessage] {
+    get {_storage._messages}
+    set {_uniqueStorage()._messages = newValue}
+  }
+
+  public var tools: [Melix_Controlplane_V1_ControlPlaneIPCChatToolDefinition] {
+    get {_storage._tools}
+    set {_uniqueStorage()._tools = newValue}
+  }
+
+  public var toolChoice: String {
+    get {_storage._toolChoice}
+    set {_uniqueStorage()._toolChoice = newValue}
+  }
+
+  public var hasToolChoice_p: Bool {
+    get {_storage._hasToolChoice_p}
+    set {_uniqueStorage()._hasToolChoice_p = newValue}
+  }
+
+  public var parallelToolCalls: Bool {
+    get {_storage._parallelToolCalls}
+    set {_uniqueStorage()._parallelToolCalls = newValue}
+  }
+
+  public var enableThinking: Bool {
+    get {_storage._enableThinking}
+    set {_uniqueStorage()._enableThinking = newValue}
+  }
+
+  public var hasEnableThinking_p: Bool {
+    get {_storage._hasEnableThinking_p}
+    set {_uniqueStorage()._hasEnableThinking_p = newValue}
+  }
+
+  public var reasoningEffort: String {
+    get {_storage._reasoningEffort}
+    set {_uniqueStorage()._reasoningEffort = newValue}
+  }
+
+  public var hasReasoningEffort_p: Bool {
+    get {_storage._hasReasoningEffort_p}
+    set {_uniqueStorage()._hasReasoningEffort_p = newValue}
+  }
+
+  public var chatTemplateKwargsJson: String {
+    get {_storage._chatTemplateKwargsJson}
+    set {_uniqueStorage()._chatTemplateKwargsJson = newValue}
+  }
+
+  public var hasChatTemplateKwargsJson_p: Bool {
+    get {_storage._hasChatTemplateKwargsJson_p}
+    set {_uniqueStorage()._hasChatTemplateKwargsJson_p = newValue}
+  }
+
+  public var resumeRequestID: String {
+    get {_storage._resumeRequestID}
+    set {_uniqueStorage()._resumeRequestID = newValue}
+  }
+
+  public var hasResumeRequestID_p: Bool {
+    get {_storage._hasResumeRequestID_p}
+    set {_uniqueStorage()._hasResumeRequestID_p = newValue}
+  }
+
+  public var temperature: Double {
+    get {_storage._temperature}
+    set {_uniqueStorage()._temperature = newValue}
+  }
+
+  public var hasTemperature_p: Bool {
+    get {_storage._hasTemperature_p}
+    set {_uniqueStorage()._hasTemperature_p = newValue}
+  }
+
+  public var topP: Double {
+    get {_storage._topP}
+    set {_uniqueStorage()._topP = newValue}
+  }
+
+  public var hasTopP_p: Bool {
+    get {_storage._hasTopP_p}
+    set {_uniqueStorage()._hasTopP_p = newValue}
+  }
+
+  public var maxTokens: UInt32 {
+    get {_storage._maxTokens}
+    set {_uniqueStorage()._maxTokens = newValue}
+  }
+
+  public var hasMaxTokens_p: Bool {
+    get {_storage._hasMaxTokens_p}
+    set {_uniqueStorage()._hasMaxTokens_p = newValue}
+  }
+
+  public var remoteTarget: Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget {
+    get {_storage._remoteTarget ?? Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget()}
+    set {_uniqueStorage()._remoteTarget = newValue}
+  }
+  /// Returns true if `remoteTarget` has been explicitly set.
+  public var hasRemoteTarget: Bool {_storage._remoteTarget != nil}
+  /// Clears the value of `remoteTarget`. Subsequent reads from it will return its default value.
+  public mutating func clearRemoteTarget() {_uniqueStorage()._remoteTarget = nil}
+
+  /// Client-generated correlation used to cancel a chat before the daemon has
+  /// returned the execution request_id in start metadata.
+  public var transportRequestID: String {
+    get {_storage._transportRequestID}
+    set {_uniqueStorage()._transportRequestID = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCChatStarted: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var requestID: String = String()
+
+  public var modelID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCChatEvent: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var payload: Melix_Controlplane_V1_ControlPlaneIPCChatEvent.OneOf_Payload? = nil
+
+  public var started: Melix_Controlplane_V1_ControlPlaneIPCChatStarted {
+    get {
+      if case .started(let v)? = payload {return v}
+      return Melix_Controlplane_V1_ControlPlaneIPCChatStarted()
+    }
+    set {payload = .started(newValue)}
+  }
+
+  public var event: Melix_Controlplane_V1_ControlPlaneIPCChatDelta {
+    get {
+      if case .event(let v)? = payload {return v}
+      return Melix_Controlplane_V1_ControlPlaneIPCChatDelta()
+    }
+    set {payload = .event(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum OneOf_Payload: Equatable, Sendable {
+    case started(Melix_Controlplane_V1_ControlPlaneIPCChatStarted)
+    case event(Melix_Controlplane_V1_ControlPlaneIPCChatDelta)
+
+  }
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCChatDelta: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var requestID: String {
+    get {_storage._requestID}
+    set {_uniqueStorage()._requestID = newValue}
+  }
+
+  public var seq: UInt64 {
+    get {_storage._seq}
+    set {_uniqueStorage()._seq = newValue}
+  }
+
+  public var kind: Melix_Controlplane_V1_ControlPlaneIPCChatDeltaKind {
+    get {_storage._kind}
+    set {_uniqueStorage()._kind = newValue}
+  }
+
+  public var lane: String {
+    get {_storage._lane}
+    set {_uniqueStorage()._lane = newValue}
+  }
+
+  public var queuePosition: UInt32 {
+    get {_storage._queuePosition}
+    set {_uniqueStorage()._queuePosition = newValue}
+  }
+
+  public var backpressure: Double {
+    get {_storage._backpressure}
+    set {_uniqueStorage()._backpressure = newValue}
+  }
+
+  public var workerID: String {
+    get {_storage._workerID}
+    set {_uniqueStorage()._workerID = newValue}
+  }
+
+  public var queueDelayMs: Double {
+    get {_storage._queueDelayMs}
+    set {_uniqueStorage()._queueDelayMs = newValue}
+  }
+
+  public var inputTokens: UInt32 {
+    get {_storage._inputTokens}
+    set {_uniqueStorage()._inputTokens = newValue}
+  }
+
+  public var decodeHandle: String {
+    get {_storage._decodeHandle}
+    set {_uniqueStorage()._decodeHandle = newValue}
+  }
+
+  public var maxOutputTokens: UInt32 {
+    get {_storage._maxOutputTokens}
+    set {_uniqueStorage()._maxOutputTokens = newValue}
+  }
+
+  public var text: String {
+    get {_storage._text}
+    set {_uniqueStorage()._text = newValue}
+  }
+
+  public var callID: String {
+    get {_storage._callID}
+    set {_uniqueStorage()._callID = newValue}
+  }
+
+  public var toolName: String {
+    get {_storage._toolName}
+    set {_uniqueStorage()._toolName = newValue}
+  }
+
+  public var argumentsFragment: String {
+    get {_storage._argumentsFragment}
+    set {_uniqueStorage()._argumentsFragment = newValue}
+  }
+
+  public var annotationID: String {
+    get {_storage._annotationID}
+    set {_uniqueStorage()._annotationID = newValue}
+  }
+
+  public var annotationKind: String {
+    get {_storage._annotationKind}
+    set {_uniqueStorage()._annotationKind = newValue}
+  }
+
+  public var startOffset: UInt32 {
+    get {_storage._startOffset}
+    set {_uniqueStorage()._startOffset = newValue}
+  }
+
+  public var endOffset: UInt32 {
+    get {_storage._endOffset}
+    set {_uniqueStorage()._endOffset = newValue}
+  }
+
+  public var payloadJson: String {
+    get {_storage._payloadJson}
+    set {_uniqueStorage()._payloadJson = newValue}
+  }
+
+  public var status: String {
+    get {_storage._status}
+    set {_uniqueStorage()._status = newValue}
+  }
+
+  public var resultJson: String {
+    get {_storage._resultJson}
+    set {_uniqueStorage()._resultJson = newValue}
+  }
+
+  public var promptTokens: UInt32 {
+    get {_storage._promptTokens}
+    set {_uniqueStorage()._promptTokens = newValue}
+  }
+
+  public var completionTokens: UInt32 {
+    get {_storage._completionTokens}
+    set {_uniqueStorage()._completionTokens = newValue}
+  }
+
+  public var cachedPromptTokens: UInt32 {
+    get {_storage._cachedPromptTokens}
+    set {_uniqueStorage()._cachedPromptTokens = newValue}
+  }
+
+  public var mediaFeatureCacheHits: UInt64 {
+    get {_storage._mediaFeatureCacheHits}
+    set {_uniqueStorage()._mediaFeatureCacheHits = newValue}
+  }
+
+  public var mediaFeatureCacheMisses: UInt64 {
+    get {_storage._mediaFeatureCacheMisses}
+    set {_uniqueStorage()._mediaFeatureCacheMisses = newValue}
+  }
+
+  public var mediaFeatureEncoderCallsSaved: UInt64 {
+    get {_storage._mediaFeatureEncoderCallsSaved}
+    set {_uniqueStorage()._mediaFeatureEncoderCallsSaved = newValue}
+  }
+
+  public var mediaFeatureWorkSavedBytes: UInt64 {
+    get {_storage._mediaFeatureWorkSavedBytes}
+    set {_uniqueStorage()._mediaFeatureWorkSavedBytes = newValue}
+  }
+
+  public var finishReason: String {
+    get {_storage._finishReason}
+    set {_uniqueStorage()._finishReason = newValue}
+  }
+
+  public var assistantText: String {
+    get {_storage._assistantText}
+    set {_uniqueStorage()._assistantText = newValue}
+  }
+
+  public var reasoningText: String {
+    get {_storage._reasoningText}
+    set {_uniqueStorage()._reasoningText = newValue}
+  }
+
+  public var errorCode: String {
+    get {_storage._errorCode}
+    set {_uniqueStorage()._errorCode = newValue}
+  }
+
+  public var errorMessage: String {
+    get {_storage._errorMessage}
+    set {_uniqueStorage()._errorMessage = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCCancelChatRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var requestID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCCancelChatResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var requestID: String = String()
+
+  public var disposition: Melix_Controlplane_V1_ControlPlaneIPCChatCancellationDisposition = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneIPCStartAgentRunRequest: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var command: Melix_Controlplane_V1_StartAgentRun {
+    get {_storage._command ?? Melix_Controlplane_V1_StartAgentRun()}
+    set {_uniqueStorage()._command = newValue}
+  }
+  /// Returns true if `command` has been explicitly set.
+  public var hasCommand: Bool {_storage._command != nil}
+  /// Clears the value of `command`. Subsequent reads from it will return its default value.
+  public mutating func clearCommand() {_uniqueStorage()._command = nil}
+
+  public var actorID: String {
+    get {_storage._actorID}
+    set {_uniqueStorage()._actorID = newValue}
+  }
+
+  public var remoteTarget: Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget {
+    get {_storage._remoteTarget ?? Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget()}
+    set {_uniqueStorage()._remoteTarget = newValue}
+  }
+  /// Returns true if `remoteTarget` has been explicitly set.
+  public var hasRemoteTarget: Bool {_storage._remoteTarget != nil}
+  /// Clears the value of `remoteTarget`. Subsequent reads from it will return its default value.
+  public mutating func clearRemoteTarget() {_uniqueStorage()._remoteTarget = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
 public nonisolated struct Melix_Controlplane_V1_ControlPlaneRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1930,6 +3216,14 @@ public nonisolated struct Melix_Controlplane_V1_ControlPlaneRequest: @unchecked 
     set {_uniqueStorage()._command = .image(newValue)}
   }
 
+  public var agent: Melix_Controlplane_V1_AgentCommand {
+    get {
+      if case .agent(let v)? = _storage._command {return v}
+      return Melix_Controlplane_V1_AgentCommand()
+    }
+    set {_uniqueStorage()._command = .agent(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Command: Equatable, Sendable {
@@ -1940,6 +3234,7 @@ public nonisolated struct Melix_Controlplane_V1_ControlPlaneRequest: @unchecked 
     case ops(Melix_Controlplane_V1_OpsCommand)
     case preset(Melix_Controlplane_V1_PresetCommand)
     case image(Melix_Controlplane_V1_ImageCommand)
+    case agent(Melix_Controlplane_V1_AgentCommand)
 
   }
 
@@ -2048,6 +3343,14 @@ public nonisolated struct Melix_Controlplane_V1_ControlPlaneResponse: @unchecked
     set {_uniqueStorage()._payload = .image(newValue)}
   }
 
+  public var agent: Melix_Controlplane_V1_AgentReply {
+    get {
+      if case .agent(let v)? = _storage._payload {return v}
+      return Melix_Controlplane_V1_AgentReply()
+    }
+    set {_uniqueStorage()._payload = .agent(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -2058,6 +3361,7 @@ public nonisolated struct Melix_Controlplane_V1_ControlPlaneResponse: @unchecked
     case ops(Melix_Controlplane_V1_OpsReply)
     case preset(Melix_Controlplane_V1_PresetReply)
     case image(Melix_Controlplane_V1_ImageReply)
+    case agent(Melix_Controlplane_V1_AgentReply)
 
   }
 
@@ -2209,6 +3513,14 @@ public nonisolated struct Melix_Controlplane_V1_ControlPlaneEvent: @unchecked Se
     set {_uniqueStorage()._payload = .imageJob(newValue)}
   }
 
+  public var agentRun: Melix_Controlplane_V1_AgentRunStateChanged {
+    get {
+      if case .agentRun(let v)? = _storage._payload {return v}
+      return Melix_Controlplane_V1_AgentRunStateChanged()
+    }
+    set {_uniqueStorage()._payload = .agentRun(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -2223,6 +3535,7 @@ public nonisolated struct Melix_Controlplane_V1_ControlPlaneEvent: @unchecked Se
     case heartbeat(Melix_Controlplane_V1_Heartbeat)
     case resourcePressure(Melix_Controlplane_V1_ResourcePressureEvent)
     case imageJob(Melix_Controlplane_V1_ImageJobStateChanged)
+    case agentRun(Melix_Controlplane_V1_AgentRunStateChanged)
 
   }
 
@@ -2811,6 +4124,103 @@ public nonisolated struct Melix_Controlplane_V1_ImageCommand: Sendable {
   public init() {}
 }
 
+public nonisolated struct Melix_Controlplane_V1_AgentCommand: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var kind: Melix_Controlplane_V1_AgentCommand.OneOf_Kind? = nil
+
+  public var start: Melix_Controlplane_V1_StartAgentRun {
+    get {
+      if case .start(let v)? = kind {return v}
+      return Melix_Controlplane_V1_StartAgentRun()
+    }
+    set {kind = .start(newValue)}
+  }
+
+  public var decideApproval: Melix_Controlplane_V1_DecideAgentApproval {
+    get {
+      if case .decideApproval(let v)? = kind {return v}
+      return Melix_Controlplane_V1_DecideAgentApproval()
+    }
+    set {kind = .decideApproval(newValue)}
+  }
+
+  public var cancel: Melix_Controlplane_V1_CancelAgentRun {
+    get {
+      if case .cancel(let v)? = kind {return v}
+      return Melix_Controlplane_V1_CancelAgentRun()
+    }
+    set {kind = .cancel(newValue)}
+  }
+
+  public var get: Melix_Controlplane_V1_GetAgentRun {
+    get {
+      if case .get(let v)? = kind {return v}
+      return Melix_Controlplane_V1_GetAgentRun()
+    }
+    set {kind = .get(newValue)}
+  }
+
+  public var list: Melix_Controlplane_V1_ListAgentRuns {
+    get {
+      if case .list(let v)? = kind {return v}
+      return Melix_Controlplane_V1_ListAgentRuns()
+    }
+    set {kind = .list(newValue)}
+  }
+
+  public var getApprovalPolicy: Melix_Controlplane_V1_GetAgentApprovalPolicy {
+    get {
+      if case .getApprovalPolicy(let v)? = kind {return v}
+      return Melix_Controlplane_V1_GetAgentApprovalPolicy()
+    }
+    set {kind = .getApprovalPolicy(newValue)}
+  }
+
+  public var replaceApprovalPolicy: Melix_Controlplane_V1_ReplaceAgentApprovalPolicy {
+    get {
+      if case .replaceApprovalPolicy(let v)? = kind {return v}
+      return Melix_Controlplane_V1_ReplaceAgentApprovalPolicy()
+    }
+    set {kind = .replaceApprovalPolicy(newValue)}
+  }
+
+  public var getOperations: Melix_Controlplane_V1_GetAgentOperations {
+    get {
+      if case .getOperations(let v)? = kind {return v}
+      return Melix_Controlplane_V1_GetAgentOperations()
+    }
+    set {kind = .getOperations(newValue)}
+  }
+
+  public var activate: Melix_Controlplane_V1_ActivateAgentRun {
+    get {
+      if case .activate(let v)? = kind {return v}
+      return Melix_Controlplane_V1_ActivateAgentRun()
+    }
+    set {kind = .activate(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum OneOf_Kind: Equatable, Sendable {
+    case start(Melix_Controlplane_V1_StartAgentRun)
+    case decideApproval(Melix_Controlplane_V1_DecideAgentApproval)
+    case cancel(Melix_Controlplane_V1_CancelAgentRun)
+    case get(Melix_Controlplane_V1_GetAgentRun)
+    case list(Melix_Controlplane_V1_ListAgentRuns)
+    case getApprovalPolicy(Melix_Controlplane_V1_GetAgentApprovalPolicy)
+    case replaceApprovalPolicy(Melix_Controlplane_V1_ReplaceAgentApprovalPolicy)
+    case getOperations(Melix_Controlplane_V1_GetAgentOperations)
+    case activate(Melix_Controlplane_V1_ActivateAgentRun)
+
+  }
+
+  public init() {}
+}
+
 public nonisolated struct Melix_Controlplane_V1_ServerReply: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -3083,6 +4493,1162 @@ public nonisolated struct Melix_Controlplane_V1_ImageReply: Sendable {
 
   fileprivate var _job: Melix_Controlplane_V1_ImageJobSummary? = nil
   fileprivate var _imageDefaults: Melix_Controlplane_V1_ImageDefaultsSummary? = nil
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentReply: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var run: Melix_Controlplane_V1_AgentRunSnapshot {
+    get {_storage._run ?? Melix_Controlplane_V1_AgentRunSnapshot()}
+    set {_uniqueStorage()._run = newValue}
+  }
+  /// Returns true if `run` has been explicitly set.
+  public var hasRun: Bool {_storage._run != nil}
+  /// Clears the value of `run`. Subsequent reads from it will return its default value.
+  public mutating func clearRun() {_uniqueStorage()._run = nil}
+
+  public var runs: [Melix_Controlplane_V1_AgentRunSnapshot] {
+    get {_storage._runs}
+    set {_uniqueStorage()._runs = newValue}
+  }
+
+  public var approval: Melix_Controlplane_V1_AgentApprovalDecisionReceipt {
+    get {_storage._approval ?? Melix_Controlplane_V1_AgentApprovalDecisionReceipt()}
+    set {_uniqueStorage()._approval = newValue}
+  }
+  /// Returns true if `approval` has been explicitly set.
+  public var hasApproval: Bool {_storage._approval != nil}
+  /// Clears the value of `approval`. Subsequent reads from it will return its default value.
+  public mutating func clearApproval() {_uniqueStorage()._approval = nil}
+
+  public var cancellation: Melix_Controlplane_V1_AgentRunCancellationReceipt {
+    get {_storage._cancellation ?? Melix_Controlplane_V1_AgentRunCancellationReceipt()}
+    set {_uniqueStorage()._cancellation = newValue}
+  }
+  /// Returns true if `cancellation` has been explicitly set.
+  public var hasCancellation: Bool {_storage._cancellation != nil}
+  /// Clears the value of `cancellation`. Subsequent reads from it will return its default value.
+  public mutating func clearCancellation() {_uniqueStorage()._cancellation = nil}
+
+  public var approvalPolicy: Melix_Controlplane_V1_AgentApprovalPolicySnapshot {
+    get {_storage._approvalPolicy ?? Melix_Controlplane_V1_AgentApprovalPolicySnapshot()}
+    set {_uniqueStorage()._approvalPolicy = newValue}
+  }
+  /// Returns true if `approvalPolicy` has been explicitly set.
+  public var hasApprovalPolicy: Bool {_storage._approvalPolicy != nil}
+  /// Clears the value of `approvalPolicy`. Subsequent reads from it will return its default value.
+  public mutating func clearApprovalPolicy() {_uniqueStorage()._approvalPolicy = nil}
+
+  public var approvalPolicyMutation: Melix_Controlplane_V1_AgentApprovalPolicyMutationReceipt {
+    get {_storage._approvalPolicyMutation ?? Melix_Controlplane_V1_AgentApprovalPolicyMutationReceipt()}
+    set {_uniqueStorage()._approvalPolicyMutation = newValue}
+  }
+  /// Returns true if `approvalPolicyMutation` has been explicitly set.
+  public var hasApprovalPolicyMutation: Bool {_storage._approvalPolicyMutation != nil}
+  /// Clears the value of `approvalPolicyMutation`. Subsequent reads from it will return its default value.
+  public mutating func clearApprovalPolicyMutation() {_uniqueStorage()._approvalPolicyMutation = nil}
+
+  public var operations: Melix_Controlplane_V1_AgentOperationsSnapshot {
+    get {_storage._operations ?? Melix_Controlplane_V1_AgentOperationsSnapshot()}
+    set {_uniqueStorage()._operations = newValue}
+  }
+  /// Returns true if `operations` has been explicitly set.
+  public var hasOperations: Bool {_storage._operations != nil}
+  /// Clears the value of `operations`. Subsequent reads from it will return its default value.
+  public mutating func clearOperations() {_uniqueStorage()._operations = nil}
+
+  /// True only when an authoritative run inventory was read without corruption
+  /// and the response was not truncated by the requested bound.
+  public var runsComplete: Bool {
+    get {_storage._runsComplete}
+    set {_uniqueStorage()._runsComplete = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentRunMessage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var role: String = String()
+
+  public var content: String = String()
+
+  public var toolCallID: String = String()
+
+  public var toolName: String = String()
+
+  public var toolArgumentsJson: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_StartAgentRun: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessionID: String = String()
+
+  public var branchID: String = String()
+
+  public var serverSessionID: String = String()
+
+  public var modelID: String = String()
+
+  public var providerServerID: String = String()
+
+  public var mode: Melix_Controlplane_V1_AgentInteractionMode = .unspecified
+
+  public var messages: [Melix_Controlplane_V1_AgentRunMessage] = []
+
+  public var maxModelTurns: UInt32 = 0
+
+  public var maxToolCalls: UInt32 = 0
+
+  public var deadlineUnixMs: Int64 = 0
+
+  public var computerUseTargets: [Melix_Controlplane_V1_AgentComputerUseTarget] = []
+
+  /// Stable caller-generated identity used to address cancellation while the
+  /// control plane is still admitting the run. The control plane validates
+  /// uniqueness and generates a value only for legacy callers that omit it.
+  public var runID: String = String()
+
+  /// When true, StartAgentRun returns a durable created snapshot without
+  /// starting provider work. The caller must issue ActivateAgentRun after it
+  /// has received the run identity; cancellation remains admissible first.
+  public var deferActivation: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentComputerUseTarget: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var targetID: String = String()
+
+  public var bundleID: String = String()
+
+  public var processID: Int32 = 0
+
+  public var processLaunchIdentity: String = String()
+
+  public var windowID: UInt32 = 0
+
+  public var windowTitle: String = String()
+
+  public var applicationName: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentApprovalBinding: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var runID: String = String()
+
+  public var callID: String = String()
+
+  public var schemaDigest: String = String()
+
+  public var argumentDigest: String = String()
+
+  public var policyRevision: String = String()
+
+  public var bindingDigest: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_DecideAgentApproval: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var binding: Melix_Controlplane_V1_AgentApprovalBinding {
+    get {_binding ?? Melix_Controlplane_V1_AgentApprovalBinding()}
+    set {_binding = newValue}
+  }
+  /// Returns true if `binding` has been explicitly set.
+  public var hasBinding: Bool {self._binding != nil}
+  /// Clears the value of `binding`. Subsequent reads from it will return its default value.
+  public mutating func clearBinding() {self._binding = nil}
+
+  public var choice: Melix_Controlplane_V1_AgentApprovalChoice = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _binding: Melix_Controlplane_V1_AgentApprovalBinding? = nil
+}
+
+public nonisolated struct Melix_Controlplane_V1_CancelAgentRun: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var runID: String = String()
+
+  public var reason: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ActivateAgentRun: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var runID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_GetAgentRun: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var runID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ListAgentRuns: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessionID: String = String()
+
+  public var limit: UInt32 = 0
+
+  /// Safety inventory mode: return active/nonterminal runs only and set the
+  /// AgentReply.runs_complete bit from the authoritative durable inventory.
+  public var nonterminalOnly: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentApprovalPolicyRule: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var id: String = String()
+
+  public var effect: Melix_Controlplane_V1_AgentApprovalPolicyEffect = .unspecified
+
+  public var sourceID: String = String()
+
+  public var toolName: String = String()
+
+  public var riskClass: Melix_Controlplane_V1_AgentApprovalRiskClass = .unspecified
+
+  public var operationKind: Melix_Controlplane_V1_AgentApprovalOperationKind = .unspecified
+
+  public var workspaceScope: String = String()
+
+  public var appBundleID: String = String()
+
+  public var networkHost: String = String()
+
+  public var schemaDigest: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentApprovalPolicySnapshot: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var schemaVersion: String = String()
+
+  public var revision: UInt64 = 0
+
+  public var rules: [Melix_Controlplane_V1_AgentApprovalPolicyRule] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_GetAgentApprovalPolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ReplaceAgentApprovalPolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var expectedRevision: UInt64 = 0
+
+  public var rules: [Melix_Controlplane_V1_AgentApprovalPolicyRule] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentApprovalPolicyMutationReceipt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var revision: UInt64 = 0
+
+  public var ruleCount: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_GetAgentOperations: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentToolSourceStatus: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sourceID: String = String()
+
+  public var transportKind: String = String()
+
+  public var connectionState: String = String()
+
+  public var serverName: String = String()
+
+  public var serverVersion: String = String()
+
+  public var capabilities: [String] = []
+
+  public var toolCount: UInt32 = 0
+
+  public var catalogDigest: String = String()
+
+  public var errorCode: String = String()
+
+  public var catalogOnly: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentToolDefinitionSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sourceID: String = String()
+
+  public var adapterKind: String = String()
+
+  public var name: String = String()
+
+  public var title: String = String()
+
+  public var schemaDigest: String = String()
+
+  public var riskClass: String = String()
+
+  public var replayability: String = String()
+
+  public var annotationsUntrusted: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentComputerUseStatus: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var brokerConfigured: Bool {
+    get {_storage._brokerConfigured}
+    set {_uniqueStorage()._brokerConfigured = newValue}
+  }
+
+  public var capabilityLevel: String {
+    get {_storage._capabilityLevel}
+    set {_uniqueStorage()._capabilityLevel = newValue}
+  }
+
+  public var supportedActions: [String] {
+    get {_storage._supportedActions}
+    set {_uniqueStorage()._supportedActions = newValue}
+  }
+
+  public var screenRecordingPermission: String {
+    get {_storage._screenRecordingPermission}
+    set {_uniqueStorage()._screenRecordingPermission = newValue}
+  }
+
+  public var accessibilityPermission: String {
+    get {_storage._accessibilityPermission}
+    set {_uniqueStorage()._accessibilityPermission = newValue}
+  }
+
+  public var maximumFrames: UInt32 {
+    get {_storage._maximumFrames}
+    set {_uniqueStorage()._maximumFrames = newValue}
+  }
+
+  public var maximumActions: UInt32 {
+    get {_storage._maximumActions}
+    set {_uniqueStorage()._maximumActions = newValue}
+  }
+
+  public var maximumArtifactBytes: UInt64 {
+    get {_storage._maximumArtifactBytes}
+    set {_uniqueStorage()._maximumArtifactBytes = newValue}
+  }
+
+  public var idleTimeoutSeconds: UInt32 {
+    get {_storage._idleTimeoutSeconds}
+    set {_uniqueStorage()._idleTimeoutSeconds = newValue}
+  }
+
+  public var absoluteTimeoutSeconds: UInt32 {
+    get {_storage._absoluteTimeoutSeconds}
+    set {_uniqueStorage()._absoluteTimeoutSeconds = newValue}
+  }
+
+  public var transportIdentityState: String {
+    get {_storage._transportIdentityState}
+    set {_uniqueStorage()._transportIdentityState = newValue}
+  }
+
+  public var availableTargets: [Melix_Controlplane_V1_AgentComputerUseTarget] {
+    get {_storage._availableTargets}
+    set {_uniqueStorage()._availableTargets = newValue}
+  }
+
+  /// State is independent from available_targets so a failed refresh is never
+  /// represented as a successful empty inventory.
+  public var targetDiscoveryState: Melix_Controlplane_V1_AgentComputerUseTargetDiscoveryState {
+    get {_storage._targetDiscoveryState}
+    set {_uniqueStorage()._targetDiscoveryState = newValue}
+  }
+
+  /// Present only for AGENT_COMPUTER_USE_TARGET_DISCOVERY_FAILED.
+  public var targetDiscoveryError: Melix_Controlplane_V1_ErrorStatus {
+    get {_storage._targetDiscoveryError ?? Melix_Controlplane_V1_ErrorStatus()}
+    set {_uniqueStorage()._targetDiscoveryError = newValue}
+  }
+  /// Returns true if `targetDiscoveryError` has been explicitly set.
+  public var hasTargetDiscoveryError: Bool {_storage._targetDiscoveryError != nil}
+  /// Clears the value of `targetDiscoveryError`. Subsequent reads from it will return its default value.
+  public mutating func clearTargetDiscoveryError() {_uniqueStorage()._targetDiscoveryError = nil}
+
+  /// Observation time for the last attempted live target refresh.
+  public var targetsObservedAtUnixMs: Int64 {
+    get {_storage._targetsObservedAtUnixMs}
+    set {_uniqueStorage()._targetsObservedAtUnixMs = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentComputerUseTargetProjection: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var availability: Melix_Controlplane_V1_AgentComputerUseFieldAvailability = .unspecified
+
+  public var bundleID: String = String()
+
+  public var windowID: UInt32 = 0
+
+  public var windowTitle: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentComputerUseBudgetProjection: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var limitAvailability: Melix_Controlplane_V1_AgentComputerUseFieldAvailability = .unspecified
+
+  public var limit: UInt32 = 0
+
+  public var usedAvailability: Melix_Controlplane_V1_AgentComputerUseFieldAvailability = .unspecified
+
+  public var used: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentComputerUseDeadlineProjection: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var availability: Melix_Controlplane_V1_AgentComputerUseFieldAvailability = .unspecified
+
+  public var unixMs: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Durable, operator-safe projection of the Computer Use session attached to
+/// one Agent run. It intentionally excludes the private session capability and
+/// only accepts fields anchored by the structured adapter receipt.
+public nonisolated struct Melix_Controlplane_V1_AgentComputerUseSessionProjection: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var schemaVersion: String {
+    get {_storage._schemaVersion}
+    set {_uniqueStorage()._schemaVersion = newValue}
+  }
+
+  public var sessionID: String {
+    get {_storage._sessionID}
+    set {_uniqueStorage()._sessionID = newValue}
+  }
+
+  public var sessionState: Melix_Controlplane_V1_AgentComputerUseSessionState {
+    get {_storage._sessionState}
+    set {_uniqueStorage()._sessionState = newValue}
+  }
+
+  public var allowedTargetsAvailability: Melix_Controlplane_V1_AgentComputerUseFieldAvailability {
+    get {_storage._allowedTargetsAvailability}
+    set {_uniqueStorage()._allowedTargetsAvailability = newValue}
+  }
+
+  public var allowedTargets: [Melix_Controlplane_V1_AgentComputerUseTargetProjection] {
+    get {_storage._allowedTargets}
+    set {_uniqueStorage()._allowedTargets = newValue}
+  }
+
+  public var activeTarget: Melix_Controlplane_V1_AgentComputerUseTargetProjection {
+    get {_storage._activeTarget ?? Melix_Controlplane_V1_AgentComputerUseTargetProjection()}
+    set {_uniqueStorage()._activeTarget = newValue}
+  }
+  /// Returns true if `activeTarget` has been explicitly set.
+  public var hasActiveTarget: Bool {_storage._activeTarget != nil}
+  /// Clears the value of `activeTarget`. Subsequent reads from it will return its default value.
+  public mutating func clearActiveTarget() {_uniqueStorage()._activeTarget = nil}
+
+  public var frameBudget: Melix_Controlplane_V1_AgentComputerUseBudgetProjection {
+    get {_storage._frameBudget ?? Melix_Controlplane_V1_AgentComputerUseBudgetProjection()}
+    set {_uniqueStorage()._frameBudget = newValue}
+  }
+  /// Returns true if `frameBudget` has been explicitly set.
+  public var hasFrameBudget: Bool {_storage._frameBudget != nil}
+  /// Clears the value of `frameBudget`. Subsequent reads from it will return its default value.
+  public mutating func clearFrameBudget() {_uniqueStorage()._frameBudget = nil}
+
+  public var actionBudget: Melix_Controlplane_V1_AgentComputerUseBudgetProjection {
+    get {_storage._actionBudget ?? Melix_Controlplane_V1_AgentComputerUseBudgetProjection()}
+    set {_uniqueStorage()._actionBudget = newValue}
+  }
+  /// Returns true if `actionBudget` has been explicitly set.
+  public var hasActionBudget: Bool {_storage._actionBudget != nil}
+  /// Clears the value of `actionBudget`. Subsequent reads from it will return its default value.
+  public mutating func clearActionBudget() {_uniqueStorage()._actionBudget = nil}
+
+  public var idleDeadline: Melix_Controlplane_V1_AgentComputerUseDeadlineProjection {
+    get {_storage._idleDeadline ?? Melix_Controlplane_V1_AgentComputerUseDeadlineProjection()}
+    set {_uniqueStorage()._idleDeadline = newValue}
+  }
+  /// Returns true if `idleDeadline` has been explicitly set.
+  public var hasIdleDeadline: Bool {_storage._idleDeadline != nil}
+  /// Clears the value of `idleDeadline`. Subsequent reads from it will return its default value.
+  public mutating func clearIdleDeadline() {_uniqueStorage()._idleDeadline = nil}
+
+  public var absoluteDeadline: Melix_Controlplane_V1_AgentComputerUseDeadlineProjection {
+    get {_storage._absoluteDeadline ?? Melix_Controlplane_V1_AgentComputerUseDeadlineProjection()}
+    set {_uniqueStorage()._absoluteDeadline = newValue}
+  }
+  /// Returns true if `absoluteDeadline` has been explicitly set.
+  public var hasAbsoluteDeadline: Bool {_storage._absoluteDeadline != nil}
+  /// Clears the value of `absoluteDeadline`. Subsequent reads from it will return its default value.
+  public mutating func clearAbsoluteDeadline() {_uniqueStorage()._absoluteDeadline = nil}
+
+  public var screenRecordingPermission: Melix_Controlplane_V1_AgentComputerUsePermissionState {
+    get {_storage._screenRecordingPermission}
+    set {_uniqueStorage()._screenRecordingPermission = newValue}
+  }
+
+  public var accessibilityPermission: Melix_Controlplane_V1_AgentComputerUsePermissionState {
+    get {_storage._accessibilityPermission}
+    set {_uniqueStorage()._accessibilityPermission = newValue}
+  }
+
+  public var restartState: Melix_Controlplane_V1_AgentComputerUseRestartState {
+    get {_storage._restartState}
+    set {_uniqueStorage()._restartState = newValue}
+  }
+
+  public var lastOperation: Melix_Controlplane_V1_AgentComputerUseOperation {
+    get {_storage._lastOperation}
+    set {_uniqueStorage()._lastOperation = newValue}
+  }
+
+  public var lastResult: Melix_Controlplane_V1_AgentComputerUseResultState {
+    get {_storage._lastResult}
+    set {_uniqueStorage()._lastResult = newValue}
+  }
+
+  public var lastActionID: String {
+    get {_storage._lastActionID}
+    set {_uniqueStorage()._lastActionID = newValue}
+  }
+
+  public var lastCallID: String {
+    get {_storage._lastCallID}
+    set {_uniqueStorage()._lastCallID = newValue}
+  }
+
+  public var updatedAtUnixMs: Int64 {
+    get {_storage._updatedAtUnixMs}
+    set {_uniqueStorage()._updatedAtUnixMs = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentOperationsSnapshot: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var toolSources: [Melix_Controlplane_V1_AgentToolSourceStatus] = []
+
+  public var tools: [Melix_Controlplane_V1_AgentToolDefinitionSummary] = []
+
+  public var computerUse: Melix_Controlplane_V1_AgentComputerUseStatus {
+    get {_computerUse ?? Melix_Controlplane_V1_AgentComputerUseStatus()}
+    set {_computerUse = newValue}
+  }
+  /// Returns true if `computerUse` has been explicitly set.
+  public var hasComputerUse: Bool {self._computerUse != nil}
+  /// Clears the value of `computerUse`. Subsequent reads from it will return its default value.
+  public mutating func clearComputerUse() {self._computerUse = nil}
+
+  public var catalogDigest: String = String()
+
+  public var observedAtUnixMs: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _computerUse: Melix_Controlplane_V1_AgentComputerUseStatus? = nil
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentToolCallSnapshot: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var callID: String {
+    get {_storage._callID}
+    set {_uniqueStorage()._callID = newValue}
+  }
+
+  public var sourceID: String {
+    get {_storage._sourceID}
+    set {_uniqueStorage()._sourceID = newValue}
+  }
+
+  public var toolName: String {
+    get {_storage._toolName}
+    set {_uniqueStorage()._toolName = newValue}
+  }
+
+  public var title: String {
+    get {_storage._title}
+    set {_uniqueStorage()._title = newValue}
+  }
+
+  public var intendedEffect: String {
+    get {_storage._intendedEffect}
+    set {_uniqueStorage()._intendedEffect = newValue}
+  }
+
+  public var riskClass: String {
+    get {_storage._riskClass}
+    set {_uniqueStorage()._riskClass = newValue}
+  }
+
+  public var state: String {
+    get {_storage._state}
+    set {_uniqueStorage()._state = newValue}
+  }
+
+  public var schemaDigest: String {
+    get {_storage._schemaDigest}
+    set {_uniqueStorage()._schemaDigest = newValue}
+  }
+
+  public var argumentDigest: String {
+    get {_storage._argumentDigest}
+    set {_uniqueStorage()._argumentDigest = newValue}
+  }
+
+  public var durationMs: Double {
+    get {_storage._durationMs}
+    set {_uniqueStorage()._durationMs = newValue}
+  }
+
+  public var evidenceReference: String {
+    get {_storage._evidenceReference}
+    set {_uniqueStorage()._evidenceReference = newValue}
+  }
+
+  public var resultTruncated: Bool {
+    get {_storage._resultTruncated}
+    set {_uniqueStorage()._resultTruncated = newValue}
+  }
+
+  public var error: Melix_Controlplane_V1_ErrorStatus {
+    get {_storage._error ?? Melix_Controlplane_V1_ErrorStatus()}
+    set {_uniqueStorage()._error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {_storage._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {_uniqueStorage()._error = nil}
+
+  /// Bounded worker-authored operator summary. Raw tool output remains in the
+  /// normalized observation/evidence path and is never copied into this field.
+  public var resultSummary: String {
+    get {_storage._resultSummary}
+    set {_uniqueStorage()._resultSummary = newValue}
+  }
+
+  public var failureStage: String {
+    get {_storage._failureStage}
+    set {_uniqueStorage()._failureStage = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentPendingApproval: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var binding: Melix_Controlplane_V1_AgentApprovalBinding {
+    get {_storage._binding ?? Melix_Controlplane_V1_AgentApprovalBinding()}
+    set {_uniqueStorage()._binding = newValue}
+  }
+  /// Returns true if `binding` has been explicitly set.
+  public var hasBinding: Bool {_storage._binding != nil}
+  /// Clears the value of `binding`. Subsequent reads from it will return its default value.
+  public mutating func clearBinding() {_uniqueStorage()._binding = nil}
+
+  public var sourceID: String {
+    get {_storage._sourceID}
+    set {_uniqueStorage()._sourceID = newValue}
+  }
+
+  public var toolName: String {
+    get {_storage._toolName}
+    set {_uniqueStorage()._toolName = newValue}
+  }
+
+  public var title: String {
+    get {_storage._title}
+    set {_uniqueStorage()._title = newValue}
+  }
+
+  public var intendedEffect: String {
+    get {_storage._intendedEffect}
+    set {_uniqueStorage()._intendedEffect = newValue}
+  }
+
+  public var riskClass: String {
+    get {_storage._riskClass}
+    set {_uniqueStorage()._riskClass = newValue}
+  }
+
+  public var operationKind: String {
+    get {_storage._operationKind}
+    set {_uniqueStorage()._operationKind = newValue}
+  }
+
+  public var redactedArgumentsJson: String {
+    get {_storage._redactedArgumentsJson}
+    set {_uniqueStorage()._redactedArgumentsJson = newValue}
+  }
+
+  public var targetScopes: [String] {
+    get {_storage._targetScopes}
+    set {_uniqueStorage()._targetScopes = newValue}
+  }
+
+  public var argumentsTruncated: Bool {
+    get {_storage._argumentsTruncated}
+    set {_uniqueStorage()._argumentsTruncated = newValue}
+  }
+
+  public var persistentAllowEligible: Bool {
+    get {_storage._persistentAllowEligible}
+    set {_uniqueStorage()._persistentAllowEligible = newValue}
+  }
+
+  public var persistentAllowUnavailableReason: String {
+    get {_storage._persistentAllowUnavailableReason}
+    set {_uniqueStorage()._persistentAllowUnavailableReason = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentRunSnapshot: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var runID: String {
+    get {_storage._runID}
+    set {_uniqueStorage()._runID = newValue}
+  }
+
+  public var sessionID: String {
+    get {_storage._sessionID}
+    set {_uniqueStorage()._sessionID = newValue}
+  }
+
+  public var branchID: String {
+    get {_storage._branchID}
+    set {_uniqueStorage()._branchID = newValue}
+  }
+
+  public var modelID: String {
+    get {_storage._modelID}
+    set {_uniqueStorage()._modelID = newValue}
+  }
+
+  public var state: String {
+    get {_storage._state}
+    set {_uniqueStorage()._state = newValue}
+  }
+
+  public var modelTurnCount: UInt32 {
+    get {_storage._modelTurnCount}
+    set {_uniqueStorage()._modelTurnCount = newValue}
+  }
+
+  public var toolCallCount: UInt32 {
+    get {_storage._toolCallCount}
+    set {_uniqueStorage()._toolCallCount = newValue}
+  }
+
+  public var toolCalls: [Melix_Controlplane_V1_AgentToolCallSnapshot] {
+    get {_storage._toolCalls}
+    set {_uniqueStorage()._toolCalls = newValue}
+  }
+
+  public var pendingApproval: Melix_Controlplane_V1_AgentPendingApproval {
+    get {_storage._pendingApproval ?? Melix_Controlplane_V1_AgentPendingApproval()}
+    set {_uniqueStorage()._pendingApproval = newValue}
+  }
+  /// Returns true if `pendingApproval` has been explicitly set.
+  public var hasPendingApproval: Bool {_storage._pendingApproval != nil}
+  /// Clears the value of `pendingApproval`. Subsequent reads from it will return its default value.
+  public mutating func clearPendingApproval() {_uniqueStorage()._pendingApproval = nil}
+
+  public var assistantText: String {
+    get {_storage._assistantText}
+    set {_uniqueStorage()._assistantText = newValue}
+  }
+
+  public var startedAtUnixMs: Int64 {
+    get {_storage._startedAtUnixMs}
+    set {_uniqueStorage()._startedAtUnixMs = newValue}
+  }
+
+  public var updatedAtUnixMs: Int64 {
+    get {_storage._updatedAtUnixMs}
+    set {_uniqueStorage()._updatedAtUnixMs = newValue}
+  }
+
+  public var error: Melix_Controlplane_V1_ErrorStatus {
+    get {_storage._error ?? Melix_Controlplane_V1_ErrorStatus()}
+    set {_uniqueStorage()._error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {_storage._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {_uniqueStorage()._error = nil}
+
+  public var computerUseSession: Melix_Controlplane_V1_AgentComputerUseSessionProjection {
+    get {_storage._computerUseSession ?? Melix_Controlplane_V1_AgentComputerUseSessionProjection()}
+    set {_uniqueStorage()._computerUseSession = newValue}
+  }
+  /// Returns true if `computerUseSession` has been explicitly set.
+  public var hasComputerUseSession: Bool {_storage._computerUseSession != nil}
+  /// Clears the value of `computerUseSession`. Subsequent reads from it will return its default value.
+  public mutating func clearComputerUseSession() {_uniqueStorage()._computerUseSession = nil}
+
+  public var revision: UInt64 {
+    get {_storage._revision}
+    set {_uniqueStorage()._revision = newValue}
+  }
+
+  /// Durable cancellation truth, attached on Get/List from the immutable
+  /// cancellation journal so historical runs remain inspectable after restart.
+  public var cancellationReceipt: Melix_Controlplane_V1_AgentRunCancellationReceipt {
+    get {_storage._cancellationReceipt ?? Melix_Controlplane_V1_AgentRunCancellationReceipt()}
+    set {_uniqueStorage()._cancellationReceipt = newValue}
+  }
+  /// Returns true if `cancellationReceipt` has been explicitly set.
+  public var hasCancellationReceipt: Bool {_storage._cancellationReceipt != nil}
+  /// Clears the value of `cancellationReceipt`. Subsequent reads from it will return its default value.
+  public mutating func clearCancellationReceipt() {_uniqueStorage()._cancellationReceipt = nil}
+
+  public var failureStage: String {
+    get {_storage._failureStage}
+    set {_uniqueStorage()._failureStage = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentApprovalDecisionReceipt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var binding: Melix_Controlplane_V1_AgentApprovalBinding {
+    get {_binding ?? Melix_Controlplane_V1_AgentApprovalBinding()}
+    set {_binding = newValue}
+  }
+  /// Returns true if `binding` has been explicitly set.
+  public var hasBinding: Bool {self._binding != nil}
+  /// Clears the value of `binding`. Subsequent reads from it will return its default value.
+  public mutating func clearBinding() {self._binding = nil}
+
+  public var choice: Melix_Controlplane_V1_AgentApprovalChoice = .unspecified
+
+  public var decisionID: String = String()
+
+  public var actorID: String = String()
+
+  public var decidedAtUnixMs: Int64 = 0
+
+  public var policyRevisionAfterDecision: String = String()
+
+  /// The current exact call decision may commit even when an Always Allow
+  /// policy mutation cannot be saved. Consumers must inspect this typed
+  /// disposition instead of inferring persistence from the operator choice.
+  public var policyPersistenceDisposition: Melix_Controlplane_V1_AgentApprovalPolicyPersistenceDisposition = .unspecified
+
+  public var policyPersistenceError: Melix_Controlplane_V1_ErrorStatus {
+    get {_policyPersistenceError ?? Melix_Controlplane_V1_ErrorStatus()}
+    set {_policyPersistenceError = newValue}
+  }
+  /// Returns true if `policyPersistenceError` has been explicitly set.
+  public var hasPolicyPersistenceError: Bool {self._policyPersistenceError != nil}
+  /// Clears the value of `policyPersistenceError`. Subsequent reads from it will return its default value.
+  public mutating func clearPolicyPersistenceError() {self._policyPersistenceError = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _binding: Melix_Controlplane_V1_AgentApprovalBinding? = nil
+  fileprivate var _policyPersistenceError: Melix_Controlplane_V1_ErrorStatus? = nil
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentToolCancellationReceipt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var callID: String = String()
+
+  public var disposition: String = String()
+
+  /// Deprecated lossy projection retained for older clients. Consumers that
+  /// need cancellation safety must use side_effect_state.
+  ///
+  /// NOTE: This field was marked as deprecated in the .proto file.
+  public var sideEffectCommitted: Bool = false
+
+  public var adapterKind: String = String()
+
+  public var sourceID: String = String()
+
+  public var sideEffectState: Melix_Controlplane_V1_AgentToolSideEffectState = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentRunCancellationReceipt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var runID: String = String()
+
+  public var cancellationID: String = String()
+
+  public var disposition: String = String()
+
+  /// Deprecated lossy projection retained for older clients. Consumers that
+  /// need cancellation safety must use side_effect_state.
+  ///
+  /// NOTE: This field was marked as deprecated in the .proto file.
+  public var sideEffectCommitted: Bool = false
+
+  public var tool: Melix_Controlplane_V1_AgentToolCancellationReceipt {
+    get {_tool ?? Melix_Controlplane_V1_AgentToolCancellationReceipt()}
+    set {_tool = newValue}
+  }
+  /// Returns true if `tool` has been explicitly set.
+  public var hasTool: Bool {self._tool != nil}
+  /// Clears the value of `tool`. Subsequent reads from it will return its default value.
+  public mutating func clearTool() {self._tool = nil}
+
+  public var sideEffectState: Melix_Controlplane_V1_AgentToolSideEffectState = .unspecified
+
+  public var runTools: Melix_Controlplane_V1_AgentRunToolCancellationReceipt {
+    get {_runTools ?? Melix_Controlplane_V1_AgentRunToolCancellationReceipt()}
+    set {_runTools = newValue}
+  }
+  /// Returns true if `runTools` has been explicitly set.
+  public var hasRunTools: Bool {self._runTools != nil}
+  /// Clears the value of `runTools`. Subsequent reads from it will return its default value.
+  public mutating func clearRunTools() {self._runTools = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _tool: Melix_Controlplane_V1_AgentToolCancellationReceipt? = nil
+  fileprivate var _runTools: Melix_Controlplane_V1_AgentRunToolCancellationReceipt? = nil
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentRunToolCancellationReceipt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var disposition: String = String()
+
+  public var sideEffectState: Melix_Controlplane_V1_AgentToolSideEffectState = .unspecified
+
+  public var calls: [Melix_Controlplane_V1_AgentToolCancellationReceipt] = []
+
+  public var computerUseDisposition: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_AgentRunStateChanged: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var run: Melix_Controlplane_V1_AgentRunSnapshot {
+    get {_run ?? Melix_Controlplane_V1_AgentRunSnapshot()}
+    set {_run = newValue}
+  }
+  /// Returns true if `run` has been explicitly set.
+  public var hasRun: Bool {self._run != nil}
+  /// Clears the value of `run`. Subsequent reads from it will return its default value.
+  public mutating func clearRun() {self._run = nil}
+
+  public var changeKind: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _run: Melix_Controlplane_V1_AgentRunSnapshot? = nil
 }
 
 public nonisolated struct Melix_Controlplane_V1_StartServer: Sendable {
@@ -7935,8 +10501,72 @@ public nonisolated struct Melix_Controlplane_V1_ImageJobStateChanged: Sendable {
 
 fileprivate nonisolated let _protobuf_package = "melix.controlplane.v1"
 
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCChatDeltaKind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CONTROL_PLANE_IPC_CHAT_DELTA_KIND_UNSPECIFIED\0\u{1}CONTROL_PLANE_IPC_CHAT_QUEUED\0\u{1}CONTROL_PLANE_IPC_CHAT_ADMITTED\0\u{1}CONTROL_PLANE_IPC_CHAT_PREFILL_STARTED\0\u{1}CONTROL_PLANE_IPC_CHAT_DECODE_STARTED\0\u{1}CONTROL_PLANE_IPC_CHAT_TOKEN\0\u{1}CONTROL_PLANE_IPC_CHAT_REASONING\0\u{1}CONTROL_PLANE_IPC_CHAT_TOOL_CALL\0\u{1}CONTROL_PLANE_IPC_CHAT_ANNOTATION\0\u{1}CONTROL_PLANE_IPC_CHAT_TOOL_RESULT\0\u{1}CONTROL_PLANE_IPC_CHAT_USAGE\0\u{1}CONTROL_PLANE_IPC_CHAT_COMPLETED\0\u{1}CONTROL_PLANE_IPC_CHAT_FAILED\0\u{1}CONTROL_PLANE_IPC_CHAT_HEARTBEAT\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCChatCancellationDisposition: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CONTROL_PLANE_IPC_CHAT_CANCELLATION_DISPOSITION_UNSPECIFIED\0\u{1}CONTROL_PLANE_IPC_CHAT_CANCELLATION_ACCEPTED\0\u{1}CONTROL_PLANE_IPC_CHAT_CANCELLATION_ALREADY_TERMINAL\0\u{1}CONTROL_PLANE_IPC_CHAT_CANCELLATION_NOT_FOUND\0\u{1}CONTROL_PLANE_IPC_CHAT_CANCELLATION_UNAVAILABLE\0")
+}
+
 nonisolated extension Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_EDIT_MODE_UNSPECIFIED\0\u{1}IMAGE_EDIT_MODE_EDIT\0\u{1}IMAGE_EDIT_MODE_VARIATION\0\u{1}IMAGE_EDIT_MODE_ITERATE\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentInteractionMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_INTERACTION_MODE_UNSPECIFIED\0\u{1}AGENT_INTERACTION_MODE_ASK\0\u{1}AGENT_INTERACTION_MODE_ACT\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalChoice: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_APPROVAL_CHOICE_UNSPECIFIED\0\u{1}AGENT_APPROVAL_ALLOW_ONCE\0\u{1}AGENT_APPROVAL_ALWAYS_ALLOW\0\u{1}AGENT_APPROVAL_DENY\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalPolicyPersistenceDisposition: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_APPROVAL_POLICY_PERSISTENCE_DISPOSITION_UNSPECIFIED\0\u{1}AGENT_APPROVAL_POLICY_PERSISTENCE_NOT_REQUESTED\0\u{1}AGENT_APPROVAL_POLICY_PERSISTENCE_APPLIED\0\u{1}AGENT_APPROVAL_POLICY_PERSISTENCE_NOT_APPLIED\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalPolicyEffect: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_APPROVAL_POLICY_EFFECT_UNSPECIFIED\0\u{1}AGENT_APPROVAL_POLICY_ALLOW\0\u{1}AGENT_APPROVAL_POLICY_ASK\0\u{1}AGENT_APPROVAL_POLICY_DENY\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalRiskClass: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_APPROVAL_RISK_CLASS_UNSPECIFIED\0\u{1}AGENT_APPROVAL_RISK_CLASS_UNKNOWN\0\u{1}AGENT_APPROVAL_RISK_CLASS_LOW\0\u{1}AGENT_APPROVAL_RISK_CLASS_MEDIUM\0\u{1}AGENT_APPROVAL_RISK_CLASS_HIGH\0\u{1}AGENT_APPROVAL_RISK_CLASS_CRITICAL\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalOperationKind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_APPROVAL_OPERATION_KIND_UNSPECIFIED\0\u{1}AGENT_APPROVAL_OPERATION_UNKNOWN\0\u{1}AGENT_APPROVAL_OPERATION_READ\0\u{1}AGENT_APPROVAL_OPERATION_WRITE\0\u{1}AGENT_APPROVAL_OPERATION_CREDENTIAL_ACCESS\0\u{1}AGENT_APPROVAL_OPERATION_AUTHENTICATION\0\u{1}AGENT_APPROVAL_OPERATION_UPLOAD\0\u{1}AGENT_APPROVAL_OPERATION_SEND\0\u{1}AGENT_APPROVAL_OPERATION_PURCHASE\0\u{1}AGENT_APPROVAL_OPERATION_DESTRUCTIVE_MUTATION\0\u{1}AGENT_APPROVAL_OPERATION_PROCESS_EXECUTION\0\u{1}AGENT_APPROVAL_OPERATION_SECURE_FIELD_INTERACTION\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseTargetDiscoveryState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_COMPUTER_USE_TARGET_DISCOVERY_STATE_UNSPECIFIED\0\u{1}AGENT_COMPUTER_USE_TARGET_DISCOVERY_NOT_REQUESTED\0\u{1}AGENT_COMPUTER_USE_TARGET_DISCOVERY_READY\0\u{1}AGENT_COMPUTER_USE_TARGET_DISCOVERY_EMPTY\0\u{1}AGENT_COMPUTER_USE_TARGET_DISCOVERY_FAILED\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseFieldAvailability: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_COMPUTER_USE_FIELD_AVAILABILITY_UNSPECIFIED\0\u{1}AGENT_COMPUTER_USE_FIELD_UNAVAILABLE\0\u{1}AGENT_COMPUTER_USE_FIELD_AVAILABLE\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseSessionState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_COMPUTER_USE_SESSION_STATE_UNSPECIFIED\0\u{1}AGENT_COMPUTER_USE_SESSION_UNAVAILABLE\0\u{1}AGENT_COMPUTER_USE_SESSION_OPEN\0\u{1}AGENT_COMPUTER_USE_SESSION_CLOSED\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUsePermissionState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_COMPUTER_USE_PERMISSION_STATE_UNSPECIFIED\0\u{1}AGENT_COMPUTER_USE_PERMISSION_UNAVAILABLE\0\u{1}AGENT_COMPUTER_USE_PERMISSION_NOT_DETERMINED\0\u{1}AGENT_COMPUTER_USE_PERMISSION_DENIED\0\u{1}AGENT_COMPUTER_USE_PERMISSION_GRANTED\0\u{1}AGENT_COMPUTER_USE_PERMISSION_RESTART_REQUIRED\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseRestartState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_COMPUTER_USE_RESTART_STATE_UNSPECIFIED\0\u{1}AGENT_COMPUTER_USE_RESTART_UNAVAILABLE\0\u{1}AGENT_COMPUTER_USE_RESTART_NOT_REQUIRED\0\u{1}AGENT_COMPUTER_USE_RESTART_REQUIRED\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseOperation: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_COMPUTER_USE_OPERATION_UNSPECIFIED\0\u{1}AGENT_COMPUTER_USE_OPERATION_UNAVAILABLE\0\u{1}AGENT_COMPUTER_USE_GET_PERMISSIONS\0\u{1}AGENT_COMPUTER_USE_OPEN_SESSION\0\u{1}AGENT_COMPUTER_USE_CAPTURE_FRAME\0\u{1}AGENT_COMPUTER_USE_PRESS_ELEMENT\0\u{1}AGENT_COMPUTER_USE_CLOSE_SESSION\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseResultState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_COMPUTER_USE_RESULT_STATE_UNSPECIFIED\0\u{1}AGENT_COMPUTER_USE_RESULT_UNAVAILABLE\0\u{1}AGENT_COMPUTER_USE_RESULT_COMPLETED\0\u{1}AGENT_COMPUTER_USE_RESULT_FAILED\0\u{1}AGENT_COMPUTER_USE_RESULT_CANCELLED\0\u{1}AGENT_COMPUTER_USE_RESULT_TIMEOUT\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentToolSideEffectState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AGENT_TOOL_SIDE_EFFECT_STATE_UNSPECIFIED\0\u{1}AGENT_TOOL_SIDE_EFFECT_NONE\0\u{1}AGENT_TOOL_SIDE_EFFECT_COMMITTED\0\u{1}AGENT_TOOL_SIDE_EFFECT_UNKNOWN\0")
 }
 
 nonisolated extension Melix_Controlplane_V1_ServerState: SwiftProtobuf._ProtoNameProviding {
@@ -8220,9 +10850,986 @@ nonisolated extension Melix_Controlplane_V1_HandshakeResponse: SwiftProtobuf.Mes
   }
 }
 
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCChatToolCall: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCChatToolCall"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}call_id\0\u{1}type\0\u{3}tool_name\0\u{3}arguments_json\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.callID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.type) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.toolName) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.argumentsJson) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.callID.isEmpty {
+      try visitor.visitSingularStringField(value: self.callID, fieldNumber: 1)
+    }
+    if !self.type.isEmpty {
+      try visitor.visitSingularStringField(value: self.type, fieldNumber: 2)
+    }
+    if !self.toolName.isEmpty {
+      try visitor.visitSingularStringField(value: self.toolName, fieldNumber: 3)
+    }
+    if !self.argumentsJson.isEmpty {
+      try visitor.visitSingularStringField(value: self.argumentsJson, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCChatToolCall, rhs: Melix_Controlplane_V1_ControlPlaneIPCChatToolCall) -> Bool {
+    if lhs.callID != rhs.callID {return false}
+    if lhs.type != rhs.type {return false}
+    if lhs.toolName != rhs.toolName {return false}
+    if lhs.argumentsJson != rhs.argumentsJson {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCChatMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCChatMessage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}role\0\u{1}content\0\u{1}name\0\u{3}has_name\0\u{3}tool_calls\0\u{3}tool_call_id\0\u{3}has_tool_call_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.role) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.content) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.hasName_p) }()
+      case 5: try { try decoder.decodeRepeatedMessageField(value: &self.toolCalls) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.toolCallID) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.hasToolCallID_p) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.role.isEmpty {
+      try visitor.visitSingularStringField(value: self.role, fieldNumber: 1)
+    }
+    if !self.content.isEmpty {
+      try visitor.visitSingularStringField(value: self.content, fieldNumber: 2)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 3)
+    }
+    if self.hasName_p != false {
+      try visitor.visitSingularBoolField(value: self.hasName_p, fieldNumber: 4)
+    }
+    if !self.toolCalls.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.toolCalls, fieldNumber: 5)
+    }
+    if !self.toolCallID.isEmpty {
+      try visitor.visitSingularStringField(value: self.toolCallID, fieldNumber: 6)
+    }
+    if self.hasToolCallID_p != false {
+      try visitor.visitSingularBoolField(value: self.hasToolCallID_p, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCChatMessage, rhs: Melix_Controlplane_V1_ControlPlaneIPCChatMessage) -> Bool {
+    if lhs.role != rhs.role {return false}
+    if lhs.content != rhs.content {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.hasName_p != rhs.hasName_p {return false}
+    if lhs.toolCalls != rhs.toolCalls {return false}
+    if lhs.toolCallID != rhs.toolCallID {return false}
+    if lhs.hasToolCallID_p != rhs.hasToolCallID_p {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCChatToolDefinition: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCChatToolDefinition"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}description\0\u{3}parameters_json\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.description_p) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.parametersJson) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.description_p.isEmpty {
+      try visitor.visitSingularStringField(value: self.description_p, fieldNumber: 2)
+    }
+    if !self.parametersJson.isEmpty {
+      try visitor.visitSingularStringField(value: self.parametersJson, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCChatToolDefinition, rhs: Melix_Controlplane_V1_ControlPlaneIPCChatToolDefinition) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.description_p != rhs.description_p {return false}
+    if lhs.parametersJson != rhs.parametersJson {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCRemoteTarget"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_id\0\u{3}provider_kind\0\u{3}base_url\0\u{3}api_key\0\u{3}model_id\0\u{3}timeout_seconds\0\u{3}rate_limit_per_minute\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.serverID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.providerKind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.baseURL) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.apiKey) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.timeoutSeconds) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.rateLimitPerMinute) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.serverID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverID, fieldNumber: 1)
+    }
+    if !self.providerKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerKind, fieldNumber: 2)
+    }
+    if !self.baseURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.baseURL, fieldNumber: 3)
+    }
+    if !self.apiKey.isEmpty {
+      try visitor.visitSingularStringField(value: self.apiKey, fieldNumber: 4)
+    }
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 5)
+    }
+    if self.timeoutSeconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.timeoutSeconds, fieldNumber: 6)
+    }
+    if self.rateLimitPerMinute != 0 {
+      try visitor.visitSingularUInt32Field(value: self.rateLimitPerMinute, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget, rhs: Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget) -> Bool {
+    if lhs.serverID != rhs.serverID {return false}
+    if lhs.providerKind != rhs.providerKind {return false}
+    if lhs.baseURL != rhs.baseURL {return false}
+    if lhs.apiKey != rhs.apiKey {return false}
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.timeoutSeconds != rhs.timeoutSeconds {return false}
+    if lhs.rateLimitPerMinute != rhs.rateLimitPerMinute {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCChatRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCChatRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}server_session_id\0\u{1}messages\0\u{1}tools\0\u{3}tool_choice\0\u{3}has_tool_choice\0\u{3}parallel_tool_calls\0\u{3}enable_thinking\0\u{3}has_enable_thinking\0\u{3}reasoning_effort\0\u{3}has_reasoning_effort\0\u{3}chat_template_kwargs_json\0\u{3}has_chat_template_kwargs_json\0\u{3}resume_request_id\0\u{3}has_resume_request_id\0\u{1}temperature\0\u{3}has_temperature\0\u{3}top_p\0\u{3}has_top_p\0\u{3}max_tokens\0\u{3}has_max_tokens\0\u{3}remote_target\0\u{3}transport_request_id\0")
+
+  fileprivate class _StorageClass {
+    var _modelID: String = String()
+    var _serverSessionID: String = String()
+    var _messages: [Melix_Controlplane_V1_ControlPlaneIPCChatMessage] = []
+    var _tools: [Melix_Controlplane_V1_ControlPlaneIPCChatToolDefinition] = []
+    var _toolChoice: String = String()
+    var _hasToolChoice_p: Bool = false
+    var _parallelToolCalls: Bool = false
+    var _enableThinking: Bool = false
+    var _hasEnableThinking_p: Bool = false
+    var _reasoningEffort: String = String()
+    var _hasReasoningEffort_p: Bool = false
+    var _chatTemplateKwargsJson: String = String()
+    var _hasChatTemplateKwargsJson_p: Bool = false
+    var _resumeRequestID: String = String()
+    var _hasResumeRequestID_p: Bool = false
+    var _temperature: Double = 0
+    var _hasTemperature_p: Bool = false
+    var _topP: Double = 0
+    var _hasTopP_p: Bool = false
+    var _maxTokens: UInt32 = 0
+    var _hasMaxTokens_p: Bool = false
+    var _remoteTarget: Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget? = nil
+    var _transportRequestID: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _modelID = source._modelID
+      _serverSessionID = source._serverSessionID
+      _messages = source._messages
+      _tools = source._tools
+      _toolChoice = source._toolChoice
+      _hasToolChoice_p = source._hasToolChoice_p
+      _parallelToolCalls = source._parallelToolCalls
+      _enableThinking = source._enableThinking
+      _hasEnableThinking_p = source._hasEnableThinking_p
+      _reasoningEffort = source._reasoningEffort
+      _hasReasoningEffort_p = source._hasReasoningEffort_p
+      _chatTemplateKwargsJson = source._chatTemplateKwargsJson
+      _hasChatTemplateKwargsJson_p = source._hasChatTemplateKwargsJson_p
+      _resumeRequestID = source._resumeRequestID
+      _hasResumeRequestID_p = source._hasResumeRequestID_p
+      _temperature = source._temperature
+      _hasTemperature_p = source._hasTemperature_p
+      _topP = source._topP
+      _hasTopP_p = source._hasTopP_p
+      _maxTokens = source._maxTokens
+      _hasMaxTokens_p = source._hasMaxTokens_p
+      _remoteTarget = source._remoteTarget
+      _transportRequestID = source._transportRequestID
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._modelID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._serverSessionID) }()
+        case 3: try { try decoder.decodeRepeatedMessageField(value: &_storage._messages) }()
+        case 4: try { try decoder.decodeRepeatedMessageField(value: &_storage._tools) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._toolChoice) }()
+        case 6: try { try decoder.decodeSingularBoolField(value: &_storage._hasToolChoice_p) }()
+        case 7: try { try decoder.decodeSingularBoolField(value: &_storage._parallelToolCalls) }()
+        case 8: try { try decoder.decodeSingularBoolField(value: &_storage._enableThinking) }()
+        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._hasEnableThinking_p) }()
+        case 10: try { try decoder.decodeSingularStringField(value: &_storage._reasoningEffort) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._hasReasoningEffort_p) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._chatTemplateKwargsJson) }()
+        case 13: try { try decoder.decodeSingularBoolField(value: &_storage._hasChatTemplateKwargsJson_p) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._resumeRequestID) }()
+        case 15: try { try decoder.decodeSingularBoolField(value: &_storage._hasResumeRequestID_p) }()
+        case 16: try { try decoder.decodeSingularDoubleField(value: &_storage._temperature) }()
+        case 17: try { try decoder.decodeSingularBoolField(value: &_storage._hasTemperature_p) }()
+        case 18: try { try decoder.decodeSingularDoubleField(value: &_storage._topP) }()
+        case 19: try { try decoder.decodeSingularBoolField(value: &_storage._hasTopP_p) }()
+        case 20: try { try decoder.decodeSingularUInt32Field(value: &_storage._maxTokens) }()
+        case 21: try { try decoder.decodeSingularBoolField(value: &_storage._hasMaxTokens_p) }()
+        case 22: try { try decoder.decodeSingularMessageField(value: &_storage._remoteTarget) }()
+        case 23: try { try decoder.decodeSingularStringField(value: &_storage._transportRequestID) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._modelID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._modelID, fieldNumber: 1)
+      }
+      if !_storage._serverSessionID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._serverSessionID, fieldNumber: 2)
+      }
+      if !_storage._messages.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._messages, fieldNumber: 3)
+      }
+      if !_storage._tools.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._tools, fieldNumber: 4)
+      }
+      if !_storage._toolChoice.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._toolChoice, fieldNumber: 5)
+      }
+      if _storage._hasToolChoice_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasToolChoice_p, fieldNumber: 6)
+      }
+      if _storage._parallelToolCalls != false {
+        try visitor.visitSingularBoolField(value: _storage._parallelToolCalls, fieldNumber: 7)
+      }
+      if _storage._enableThinking != false {
+        try visitor.visitSingularBoolField(value: _storage._enableThinking, fieldNumber: 8)
+      }
+      if _storage._hasEnableThinking_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasEnableThinking_p, fieldNumber: 9)
+      }
+      if !_storage._reasoningEffort.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._reasoningEffort, fieldNumber: 10)
+      }
+      if _storage._hasReasoningEffort_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasReasoningEffort_p, fieldNumber: 11)
+      }
+      if !_storage._chatTemplateKwargsJson.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._chatTemplateKwargsJson, fieldNumber: 12)
+      }
+      if _storage._hasChatTemplateKwargsJson_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasChatTemplateKwargsJson_p, fieldNumber: 13)
+      }
+      if !_storage._resumeRequestID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._resumeRequestID, fieldNumber: 14)
+      }
+      if _storage._hasResumeRequestID_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasResumeRequestID_p, fieldNumber: 15)
+      }
+      if _storage._temperature.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._temperature, fieldNumber: 16)
+      }
+      if _storage._hasTemperature_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasTemperature_p, fieldNumber: 17)
+      }
+      if _storage._topP.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._topP, fieldNumber: 18)
+      }
+      if _storage._hasTopP_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasTopP_p, fieldNumber: 19)
+      }
+      if _storage._maxTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._maxTokens, fieldNumber: 20)
+      }
+      if _storage._hasMaxTokens_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasMaxTokens_p, fieldNumber: 21)
+      }
+      try { if let v = _storage._remoteTarget {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 22)
+      } }()
+      if !_storage._transportRequestID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._transportRequestID, fieldNumber: 23)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCChatRequest, rhs: Melix_Controlplane_V1_ControlPlaneIPCChatRequest) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._modelID != rhs_storage._modelID {return false}
+        if _storage._serverSessionID != rhs_storage._serverSessionID {return false}
+        if _storage._messages != rhs_storage._messages {return false}
+        if _storage._tools != rhs_storage._tools {return false}
+        if _storage._toolChoice != rhs_storage._toolChoice {return false}
+        if _storage._hasToolChoice_p != rhs_storage._hasToolChoice_p {return false}
+        if _storage._parallelToolCalls != rhs_storage._parallelToolCalls {return false}
+        if _storage._enableThinking != rhs_storage._enableThinking {return false}
+        if _storage._hasEnableThinking_p != rhs_storage._hasEnableThinking_p {return false}
+        if _storage._reasoningEffort != rhs_storage._reasoningEffort {return false}
+        if _storage._hasReasoningEffort_p != rhs_storage._hasReasoningEffort_p {return false}
+        if _storage._chatTemplateKwargsJson != rhs_storage._chatTemplateKwargsJson {return false}
+        if _storage._hasChatTemplateKwargsJson_p != rhs_storage._hasChatTemplateKwargsJson_p {return false}
+        if _storage._resumeRequestID != rhs_storage._resumeRequestID {return false}
+        if _storage._hasResumeRequestID_p != rhs_storage._hasResumeRequestID_p {return false}
+        if _storage._temperature != rhs_storage._temperature {return false}
+        if _storage._hasTemperature_p != rhs_storage._hasTemperature_p {return false}
+        if _storage._topP != rhs_storage._topP {return false}
+        if _storage._hasTopP_p != rhs_storage._hasTopP_p {return false}
+        if _storage._maxTokens != rhs_storage._maxTokens {return false}
+        if _storage._hasMaxTokens_p != rhs_storage._hasMaxTokens_p {return false}
+        if _storage._remoteTarget != rhs_storage._remoteTarget {return false}
+        if _storage._transportRequestID != rhs_storage._transportRequestID {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCChatStarted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCChatStarted"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}model_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.requestID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.requestID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestID, fieldNumber: 1)
+    }
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCChatStarted, rhs: Melix_Controlplane_V1_ControlPlaneIPCChatStarted) -> Bool {
+    if lhs.requestID != rhs.requestID {return false}
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCChatEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCChatEvent"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}started\0\u{1}event\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: Melix_Controlplane_V1_ControlPlaneIPCChatStarted?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .started(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .started(v)
+        }
+      }()
+      case 2: try {
+        var v: Melix_Controlplane_V1_ControlPlaneIPCChatDelta?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .event(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .event(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.payload {
+    case .started?: try {
+      guard case .started(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    }()
+    case .event?: try {
+      guard case .event(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCChatEvent, rhs: Melix_Controlplane_V1_ControlPlaneIPCChatEvent) -> Bool {
+    if lhs.payload != rhs.payload {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCChatDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCChatDelta"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{1}seq\0\u{1}kind\0\u{1}lane\0\u{3}queue_position\0\u{1}backpressure\0\u{3}worker_id\0\u{3}queue_delay_ms\0\u{3}input_tokens\0\u{3}decode_handle\0\u{3}max_output_tokens\0\u{1}text\0\u{3}call_id\0\u{3}tool_name\0\u{3}arguments_fragment\0\u{3}annotation_id\0\u{3}annotation_kind\0\u{3}start_offset\0\u{3}end_offset\0\u{3}payload_json\0\u{1}status\0\u{3}result_json\0\u{3}prompt_tokens\0\u{3}completion_tokens\0\u{3}cached_prompt_tokens\0\u{3}media_feature_cache_hits\0\u{3}media_feature_cache_misses\0\u{3}media_feature_encoder_calls_saved\0\u{3}media_feature_work_saved_bytes\0\u{3}finish_reason\0\u{3}assistant_text\0\u{3}reasoning_text\0\u{3}error_code\0\u{3}error_message\0")
+
+  fileprivate class _StorageClass {
+    var _requestID: String = String()
+    var _seq: UInt64 = 0
+    var _kind: Melix_Controlplane_V1_ControlPlaneIPCChatDeltaKind = .unspecified
+    var _lane: String = String()
+    var _queuePosition: UInt32 = 0
+    var _backpressure: Double = 0
+    var _workerID: String = String()
+    var _queueDelayMs: Double = 0
+    var _inputTokens: UInt32 = 0
+    var _decodeHandle: String = String()
+    var _maxOutputTokens: UInt32 = 0
+    var _text: String = String()
+    var _callID: String = String()
+    var _toolName: String = String()
+    var _argumentsFragment: String = String()
+    var _annotationID: String = String()
+    var _annotationKind: String = String()
+    var _startOffset: UInt32 = 0
+    var _endOffset: UInt32 = 0
+    var _payloadJson: String = String()
+    var _status: String = String()
+    var _resultJson: String = String()
+    var _promptTokens: UInt32 = 0
+    var _completionTokens: UInt32 = 0
+    var _cachedPromptTokens: UInt32 = 0
+    var _mediaFeatureCacheHits: UInt64 = 0
+    var _mediaFeatureCacheMisses: UInt64 = 0
+    var _mediaFeatureEncoderCallsSaved: UInt64 = 0
+    var _mediaFeatureWorkSavedBytes: UInt64 = 0
+    var _finishReason: String = String()
+    var _assistantText: String = String()
+    var _reasoningText: String = String()
+    var _errorCode: String = String()
+    var _errorMessage: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _requestID = source._requestID
+      _seq = source._seq
+      _kind = source._kind
+      _lane = source._lane
+      _queuePosition = source._queuePosition
+      _backpressure = source._backpressure
+      _workerID = source._workerID
+      _queueDelayMs = source._queueDelayMs
+      _inputTokens = source._inputTokens
+      _decodeHandle = source._decodeHandle
+      _maxOutputTokens = source._maxOutputTokens
+      _text = source._text
+      _callID = source._callID
+      _toolName = source._toolName
+      _argumentsFragment = source._argumentsFragment
+      _annotationID = source._annotationID
+      _annotationKind = source._annotationKind
+      _startOffset = source._startOffset
+      _endOffset = source._endOffset
+      _payloadJson = source._payloadJson
+      _status = source._status
+      _resultJson = source._resultJson
+      _promptTokens = source._promptTokens
+      _completionTokens = source._completionTokens
+      _cachedPromptTokens = source._cachedPromptTokens
+      _mediaFeatureCacheHits = source._mediaFeatureCacheHits
+      _mediaFeatureCacheMisses = source._mediaFeatureCacheMisses
+      _mediaFeatureEncoderCallsSaved = source._mediaFeatureEncoderCallsSaved
+      _mediaFeatureWorkSavedBytes = source._mediaFeatureWorkSavedBytes
+      _finishReason = source._finishReason
+      _assistantText = source._assistantText
+      _reasoningText = source._reasoningText
+      _errorCode = source._errorCode
+      _errorMessage = source._errorMessage
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._requestID) }()
+        case 2: try { try decoder.decodeSingularUInt64Field(value: &_storage._seq) }()
+        case 3: try { try decoder.decodeSingularEnumField(value: &_storage._kind) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._lane) }()
+        case 5: try { try decoder.decodeSingularUInt32Field(value: &_storage._queuePosition) }()
+        case 6: try { try decoder.decodeSingularDoubleField(value: &_storage._backpressure) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._workerID) }()
+        case 8: try { try decoder.decodeSingularDoubleField(value: &_storage._queueDelayMs) }()
+        case 9: try { try decoder.decodeSingularUInt32Field(value: &_storage._inputTokens) }()
+        case 10: try { try decoder.decodeSingularStringField(value: &_storage._decodeHandle) }()
+        case 11: try { try decoder.decodeSingularUInt32Field(value: &_storage._maxOutputTokens) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._text) }()
+        case 13: try { try decoder.decodeSingularStringField(value: &_storage._callID) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._toolName) }()
+        case 15: try { try decoder.decodeSingularStringField(value: &_storage._argumentsFragment) }()
+        case 16: try { try decoder.decodeSingularStringField(value: &_storage._annotationID) }()
+        case 17: try { try decoder.decodeSingularStringField(value: &_storage._annotationKind) }()
+        case 18: try { try decoder.decodeSingularUInt32Field(value: &_storage._startOffset) }()
+        case 19: try { try decoder.decodeSingularUInt32Field(value: &_storage._endOffset) }()
+        case 20: try { try decoder.decodeSingularStringField(value: &_storage._payloadJson) }()
+        case 21: try { try decoder.decodeSingularStringField(value: &_storage._status) }()
+        case 22: try { try decoder.decodeSingularStringField(value: &_storage._resultJson) }()
+        case 23: try { try decoder.decodeSingularUInt32Field(value: &_storage._promptTokens) }()
+        case 24: try { try decoder.decodeSingularUInt32Field(value: &_storage._completionTokens) }()
+        case 25: try { try decoder.decodeSingularUInt32Field(value: &_storage._cachedPromptTokens) }()
+        case 26: try { try decoder.decodeSingularUInt64Field(value: &_storage._mediaFeatureCacheHits) }()
+        case 27: try { try decoder.decodeSingularUInt64Field(value: &_storage._mediaFeatureCacheMisses) }()
+        case 28: try { try decoder.decodeSingularUInt64Field(value: &_storage._mediaFeatureEncoderCallsSaved) }()
+        case 29: try { try decoder.decodeSingularUInt64Field(value: &_storage._mediaFeatureWorkSavedBytes) }()
+        case 30: try { try decoder.decodeSingularStringField(value: &_storage._finishReason) }()
+        case 31: try { try decoder.decodeSingularStringField(value: &_storage._assistantText) }()
+        case 32: try { try decoder.decodeSingularStringField(value: &_storage._reasoningText) }()
+        case 33: try { try decoder.decodeSingularStringField(value: &_storage._errorCode) }()
+        case 34: try { try decoder.decodeSingularStringField(value: &_storage._errorMessage) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if !_storage._requestID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._requestID, fieldNumber: 1)
+      }
+      if _storage._seq != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._seq, fieldNumber: 2)
+      }
+      if _storage._kind != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._kind, fieldNumber: 3)
+      }
+      if !_storage._lane.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lane, fieldNumber: 4)
+      }
+      if _storage._queuePosition != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._queuePosition, fieldNumber: 5)
+      }
+      if _storage._backpressure.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._backpressure, fieldNumber: 6)
+      }
+      if !_storage._workerID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._workerID, fieldNumber: 7)
+      }
+      if _storage._queueDelayMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._queueDelayMs, fieldNumber: 8)
+      }
+      if _storage._inputTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._inputTokens, fieldNumber: 9)
+      }
+      if !_storage._decodeHandle.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._decodeHandle, fieldNumber: 10)
+      }
+      if _storage._maxOutputTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._maxOutputTokens, fieldNumber: 11)
+      }
+      if !_storage._text.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._text, fieldNumber: 12)
+      }
+      if !_storage._callID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._callID, fieldNumber: 13)
+      }
+      if !_storage._toolName.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._toolName, fieldNumber: 14)
+      }
+      if !_storage._argumentsFragment.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._argumentsFragment, fieldNumber: 15)
+      }
+      if !_storage._annotationID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._annotationID, fieldNumber: 16)
+      }
+      if !_storage._annotationKind.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._annotationKind, fieldNumber: 17)
+      }
+      if _storage._startOffset != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._startOffset, fieldNumber: 18)
+      }
+      if _storage._endOffset != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._endOffset, fieldNumber: 19)
+      }
+      if !_storage._payloadJson.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._payloadJson, fieldNumber: 20)
+      }
+      if !_storage._status.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._status, fieldNumber: 21)
+      }
+      if !_storage._resultJson.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._resultJson, fieldNumber: 22)
+      }
+      if _storage._promptTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._promptTokens, fieldNumber: 23)
+      }
+      if _storage._completionTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._completionTokens, fieldNumber: 24)
+      }
+      if _storage._cachedPromptTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._cachedPromptTokens, fieldNumber: 25)
+      }
+      if _storage._mediaFeatureCacheHits != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._mediaFeatureCacheHits, fieldNumber: 26)
+      }
+      if _storage._mediaFeatureCacheMisses != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._mediaFeatureCacheMisses, fieldNumber: 27)
+      }
+      if _storage._mediaFeatureEncoderCallsSaved != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._mediaFeatureEncoderCallsSaved, fieldNumber: 28)
+      }
+      if _storage._mediaFeatureWorkSavedBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._mediaFeatureWorkSavedBytes, fieldNumber: 29)
+      }
+      if !_storage._finishReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._finishReason, fieldNumber: 30)
+      }
+      if !_storage._assistantText.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._assistantText, fieldNumber: 31)
+      }
+      if !_storage._reasoningText.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._reasoningText, fieldNumber: 32)
+      }
+      if !_storage._errorCode.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._errorCode, fieldNumber: 33)
+      }
+      if !_storage._errorMessage.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._errorMessage, fieldNumber: 34)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCChatDelta, rhs: Melix_Controlplane_V1_ControlPlaneIPCChatDelta) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._requestID != rhs_storage._requestID {return false}
+        if _storage._seq != rhs_storage._seq {return false}
+        if _storage._kind != rhs_storage._kind {return false}
+        if _storage._lane != rhs_storage._lane {return false}
+        if _storage._queuePosition != rhs_storage._queuePosition {return false}
+        if _storage._backpressure != rhs_storage._backpressure {return false}
+        if _storage._workerID != rhs_storage._workerID {return false}
+        if _storage._queueDelayMs != rhs_storage._queueDelayMs {return false}
+        if _storage._inputTokens != rhs_storage._inputTokens {return false}
+        if _storage._decodeHandle != rhs_storage._decodeHandle {return false}
+        if _storage._maxOutputTokens != rhs_storage._maxOutputTokens {return false}
+        if _storage._text != rhs_storage._text {return false}
+        if _storage._callID != rhs_storage._callID {return false}
+        if _storage._toolName != rhs_storage._toolName {return false}
+        if _storage._argumentsFragment != rhs_storage._argumentsFragment {return false}
+        if _storage._annotationID != rhs_storage._annotationID {return false}
+        if _storage._annotationKind != rhs_storage._annotationKind {return false}
+        if _storage._startOffset != rhs_storage._startOffset {return false}
+        if _storage._endOffset != rhs_storage._endOffset {return false}
+        if _storage._payloadJson != rhs_storage._payloadJson {return false}
+        if _storage._status != rhs_storage._status {return false}
+        if _storage._resultJson != rhs_storage._resultJson {return false}
+        if _storage._promptTokens != rhs_storage._promptTokens {return false}
+        if _storage._completionTokens != rhs_storage._completionTokens {return false}
+        if _storage._cachedPromptTokens != rhs_storage._cachedPromptTokens {return false}
+        if _storage._mediaFeatureCacheHits != rhs_storage._mediaFeatureCacheHits {return false}
+        if _storage._mediaFeatureCacheMisses != rhs_storage._mediaFeatureCacheMisses {return false}
+        if _storage._mediaFeatureEncoderCallsSaved != rhs_storage._mediaFeatureEncoderCallsSaved {return false}
+        if _storage._mediaFeatureWorkSavedBytes != rhs_storage._mediaFeatureWorkSavedBytes {return false}
+        if _storage._finishReason != rhs_storage._finishReason {return false}
+        if _storage._assistantText != rhs_storage._assistantText {return false}
+        if _storage._reasoningText != rhs_storage._reasoningText {return false}
+        if _storage._errorCode != rhs_storage._errorCode {return false}
+        if _storage._errorMessage != rhs_storage._errorMessage {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCCancelChatRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCCancelChatRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.requestID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.requestID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCCancelChatRequest, rhs: Melix_Controlplane_V1_ControlPlaneIPCCancelChatRequest) -> Bool {
+    if lhs.requestID != rhs.requestID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCCancelChatResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCCancelChatResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{1}disposition\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.requestID) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.disposition) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.requestID.isEmpty {
+      try visitor.visitSingularStringField(value: self.requestID, fieldNumber: 1)
+    }
+    if self.disposition != .unspecified {
+      try visitor.visitSingularEnumField(value: self.disposition, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCCancelChatResponse, rhs: Melix_Controlplane_V1_ControlPlaneIPCCancelChatResponse) -> Bool {
+    if lhs.requestID != rhs.requestID {return false}
+    if lhs.disposition != rhs.disposition {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ControlPlaneIPCStartAgentRunRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ControlPlaneIPCStartAgentRunRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}command\0\u{3}actor_id\0\u{3}remote_target\0")
+
+  fileprivate class _StorageClass {
+    var _command: Melix_Controlplane_V1_StartAgentRun? = nil
+    var _actorID: String = String()
+    var _remoteTarget: Melix_Controlplane_V1_ControlPlaneIPCRemoteTarget? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _command = source._command
+      _actorID = source._actorID
+      _remoteTarget = source._remoteTarget
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._command) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._actorID) }()
+        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._remoteTarget) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._command {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if !_storage._actorID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._actorID, fieldNumber: 2)
+      }
+      try { if let v = _storage._remoteTarget {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      } }()
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ControlPlaneIPCStartAgentRunRequest, rhs: Melix_Controlplane_V1_ControlPlaneIPCStartAgentRunRequest) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._command != rhs_storage._command {return false}
+        if _storage._actorID != rhs_storage._actorID {return false}
+        if _storage._remoteTarget != rhs_storage._remoteTarget {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Melix_Controlplane_V1_ControlPlaneRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ControlPlaneRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}actor_id\0\u{3}command_type\0\u{3}idempotency_key\0\u{3}deadline_unix_ms\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}target_id\0\u{2}\u{c}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0\u{1}image\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}actor_id\0\u{3}command_type\0\u{3}idempotency_key\0\u{3}deadline_unix_ms\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}target_id\0\u{2}\u{c}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0\u{1}image\0\u{1}agent\0")
 
   fileprivate class _StorageClass {
     var _requestID: String = String()
@@ -8370,6 +11977,19 @@ nonisolated extension Melix_Controlplane_V1_ControlPlaneRequest: SwiftProtobuf.M
             _storage._command = .image(v)
           }
         }()
+        case 27: try {
+          var v: Melix_Controlplane_V1_AgentCommand?
+          var hadOneofValue = false
+          if let current = _storage._command {
+            hadOneofValue = true
+            if case .agent(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._command = .agent(v)
+          }
+        }()
         default: break
         }
       }
@@ -8435,6 +12055,10 @@ nonisolated extension Melix_Controlplane_V1_ControlPlaneRequest: SwiftProtobuf.M
         guard case .image(let v)? = _storage._command else { preconditionFailure() }
         try visitor.visitSingularMessageField(value: v, fieldNumber: 26)
       }()
+      case .agent?: try {
+        guard case .agent(let v)? = _storage._command else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 27)
+      }()
       case nil: break
       }
     }
@@ -8466,7 +12090,7 @@ nonisolated extension Melix_Controlplane_V1_ControlPlaneRequest: SwiftProtobuf.M
 
 nonisolated extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ControlPlaneResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}command_type\0\u{1}ok\0\u{1}error\0\u{3}correlation_id\0\u{3}causation_id\0\u{2}\u{e}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0\u{1}image\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}command_type\0\u{1}ok\0\u{1}error\0\u{3}correlation_id\0\u{3}causation_id\0\u{2}\u{e}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0\u{1}image\0\u{1}agent\0")
 
   fileprivate class _StorageClass {
     var _requestID: String = String()
@@ -8608,6 +12232,19 @@ nonisolated extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.
             _storage._payload = .image(v)
           }
         }()
+        case 27: try {
+          var v: Melix_Controlplane_V1_AgentReply?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .agent(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .agent(v)
+          }
+        }()
         default: break
         }
       }
@@ -8667,6 +12304,10 @@ nonisolated extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.
         guard case .image(let v)? = _storage._payload else { preconditionFailure() }
         try visitor.visitSingularMessageField(value: v, fieldNumber: 26)
       }()
+      case .agent?: try {
+        guard case .agent(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 27)
+      }()
       case nil: break
       }
     }
@@ -8696,7 +12337,7 @@ nonisolated extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.
 
 nonisolated extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ControlPlaneEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}event_type\0\u{1}source\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}request_id\0\u{3}actor_id\0\u{3}subscription_id\0\u{1}seq\0\u{3}emitted_at_unix_ms\0\u{4}\u{b}server_state\0\u{3}worker_state\0\u{3}model_state\0\u{3}request_progress\0\u{3}session_state\0\u{3}cache_stats\0\u{3}bench_progress\0\u{1}log\0\u{1}heartbeat\0\u{3}resource_pressure\0\u{3}image_job\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}event_type\0\u{1}source\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}request_id\0\u{3}actor_id\0\u{3}subscription_id\0\u{1}seq\0\u{3}emitted_at_unix_ms\0\u{4}\u{b}server_state\0\u{3}worker_state\0\u{3}model_state\0\u{3}request_progress\0\u{3}session_state\0\u{3}cache_stats\0\u{3}bench_progress\0\u{1}log\0\u{1}heartbeat\0\u{3}resource_pressure\0\u{3}image_job\0\u{3}agent_run\0")
 
   fileprivate class _StorageClass {
     var _eventType: String = String()
@@ -8899,6 +12540,19 @@ nonisolated extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Mes
             _storage._payload = .imageJob(v)
           }
         }()
+        case 31: try {
+          var v: Melix_Controlplane_V1_AgentRunStateChanged?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .agentRun(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .agentRun(v)
+          }
+        }()
         default: break
         }
       }
@@ -8982,6 +12636,10 @@ nonisolated extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Mes
       case .imageJob?: try {
         guard case .imageJob(let v)? = _storage._payload else { preconditionFailure() }
         try visitor.visitSingularMessageField(value: v, fieldNumber: 30)
+      }()
+      case .agentRun?: try {
+        guard case .agentRun(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 31)
       }()
       case nil: break
       }
@@ -10128,6 +13786,192 @@ nonisolated extension Melix_Controlplane_V1_ImageCommand: SwiftProtobuf.Message,
   }
 }
 
+nonisolated extension Melix_Controlplane_V1_AgentCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentCommand"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{3}decide_approval\0\u{1}cancel\0\u{1}get\0\u{1}list\0\u{3}get_approval_policy\0\u{3}replace_approval_policy\0\u{3}get_operations\0\u{1}activate\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: Melix_Controlplane_V1_StartAgentRun?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .start(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .start(v)
+        }
+      }()
+      case 2: try {
+        var v: Melix_Controlplane_V1_DecideAgentApproval?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .decideApproval(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .decideApproval(v)
+        }
+      }()
+      case 3: try {
+        var v: Melix_Controlplane_V1_CancelAgentRun?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .cancel(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .cancel(v)
+        }
+      }()
+      case 4: try {
+        var v: Melix_Controlplane_V1_GetAgentRun?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .get(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .get(v)
+        }
+      }()
+      case 5: try {
+        var v: Melix_Controlplane_V1_ListAgentRuns?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .list(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .list(v)
+        }
+      }()
+      case 6: try {
+        var v: Melix_Controlplane_V1_GetAgentApprovalPolicy?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .getApprovalPolicy(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .getApprovalPolicy(v)
+        }
+      }()
+      case 7: try {
+        var v: Melix_Controlplane_V1_ReplaceAgentApprovalPolicy?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .replaceApprovalPolicy(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .replaceApprovalPolicy(v)
+        }
+      }()
+      case 8: try {
+        var v: Melix_Controlplane_V1_GetAgentOperations?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .getOperations(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .getOperations(v)
+        }
+      }()
+      case 9: try {
+        var v: Melix_Controlplane_V1_ActivateAgentRun?
+        var hadOneofValue = false
+        if let current = self.kind {
+          hadOneofValue = true
+          if case .activate(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.kind = .activate(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.kind {
+    case .start?: try {
+      guard case .start(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    }()
+    case .decideApproval?: try {
+      guard case .decideApproval(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    }()
+    case .cancel?: try {
+      guard case .cancel(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    }()
+    case .get?: try {
+      guard case .get(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    }()
+    case .list?: try {
+      guard case .list(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    }()
+    case .getApprovalPolicy?: try {
+      guard case .getApprovalPolicy(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    }()
+    case .replaceApprovalPolicy?: try {
+      guard case .replaceApprovalPolicy(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+    }()
+    case .getOperations?: try {
+      guard case .getOperations(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+    }()
+    case .activate?: try {
+      guard case .activate(let v)? = self.kind else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentCommand, rhs: Melix_Controlplane_V1_AgentCommand) -> Bool {
+    if lhs.kind != rhs.kind {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Melix_Controlplane_V1_ServerReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerReply"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}snapshot\0")
@@ -10516,6 +14360,2222 @@ nonisolated extension Melix_Controlplane_V1_ImageReply: SwiftProtobuf.Message, S
   public static func ==(lhs: Melix_Controlplane_V1_ImageReply, rhs: Melix_Controlplane_V1_ImageReply) -> Bool {
     if lhs._job != rhs._job {return false}
     if lhs._imageDefaults != rhs._imageDefaults {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentReply"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}run\0\u{1}runs\0\u{1}approval\0\u{1}cancellation\0\u{3}approval_policy\0\u{3}approval_policy_mutation\0\u{1}operations\0\u{3}runs_complete\0")
+
+  fileprivate class _StorageClass {
+    var _run: Melix_Controlplane_V1_AgentRunSnapshot? = nil
+    var _runs: [Melix_Controlplane_V1_AgentRunSnapshot] = []
+    var _approval: Melix_Controlplane_V1_AgentApprovalDecisionReceipt? = nil
+    var _cancellation: Melix_Controlplane_V1_AgentRunCancellationReceipt? = nil
+    var _approvalPolicy: Melix_Controlplane_V1_AgentApprovalPolicySnapshot? = nil
+    var _approvalPolicyMutation: Melix_Controlplane_V1_AgentApprovalPolicyMutationReceipt? = nil
+    var _operations: Melix_Controlplane_V1_AgentOperationsSnapshot? = nil
+    var _runsComplete: Bool = false
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _run = source._run
+      _runs = source._runs
+      _approval = source._approval
+      _cancellation = source._cancellation
+      _approvalPolicy = source._approvalPolicy
+      _approvalPolicyMutation = source._approvalPolicyMutation
+      _operations = source._operations
+      _runsComplete = source._runsComplete
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._run) }()
+        case 2: try { try decoder.decodeRepeatedMessageField(value: &_storage._runs) }()
+        case 3: try { try decoder.decodeSingularMessageField(value: &_storage._approval) }()
+        case 4: try { try decoder.decodeSingularMessageField(value: &_storage._cancellation) }()
+        case 5: try { try decoder.decodeSingularMessageField(value: &_storage._approvalPolicy) }()
+        case 6: try { try decoder.decodeSingularMessageField(value: &_storage._approvalPolicyMutation) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._operations) }()
+        case 8: try { try decoder.decodeSingularBoolField(value: &_storage._runsComplete) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._run {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if !_storage._runs.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._runs, fieldNumber: 2)
+      }
+      try { if let v = _storage._approval {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      } }()
+      try { if let v = _storage._cancellation {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+      } }()
+      try { if let v = _storage._approvalPolicy {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+      } }()
+      try { if let v = _storage._approvalPolicyMutation {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+      } }()
+      try { if let v = _storage._operations {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+      } }()
+      if _storage._runsComplete != false {
+        try visitor.visitSingularBoolField(value: _storage._runsComplete, fieldNumber: 8)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentReply, rhs: Melix_Controlplane_V1_AgentReply) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._run != rhs_storage._run {return false}
+        if _storage._runs != rhs_storage._runs {return false}
+        if _storage._approval != rhs_storage._approval {return false}
+        if _storage._cancellation != rhs_storage._cancellation {return false}
+        if _storage._approvalPolicy != rhs_storage._approvalPolicy {return false}
+        if _storage._approvalPolicyMutation != rhs_storage._approvalPolicyMutation {return false}
+        if _storage._operations != rhs_storage._operations {return false}
+        if _storage._runsComplete != rhs_storage._runsComplete {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentRunMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentRunMessage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}role\0\u{1}content\0\u{3}tool_call_id\0\u{3}tool_name\0\u{3}tool_arguments_json\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.role) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.content) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.toolCallID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.toolName) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.toolArgumentsJson) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.role.isEmpty {
+      try visitor.visitSingularStringField(value: self.role, fieldNumber: 1)
+    }
+    if !self.content.isEmpty {
+      try visitor.visitSingularStringField(value: self.content, fieldNumber: 2)
+    }
+    if !self.toolCallID.isEmpty {
+      try visitor.visitSingularStringField(value: self.toolCallID, fieldNumber: 3)
+    }
+    if !self.toolName.isEmpty {
+      try visitor.visitSingularStringField(value: self.toolName, fieldNumber: 4)
+    }
+    if !self.toolArgumentsJson.isEmpty {
+      try visitor.visitSingularStringField(value: self.toolArgumentsJson, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentRunMessage, rhs: Melix_Controlplane_V1_AgentRunMessage) -> Bool {
+    if lhs.role != rhs.role {return false}
+    if lhs.content != rhs.content {return false}
+    if lhs.toolCallID != rhs.toolCallID {return false}
+    if lhs.toolName != rhs.toolName {return false}
+    if lhs.toolArgumentsJson != rhs.toolArgumentsJson {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_StartAgentRun: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".StartAgentRun"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}branch_id\0\u{3}server_session_id\0\u{3}model_id\0\u{3}provider_server_id\0\u{1}mode\0\u{1}messages\0\u{3}max_model_turns\0\u{3}max_tool_calls\0\u{3}deadline_unix_ms\0\u{3}computer_use_targets\0\u{3}run_id\0\u{3}defer_activation\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.branchID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.providerServerID) }()
+      case 6: try { try decoder.decodeSingularEnumField(value: &self.mode) }()
+      case 7: try { try decoder.decodeRepeatedMessageField(value: &self.messages) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.maxModelTurns) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.maxToolCalls) }()
+      case 10: try { try decoder.decodeSingularInt64Field(value: &self.deadlineUnixMs) }()
+      case 11: try { try decoder.decodeRepeatedMessageField(value: &self.computerUseTargets) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.runID) }()
+      case 13: try { try decoder.decodeSingularBoolField(value: &self.deferActivation) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
+    }
+    if !self.branchID.isEmpty {
+      try visitor.visitSingularStringField(value: self.branchID, fieldNumber: 2)
+    }
+    if !self.serverSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverSessionID, fieldNumber: 3)
+    }
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 4)
+    }
+    if !self.providerServerID.isEmpty {
+      try visitor.visitSingularStringField(value: self.providerServerID, fieldNumber: 5)
+    }
+    if self.mode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.mode, fieldNumber: 6)
+    }
+    if !self.messages.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.messages, fieldNumber: 7)
+    }
+    if self.maxModelTurns != 0 {
+      try visitor.visitSingularUInt32Field(value: self.maxModelTurns, fieldNumber: 8)
+    }
+    if self.maxToolCalls != 0 {
+      try visitor.visitSingularUInt32Field(value: self.maxToolCalls, fieldNumber: 9)
+    }
+    if self.deadlineUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.deadlineUnixMs, fieldNumber: 10)
+    }
+    if !self.computerUseTargets.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.computerUseTargets, fieldNumber: 11)
+    }
+    if !self.runID.isEmpty {
+      try visitor.visitSingularStringField(value: self.runID, fieldNumber: 12)
+    }
+    if self.deferActivation != false {
+      try visitor.visitSingularBoolField(value: self.deferActivation, fieldNumber: 13)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_StartAgentRun, rhs: Melix_Controlplane_V1_StartAgentRun) -> Bool {
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.branchID != rhs.branchID {return false}
+    if lhs.serverSessionID != rhs.serverSessionID {return false}
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.providerServerID != rhs.providerServerID {return false}
+    if lhs.mode != rhs.mode {return false}
+    if lhs.messages != rhs.messages {return false}
+    if lhs.maxModelTurns != rhs.maxModelTurns {return false}
+    if lhs.maxToolCalls != rhs.maxToolCalls {return false}
+    if lhs.deadlineUnixMs != rhs.deadlineUnixMs {return false}
+    if lhs.computerUseTargets != rhs.computerUseTargets {return false}
+    if lhs.runID != rhs.runID {return false}
+    if lhs.deferActivation != rhs.deferActivation {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseTarget: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentComputerUseTarget"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}target_id\0\u{3}bundle_id\0\u{3}process_id\0\u{3}process_launch_identity\0\u{3}window_id\0\u{3}window_title\0\u{3}application_name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.targetID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.bundleID) }()
+      case 3: try { try decoder.decodeSingularInt32Field(value: &self.processID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.processLaunchIdentity) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.windowID) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.windowTitle) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.applicationName) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.targetID.isEmpty {
+      try visitor.visitSingularStringField(value: self.targetID, fieldNumber: 1)
+    }
+    if !self.bundleID.isEmpty {
+      try visitor.visitSingularStringField(value: self.bundleID, fieldNumber: 2)
+    }
+    if self.processID != 0 {
+      try visitor.visitSingularInt32Field(value: self.processID, fieldNumber: 3)
+    }
+    if !self.processLaunchIdentity.isEmpty {
+      try visitor.visitSingularStringField(value: self.processLaunchIdentity, fieldNumber: 4)
+    }
+    if self.windowID != 0 {
+      try visitor.visitSingularUInt32Field(value: self.windowID, fieldNumber: 5)
+    }
+    if !self.windowTitle.isEmpty {
+      try visitor.visitSingularStringField(value: self.windowTitle, fieldNumber: 6)
+    }
+    if !self.applicationName.isEmpty {
+      try visitor.visitSingularStringField(value: self.applicationName, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentComputerUseTarget, rhs: Melix_Controlplane_V1_AgentComputerUseTarget) -> Bool {
+    if lhs.targetID != rhs.targetID {return false}
+    if lhs.bundleID != rhs.bundleID {return false}
+    if lhs.processID != rhs.processID {return false}
+    if lhs.processLaunchIdentity != rhs.processLaunchIdentity {return false}
+    if lhs.windowID != rhs.windowID {return false}
+    if lhs.windowTitle != rhs.windowTitle {return false}
+    if lhs.applicationName != rhs.applicationName {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalBinding: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentApprovalBinding"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}run_id\0\u{3}call_id\0\u{3}schema_digest\0\u{3}argument_digest\0\u{3}policy_revision\0\u{3}binding_digest\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.runID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.callID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.schemaDigest) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.argumentDigest) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.policyRevision) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.bindingDigest) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.runID.isEmpty {
+      try visitor.visitSingularStringField(value: self.runID, fieldNumber: 1)
+    }
+    if !self.callID.isEmpty {
+      try visitor.visitSingularStringField(value: self.callID, fieldNumber: 2)
+    }
+    if !self.schemaDigest.isEmpty {
+      try visitor.visitSingularStringField(value: self.schemaDigest, fieldNumber: 3)
+    }
+    if !self.argumentDigest.isEmpty {
+      try visitor.visitSingularStringField(value: self.argumentDigest, fieldNumber: 4)
+    }
+    if !self.policyRevision.isEmpty {
+      try visitor.visitSingularStringField(value: self.policyRevision, fieldNumber: 5)
+    }
+    if !self.bindingDigest.isEmpty {
+      try visitor.visitSingularStringField(value: self.bindingDigest, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentApprovalBinding, rhs: Melix_Controlplane_V1_AgentApprovalBinding) -> Bool {
+    if lhs.runID != rhs.runID {return false}
+    if lhs.callID != rhs.callID {return false}
+    if lhs.schemaDigest != rhs.schemaDigest {return false}
+    if lhs.argumentDigest != rhs.argumentDigest {return false}
+    if lhs.policyRevision != rhs.policyRevision {return false}
+    if lhs.bindingDigest != rhs.bindingDigest {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_DecideAgentApproval: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DecideAgentApproval"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}binding\0\u{1}choice\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._binding) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.choice) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._binding {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if self.choice != .unspecified {
+      try visitor.visitSingularEnumField(value: self.choice, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_DecideAgentApproval, rhs: Melix_Controlplane_V1_DecideAgentApproval) -> Bool {
+    if lhs._binding != rhs._binding {return false}
+    if lhs.choice != rhs.choice {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_CancelAgentRun: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CancelAgentRun"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}run_id\0\u{1}reason\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.runID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.reason) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.runID.isEmpty {
+      try visitor.visitSingularStringField(value: self.runID, fieldNumber: 1)
+    }
+    if !self.reason.isEmpty {
+      try visitor.visitSingularStringField(value: self.reason, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_CancelAgentRun, rhs: Melix_Controlplane_V1_CancelAgentRun) -> Bool {
+    if lhs.runID != rhs.runID {return false}
+    if lhs.reason != rhs.reason {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ActivateAgentRun: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ActivateAgentRun"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}run_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.runID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.runID.isEmpty {
+      try visitor.visitSingularStringField(value: self.runID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ActivateAgentRun, rhs: Melix_Controlplane_V1_ActivateAgentRun) -> Bool {
+    if lhs.runID != rhs.runID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_GetAgentRun: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetAgentRun"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}run_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.runID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.runID.isEmpty {
+      try visitor.visitSingularStringField(value: self.runID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_GetAgentRun, rhs: Melix_Controlplane_V1_GetAgentRun) -> Bool {
+    if lhs.runID != rhs.runID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ListAgentRuns: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListAgentRuns"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}limit\0\u{3}nonterminal_only\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.limit) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.nonterminalOnly) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
+    }
+    if self.limit != 0 {
+      try visitor.visitSingularUInt32Field(value: self.limit, fieldNumber: 2)
+    }
+    if self.nonterminalOnly != false {
+      try visitor.visitSingularBoolField(value: self.nonterminalOnly, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ListAgentRuns, rhs: Melix_Controlplane_V1_ListAgentRuns) -> Bool {
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.limit != rhs.limit {return false}
+    if lhs.nonterminalOnly != rhs.nonterminalOnly {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalPolicyRule: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentApprovalPolicyRule"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}effect\0\u{3}source_id\0\u{3}tool_name\0\u{3}risk_class\0\u{3}operation_kind\0\u{3}workspace_scope\0\u{3}app_bundle_id\0\u{3}network_host\0\u{3}schema_digest\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.effect) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.sourceID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.toolName) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self.riskClass) }()
+      case 6: try { try decoder.decodeSingularEnumField(value: &self.operationKind) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.workspaceScope) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.appBundleID) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.networkHost) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.schemaDigest) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if self.effect != .unspecified {
+      try visitor.visitSingularEnumField(value: self.effect, fieldNumber: 2)
+    }
+    if !self.sourceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceID, fieldNumber: 3)
+    }
+    if !self.toolName.isEmpty {
+      try visitor.visitSingularStringField(value: self.toolName, fieldNumber: 4)
+    }
+    if self.riskClass != .unspecified {
+      try visitor.visitSingularEnumField(value: self.riskClass, fieldNumber: 5)
+    }
+    if self.operationKind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.operationKind, fieldNumber: 6)
+    }
+    if !self.workspaceScope.isEmpty {
+      try visitor.visitSingularStringField(value: self.workspaceScope, fieldNumber: 7)
+    }
+    if !self.appBundleID.isEmpty {
+      try visitor.visitSingularStringField(value: self.appBundleID, fieldNumber: 8)
+    }
+    if !self.networkHost.isEmpty {
+      try visitor.visitSingularStringField(value: self.networkHost, fieldNumber: 9)
+    }
+    if !self.schemaDigest.isEmpty {
+      try visitor.visitSingularStringField(value: self.schemaDigest, fieldNumber: 10)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentApprovalPolicyRule, rhs: Melix_Controlplane_V1_AgentApprovalPolicyRule) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.effect != rhs.effect {return false}
+    if lhs.sourceID != rhs.sourceID {return false}
+    if lhs.toolName != rhs.toolName {return false}
+    if lhs.riskClass != rhs.riskClass {return false}
+    if lhs.operationKind != rhs.operationKind {return false}
+    if lhs.workspaceScope != rhs.workspaceScope {return false}
+    if lhs.appBundleID != rhs.appBundleID {return false}
+    if lhs.networkHost != rhs.networkHost {return false}
+    if lhs.schemaDigest != rhs.schemaDigest {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalPolicySnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentApprovalPolicySnapshot"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{1}revision\0\u{1}rules\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.schemaVersion) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.revision) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.rules) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.schemaVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.schemaVersion, fieldNumber: 1)
+    }
+    if self.revision != 0 {
+      try visitor.visitSingularUInt64Field(value: self.revision, fieldNumber: 2)
+    }
+    if !self.rules.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.rules, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentApprovalPolicySnapshot, rhs: Melix_Controlplane_V1_AgentApprovalPolicySnapshot) -> Bool {
+    if lhs.schemaVersion != rhs.schemaVersion {return false}
+    if lhs.revision != rhs.revision {return false}
+    if lhs.rules != rhs.rules {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_GetAgentApprovalPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetAgentApprovalPolicy"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_GetAgentApprovalPolicy, rhs: Melix_Controlplane_V1_GetAgentApprovalPolicy) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_ReplaceAgentApprovalPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ReplaceAgentApprovalPolicy"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}expected_revision\0\u{1}rules\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.expectedRevision) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.rules) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.expectedRevision != 0 {
+      try visitor.visitSingularUInt64Field(value: self.expectedRevision, fieldNumber: 1)
+    }
+    if !self.rules.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.rules, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ReplaceAgentApprovalPolicy, rhs: Melix_Controlplane_V1_ReplaceAgentApprovalPolicy) -> Bool {
+    if lhs.expectedRevision != rhs.expectedRevision {return false}
+    if lhs.rules != rhs.rules {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalPolicyMutationReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentApprovalPolicyMutationReceipt"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}revision\0\u{3}rule_count\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.revision) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.ruleCount) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.revision != 0 {
+      try visitor.visitSingularUInt64Field(value: self.revision, fieldNumber: 1)
+    }
+    if self.ruleCount != 0 {
+      try visitor.visitSingularUInt32Field(value: self.ruleCount, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentApprovalPolicyMutationReceipt, rhs: Melix_Controlplane_V1_AgentApprovalPolicyMutationReceipt) -> Bool {
+    if lhs.revision != rhs.revision {return false}
+    if lhs.ruleCount != rhs.ruleCount {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_GetAgentOperations: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetAgentOperations"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_GetAgentOperations, rhs: Melix_Controlplane_V1_GetAgentOperations) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentToolSourceStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentToolSourceStatus"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}source_id\0\u{3}transport_kind\0\u{3}connection_state\0\u{3}server_name\0\u{3}server_version\0\u{1}capabilities\0\u{3}tool_count\0\u{3}catalog_digest\0\u{3}error_code\0\u{3}catalog_only\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sourceID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.transportKind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.connectionState) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.serverName) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.serverVersion) }()
+      case 6: try { try decoder.decodeRepeatedStringField(value: &self.capabilities) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.toolCount) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.catalogDigest) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.errorCode) }()
+      case 10: try { try decoder.decodeSingularBoolField(value: &self.catalogOnly) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sourceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceID, fieldNumber: 1)
+    }
+    if !self.transportKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.transportKind, fieldNumber: 2)
+    }
+    if !self.connectionState.isEmpty {
+      try visitor.visitSingularStringField(value: self.connectionState, fieldNumber: 3)
+    }
+    if !self.serverName.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverName, fieldNumber: 4)
+    }
+    if !self.serverVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.serverVersion, fieldNumber: 5)
+    }
+    if !self.capabilities.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.capabilities, fieldNumber: 6)
+    }
+    if self.toolCount != 0 {
+      try visitor.visitSingularUInt32Field(value: self.toolCount, fieldNumber: 7)
+    }
+    if !self.catalogDigest.isEmpty {
+      try visitor.visitSingularStringField(value: self.catalogDigest, fieldNumber: 8)
+    }
+    if !self.errorCode.isEmpty {
+      try visitor.visitSingularStringField(value: self.errorCode, fieldNumber: 9)
+    }
+    if self.catalogOnly != false {
+      try visitor.visitSingularBoolField(value: self.catalogOnly, fieldNumber: 10)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentToolSourceStatus, rhs: Melix_Controlplane_V1_AgentToolSourceStatus) -> Bool {
+    if lhs.sourceID != rhs.sourceID {return false}
+    if lhs.transportKind != rhs.transportKind {return false}
+    if lhs.connectionState != rhs.connectionState {return false}
+    if lhs.serverName != rhs.serverName {return false}
+    if lhs.serverVersion != rhs.serverVersion {return false}
+    if lhs.capabilities != rhs.capabilities {return false}
+    if lhs.toolCount != rhs.toolCount {return false}
+    if lhs.catalogDigest != rhs.catalogDigest {return false}
+    if lhs.errorCode != rhs.errorCode {return false}
+    if lhs.catalogOnly != rhs.catalogOnly {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentToolDefinitionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentToolDefinitionSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}source_id\0\u{3}adapter_kind\0\u{1}name\0\u{1}title\0\u{3}schema_digest\0\u{3}risk_class\0\u{1}replayability\0\u{3}annotations_untrusted\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sourceID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.adapterKind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.title) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.schemaDigest) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.riskClass) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.replayability) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.annotationsUntrusted) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sourceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceID, fieldNumber: 1)
+    }
+    if !self.adapterKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.adapterKind, fieldNumber: 2)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 3)
+    }
+    if !self.title.isEmpty {
+      try visitor.visitSingularStringField(value: self.title, fieldNumber: 4)
+    }
+    if !self.schemaDigest.isEmpty {
+      try visitor.visitSingularStringField(value: self.schemaDigest, fieldNumber: 5)
+    }
+    if !self.riskClass.isEmpty {
+      try visitor.visitSingularStringField(value: self.riskClass, fieldNumber: 6)
+    }
+    if !self.replayability.isEmpty {
+      try visitor.visitSingularStringField(value: self.replayability, fieldNumber: 7)
+    }
+    if self.annotationsUntrusted != false {
+      try visitor.visitSingularBoolField(value: self.annotationsUntrusted, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentToolDefinitionSummary, rhs: Melix_Controlplane_V1_AgentToolDefinitionSummary) -> Bool {
+    if lhs.sourceID != rhs.sourceID {return false}
+    if lhs.adapterKind != rhs.adapterKind {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.title != rhs.title {return false}
+    if lhs.schemaDigest != rhs.schemaDigest {return false}
+    if lhs.riskClass != rhs.riskClass {return false}
+    if lhs.replayability != rhs.replayability {return false}
+    if lhs.annotationsUntrusted != rhs.annotationsUntrusted {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentComputerUseStatus"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}broker_configured\0\u{3}capability_level\0\u{3}supported_actions\0\u{3}screen_recording_permission\0\u{3}accessibility_permission\0\u{3}maximum_frames\0\u{3}maximum_actions\0\u{3}maximum_artifact_bytes\0\u{3}idle_timeout_seconds\0\u{3}absolute_timeout_seconds\0\u{3}transport_identity_state\0\u{3}available_targets\0\u{3}target_discovery_state\0\u{3}target_discovery_error\0\u{3}targets_observed_at_unix_ms\0")
+
+  fileprivate class _StorageClass {
+    var _brokerConfigured: Bool = false
+    var _capabilityLevel: String = String()
+    var _supportedActions: [String] = []
+    var _screenRecordingPermission: String = String()
+    var _accessibilityPermission: String = String()
+    var _maximumFrames: UInt32 = 0
+    var _maximumActions: UInt32 = 0
+    var _maximumArtifactBytes: UInt64 = 0
+    var _idleTimeoutSeconds: UInt32 = 0
+    var _absoluteTimeoutSeconds: UInt32 = 0
+    var _transportIdentityState: String = String()
+    var _availableTargets: [Melix_Controlplane_V1_AgentComputerUseTarget] = []
+    var _targetDiscoveryState: Melix_Controlplane_V1_AgentComputerUseTargetDiscoveryState = .unspecified
+    var _targetDiscoveryError: Melix_Controlplane_V1_ErrorStatus? = nil
+    var _targetsObservedAtUnixMs: Int64 = 0
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _brokerConfigured = source._brokerConfigured
+      _capabilityLevel = source._capabilityLevel
+      _supportedActions = source._supportedActions
+      _screenRecordingPermission = source._screenRecordingPermission
+      _accessibilityPermission = source._accessibilityPermission
+      _maximumFrames = source._maximumFrames
+      _maximumActions = source._maximumActions
+      _maximumArtifactBytes = source._maximumArtifactBytes
+      _idleTimeoutSeconds = source._idleTimeoutSeconds
+      _absoluteTimeoutSeconds = source._absoluteTimeoutSeconds
+      _transportIdentityState = source._transportIdentityState
+      _availableTargets = source._availableTargets
+      _targetDiscoveryState = source._targetDiscoveryState
+      _targetDiscoveryError = source._targetDiscoveryError
+      _targetsObservedAtUnixMs = source._targetsObservedAtUnixMs
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularBoolField(value: &_storage._brokerConfigured) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._capabilityLevel) }()
+        case 3: try { try decoder.decodeRepeatedStringField(value: &_storage._supportedActions) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._screenRecordingPermission) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._accessibilityPermission) }()
+        case 6: try { try decoder.decodeSingularUInt32Field(value: &_storage._maximumFrames) }()
+        case 7: try { try decoder.decodeSingularUInt32Field(value: &_storage._maximumActions) }()
+        case 8: try { try decoder.decodeSingularUInt64Field(value: &_storage._maximumArtifactBytes) }()
+        case 9: try { try decoder.decodeSingularUInt32Field(value: &_storage._idleTimeoutSeconds) }()
+        case 10: try { try decoder.decodeSingularUInt32Field(value: &_storage._absoluteTimeoutSeconds) }()
+        case 11: try { try decoder.decodeSingularStringField(value: &_storage._transportIdentityState) }()
+        case 12: try { try decoder.decodeRepeatedMessageField(value: &_storage._availableTargets) }()
+        case 13: try { try decoder.decodeSingularEnumField(value: &_storage._targetDiscoveryState) }()
+        case 14: try { try decoder.decodeSingularMessageField(value: &_storage._targetDiscoveryError) }()
+        case 15: try { try decoder.decodeSingularInt64Field(value: &_storage._targetsObservedAtUnixMs) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._brokerConfigured != false {
+        try visitor.visitSingularBoolField(value: _storage._brokerConfigured, fieldNumber: 1)
+      }
+      if !_storage._capabilityLevel.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._capabilityLevel, fieldNumber: 2)
+      }
+      if !_storage._supportedActions.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._supportedActions, fieldNumber: 3)
+      }
+      if !_storage._screenRecordingPermission.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._screenRecordingPermission, fieldNumber: 4)
+      }
+      if !_storage._accessibilityPermission.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._accessibilityPermission, fieldNumber: 5)
+      }
+      if _storage._maximumFrames != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._maximumFrames, fieldNumber: 6)
+      }
+      if _storage._maximumActions != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._maximumActions, fieldNumber: 7)
+      }
+      if _storage._maximumArtifactBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._maximumArtifactBytes, fieldNumber: 8)
+      }
+      if _storage._idleTimeoutSeconds != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._idleTimeoutSeconds, fieldNumber: 9)
+      }
+      if _storage._absoluteTimeoutSeconds != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._absoluteTimeoutSeconds, fieldNumber: 10)
+      }
+      if !_storage._transportIdentityState.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._transportIdentityState, fieldNumber: 11)
+      }
+      if !_storage._availableTargets.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._availableTargets, fieldNumber: 12)
+      }
+      if _storage._targetDiscoveryState != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._targetDiscoveryState, fieldNumber: 13)
+      }
+      try { if let v = _storage._targetDiscoveryError {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
+      } }()
+      if _storage._targetsObservedAtUnixMs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._targetsObservedAtUnixMs, fieldNumber: 15)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentComputerUseStatus, rhs: Melix_Controlplane_V1_AgentComputerUseStatus) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._brokerConfigured != rhs_storage._brokerConfigured {return false}
+        if _storage._capabilityLevel != rhs_storage._capabilityLevel {return false}
+        if _storage._supportedActions != rhs_storage._supportedActions {return false}
+        if _storage._screenRecordingPermission != rhs_storage._screenRecordingPermission {return false}
+        if _storage._accessibilityPermission != rhs_storage._accessibilityPermission {return false}
+        if _storage._maximumFrames != rhs_storage._maximumFrames {return false}
+        if _storage._maximumActions != rhs_storage._maximumActions {return false}
+        if _storage._maximumArtifactBytes != rhs_storage._maximumArtifactBytes {return false}
+        if _storage._idleTimeoutSeconds != rhs_storage._idleTimeoutSeconds {return false}
+        if _storage._absoluteTimeoutSeconds != rhs_storage._absoluteTimeoutSeconds {return false}
+        if _storage._transportIdentityState != rhs_storage._transportIdentityState {return false}
+        if _storage._availableTargets != rhs_storage._availableTargets {return false}
+        if _storage._targetDiscoveryState != rhs_storage._targetDiscoveryState {return false}
+        if _storage._targetDiscoveryError != rhs_storage._targetDiscoveryError {return false}
+        if _storage._targetsObservedAtUnixMs != rhs_storage._targetsObservedAtUnixMs {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseTargetProjection: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentComputerUseTargetProjection"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}availability\0\u{3}bundle_id\0\u{3}window_id\0\u{3}window_title\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.availability) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.bundleID) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.windowID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.windowTitle) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.availability != .unspecified {
+      try visitor.visitSingularEnumField(value: self.availability, fieldNumber: 1)
+    }
+    if !self.bundleID.isEmpty {
+      try visitor.visitSingularStringField(value: self.bundleID, fieldNumber: 2)
+    }
+    if self.windowID != 0 {
+      try visitor.visitSingularUInt32Field(value: self.windowID, fieldNumber: 3)
+    }
+    if !self.windowTitle.isEmpty {
+      try visitor.visitSingularStringField(value: self.windowTitle, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentComputerUseTargetProjection, rhs: Melix_Controlplane_V1_AgentComputerUseTargetProjection) -> Bool {
+    if lhs.availability != rhs.availability {return false}
+    if lhs.bundleID != rhs.bundleID {return false}
+    if lhs.windowID != rhs.windowID {return false}
+    if lhs.windowTitle != rhs.windowTitle {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseBudgetProjection: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentComputerUseBudgetProjection"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}limit_availability\0\u{1}limit\0\u{3}used_availability\0\u{1}used\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.limitAvailability) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.limit) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.usedAvailability) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.used) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.limitAvailability != .unspecified {
+      try visitor.visitSingularEnumField(value: self.limitAvailability, fieldNumber: 1)
+    }
+    if self.limit != 0 {
+      try visitor.visitSingularUInt32Field(value: self.limit, fieldNumber: 2)
+    }
+    if self.usedAvailability != .unspecified {
+      try visitor.visitSingularEnumField(value: self.usedAvailability, fieldNumber: 3)
+    }
+    if self.used != 0 {
+      try visitor.visitSingularUInt32Field(value: self.used, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentComputerUseBudgetProjection, rhs: Melix_Controlplane_V1_AgentComputerUseBudgetProjection) -> Bool {
+    if lhs.limitAvailability != rhs.limitAvailability {return false}
+    if lhs.limit != rhs.limit {return false}
+    if lhs.usedAvailability != rhs.usedAvailability {return false}
+    if lhs.used != rhs.used {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseDeadlineProjection: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentComputerUseDeadlineProjection"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}availability\0\u{3}unix_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.availability) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.unixMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.availability != .unspecified {
+      try visitor.visitSingularEnumField(value: self.availability, fieldNumber: 1)
+    }
+    if self.unixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.unixMs, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentComputerUseDeadlineProjection, rhs: Melix_Controlplane_V1_AgentComputerUseDeadlineProjection) -> Bool {
+    if lhs.availability != rhs.availability {return false}
+    if lhs.unixMs != rhs.unixMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentComputerUseSessionProjection: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentComputerUseSessionProjection"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}session_id\0\u{3}session_state\0\u{3}allowed_targets_availability\0\u{3}allowed_targets\0\u{3}active_target\0\u{3}frame_budget\0\u{3}action_budget\0\u{3}idle_deadline\0\u{3}absolute_deadline\0\u{3}screen_recording_permission\0\u{3}accessibility_permission\0\u{3}restart_state\0\u{3}last_operation\0\u{3}last_result\0\u{3}last_action_id\0\u{3}last_call_id\0\u{3}updated_at_unix_ms\0")
+
+  fileprivate class _StorageClass {
+    var _schemaVersion: String = String()
+    var _sessionID: String = String()
+    var _sessionState: Melix_Controlplane_V1_AgentComputerUseSessionState = .unspecified
+    var _allowedTargetsAvailability: Melix_Controlplane_V1_AgentComputerUseFieldAvailability = .unspecified
+    var _allowedTargets: [Melix_Controlplane_V1_AgentComputerUseTargetProjection] = []
+    var _activeTarget: Melix_Controlplane_V1_AgentComputerUseTargetProjection? = nil
+    var _frameBudget: Melix_Controlplane_V1_AgentComputerUseBudgetProjection? = nil
+    var _actionBudget: Melix_Controlplane_V1_AgentComputerUseBudgetProjection? = nil
+    var _idleDeadline: Melix_Controlplane_V1_AgentComputerUseDeadlineProjection? = nil
+    var _absoluteDeadline: Melix_Controlplane_V1_AgentComputerUseDeadlineProjection? = nil
+    var _screenRecordingPermission: Melix_Controlplane_V1_AgentComputerUsePermissionState = .unspecified
+    var _accessibilityPermission: Melix_Controlplane_V1_AgentComputerUsePermissionState = .unspecified
+    var _restartState: Melix_Controlplane_V1_AgentComputerUseRestartState = .unspecified
+    var _lastOperation: Melix_Controlplane_V1_AgentComputerUseOperation = .unspecified
+    var _lastResult: Melix_Controlplane_V1_AgentComputerUseResultState = .unspecified
+    var _lastActionID: String = String()
+    var _lastCallID: String = String()
+    var _updatedAtUnixMs: Int64 = 0
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _schemaVersion = source._schemaVersion
+      _sessionID = source._sessionID
+      _sessionState = source._sessionState
+      _allowedTargetsAvailability = source._allowedTargetsAvailability
+      _allowedTargets = source._allowedTargets
+      _activeTarget = source._activeTarget
+      _frameBudget = source._frameBudget
+      _actionBudget = source._actionBudget
+      _idleDeadline = source._idleDeadline
+      _absoluteDeadline = source._absoluteDeadline
+      _screenRecordingPermission = source._screenRecordingPermission
+      _accessibilityPermission = source._accessibilityPermission
+      _restartState = source._restartState
+      _lastOperation = source._lastOperation
+      _lastResult = source._lastResult
+      _lastActionID = source._lastActionID
+      _lastCallID = source._lastCallID
+      _updatedAtUnixMs = source._updatedAtUnixMs
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._schemaVersion) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._sessionID) }()
+        case 3: try { try decoder.decodeSingularEnumField(value: &_storage._sessionState) }()
+        case 4: try { try decoder.decodeSingularEnumField(value: &_storage._allowedTargetsAvailability) }()
+        case 5: try { try decoder.decodeRepeatedMessageField(value: &_storage._allowedTargets) }()
+        case 6: try { try decoder.decodeSingularMessageField(value: &_storage._activeTarget) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._frameBudget) }()
+        case 8: try { try decoder.decodeSingularMessageField(value: &_storage._actionBudget) }()
+        case 9: try { try decoder.decodeSingularMessageField(value: &_storage._idleDeadline) }()
+        case 10: try { try decoder.decodeSingularMessageField(value: &_storage._absoluteDeadline) }()
+        case 11: try { try decoder.decodeSingularEnumField(value: &_storage._screenRecordingPermission) }()
+        case 12: try { try decoder.decodeSingularEnumField(value: &_storage._accessibilityPermission) }()
+        case 13: try { try decoder.decodeSingularEnumField(value: &_storage._restartState) }()
+        case 14: try { try decoder.decodeSingularEnumField(value: &_storage._lastOperation) }()
+        case 15: try { try decoder.decodeSingularEnumField(value: &_storage._lastResult) }()
+        case 16: try { try decoder.decodeSingularStringField(value: &_storage._lastActionID) }()
+        case 17: try { try decoder.decodeSingularStringField(value: &_storage._lastCallID) }()
+        case 18: try { try decoder.decodeSingularInt64Field(value: &_storage._updatedAtUnixMs) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._schemaVersion.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._schemaVersion, fieldNumber: 1)
+      }
+      if !_storage._sessionID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sessionID, fieldNumber: 2)
+      }
+      if _storage._sessionState != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._sessionState, fieldNumber: 3)
+      }
+      if _storage._allowedTargetsAvailability != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._allowedTargetsAvailability, fieldNumber: 4)
+      }
+      if !_storage._allowedTargets.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._allowedTargets, fieldNumber: 5)
+      }
+      try { if let v = _storage._activeTarget {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+      } }()
+      try { if let v = _storage._frameBudget {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+      } }()
+      try { if let v = _storage._actionBudget {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+      } }()
+      try { if let v = _storage._idleDeadline {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+      } }()
+      try { if let v = _storage._absoluteDeadline {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+      } }()
+      if _storage._screenRecordingPermission != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._screenRecordingPermission, fieldNumber: 11)
+      }
+      if _storage._accessibilityPermission != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._accessibilityPermission, fieldNumber: 12)
+      }
+      if _storage._restartState != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._restartState, fieldNumber: 13)
+      }
+      if _storage._lastOperation != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._lastOperation, fieldNumber: 14)
+      }
+      if _storage._lastResult != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._lastResult, fieldNumber: 15)
+      }
+      if !_storage._lastActionID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lastActionID, fieldNumber: 16)
+      }
+      if !_storage._lastCallID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lastCallID, fieldNumber: 17)
+      }
+      if _storage._updatedAtUnixMs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._updatedAtUnixMs, fieldNumber: 18)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentComputerUseSessionProjection, rhs: Melix_Controlplane_V1_AgentComputerUseSessionProjection) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._schemaVersion != rhs_storage._schemaVersion {return false}
+        if _storage._sessionID != rhs_storage._sessionID {return false}
+        if _storage._sessionState != rhs_storage._sessionState {return false}
+        if _storage._allowedTargetsAvailability != rhs_storage._allowedTargetsAvailability {return false}
+        if _storage._allowedTargets != rhs_storage._allowedTargets {return false}
+        if _storage._activeTarget != rhs_storage._activeTarget {return false}
+        if _storage._frameBudget != rhs_storage._frameBudget {return false}
+        if _storage._actionBudget != rhs_storage._actionBudget {return false}
+        if _storage._idleDeadline != rhs_storage._idleDeadline {return false}
+        if _storage._absoluteDeadline != rhs_storage._absoluteDeadline {return false}
+        if _storage._screenRecordingPermission != rhs_storage._screenRecordingPermission {return false}
+        if _storage._accessibilityPermission != rhs_storage._accessibilityPermission {return false}
+        if _storage._restartState != rhs_storage._restartState {return false}
+        if _storage._lastOperation != rhs_storage._lastOperation {return false}
+        if _storage._lastResult != rhs_storage._lastResult {return false}
+        if _storage._lastActionID != rhs_storage._lastActionID {return false}
+        if _storage._lastCallID != rhs_storage._lastCallID {return false}
+        if _storage._updatedAtUnixMs != rhs_storage._updatedAtUnixMs {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentOperationsSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentOperationsSnapshot"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}tool_sources\0\u{1}tools\0\u{3}computer_use\0\u{3}catalog_digest\0\u{3}observed_at_unix_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.toolSources) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.tools) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._computerUse) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.catalogDigest) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.observedAtUnixMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.toolSources.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.toolSources, fieldNumber: 1)
+    }
+    if !self.tools.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.tools, fieldNumber: 2)
+    }
+    try { if let v = self._computerUse {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    if !self.catalogDigest.isEmpty {
+      try visitor.visitSingularStringField(value: self.catalogDigest, fieldNumber: 4)
+    }
+    if self.observedAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.observedAtUnixMs, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentOperationsSnapshot, rhs: Melix_Controlplane_V1_AgentOperationsSnapshot) -> Bool {
+    if lhs.toolSources != rhs.toolSources {return false}
+    if lhs.tools != rhs.tools {return false}
+    if lhs._computerUse != rhs._computerUse {return false}
+    if lhs.catalogDigest != rhs.catalogDigest {return false}
+    if lhs.observedAtUnixMs != rhs.observedAtUnixMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentToolCallSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentToolCallSnapshot"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}call_id\0\u{3}source_id\0\u{3}tool_name\0\u{1}title\0\u{3}intended_effect\0\u{3}risk_class\0\u{1}state\0\u{3}schema_digest\0\u{3}argument_digest\0\u{3}duration_ms\0\u{3}evidence_reference\0\u{3}result_truncated\0\u{1}error\0\u{3}result_summary\0\u{3}failure_stage\0")
+
+  fileprivate class _StorageClass {
+    var _callID: String = String()
+    var _sourceID: String = String()
+    var _toolName: String = String()
+    var _title: String = String()
+    var _intendedEffect: String = String()
+    var _riskClass: String = String()
+    var _state: String = String()
+    var _schemaDigest: String = String()
+    var _argumentDigest: String = String()
+    var _durationMs: Double = 0
+    var _evidenceReference: String = String()
+    var _resultTruncated: Bool = false
+    var _error: Melix_Controlplane_V1_ErrorStatus? = nil
+    var _resultSummary: String = String()
+    var _failureStage: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _callID = source._callID
+      _sourceID = source._sourceID
+      _toolName = source._toolName
+      _title = source._title
+      _intendedEffect = source._intendedEffect
+      _riskClass = source._riskClass
+      _state = source._state
+      _schemaDigest = source._schemaDigest
+      _argumentDigest = source._argumentDigest
+      _durationMs = source._durationMs
+      _evidenceReference = source._evidenceReference
+      _resultTruncated = source._resultTruncated
+      _error = source._error
+      _resultSummary = source._resultSummary
+      _failureStage = source._failureStage
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._callID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._sourceID) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._toolName) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._title) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._intendedEffect) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._riskClass) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._state) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._schemaDigest) }()
+        case 9: try { try decoder.decodeSingularStringField(value: &_storage._argumentDigest) }()
+        case 10: try { try decoder.decodeSingularDoubleField(value: &_storage._durationMs) }()
+        case 11: try { try decoder.decodeSingularStringField(value: &_storage._evidenceReference) }()
+        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._resultTruncated) }()
+        case 13: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._resultSummary) }()
+        case 15: try { try decoder.decodeSingularStringField(value: &_storage._failureStage) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._callID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._callID, fieldNumber: 1)
+      }
+      if !_storage._sourceID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sourceID, fieldNumber: 2)
+      }
+      if !_storage._toolName.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._toolName, fieldNumber: 3)
+      }
+      if !_storage._title.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._title, fieldNumber: 4)
+      }
+      if !_storage._intendedEffect.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._intendedEffect, fieldNumber: 5)
+      }
+      if !_storage._riskClass.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._riskClass, fieldNumber: 6)
+      }
+      if !_storage._state.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._state, fieldNumber: 7)
+      }
+      if !_storage._schemaDigest.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._schemaDigest, fieldNumber: 8)
+      }
+      if !_storage._argumentDigest.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._argumentDigest, fieldNumber: 9)
+      }
+      if _storage._durationMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._durationMs, fieldNumber: 10)
+      }
+      if !_storage._evidenceReference.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._evidenceReference, fieldNumber: 11)
+      }
+      if _storage._resultTruncated != false {
+        try visitor.visitSingularBoolField(value: _storage._resultTruncated, fieldNumber: 12)
+      }
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+      } }()
+      if !_storage._resultSummary.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._resultSummary, fieldNumber: 14)
+      }
+      if !_storage._failureStage.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._failureStage, fieldNumber: 15)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentToolCallSnapshot, rhs: Melix_Controlplane_V1_AgentToolCallSnapshot) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._callID != rhs_storage._callID {return false}
+        if _storage._sourceID != rhs_storage._sourceID {return false}
+        if _storage._toolName != rhs_storage._toolName {return false}
+        if _storage._title != rhs_storage._title {return false}
+        if _storage._intendedEffect != rhs_storage._intendedEffect {return false}
+        if _storage._riskClass != rhs_storage._riskClass {return false}
+        if _storage._state != rhs_storage._state {return false}
+        if _storage._schemaDigest != rhs_storage._schemaDigest {return false}
+        if _storage._argumentDigest != rhs_storage._argumentDigest {return false}
+        if _storage._durationMs != rhs_storage._durationMs {return false}
+        if _storage._evidenceReference != rhs_storage._evidenceReference {return false}
+        if _storage._resultTruncated != rhs_storage._resultTruncated {return false}
+        if _storage._error != rhs_storage._error {return false}
+        if _storage._resultSummary != rhs_storage._resultSummary {return false}
+        if _storage._failureStage != rhs_storage._failureStage {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentPendingApproval: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentPendingApproval"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}binding\0\u{3}source_id\0\u{3}tool_name\0\u{1}title\0\u{3}intended_effect\0\u{3}risk_class\0\u{3}operation_kind\0\u{3}redacted_arguments_json\0\u{3}target_scopes\0\u{3}arguments_truncated\0\u{3}persistent_allow_eligible\0\u{3}persistent_allow_unavailable_reason\0")
+
+  fileprivate class _StorageClass {
+    var _binding: Melix_Controlplane_V1_AgentApprovalBinding? = nil
+    var _sourceID: String = String()
+    var _toolName: String = String()
+    var _title: String = String()
+    var _intendedEffect: String = String()
+    var _riskClass: String = String()
+    var _operationKind: String = String()
+    var _redactedArgumentsJson: String = String()
+    var _targetScopes: [String] = []
+    var _argumentsTruncated: Bool = false
+    var _persistentAllowEligible: Bool = false
+    var _persistentAllowUnavailableReason: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _binding = source._binding
+      _sourceID = source._sourceID
+      _toolName = source._toolName
+      _title = source._title
+      _intendedEffect = source._intendedEffect
+      _riskClass = source._riskClass
+      _operationKind = source._operationKind
+      _redactedArgumentsJson = source._redactedArgumentsJson
+      _targetScopes = source._targetScopes
+      _argumentsTruncated = source._argumentsTruncated
+      _persistentAllowEligible = source._persistentAllowEligible
+      _persistentAllowUnavailableReason = source._persistentAllowUnavailableReason
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._binding) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._sourceID) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._toolName) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._title) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._intendedEffect) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._riskClass) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._operationKind) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._redactedArgumentsJson) }()
+        case 9: try { try decoder.decodeRepeatedStringField(value: &_storage._targetScopes) }()
+        case 10: try { try decoder.decodeSingularBoolField(value: &_storage._argumentsTruncated) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._persistentAllowEligible) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._persistentAllowUnavailableReason) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._binding {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if !_storage._sourceID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sourceID, fieldNumber: 2)
+      }
+      if !_storage._toolName.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._toolName, fieldNumber: 3)
+      }
+      if !_storage._title.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._title, fieldNumber: 4)
+      }
+      if !_storage._intendedEffect.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._intendedEffect, fieldNumber: 5)
+      }
+      if !_storage._riskClass.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._riskClass, fieldNumber: 6)
+      }
+      if !_storage._operationKind.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._operationKind, fieldNumber: 7)
+      }
+      if !_storage._redactedArgumentsJson.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._redactedArgumentsJson, fieldNumber: 8)
+      }
+      if !_storage._targetScopes.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._targetScopes, fieldNumber: 9)
+      }
+      if _storage._argumentsTruncated != false {
+        try visitor.visitSingularBoolField(value: _storage._argumentsTruncated, fieldNumber: 10)
+      }
+      if _storage._persistentAllowEligible != false {
+        try visitor.visitSingularBoolField(value: _storage._persistentAllowEligible, fieldNumber: 11)
+      }
+      if !_storage._persistentAllowUnavailableReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._persistentAllowUnavailableReason, fieldNumber: 12)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentPendingApproval, rhs: Melix_Controlplane_V1_AgentPendingApproval) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._binding != rhs_storage._binding {return false}
+        if _storage._sourceID != rhs_storage._sourceID {return false}
+        if _storage._toolName != rhs_storage._toolName {return false}
+        if _storage._title != rhs_storage._title {return false}
+        if _storage._intendedEffect != rhs_storage._intendedEffect {return false}
+        if _storage._riskClass != rhs_storage._riskClass {return false}
+        if _storage._operationKind != rhs_storage._operationKind {return false}
+        if _storage._redactedArgumentsJson != rhs_storage._redactedArgumentsJson {return false}
+        if _storage._targetScopes != rhs_storage._targetScopes {return false}
+        if _storage._argumentsTruncated != rhs_storage._argumentsTruncated {return false}
+        if _storage._persistentAllowEligible != rhs_storage._persistentAllowEligible {return false}
+        if _storage._persistentAllowUnavailableReason != rhs_storage._persistentAllowUnavailableReason {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentRunSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentRunSnapshot"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}run_id\0\u{3}session_id\0\u{3}branch_id\0\u{3}model_id\0\u{1}state\0\u{3}model_turn_count\0\u{3}tool_call_count\0\u{3}tool_calls\0\u{3}pending_approval\0\u{3}assistant_text\0\u{3}started_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{1}error\0\u{3}computer_use_session\0\u{1}revision\0\u{3}cancellation_receipt\0\u{3}failure_stage\0")
+
+  fileprivate class _StorageClass {
+    var _runID: String = String()
+    var _sessionID: String = String()
+    var _branchID: String = String()
+    var _modelID: String = String()
+    var _state: String = String()
+    var _modelTurnCount: UInt32 = 0
+    var _toolCallCount: UInt32 = 0
+    var _toolCalls: [Melix_Controlplane_V1_AgentToolCallSnapshot] = []
+    var _pendingApproval: Melix_Controlplane_V1_AgentPendingApproval? = nil
+    var _assistantText: String = String()
+    var _startedAtUnixMs: Int64 = 0
+    var _updatedAtUnixMs: Int64 = 0
+    var _error: Melix_Controlplane_V1_ErrorStatus? = nil
+    var _computerUseSession: Melix_Controlplane_V1_AgentComputerUseSessionProjection? = nil
+    var _revision: UInt64 = 0
+    var _cancellationReceipt: Melix_Controlplane_V1_AgentRunCancellationReceipt? = nil
+    var _failureStage: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _runID = source._runID
+      _sessionID = source._sessionID
+      _branchID = source._branchID
+      _modelID = source._modelID
+      _state = source._state
+      _modelTurnCount = source._modelTurnCount
+      _toolCallCount = source._toolCallCount
+      _toolCalls = source._toolCalls
+      _pendingApproval = source._pendingApproval
+      _assistantText = source._assistantText
+      _startedAtUnixMs = source._startedAtUnixMs
+      _updatedAtUnixMs = source._updatedAtUnixMs
+      _error = source._error
+      _computerUseSession = source._computerUseSession
+      _revision = source._revision
+      _cancellationReceipt = source._cancellationReceipt
+      _failureStage = source._failureStage
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._runID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._sessionID) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._branchID) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._modelID) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._state) }()
+        case 6: try { try decoder.decodeSingularUInt32Field(value: &_storage._modelTurnCount) }()
+        case 7: try { try decoder.decodeSingularUInt32Field(value: &_storage._toolCallCount) }()
+        case 8: try { try decoder.decodeRepeatedMessageField(value: &_storage._toolCalls) }()
+        case 9: try { try decoder.decodeSingularMessageField(value: &_storage._pendingApproval) }()
+        case 10: try { try decoder.decodeSingularStringField(value: &_storage._assistantText) }()
+        case 11: try { try decoder.decodeSingularInt64Field(value: &_storage._startedAtUnixMs) }()
+        case 12: try { try decoder.decodeSingularInt64Field(value: &_storage._updatedAtUnixMs) }()
+        case 13: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 14: try { try decoder.decodeSingularMessageField(value: &_storage._computerUseSession) }()
+        case 15: try { try decoder.decodeSingularUInt64Field(value: &_storage._revision) }()
+        case 16: try { try decoder.decodeSingularMessageField(value: &_storage._cancellationReceipt) }()
+        case 17: try { try decoder.decodeSingularStringField(value: &_storage._failureStage) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._runID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._runID, fieldNumber: 1)
+      }
+      if !_storage._sessionID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sessionID, fieldNumber: 2)
+      }
+      if !_storage._branchID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._branchID, fieldNumber: 3)
+      }
+      if !_storage._modelID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._modelID, fieldNumber: 4)
+      }
+      if !_storage._state.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._state, fieldNumber: 5)
+      }
+      if _storage._modelTurnCount != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._modelTurnCount, fieldNumber: 6)
+      }
+      if _storage._toolCallCount != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._toolCallCount, fieldNumber: 7)
+      }
+      if !_storage._toolCalls.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._toolCalls, fieldNumber: 8)
+      }
+      try { if let v = _storage._pendingApproval {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+      } }()
+      if !_storage._assistantText.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._assistantText, fieldNumber: 10)
+      }
+      if _storage._startedAtUnixMs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._startedAtUnixMs, fieldNumber: 11)
+      }
+      if _storage._updatedAtUnixMs != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._updatedAtUnixMs, fieldNumber: 12)
+      }
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+      } }()
+      try { if let v = _storage._computerUseSession {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
+      } }()
+      if _storage._revision != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._revision, fieldNumber: 15)
+      }
+      try { if let v = _storage._cancellationReceipt {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
+      } }()
+      if !_storage._failureStage.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._failureStage, fieldNumber: 17)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentRunSnapshot, rhs: Melix_Controlplane_V1_AgentRunSnapshot) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._runID != rhs_storage._runID {return false}
+        if _storage._sessionID != rhs_storage._sessionID {return false}
+        if _storage._branchID != rhs_storage._branchID {return false}
+        if _storage._modelID != rhs_storage._modelID {return false}
+        if _storage._state != rhs_storage._state {return false}
+        if _storage._modelTurnCount != rhs_storage._modelTurnCount {return false}
+        if _storage._toolCallCount != rhs_storage._toolCallCount {return false}
+        if _storage._toolCalls != rhs_storage._toolCalls {return false}
+        if _storage._pendingApproval != rhs_storage._pendingApproval {return false}
+        if _storage._assistantText != rhs_storage._assistantText {return false}
+        if _storage._startedAtUnixMs != rhs_storage._startedAtUnixMs {return false}
+        if _storage._updatedAtUnixMs != rhs_storage._updatedAtUnixMs {return false}
+        if _storage._error != rhs_storage._error {return false}
+        if _storage._computerUseSession != rhs_storage._computerUseSession {return false}
+        if _storage._revision != rhs_storage._revision {return false}
+        if _storage._cancellationReceipt != rhs_storage._cancellationReceipt {return false}
+        if _storage._failureStage != rhs_storage._failureStage {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentApprovalDecisionReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentApprovalDecisionReceipt"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}binding\0\u{1}choice\0\u{3}decision_id\0\u{3}actor_id\0\u{3}decided_at_unix_ms\0\u{3}policy_revision_after_decision\0\u{3}policy_persistence_disposition\0\u{3}policy_persistence_error\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._binding) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.choice) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.decisionID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.actorID) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.decidedAtUnixMs) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.policyRevisionAfterDecision) }()
+      case 7: try { try decoder.decodeSingularEnumField(value: &self.policyPersistenceDisposition) }()
+      case 8: try { try decoder.decodeSingularMessageField(value: &self._policyPersistenceError) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._binding {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if self.choice != .unspecified {
+      try visitor.visitSingularEnumField(value: self.choice, fieldNumber: 2)
+    }
+    if !self.decisionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.decisionID, fieldNumber: 3)
+    }
+    if !self.actorID.isEmpty {
+      try visitor.visitSingularStringField(value: self.actorID, fieldNumber: 4)
+    }
+    if self.decidedAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.decidedAtUnixMs, fieldNumber: 5)
+    }
+    if !self.policyRevisionAfterDecision.isEmpty {
+      try visitor.visitSingularStringField(value: self.policyRevisionAfterDecision, fieldNumber: 6)
+    }
+    if self.policyPersistenceDisposition != .unspecified {
+      try visitor.visitSingularEnumField(value: self.policyPersistenceDisposition, fieldNumber: 7)
+    }
+    try { if let v = self._policyPersistenceError {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentApprovalDecisionReceipt, rhs: Melix_Controlplane_V1_AgentApprovalDecisionReceipt) -> Bool {
+    if lhs._binding != rhs._binding {return false}
+    if lhs.choice != rhs.choice {return false}
+    if lhs.decisionID != rhs.decisionID {return false}
+    if lhs.actorID != rhs.actorID {return false}
+    if lhs.decidedAtUnixMs != rhs.decidedAtUnixMs {return false}
+    if lhs.policyRevisionAfterDecision != rhs.policyRevisionAfterDecision {return false}
+    if lhs.policyPersistenceDisposition != rhs.policyPersistenceDisposition {return false}
+    if lhs._policyPersistenceError != rhs._policyPersistenceError {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentToolCancellationReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentToolCancellationReceipt"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}call_id\0\u{1}disposition\0\u{3}side_effect_committed\0\u{3}adapter_kind\0\u{3}source_id\0\u{3}side_effect_state\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.callID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.disposition) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.sideEffectCommitted) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.adapterKind) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.sourceID) }()
+      case 6: try { try decoder.decodeSingularEnumField(value: &self.sideEffectState) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.callID.isEmpty {
+      try visitor.visitSingularStringField(value: self.callID, fieldNumber: 1)
+    }
+    if !self.disposition.isEmpty {
+      try visitor.visitSingularStringField(value: self.disposition, fieldNumber: 2)
+    }
+    if self.sideEffectCommitted != false {
+      try visitor.visitSingularBoolField(value: self.sideEffectCommitted, fieldNumber: 3)
+    }
+    if !self.adapterKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.adapterKind, fieldNumber: 4)
+    }
+    if !self.sourceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sourceID, fieldNumber: 5)
+    }
+    if self.sideEffectState != .unspecified {
+      try visitor.visitSingularEnumField(value: self.sideEffectState, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentToolCancellationReceipt, rhs: Melix_Controlplane_V1_AgentToolCancellationReceipt) -> Bool {
+    if lhs.callID != rhs.callID {return false}
+    if lhs.disposition != rhs.disposition {return false}
+    if lhs.sideEffectCommitted != rhs.sideEffectCommitted {return false}
+    if lhs.adapterKind != rhs.adapterKind {return false}
+    if lhs.sourceID != rhs.sourceID {return false}
+    if lhs.sideEffectState != rhs.sideEffectState {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentRunCancellationReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentRunCancellationReceipt"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}run_id\0\u{3}cancellation_id\0\u{1}disposition\0\u{3}side_effect_committed\0\u{1}tool\0\u{3}side_effect_state\0\u{3}run_tools\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.runID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.cancellationID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.disposition) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.sideEffectCommitted) }()
+      case 5: try { try decoder.decodeSingularMessageField(value: &self._tool) }()
+      case 6: try { try decoder.decodeSingularEnumField(value: &self.sideEffectState) }()
+      case 7: try { try decoder.decodeSingularMessageField(value: &self._runTools) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.runID.isEmpty {
+      try visitor.visitSingularStringField(value: self.runID, fieldNumber: 1)
+    }
+    if !self.cancellationID.isEmpty {
+      try visitor.visitSingularStringField(value: self.cancellationID, fieldNumber: 2)
+    }
+    if !self.disposition.isEmpty {
+      try visitor.visitSingularStringField(value: self.disposition, fieldNumber: 3)
+    }
+    if self.sideEffectCommitted != false {
+      try visitor.visitSingularBoolField(value: self.sideEffectCommitted, fieldNumber: 4)
+    }
+    try { if let v = self._tool {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    } }()
+    if self.sideEffectState != .unspecified {
+      try visitor.visitSingularEnumField(value: self.sideEffectState, fieldNumber: 6)
+    }
+    try { if let v = self._runTools {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentRunCancellationReceipt, rhs: Melix_Controlplane_V1_AgentRunCancellationReceipt) -> Bool {
+    if lhs.runID != rhs.runID {return false}
+    if lhs.cancellationID != rhs.cancellationID {return false}
+    if lhs.disposition != rhs.disposition {return false}
+    if lhs.sideEffectCommitted != rhs.sideEffectCommitted {return false}
+    if lhs._tool != rhs._tool {return false}
+    if lhs.sideEffectState != rhs.sideEffectState {return false}
+    if lhs._runTools != rhs._runTools {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentRunToolCancellationReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentRunToolCancellationReceipt"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}disposition\0\u{3}side_effect_state\0\u{1}calls\0\u{3}computer_use_disposition\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.disposition) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.sideEffectState) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.calls) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.computerUseDisposition) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.disposition.isEmpty {
+      try visitor.visitSingularStringField(value: self.disposition, fieldNumber: 1)
+    }
+    if self.sideEffectState != .unspecified {
+      try visitor.visitSingularEnumField(value: self.sideEffectState, fieldNumber: 2)
+    }
+    if !self.calls.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.calls, fieldNumber: 3)
+    }
+    if !self.computerUseDisposition.isEmpty {
+      try visitor.visitSingularStringField(value: self.computerUseDisposition, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentRunToolCancellationReceipt, rhs: Melix_Controlplane_V1_AgentRunToolCancellationReceipt) -> Bool {
+    if lhs.disposition != rhs.disposition {return false}
+    if lhs.sideEffectState != rhs.sideEffectState {return false}
+    if lhs.calls != rhs.calls {return false}
+    if lhs.computerUseDisposition != rhs.computerUseDisposition {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Controlplane_V1_AgentRunStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentRunStateChanged"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}run\0\u{3}change_kind\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._run) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.changeKind) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._run {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if !self.changeKind.isEmpty {
+      try visitor.visitSingularStringField(value: self.changeKind, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_AgentRunStateChanged, rhs: Melix_Controlplane_V1_AgentRunStateChanged) -> Bool {
+    if lhs._run != rhs._run {return false}
+    if lhs.changeKind != rhs.changeKind {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

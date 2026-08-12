@@ -38,6 +38,10 @@ public enum BridgeCommandKind: String, Sendable {
     case exportResults = "export-results"
     case exportResultsStream = "export-results-stream"
     case submitResults = "submit-results"
+    case listAgentTools = "list-agent-tools"
+    case executeAgentTool = "execute-agent-tool"
+    case cancelAgentTool = "cancel-agent-tool"
+    case cancelAgentRunTools = "cancel-agent-run-tools"
 }
 
 public struct BridgeCommand: Sendable {
@@ -199,10 +203,58 @@ public protocol PythonWorkerRPCRunning: Sendable {
         socketPath: String,
         request: Melix_Worker_V1_SubmitResultsRequest
     ) async throws -> Melix_Worker_V1_SubmitResultsResponse
+
+    func listAgentTools(
+        socketPath: String,
+        request: Melix_Worker_V1_ListAgentToolsRequest
+    ) async throws -> Melix_Worker_V1_ToolCatalogReceipt
+
+    func executeAgentTool(
+        socketPath: String,
+        request: Melix_Worker_V1_ExecuteAgentToolRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_AgentToolExecutionEvent, Error>
+
+    func cancelAgentTool(
+        socketPath: String,
+        request: Melix_Worker_V1_CancelAgentToolRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentToolResponse
+
+    func cancelAgentRunTools(
+        socketPath: String,
+        request: Melix_Worker_V1_CancelAgentRunToolsRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentRunToolsResponse
 }
 
 public extension PythonWorkerRPCRunning {
     func shutdown() async {}
+
+    func listAgentTools(
+        socketPath _: String,
+        request _: Melix_Worker_V1_ListAgentToolsRequest
+    ) async throws -> Melix_Worker_V1_ToolCatalogReceipt {
+        throw WorkerClientError.unavailable
+    }
+
+    func executeAgentTool(
+        socketPath _: String,
+        request _: Melix_Worker_V1_ExecuteAgentToolRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_AgentToolExecutionEvent, Error> {
+        throw WorkerClientError.unavailable
+    }
+
+    func cancelAgentTool(
+        socketPath _: String,
+        request _: Melix_Worker_V1_CancelAgentToolRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentToolResponse {
+        throw WorkerClientError.unavailable
+    }
+
+    func cancelAgentRunTools(
+        socketPath _: String,
+        request _: Melix_Worker_V1_CancelAgentRunToolsRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentRunToolsResponse {
+        throw WorkerClientError.unavailable
+    }
 }
 
 private enum PythonWorkerTransport: Sendable {
@@ -220,6 +272,7 @@ public struct PythonBridgeWorkerClient:
     BackendHealthIdentifyingWorkerClientProtocol,
     ModelOperationsWorkerClientProtocol,
     StreamingExportResultsWorkerClientProtocol,
+    AgentToolRuntimeWorkerClientProtocol,
     Sendable
 {
     private let socketPath: String
@@ -632,6 +685,78 @@ public struct PythonBridgeWorkerClient:
             )
         case .rpc(let runner):
             return try await runner.submitResults(socketPath: socketPath, request: request)
+        }
+    }
+
+    public func listAgentTools(
+        request: Melix_Worker_V1_ListAgentToolsRequest
+    ) async throws -> Melix_Worker_V1_ToolCatalogReceipt {
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .listAgentTools,
+                request: request,
+                as: Melix_Worker_V1_ToolCatalogReceipt.self
+            )
+        case .rpc(let runner):
+            return try await runner.listAgentTools(
+                socketPath: socketPath,
+                request: request
+            )
+        }
+    }
+
+    public func executeAgentTool(
+        request: Melix_Worker_V1_ExecuteAgentToolRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_AgentToolExecutionEvent, Error> {
+        switch transport {
+        case .bridge:
+            return try await sendStream(
+                kind: .executeAgentTool,
+                request: request,
+                as: Melix_Worker_V1_AgentToolExecutionEvent.self
+            )
+        case .rpc(let runner):
+            return try await runner.executeAgentTool(
+                socketPath: socketPath,
+                request: request
+            )
+        }
+    }
+
+    public func cancelAgentTool(
+        request: Melix_Worker_V1_CancelAgentToolRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentToolResponse {
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .cancelAgentTool,
+                request: request,
+                as: Melix_Worker_V1_CancelAgentToolResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.cancelAgentTool(
+                socketPath: socketPath,
+                request: request
+            )
+        }
+    }
+
+    public func cancelAgentRunTools(
+        request: Melix_Worker_V1_CancelAgentRunToolsRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentRunToolsResponse {
+        switch transport {
+        case .bridge:
+            return try await sendUnary(
+                kind: .cancelAgentRunTools,
+                request: request,
+                as: Melix_Worker_V1_CancelAgentRunToolsResponse.self
+            )
+        case .rpc(let runner):
+            return try await runner.cancelAgentRunTools(
+                socketPath: socketPath,
+                request: request
+            )
         }
     }
 
@@ -1930,16 +2055,37 @@ private actor ProcessTerminationState {
 
 public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
     private let sessionProvider: PythonWorkerGRPCSessionProvider
+    private let agentToolCancellationTimeoutMilliseconds: Int64
+    private let agentRunCleanupTimeoutMilliseconds: Int64
 
     public init(
         makeEventLoopGroup: @escaping @Sendable () -> MultiThreadedEventLoopGroup = {
             MultiThreadedEventLoopGroup(numberOfThreads: 1)
         },
         shutdownEventLoopGroup: @escaping @Sendable (MultiThreadedEventLoopGroup) async throws -> Void = { group in
-            try await group.shutdownGracefully()
+            try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async {
+                    do {
+                        try group.syncShutdownGracefully()
+                        continuation.resume()
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
         },
-        onClientSessionCreated: @escaping @Sendable () -> Void = {}
+        onClientSessionCreated: @escaping @Sendable () -> Void = {},
+        agentToolCancellationTimeoutMilliseconds: Int64 = 3_000,
+        agentRunCleanupTimeoutMilliseconds: Int64 = 5_000
     ) {
+        self.agentToolCancellationTimeoutMilliseconds = max(
+            agentToolCancellationTimeoutMilliseconds,
+            1
+        )
+        self.agentRunCleanupTimeoutMilliseconds = max(
+            agentRunCleanupTimeoutMilliseconds,
+            1
+        )
         self.sessionProvider = PythonWorkerGRPCSessionProvider(
             makeEventLoopGroup: makeEventLoopGroup,
             shutdownEventLoopGroup: shutdownEventLoopGroup,
@@ -2314,6 +2460,90 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
         }
     }
 
+    public func listAgentTools(
+        socketPath: String,
+        request: Melix_Worker_V1_ListAgentToolsRequest
+    ) async throws -> Melix_Worker_V1_ToolCatalogReceipt {
+        let options = agentToolRequestOptions(
+            deadlineUnixMs: request.deadlineUnixMs,
+            fallbackMilliseconds: 30_000
+        )
+        return try await withToolRPCClient(socketPath: socketPath) { client in
+            try await client.listAgentTools(request, options: options)
+        }
+    }
+
+    public func executeAgentTool(
+        socketPath: String,
+        request: Melix_Worker_V1_ExecuteAgentToolRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_AgentToolExecutionEvent, Error> {
+        let options = agentToolRequestOptions(
+            deadlineUnixMs: request.context.deadlineUnixMs,
+            fallbackMilliseconds: 120_000
+        )
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await withToolRPCClient(socketPath: socketPath) { client in
+                        try await client.executeAgentTool(
+                            request,
+                            options: options
+                        ) { response in
+                            for try await event in response.messages {
+                                continuation.yield(event)
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: workerClientError(from: error))
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    public func cancelAgentTool(
+        socketPath: String,
+        request: Melix_Worker_V1_CancelAgentToolRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentToolResponse {
+        let options = agentToolRequestOptions(
+            deadlineUnixMs: 0,
+            fallbackMilliseconds: agentToolCancellationTimeoutMilliseconds
+        )
+        return try await withToolRPCClient(socketPath: socketPath) { client in
+            try await client.cancelAgentTool(request, options: options)
+        }
+    }
+
+    public func cancelAgentRunTools(
+        socketPath: String,
+        request: Melix_Worker_V1_CancelAgentRunToolsRequest
+    ) async throws -> Melix_Worker_V1_CancelAgentRunToolsResponse {
+        let options = agentToolRequestOptions(
+            deadlineUnixMs: 0,
+            fallbackMilliseconds: agentRunCleanupTimeoutMilliseconds
+        )
+        return try await withToolRPCClient(socketPath: socketPath) { client in
+            try await client.cancelAgentRunTools(request, options: options)
+        }
+    }
+
+    private func agentToolRequestOptions(
+        deadlineUnixMs: Int64,
+        fallbackMilliseconds: Int64
+    ) -> GRPCCore.CallOptions {
+        let nowUnixMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        let timeoutMilliseconds = deadlineUnixMs > 0
+            ? max(deadlineUnixMs - nowUnixMs, 1)
+            : max(fallbackMilliseconds, 1)
+        var options = GRPCCore.CallOptions.defaults
+        options.timeout = .milliseconds(timeoutMilliseconds)
+        return options
+    }
+
     private func withRPCClients<Result: Sendable>(
         socketPath: String,
         operation: @Sendable @escaping (
@@ -2331,6 +2561,23 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
                 session.cacheClient,
                 session.maintenanceClient
             )
+        } catch {
+            if shouldInvalidateGRPCSession(for: error) {
+                await sessionProvider.invalidate(socketPath: socketPath, ifMatching: session)
+            }
+            throw workerClientError(from: error)
+        }
+    }
+
+    private func withToolRPCClient<Result: Sendable>(
+        socketPath: String,
+        operation: @Sendable @escaping (
+            Melix_Worker_V1_ToolRuntimeService.Client<HTTP2ClientTransport.Posix>
+        ) async throws -> Result
+    ) async throws -> Result {
+        let session = try sessionProvider.session(socketPath: socketPath)
+        do {
+            return try await operation(session.toolRuntimeClient)
         } catch {
             if shouldInvalidateGRPCSession(for: error) {
                 await sessionProvider.invalidate(socketPath: socketPath, ifMatching: session)
@@ -2447,6 +2694,7 @@ private final class PythonWorkerGRPCSession: @unchecked Sendable {
     let inferenceClient: Melix_Worker_V1_InferenceService.Client<HTTP2ClientTransport.Posix>
     let cacheClient: Melix_Worker_V1_CacheService.Client<HTTP2ClientTransport.Posix>
     let maintenanceClient: Melix_Worker_V1_MaintenanceService.Client<HTTP2ClientTransport.Posix>
+    let toolRuntimeClient: Melix_Worker_V1_ToolRuntimeService.Client<HTTP2ClientTransport.Posix>
 
     private let lock = NSLock()
     private let eventLoopGroup: MultiThreadedEventLoopGroup
@@ -2471,6 +2719,7 @@ private final class PythonWorkerGRPCSession: @unchecked Sendable {
         self.inferenceClient = Melix_Worker_V1_InferenceService.Client(wrapping: client)
         self.cacheClient = Melix_Worker_V1_CacheService.Client(wrapping: client)
         self.maintenanceClient = Melix_Worker_V1_MaintenanceService.Client(wrapping: client)
+        self.toolRuntimeClient = Melix_Worker_V1_ToolRuntimeService.Client(wrapping: client)
         self.connectionTask = Task {
             try await client.runConnections()
         }

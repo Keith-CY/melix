@@ -29,6 +29,7 @@ let package = Package(
             path: "Sources",
             exclude: ["Bootstrap", "OpenAIConformanceHarnessCLI"],
             sources: [
+                "AgentRuntime",
                 "EnginePool",
                 "HTTPGateway",
                 "ImageJobs",

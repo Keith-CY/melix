@@ -5,6 +5,19 @@ public enum ControlPlaneXPCClientError: Error, Equatable {
     case requestFailed(code: String, message: String)
 }
 
+public struct ControlPlaneAgentRunInventory: Equatable, Sendable {
+    public let runs: [Melix_Controlplane_V1_AgentRunSnapshot]
+    public let isComplete: Bool
+
+    public init(
+        runs: [Melix_Controlplane_V1_AgentRunSnapshot],
+        isComplete: Bool
+    ) {
+        self.runs = runs
+        self.isComplete = isComplete
+    }
+}
+
 public struct ControlPlaneImageGenerationRequest: Equatable, Sendable {
     public let modelID: String
     public let prompt: String
@@ -481,6 +494,39 @@ public protocol ControlPlaneXPCClient: Sendable {
     func handshake() async throws -> Melix_Controlplane_V1_HandshakeResponse
     func subscribe(lastSeenSeq: UInt64) async -> AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution
+    func startAgentRun(
+        _ command: Melix_Controlplane_V1_StartAgentRun,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget?
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot
+    func activateAgentRun(
+        runID: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot
+    func decideAgentApproval(
+        _ command: Melix_Controlplane_V1_DecideAgentApproval
+    ) async throws -> Melix_Controlplane_V1_AgentApprovalDecisionReceipt
+    func cancelAgentRun(
+        runID: String,
+        reason: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunCancellationReceipt
+    func agentRun(
+        runID: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot
+    func agentRuns(
+        sessionID: String,
+        limit: UInt32
+    ) async throws -> [Melix_Controlplane_V1_AgentRunSnapshot]
+    func nonterminalAgentRuns(
+        sessionID: String,
+        limit: UInt32
+    ) async throws -> ControlPlaneAgentRunInventory
+    func agentApprovalPolicy()
+        async throws -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot
+    func replaceAgentApprovalPolicy(
+        rules: [Melix_Controlplane_V1_AgentApprovalPolicyRule],
+        expectedRevision: UInt64
+    ) async throws -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot
+    func agentOperations()
+        async throws -> Melix_Controlplane_V1_AgentOperationsSnapshot
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot
     func startServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot
     func pauseServerSession(serverSessionID: String) async throws -> Melix_Controlplane_V1_ServerSnapshot
@@ -570,6 +616,112 @@ public protocol ControlPlaneXPCClient: Sendable {
 }
 
 public extension ControlPlaneXPCClient {
+    func startAgentRun(
+        _ command: Melix_Controlplane_V1_StartAgentRun,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget? = nil
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        _ = command
+        _ = remoteTarget
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent runs are not implemented for this control-plane client."
+        )
+    }
+
+    func activateAgentRun(
+        runID: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        _ = runID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent activation is not implemented for this control-plane client."
+        )
+    }
+
+    func decideAgentApproval(
+        _ command: Melix_Controlplane_V1_DecideAgentApproval
+    ) async throws -> Melix_Controlplane_V1_AgentApprovalDecisionReceipt {
+        _ = command
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent approvals are not implemented for this control-plane client."
+        )
+    }
+
+    func cancelAgentRun(
+        runID: String,
+        reason: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunCancellationReceipt {
+        _ = runID
+        _ = reason
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent cancellation is not implemented for this control-plane client."
+        )
+    }
+
+    func agentRun(
+        runID: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        _ = runID
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent run lookup is not implemented for this control-plane client."
+        )
+    }
+
+    func agentRuns(
+        sessionID: String,
+        limit: UInt32 = 100
+    ) async throws -> [Melix_Controlplane_V1_AgentRunSnapshot] {
+        _ = sessionID
+        _ = limit
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent run listing is not implemented for this control-plane client."
+        )
+    }
+
+    func nonterminalAgentRuns(
+        sessionID: String,
+        limit: UInt32 = 500
+    ) async throws -> ControlPlaneAgentRunInventory {
+        _ = sessionID
+        _ = limit
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Authoritative Agent run inventory is not implemented for this control-plane client."
+        )
+    }
+
+    func agentApprovalPolicy()
+        async throws -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot {
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent approval policy lookup is not implemented for this control-plane client."
+        )
+    }
+
+    func replaceAgentApprovalPolicy(
+        rules: [Melix_Controlplane_V1_AgentApprovalPolicyRule],
+        expectedRevision: UInt64
+    ) async throws -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot {
+        _ = rules
+        _ = expectedRevision
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent approval policy mutation is not implemented for this control-plane client."
+        )
+    }
+
+    func agentOperations()
+        async throws -> Melix_Controlplane_V1_AgentOperationsSnapshot {
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent operations lookup is not implemented for this control-plane client."
+        )
+    }
+
     func loadModel(modelID: String, memoryBudgetBytes: UInt64) async throws -> Melix_Controlplane_V1_ModelSummary {
         _ = memoryBudgetBytes
         return try await loadModel(modelID: modelID)
@@ -834,10 +986,31 @@ public protocol ControlPlaneExecuting: Sendable {
     func subscribe(_ request: Melix_Controlplane_V1_SubscribeRequest) async -> ControlPlaneSubscription
     func unsubscribe(_ subscriptionID: String) async
     func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution
+    func startAgentRun(
+        _ command: Melix_Controlplane_V1_StartAgentRun,
+        actorID: String,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget?
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot
     func execute(_ request: Melix_Controlplane_V1_ControlPlaneRequest) async throws -> Melix_Controlplane_V1_ControlPlaneResponse
 }
 
 extension ControlPlaneService: ControlPlaneExecuting {}
+
+public extension ControlPlaneExecuting {
+    func startAgentRun(
+        _ command: Melix_Controlplane_V1_StartAgentRun,
+        actorID: String,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget?
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        _ = command
+        _ = actorID
+        _ = remoteTarget
+        throw ControlPlaneXPCClientError.requestFailed(
+            code: "unimplemented",
+            message: "Agent runs are not implemented for this control-plane service."
+        )
+    }
+}
 
 public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
     private let service: any ControlPlaneExecuting
@@ -879,6 +1052,112 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
 
     public func startChat(_ request: ControlPlaneChatRequest) async throws -> ControlPlaneChatExecution {
         try await service.startChat(request)
+    }
+
+    public func startAgentRun(
+        _ command: Melix_Controlplane_V1_StartAgentRun,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget? = nil
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        try await service.startAgentRun(
+            command,
+            actorID: "local-operator",
+            remoteTarget: remoteTarget
+        )
+    }
+
+    public func activateAgentRun(
+        runID: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        try await execute(makeActivateAgentRunRequest(runID: runID)) { response in
+            response.agent.run
+        }
+    }
+
+    public func decideAgentApproval(
+        _ command: Melix_Controlplane_V1_DecideAgentApproval
+    ) async throws -> Melix_Controlplane_V1_AgentApprovalDecisionReceipt {
+        try await execute(makeAgentApprovalRequest(command)) { response in
+            response.agent.approval
+        }
+    }
+
+    public func cancelAgentRun(
+        runID: String,
+        reason: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunCancellationReceipt {
+        try await execute(makeCancelAgentRunRequest(runID: runID, reason: reason)) {
+            response in
+            response.agent.cancellation
+        }
+    }
+
+    public func agentRun(
+        runID: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        try await execute(makeGetAgentRunRequest(runID: runID)) { response in
+            response.agent.run
+        }
+    }
+
+    public func agentRuns(
+        sessionID: String,
+        limit: UInt32 = 100
+    ) async throws -> [Melix_Controlplane_V1_AgentRunSnapshot] {
+        try await execute(
+            makeListAgentRunsRequest(
+                sessionID: sessionID,
+                limit: limit,
+                nonterminalOnly: false
+            )
+        ) { response in
+            response.agent.runs
+        }
+    }
+
+    public func nonterminalAgentRuns(
+        sessionID: String,
+        limit: UInt32 = 500
+    ) async throws -> ControlPlaneAgentRunInventory {
+        try await execute(
+            makeListAgentRunsRequest(
+                sessionID: sessionID,
+                limit: limit,
+                nonterminalOnly: true
+            )
+        ) { response in
+            ControlPlaneAgentRunInventory(
+                runs: response.agent.runs,
+                isComplete: response.agent.runsComplete
+            )
+        }
+    }
+
+    public func agentApprovalPolicy()
+        async throws -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot {
+        try await execute(makeGetAgentApprovalPolicyRequest()) { response in
+            response.agent.approvalPolicy
+        }
+    }
+
+    public func replaceAgentApprovalPolicy(
+        rules: [Melix_Controlplane_V1_AgentApprovalPolicyRule],
+        expectedRevision: UInt64
+    ) async throws -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot {
+        try await execute(
+            makeReplaceAgentApprovalPolicyRequest(
+                rules: rules,
+                expectedRevision: expectedRevision
+            )
+        ) { response in
+            response.agent.approvalPolicy
+        }
+    }
+
+    public func agentOperations()
+        async throws -> Melix_Controlplane_V1_AgentOperationsSnapshot {
+        try await execute(makeGetAgentOperationsRequest()) { response in
+            response.agent.operations
+        }
     }
 
     public func loadModel(modelID: String) async throws -> Melix_Controlplane_V1_ModelSummary {
@@ -1432,6 +1711,121 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.ops = Melix_Controlplane_V1_OpsCommand()
         request.ops.cancelRequest = Melix_Controlplane_V1_CancelRequest()
         request.ops.cancelRequest.requestID = requestID
+        return request
+    }
+
+    private func makeAgentApprovalRequest(
+        _ command: Melix_Controlplane_V1_DecideAgentApproval
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-agent-approval-\(UUID().uuidString)"
+        request.commandType = "agent.decide_approval"
+        request.actorID = "local-operator"
+        request.agent = Melix_Controlplane_V1_AgentCommand()
+        request.agent.decideApproval = command
+        return request
+    }
+
+    private func makeActivateAgentRunRequest(
+        runID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-agent-activate-\(UUID().uuidString)"
+        request.commandType = "agent.activate"
+        request.actorID = "local-operator"
+        request.targetID = runID
+        request.deadlineUnixMs = Int64(
+            Date().addingTimeInterval(30).timeIntervalSince1970 * 1_000
+        )
+        request.agent = Melix_Controlplane_V1_AgentCommand()
+        request.agent.activate = Melix_Controlplane_V1_ActivateAgentRun()
+        request.agent.activate.runID = runID
+        return request
+    }
+
+    private func makeCancelAgentRunRequest(
+        runID: String,
+        reason: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-agent-cancel-\(UUID().uuidString)"
+        request.commandType = "agent.cancel"
+        request.actorID = "local-operator"
+        request.targetID = runID
+        request.agent = Melix_Controlplane_V1_AgentCommand()
+        request.agent.cancel = Melix_Controlplane_V1_CancelAgentRun()
+        request.agent.cancel.runID = runID
+        request.agent.cancel.reason = reason
+        return request
+    }
+
+    private func makeGetAgentRunRequest(
+        runID: String
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-agent-get-\(UUID().uuidString)"
+        request.commandType = "agent.get"
+        request.actorID = "local-operator"
+        request.targetID = runID
+        request.agent = Melix_Controlplane_V1_AgentCommand()
+        request.agent.get = Melix_Controlplane_V1_GetAgentRun()
+        request.agent.get.runID = runID
+        return request
+    }
+
+    private func makeListAgentRunsRequest(
+        sessionID: String,
+        limit: UInt32,
+        nonterminalOnly: Bool
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-agent-list-\(UUID().uuidString)"
+        request.commandType = "agent.list"
+        request.actorID = "local-operator"
+        request.agent = Melix_Controlplane_V1_AgentCommand()
+        request.agent.list = Melix_Controlplane_V1_ListAgentRuns()
+        request.agent.list.sessionID = sessionID
+        request.agent.list.limit = limit
+        request.agent.list.nonterminalOnly = nonterminalOnly
+        return request
+    }
+
+    private func makeGetAgentApprovalPolicyRequest()
+        -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-agent-policy-get-\(UUID().uuidString)"
+        request.commandType = "agent.get_approval_policy"
+        request.actorID = "local-operator"
+        request.agent = Melix_Controlplane_V1_AgentCommand()
+        request.agent.getApprovalPolicy =
+            Melix_Controlplane_V1_GetAgentApprovalPolicy()
+        return request
+    }
+
+    private func makeReplaceAgentApprovalPolicyRequest(
+        rules: [Melix_Controlplane_V1_AgentApprovalPolicyRule],
+        expectedRevision: UInt64
+    ) -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-agent-policy-replace-\(UUID().uuidString)"
+        request.commandType = "agent.replace_approval_policy"
+        request.actorID = "local-operator"
+        request.agent = Melix_Controlplane_V1_AgentCommand()
+        request.agent.replaceApprovalPolicy =
+            Melix_Controlplane_V1_ReplaceAgentApprovalPolicy()
+        request.agent.replaceApprovalPolicy.expectedRevision = expectedRevision
+        request.agent.replaceApprovalPolicy.rules = rules
+        return request
+    }
+
+    private func makeGetAgentOperationsRequest()
+        -> Melix_Controlplane_V1_ControlPlaneRequest {
+        var request = Melix_Controlplane_V1_ControlPlaneRequest()
+        request.requestID = "menubar-agent-operations-\(UUID().uuidString)"
+        request.commandType = "agent.get_operations"
+        request.actorID = "local-operator"
+        request.agent = Melix_Controlplane_V1_AgentCommand()
+        request.agent.getOperations = Melix_Controlplane_V1_GetAgentOperations()
         return request
     }
 

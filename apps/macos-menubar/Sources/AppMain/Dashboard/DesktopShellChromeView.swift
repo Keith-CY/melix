@@ -229,8 +229,10 @@ struct DesktopShellTabStripView: View {
         switch surface {
         case .chat:
             return "1"
-        case .commandCenter:
+        case .agents:
             return "2"
+        case .commandCenter:
+            return "6"
         case .server:
             return "3"
         case .models:

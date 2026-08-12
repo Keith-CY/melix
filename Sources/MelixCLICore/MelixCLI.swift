@@ -6438,9 +6438,14 @@ public actor MelixCLIRunner {
         )
         if let client {
             self.client = client
+        } else if let serviceBuilder {
+            self.client = LocalControlPlaneXPCClient(
+                service: serviceBuilder(environment)
+            )
         } else {
-            let resolvedServiceBuilder = serviceBuilder ?? MelixLocalRuntimeFactory.makeService
-            self.client = LocalControlPlaneXPCClient(service: resolvedServiceBuilder(environment))
+            self.client = MelixLocalRuntimeFactory.makeClient(
+                environment: environment
+            )
         }
     }
 

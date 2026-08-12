@@ -5,6 +5,7 @@ CLANG_MODULE_CACHE_PATH := $(ROOT)/.build/ModuleCache.noindex
 PROTOCOL_SWIFT_HOME := $(SWIFT_HOME)/protocol
 TEXT_WORKER_SWIFT_HOME := $(SWIFT_HOME)/mlx-text-worker-swift
 CONTROL_PLANE_SWIFT_HOME := $(SWIFT_HOME)/control-plane-swift
+COMPUTER_USE_BROKER_SWIFT_HOME := $(SWIFT_HOME)/computer-use-broker-swift
 MENUBAR_SWIFT_HOME := $(SWIFT_HOME)/macos-menubar
 # AppKit-backed menubar tests share NSApplication/status-bar process state.
 MENUBAR_SWIFT_TEST_FLAGS := --no-parallel -Xswiftc -gnone
@@ -12,10 +13,11 @@ MENUBAR_SWIFT_TEST_FLAGS := --no-parallel -Xswiftc -gnone
 PROTOCOL_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/protocol
 TEXT_WORKER_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/mlx-text-worker-swift
 CONTROL_PLANE_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/control-plane-swift
+COMPUTER_USE_BROKER_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/computer-use-broker-swift
 MENUBAR_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/macos-menubar
 
-CONTROL_PLANE_TEST_FILTER_CONTROL := SnapshotStoreTests|BackendModelIdentityTests|BenchmarkExportBundleTests|ImageDefaultsStoreTests|SchedulerReadModelTests|ToolParserRegistryTests|GatewayConfigStoreTests|ChatTemplatePolicyTests|ImageJobReadModelTests|GatewayServingDefaultsStoreTests|MCPToolCatalogTests|ModelCatalogTests|TextExecutionModelResolverTests|MultimodalContractTests|PrivacyPolicyReceiptsTests|ImageJobAdmissionControllerTests|StructuredOutputValidationTests|AudioAssetManagerTests|EventSubscriptionHubTests|CoreUtilityTests|ControlPlaneServiceTests|ControlPlaneChatExecutionTests|ControlPlaneServiceFastPathTests|TextEndpointContractTests
-CONTROL_PLANE_TEST_FILTER_WORKER := PythonBridgeWorkerClientTests|SwiftTextWorkerClientTests|WorkerClientTests|WorkerRegistryTests|OnDemandModelLoaderTests
+CONTROL_PLANE_TEST_FILTER_CONTROL := SnapshotStoreTests|BackendModelIdentityTests|BenchmarkExportBundleTests|ImageDefaultsStoreTests|SchedulerReadModelTests|ToolParserRegistryTests|GatewayConfigStoreTests|ChatTemplatePolicyTests|ImageJobReadModelTests|GatewayServingDefaultsStoreTests|MCPToolCatalogTests|ModelCatalogTests|TextExecutionModelResolverTests|MultimodalContractTests|PrivacyPolicyReceiptsTests|ImageJobAdmissionControllerTests|StructuredOutputValidationTests|AudioAssetManagerTests|EventSubscriptionHubTests|CoreUtilityTests|ControlPlaneServiceTests|ControlPlaneChatExecutionTests|ControlPlaneServiceFastPathTests|TextEndpointContractTests|AgentMCPWorkerIntegrationTests|AgentRunCoordinatorTests|AgentRunDurableStoreTests|AgentRuntimeMetricsObserverTests|ApprovalPolicyStoreTests|ComputerUseToolAuthorizationTests|ControlPlaneAgentRuntimeTests|ControlPlaneHomeOwnershipLeaseTests|ControlPlaneIPCTransportTests|RemoteProviderClientTests|AgentAdapterBoundaryTests|AgentComputerUseSessionProjectorTests|AgentRunAdmissionSuspensionTests|AgentRuntimeBoundaryTests|AgentToolJSONSchemaValidatorTests|AgenticToolGuardrailContractTests|SiblingFileAdvisoryLockTests
+CONTROL_PLANE_TEST_FILTER_WORKER := AgentToolRPCDeadlineTests|PythonBridgeWorkerClientTests|SwiftTextWorkerClientTests|WorkerClientTests|WorkerRegistryTests|OnDemandModelLoaderTests
 CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_A := \
 	"HTTPGatewayTests.RequestCoordinatorTests/admittedRequestCancellationBeforeGenerateReturnsYieldsACancelledExecution()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/admittedTextRequestsRefreshModelRecencyForSameFamilyEvictionPlanning()" \
@@ -97,6 +99,7 @@ SWIFT_TEST_SHARD_TARGETS := \
 	swift-test-control-openai \
 	swift-test-control-rest \
 	swift-test-control-worker \
+	swift-test-computer-use-broker \
 	swift-test-menubar
 
 .PHONY: bootstrap git-hooks-install proto proto-check swift-build-integration-prereqs swift-test $(SWIFT_TEST_SHARD_TARGETS) py-test py-test-ci integration-test package-smoke swift-coverage py-coverage coverage phase1-metrics phase2-metrics phase5-metrics phase6-metrics phase7-metrics phase8-acceptance phase8-real-e2e phase8-install-smoke phase8-release-gate phase8-metrics phase17-metrics
@@ -206,6 +209,11 @@ swift-test-control-worker:
 	mkdir -p "$(CONTROL_PLANE_SWIFT_HOME)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)"; \
 	bash scripts/ci_progress.sh "swift-test stage: control-plane worker clients" env HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --no-parallel --package-path services/control-plane-swift --filter "$(CONTROL_PLANE_TEST_FILTER_WORKER)"'
 
+swift-test-computer-use-broker:
+	/bin/zsh -lc 'set -e; \
+	mkdir -p "$(COMPUTER_USE_BROKER_SWIFT_HOME)" "$(COMPUTER_USE_BROKER_MODULE_CACHE_PATH)"; \
+	bash scripts/ci_progress.sh "swift-test stage: Computer Use Broker package" env HOME="$(COMPUTER_USE_BROKER_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(COMPUTER_USE_BROKER_MODULE_CACHE_PATH)" xcrun swift test --package-path services/computer-use-broker-swift'
+
 swift-test-menubar:
 	/bin/zsh -lc 'set -e; \
 	mkdir -p "$(MENUBAR_SWIFT_HOME)" "$(MENUBAR_MODULE_CACHE_PATH)"; \
@@ -244,13 +252,15 @@ package-smoke:
 
 swift-coverage:
 	/bin/zsh -lc 'set -e; \
-	mkdir -p "$(TEXT_WORKER_SWIFT_HOME)" "$(CONTROL_PLANE_SWIFT_HOME)" "$(MENUBAR_SWIFT_HOME)"; \
-	mkdir -p "$(TEXT_WORKER_MODULE_CACHE_PATH)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)" "$(MENUBAR_MODULE_CACHE_PATH)"; \
+	mkdir -p "$(TEXT_WORKER_SWIFT_HOME)" "$(CONTROL_PLANE_SWIFT_HOME)" "$(COMPUTER_USE_BROKER_SWIFT_HOME)" "$(MENUBAR_SWIFT_HOME)"; \
+	mkdir -p "$(TEXT_WORKER_MODULE_CACHE_PATH)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)" "$(COMPUTER_USE_BROKER_MODULE_CACHE_PATH)" "$(MENUBAR_MODULE_CACHE_PATH)"; \
 	HOME="$(TEXT_WORKER_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(TEXT_WORKER_MODULE_CACHE_PATH)" xcrun swift test --package-path services/mlx-text-worker-swift --enable-code-coverage; \
 	HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --package-path services/control-plane-swift --enable-code-coverage; \
+	HOME="$(COMPUTER_USE_BROKER_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(COMPUTER_USE_BROKER_MODULE_CACHE_PATH)" xcrun swift test --package-path services/computer-use-broker-swift --enable-code-coverage; \
 	HOME="$(MENUBAR_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(MENUBAR_MODULE_CACHE_PATH)" xcrun swift test --package-path apps/macos-menubar --enable-code-coverage $(MENUBAR_SWIFT_TEST_FLAGS)'
 	python3 scripts/swift_coverage_summary.py services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/codecov/MelixTextWorkerSwift.json /services/mlx-text-worker-swift/Sources/
 	python3 scripts/swift_coverage_summary.py services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/MelixControlPlane.json /services/control-plane-swift/Sources/
+	python3 scripts/swift_coverage_summary.py services/computer-use-broker-swift/.build/arm64-apple-macosx/debug/codecov/MelixComputerUseBroker.json /services/computer-use-broker-swift/Sources/
 	python3 scripts/swift_coverage_summary.py apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/MelixMacOSMenubar.json /apps/macos-menubar/Sources/
 
 py-coverage:

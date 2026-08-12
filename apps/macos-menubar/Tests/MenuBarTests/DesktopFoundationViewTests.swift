@@ -284,13 +284,1611 @@ struct DesktopFoundationViewTests {
         let chromeSource = try String(contentsOf: chromeSourceURL, encoding: .utf8)
 
         #expect(hosted.subviews.isEmpty == false)
-        #expect(DesktopSurface.titlebarNavigationCases.map(\.rawValue) == ["Chat", "Providers", "Models", "Workflows"])
+        #expect(DesktopSurface.titlebarNavigationCases.map(\.rawValue) == ["Chat", "Agents", "Providers", "Models", "Workflows"])
         #expect(chromeSource.contains("ForEach(DesktopSurface.titlebarNavigationCases)"))
         #expect(rootSource.contains("ToolbarItem(placement: .principal)"))
         #expect(rootSource.contains("ToolbarItem(placement: .primaryAction)") == false)
         #expect(rootSource.contains("DesktopCommandCenterShortcutHost(viewModel: viewModel)"))
         #expect(rootSource.contains(".keyboardShortcut(\"k\", modifiers: .command)"))
         #expect(rootSource.contains("ToolbarItem(placement: .primaryAction) {\\n                    DesktopCommandCenter") == false)
+    }
+
+    @Test("Agents destination exposes configuration truth and run history")
+    func agentsDestinationExposesConfigurationTruthAndRunHistory() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let agentsSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopAgentsView.swift"
+        )
+        let agentRunSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Chat/DesktopAgentRunView.swift"
+        )
+        let runtimeViewModelSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Models/RuntimeViewModel.swift"
+        )
+        let agentsSource = try String(
+            contentsOf: agentsSourceURL,
+            encoding: .utf8
+        )
+        let agentRunSource = try String(
+            contentsOf: agentRunSourceURL,
+            encoding: .utf8
+        )
+        let runtimeViewModelSource = try String(
+            contentsOf: runtimeViewModelSourceURL,
+            encoding: .utf8
+        )
+
+        for section in [
+            "Tool Sources",
+            "Tool Sets",
+            "Approval Policies",
+            "Computer Use",
+            "Runtime Inventory",
+            "Run History",
+        ] {
+            #expect(agentsSource.contains(section))
+        }
+        #expect(agentsSource.contains("Live worker receipts, not run history. Catalog-only sources cannot execute."))
+        #expect(agentsSource.contains("viewModel.agentOperations.toolSources"))
+        #expect(agentsSource.contains("viewModel.agentOperations.tools"))
+        #expect(agentsSource.contains("Ask by default"))
+        #expect(agentsSource.contains("Live permission probe; only window capture and approved semantic press are advertised."))
+        #expect(agentsSource.contains("Open Screen Recording"))
+        #expect(agentsSource.contains("Open Accessibility"))
+        #expect(agentsSource.contains("Privacy_ScreenCapture"))
+        #expect(agentsSource.contains("Privacy_Accessibility"))
+        #expect(agentsSource.contains("refreshAgentOperationsForOperator()"))
+        #expect(agentsSource.contains("Computer Use permission is ready after restart"))
+        #expect(agentsSource.contains("Button(\"Quit Melix\")"))
+        #expect(agentsSource.contains("desktop.agents.computer-use.quit-for-restart"))
+        #expect(agentsSource.contains("Computer Use status unavailable"))
+        #expect(agentsSource.contains("Button(\"Retry Probe\")"))
+        #expect(agentsSource.contains("desktop.agents.computer-use.retry-probe"))
+        #expect(agentsSource.contains("[\"denied\", \"not_determined\"].contains(state)"))
+        #expect(agentsSource.contains("RuntimeViewModel.agentCancellationSideEffectSummary"))
+        #expect(runtimeViewModelSource.contains("No side effect committed"))
+        #expect(runtimeViewModelSource.contains("Side effect state unknown"))
+        #expect(runtimeViewModelSource.contains("Side effect state unknown (legacy receipt)"))
+        #expect(agentRunSource.contains("Button(\"Allow Once\")"))
+        #expect(agentRunSource.contains("Button(\"Always Allow This Tool\")"))
+        #expect(agentRunSource.contains("Button(\"Deny\", role: .destructive)"))
+        #expect(agentRunSource.contains("alwaysAllowEligible"))
+        #expect(agentRunSource.contains("approval.persistentAllowEligible"))
+        #expect(agentRunSource.contains("persistentAllowUnavailableReason"))
+        #expect(agentRunSource.contains("approval.binding.bindingDigest"))
+        #expect(agentRunSource.contains("protected by Melix's safety floor"))
+        #expect(agentRunSource.contains("approval.binding.schemaDigest.prefix(12)"))
+        #expect(agentRunSource.contains("Exact call targets and saved-policy scope"))
+        #expect(agentRunSource.contains("Text(\"Result summary\")"))
+        #expect(agentRunSource.contains("Tool result truncated"))
+        #expect(agentRunSource.contains("Redacted tool evidence reference"))
+        #expect(agentRunSource.contains("ScrollView(.horizontal)") == false)
+        #expect(agentRunSource.contains("ScrollView(.vertical)") == false)
+        #expect(agentRunSource.contains(".truncationMode(.middle)"))
+        #expect(agentRunSource.contains(".help(tool.evidenceReference)"))
+        #expect(agentRunSource.contains("Validated redacted approval arguments"))
+        #expect(agentRunSource.contains(".help(approval.redactedArgumentsJson)"))
+        #expect(agentRunSource.contains("Backend approval arguments truncated"))
+        #expect(agentRunSource.contains("approvalArgumentsExpanded.toggle()"))
+        #expect(agentRunSource.contains("Expand arguments"))
+        #expect(agentRunSource.contains("Collapse arguments"))
+        #expect(agentRunSource.contains("Button(\"Stop\", role: .destructive)"))
+        #expect(agentRunSource.contains("Button(\"Take Over\")") == false)
+        #expect(agentRunSource.contains("Button(\"Pause\")") == false)
+    }
+
+    @Test("Agent tool history distinguishes missing evidence from execution failure")
+    func agentToolHistoryIssuePresentationDistinguishesEvidenceWarning() throws {
+        var tool = Melix_Controlplane_V1_AgentToolCallSnapshot()
+        tool.state = "completed"
+        tool.error.code = "agent_tool_evidence_unavailable"
+        tool.error.message = "The tool completed, but its evidence could not be saved."
+
+        let evidenceWarning = try #require(
+            desktopAgentToolIssuePresentation(for: tool)
+        )
+        #expect(evidenceWarning.title == "Evidence unavailable")
+        #expect(evidenceWarning.tone == .warning)
+
+        tool.state = "failed"
+        tool.failureStage = "mcp_call"
+        tool.error.code = "mcp_connection_failed"
+        let executionFailure = try #require(
+            desktopAgentToolIssuePresentation(for: tool)
+        )
+        #expect(executionFailure.title == "Tool failure · mcp_call")
+        #expect(executionFailure.tone == .error)
+
+        tool.clearError()
+        #expect(desktopAgentToolIssuePresentation(for: tool) == nil)
+    }
+
+    @Test("Chat Agent outcome helpers preserve typed approval and cancellation truth")
+    func chatAgentOutcomePresentationsPreserveTypedTruth() {
+        var approval = Melix_Controlplane_V1_AgentApprovalDecisionReceipt()
+        approval.choice = .agentApprovalAlwaysAllow
+        approval.policyPersistenceDisposition =
+            .agentApprovalPolicyPersistenceNotApplied
+        approval.policyPersistenceError.code =
+            "agent_approval_policy_persistence_failed"
+        approval.policyPersistenceError.message =
+            "Always Allow could not be saved."
+        let approvalPresentation = desktopAgentApprovalOutcomePresentation(
+            approval
+        )
+        #expect(
+            approvalPresentation.title
+                == "Allowed This Call · Always Allow Not Saved"
+        )
+        #expect(approvalPresentation.isWarning)
+        #expect(
+            approvalPresentation.errorCode
+                == "agent_approval_policy_persistence_failed"
+        )
+
+        for (
+            choice,
+            persistenceDisposition,
+            expectedTitle,
+            expectedWarning
+        ) in [
+            (
+                Melix_Controlplane_V1_AgentApprovalChoice.agentApprovalAllowOnce,
+                Melix_Controlplane_V1_AgentApprovalPolicyPersistenceDisposition.unspecified,
+                "Allowed This Call",
+                false
+            ),
+            (
+                .agentApprovalAlwaysAllow,
+                .agentApprovalPolicyPersistenceApplied,
+                "Allowed This Call · Always Allow Saved",
+                false
+            ),
+            (
+                .agentApprovalAlwaysAllow,
+                .unspecified,
+                "Allowed This Call · Always Allow Outcome Unknown",
+                true
+            ),
+            (
+                .agentApprovalDeny,
+                .unspecified,
+                "Approval Denied",
+                false
+            ),
+            (
+                .unspecified,
+                .unspecified,
+                "Approval Outcome Unknown",
+                true
+            ),
+        ] {
+            approval.choice = choice
+            approval.policyPersistenceDisposition = persistenceDisposition
+            approval.clearPolicyPersistenceError()
+            let presentation = desktopAgentApprovalOutcomePresentation(approval)
+            #expect(presentation.title == expectedTitle)
+            #expect(presentation.isWarning == expectedWarning)
+        }
+
+        approval.choice = .agentApprovalAlwaysAllow
+        approval.policyPersistenceDisposition =
+            .agentApprovalPolicyPersistenceNotApplied
+        approval.clearPolicyPersistenceError()
+        #expect(
+            desktopAgentApprovalOutcomePresentation(approval).errorMessage
+                == "The current call was approved, but the saved policy was not updated."
+        )
+
+        for (disposition, sideEffect, expectedDetail, expectedWarning) in [
+            (
+                "accepted",
+                Melix_Controlplane_V1_AgentToolSideEffectState.agentToolSideEffectNone,
+                "Stop accepted before any side effect was reported.",
+                false
+            ),
+            (
+                "accepted",
+                .agentToolSideEffectCommitted,
+                "Stop was accepted, but a side effect committed before cancellation. Verify the target before continuing.",
+                true
+            ),
+            (
+                "accepted",
+                .agentToolSideEffectUnknown,
+                "Stop was accepted, but the side-effect state is unknown. Verify the target before continuing.",
+                true
+            ),
+            (
+                "not_found",
+                .agentToolSideEffectUnknown,
+                "No matching run was found; Stop was not confirmed, and the side-effect state is unknown. Verify the target before continuing.",
+                true
+            ),
+            (
+                "too_late",
+                .agentToolSideEffectCommitted,
+                "Stop arrived too late; a side effect had committed. Verify the target before continuing.",
+                true
+            ),
+            (
+                "already_terminal",
+                .agentToolSideEffectNone,
+                "The run was already terminal when Stop arrived; no side effect was reported. Verify the target before continuing.",
+                true
+            ),
+        ] {
+            var receipt = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+            receipt.disposition = disposition
+            receipt.sideEffectState = sideEffect
+            let presentation = desktopAgentCancellationOutcomePresentation(
+                receipt
+            )
+            #expect(presentation.disposition == disposition)
+            #expect(presentation.detail == expectedDetail)
+            #expect(presentation.isWarning == expectedWarning)
+        }
+    }
+
+    @Test("Agent mode bar separates reconciliation repair from exact Stop")
+    @MainActor
+    func chatAgentModeBarUsesTruthfulReconciliationControls() async throws {
+        let startupViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient()
+        )
+        let checkingControls = desktopChatAgentModeBarControls(
+            for: startupViewModel
+        )
+        #expect(checkingControls.showsReviewAgents == false)
+        #expect(checkingControls.showsStop == false)
+        #expect(checkingControls.showsCheckingStatus)
+        #expect(checkingControls.showsRetryStatus == false)
+        let hostedChecking = hostViewInWindow(
+            DesktopChatAgentModeBar(viewModel: startupViewModel),
+            size: CGSize(width: 1_200, height: 220)
+        )
+        defer { hostedChecking.window.close() }
+        settleHostedUI()
+        #expect(hostedChecking.controller.view.subviews.isEmpty == false)
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let session = try #require(viewModel.selectedChatSession)
+        await client.configureAgentRunsError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "agent_runs_unavailable",
+                message: "Agent history is unavailable."
+            )
+        )
+        await viewModel.refreshAgentRunsForOperator()
+        let retryControls = desktopChatAgentModeBarControls(for: viewModel)
+        #expect(retryControls.showsStop == false)
+        #expect(retryControls.showsCheckingStatus == false)
+        #expect(retryControls.showsRetryStatus)
+        let hostedRetry = hostViewInWindow(
+            DesktopChatAgentModeBar(viewModel: viewModel),
+            size: CGSize(width: 1_200, height: 220)
+        )
+        defer { hostedRetry.window.close() }
+        settleHostedUI()
+        #expect(hostedRetry.controller.view.subviews.isEmpty == false)
+
+        await client.configureAgentRunsError(nil)
+        var active = Melix_Controlplane_V1_AgentRunSnapshot()
+        active.runID = "agent-mode-bar-active"
+        active.sessionID = session.id
+        active.branchID = session.branchID
+        active.modelID = "melix-dev-text"
+        active.state = "tool_running"
+        active.revision = 1
+        active.updatedAtUnixMs = 1_800_000_020_000
+        await client.configureAgentSnapshot(active)
+        await viewModel.refreshAgentRunsForOperator()
+        await client.configureAgentRunsDelay(.seconds(1))
+        await client.configureAgentRunsError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "agent_runs_unavailable",
+                message: "Agent history is unavailable."
+            )
+        )
+        let slowRefresh = Task { @MainActor in
+            await viewModel.refreshAgentRunsForOperator()
+        }
+        for _ in 0..<100 where !viewModel.agentRunReconciliationInProgress {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(viewModel.agentRunReconciliationInProgress)
+        let stopAndCheckingControls = desktopChatAgentModeBarControls(
+            for: viewModel
+        )
+        #expect(stopAndCheckingControls.showsStop)
+        #expect(stopAndCheckingControls.showsCheckingStatus)
+        #expect(stopAndCheckingControls.showsRetryStatus == false)
+        let hostedStopAndChecking = hostViewInWindow(
+            DesktopChatAgentModeBar(viewModel: viewModel),
+            size: CGSize(width: 1_200, height: 220)
+        )
+        defer { hostedStopAndChecking.window.close() }
+        settleHostedUI()
+        #expect(hostedStopAndChecking.controller.view.subviews.isEmpty == false)
+        await slowRefresh.value
+        let stopAndRetryControls = desktopChatAgentModeBarControls(
+            for: viewModel
+        )
+        #expect(stopAndRetryControls.showsStop)
+        #expect(stopAndRetryControls.showsCheckingStatus == false)
+        #expect(stopAndRetryControls.showsRetryStatus)
+
+        await client.configureAgentRunsDelay(.zero)
+        await client.configureAgentRunsError(nil)
+        var orphan = active
+        orphan.runID = "agent-mode-bar-orphan"
+        orphan.sessionID = "unknown-chat-session"
+        orphan.revision = 2
+        orphan.updatedAtUnixMs += 1
+        await client.configureAgentSnapshot(orphan)
+        await viewModel.refreshAgentRunsForOperator()
+        let hostedConflict = hostViewInWindow(
+            DesktopChatAgentModeBar(viewModel: viewModel),
+            size: CGSize(width: 1_200, height: 220)
+        )
+        defer { hostedConflict.window.close() }
+        settleHostedUI()
+        #expect(hostedConflict.controller.view.subviews.isEmpty == false)
+    }
+
+    @Test("Chat live Agent card renders terminal tools and bounded approval arguments")
+    @MainActor
+    func chatLiveAgentCardRendersTerminalToolAndApprovalTruth() async throws {
+        let fixture = try await makeAgentViewCoverageFixture()
+        let hosted = hostViewInWindow(
+            ScrollView {
+                DesktopAgentLiveRunCard(viewModel: fixture.viewModel)
+                    .frame(maxWidth: .infinity)
+            },
+            size: CGSize(width: 1_200, height: 1_300)
+        )
+        defer { hosted.window.close() }
+        settleHostedUI()
+
+        let values = renderedTextValues(in: hosted.controller.view)
+        #expect(values.contains { $0.contains("bounded tool-result projection") })
+        #expect(values.contains("evidence://computer/action"))
+        #expect(values.contains("mcp_call"))
+        #expect(values.contains("fixture_failure"))
+        #expect(values.contains("The fixture documentation call failed."))
+        #expect(
+            values.contains(
+                #"{"path":"report.md","content":"[redacted]"}"#
+            )
+        )
+        let run = try #require(fixture.viewModel.currentChatAgentRun)
+        let workspace = try #require(
+            run.toolCalls.first { $0.toolName == "workspace.write_file" }
+        )
+        #expect(workspace.sourceID == "workspace")
+        #expect(workspace.resultTruncated)
+        #expect(
+            workspace.resultSummary
+                == "The report was written with a bounded tool-result projection."
+        )
+        #expect(workspace.evidenceReference == "evidence://workspace/report")
+        let failed = try #require(
+            run.toolCalls.first { $0.callID == "failed-call" }
+        )
+        let issue = try #require(desktopAgentToolIssuePresentation(for: failed))
+        #expect(issue.title == "Tool failure · mcp_call")
+        let approval = try #require(run.hasPendingApproval ? run.pendingApproval : nil)
+        #expect(approval.argumentsTruncated)
+        #expect(
+            approval.redactedArgumentsJson
+                == #"{"path":"report.md","content":"[redacted]"}"#
+        )
+    }
+
+    @Test("Chat live Agent card renders receipt-backed approval and cancellation outcomes")
+    @MainActor
+    func chatLiveAgentCardRendersReceiptBackedOutcomes() async throws {
+        let fixture = try await makeAgentViewCoverageFixture()
+        let viewModel = fixture.viewModel
+        let pending = try #require(viewModel.pendingAgentApproval)
+        var approval = Melix_Controlplane_V1_AgentApprovalDecisionReceipt()
+        approval.binding = pending.binding
+        approval.choice = .agentApprovalAlwaysAllow
+        approval.decisionID = "decision-not-saved"
+        approval.decidedAtUnixMs = 1_800_000_000_200
+        approval.policyPersistenceDisposition =
+            .agentApprovalPolicyPersistenceNotApplied
+        approval.policyPersistenceError.code =
+            "agent_approval_policy_persistence_failed"
+        approval.policyPersistenceError.message =
+            "This call was approved, but Always Allow could not be saved."
+        await fixture.client.configureAgentApprovalDecisionReceipt(approval)
+        await viewModel.decideAgentApproval(.agentApprovalAlwaysAllow)
+
+        var run = try #require(viewModel.currentChatAgentRun)
+        var cancellation = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        cancellation.runID = run.runID
+        cancellation.cancellationID = "cancel-too-late"
+        cancellation.disposition = "too_late"
+        cancellation.sideEffectState = .agentToolSideEffectCommitted
+        run.cancellationReceipt = cancellation
+        await fixture.client.configureAgentSnapshot(run)
+        await viewModel.refreshAgentRunsForOperator()
+
+        let warningHost = hostViewInWindow(
+            ScrollView {
+                DesktopAgentLiveRunCard(viewModel: viewModel)
+                    .frame(maxWidth: .infinity)
+            },
+            size: CGSize(width: 1_200, height: 1_300)
+        )
+        defer { warningHost.window.close() }
+        settleHostedUI()
+        let warningValues = renderedTextValues(in: warningHost.controller.view)
+        let approvalPresentation = desktopAgentApprovalOutcomePresentation(
+            approval
+        )
+        #expect(
+            approvalPresentation.title
+                == "Allowed This Call · Always Allow Not Saved"
+        )
+        #expect(approvalPresentation.isWarning)
+        #expect(warningValues.contains("Decision decision-not-saved"))
+        #expect(warningValues.contains("agent_approval_policy_persistence_failed"))
+        #expect(
+            warningValues.contains(
+                "This call was approved, but Always Allow could not be saved."
+            )
+        )
+        #expect(warningValues.contains("cancel-too-late"))
+        #expect(warningValues.contains("too_late"))
+        #expect(warningValues.contains("committed"))
+        let warningCancellationPresentation =
+            desktopAgentCancellationOutcomePresentation(cancellation)
+        #expect(
+            warningCancellationPresentation.detail.contains(
+                "arrived too late"
+            )
+        )
+        #expect(warningCancellationPresentation.isWarning)
+
+        cancellation.cancellationID = "cancel-accepted"
+        cancellation.disposition = "accepted"
+        cancellation.sideEffectState = .agentToolSideEffectNone
+        run.cancellationReceipt = cancellation
+        run.revision += 1
+        run.updatedAtUnixMs += 1
+        await fixture.client.configureAgentSnapshot(run)
+        await viewModel.refreshAgentRunsForOperator()
+        let acceptedHost = hostViewInWindow(
+            DesktopAgentLiveRunCard(viewModel: viewModel),
+            size: CGSize(width: 1_200, height: 900)
+        )
+        defer { acceptedHost.window.close() }
+        settleHostedUI()
+        let acceptedValues = renderedTextValues(
+            in: acceptedHost.controller.view
+        )
+        #expect(acceptedValues.contains("accepted"))
+        #expect(acceptedValues.contains("none"))
+        #expect(acceptedValues.contains("cancel-accepted"))
+        let acceptedCancellationPresentation =
+            desktopAgentCancellationOutcomePresentation(cancellation)
+        #expect(
+            acceptedCancellationPresentation.detail.contains(
+                "before any side effect was reported"
+            )
+        )
+        #expect(acceptedCancellationPresentation.isWarning == false)
+    }
+
+    @Test("Chat transcript keeps terminal Agent cards across sequential runs")
+    @MainActor
+    func chatTranscriptKeepsTerminalAgentCardsAcrossSequentialRuns() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+
+        var firstRun = makeAgentViewRun(
+            runID: "agent-sequential-first",
+            sessionID: session.id,
+            branchID: session.branchID,
+            approvalRequired: true,
+            updatedAtUnixMs: 1_800_000_000_100
+        )
+        firstRun.toolCalls[0].resultSummary = "First run retained summary."
+        firstRun.toolCalls[0].evidenceReference = "evidence://first/run"
+        await client.configureAgentSnapshot(firstRun)
+        await viewModel.refreshAgentRunsForOperator()
+
+        let pending = try #require(viewModel.pendingAgentApproval)
+        var approvalReceipt =
+            Melix_Controlplane_V1_AgentApprovalDecisionReceipt()
+        approvalReceipt.binding = pending.binding
+        approvalReceipt.choice = .agentApprovalAlwaysAllow
+        approvalReceipt.decisionID = "decision-first-run"
+        approvalReceipt.decidedAtUnixMs = 1_800_000_000_200
+        approvalReceipt.policyPersistenceDisposition =
+            .agentApprovalPolicyPersistenceNotApplied
+        approvalReceipt.policyPersistenceError.code =
+            "agent_approval_policy_persistence_failed"
+        approvalReceipt.policyPersistenceError.message =
+            "The first run approval was not persisted."
+        await client.configureAgentApprovalDecisionReceipt(approvalReceipt)
+        await viewModel.decideAgentApproval(.agentApprovalAlwaysAllow)
+
+        firstRun.clearPendingApproval()
+        firstRun.state = "cancelled"
+        firstRun.toolCalls[0].state = "completed"
+        firstRun.revision = 12
+        firstRun.updatedAtUnixMs = 1_800_000_000_300
+        var firstCancellation =
+            Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        firstCancellation.runID = firstRun.runID
+        firstCancellation.cancellationID = "cancel-first-run"
+        firstCancellation.disposition = "too_late"
+        firstCancellation.sideEffectState = .agentToolSideEffectCommitted
+        firstRun.cancellationReceipt = firstCancellation
+        await client.configureAgentSnapshot(firstRun)
+        await viewModel.refreshAgentRunsForOperator()
+
+        var secondRun = makeAgentViewRun(
+            runID: "agent-sequential-second",
+            sessionID: session.id,
+            branchID: session.branchID,
+            approvalRequired: false,
+            updatedAtUnixMs: 1_800_000_000_500
+        )
+        secondRun.state = "completed"
+        secondRun.revision = 12
+        secondRun.assistantText = "Second run final answer."
+        secondRun.toolCalls[0].resultSummary = "Second run retained summary."
+        secondRun.toolCalls[0].evidenceReference = "evidence://second/run"
+        await client.configureAgentSnapshot(secondRun)
+        await viewModel.refreshAgentRunsForOperator()
+
+        let markerIDs = viewModel.chatTranscript.compactMap { entry in
+            entry.kind == .agentRun ? entry.id : nil
+        }
+        #expect(markerIDs == [
+            DesktopChatTranscriptEntry.agentRunMarkerID(for: firstRun.runID),
+            DesktopChatTranscriptEntry.agentRunMarkerID(for: secondRun.runID),
+        ])
+        let firstMarkerIndex = try #require(
+            viewModel.chatTranscript.firstIndex {
+                $0.id == DesktopChatTranscriptEntry.agentRunMarkerID(
+                    for: firstRun.runID
+                )
+            }
+        )
+        let firstTerminalIndex = try #require(
+            viewModel.chatTranscript.firstIndex {
+                $0.id == "agent-terminal-\(firstRun.runID)"
+            }
+        )
+        let secondMarkerIndex = try #require(
+            viewModel.chatTranscript.firstIndex {
+                $0.id == DesktopChatTranscriptEntry.agentRunMarkerID(
+                    for: secondRun.runID
+                )
+            }
+        )
+        let secondAssistantIndex = try #require(
+            viewModel.chatTranscript.firstIndex {
+                $0.id == "agent-assistant-\(secondRun.runID)"
+            }
+        )
+        #expect(firstMarkerIndex < firstTerminalIndex)
+        #expect(firstTerminalIndex < secondMarkerIndex)
+        #expect(secondMarkerIndex < secondAssistantIndex)
+
+        let hosted = hostViewInWindow(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            ),
+            size: CGSize(width: 1_300, height: 3_200)
+        )
+        defer { hosted.window.close() }
+        settleHostedUI(for: 0.12)
+        let values = renderedTextValues(in: hosted.controller.view)
+        #expect(values.contains("cancel-first-run"))
+        #expect(values.contains("too_late"))
+        #expect(values.contains("committed"))
+
+        let firstSnapshot = try #require(
+            viewModel.agentRunSnapshot(for: firstRun.runID)
+        )
+        let firstCard = hostViewInWindow(
+            ScrollView {
+                DesktopAgentLiveRunCard(
+                    viewModel: viewModel,
+                    run: firstSnapshot
+                )
+            },
+            size: CGSize(width: 1_200, height: 1_600)
+        )
+        defer { firstCard.window.close() }
+        settleHostedUI()
+        let firstValues = renderedTextValues(in: firstCard.controller.view)
+        #expect(firstValues.contains("First run retained summary."))
+        #expect(firstValues.contains("evidence://first/run"))
+        #expect(firstValues.contains("Decision decision-first-run"))
+        #expect(firstValues.contains("agent_approval_policy_persistence_failed"))
+        #expect(
+            desktopAgentApprovalOutcomePresentation(approvalReceipt).title
+                == "Allowed This Call · Always Allow Not Saved"
+        )
+
+        let secondSnapshot = try #require(
+            viewModel.agentRunSnapshot(for: secondRun.runID)
+        )
+        let secondCard = hostViewInWindow(
+            ScrollView {
+                DesktopAgentLiveRunCard(
+                    viewModel: viewModel,
+                    run: secondSnapshot
+                )
+            },
+            size: CGSize(width: 1_200, height: 1_200)
+        )
+        defer { secondCard.window.close() }
+        settleHostedUI()
+        let secondValues = renderedTextValues(in: secondCard.controller.view)
+        #expect(secondValues.contains("Second run retained summary."))
+        #expect(secondValues.contains("evidence://second/run"))
+        #expect(
+            viewModel.chatTranscript.contains {
+                $0.id == "agent-assistant-\(secondRun.runID)"
+                    && $0.body == "Second run final answer."
+            }
+        )
+    }
+
+    @Test("Chat reconciles a terminal Agent run after switching sessions")
+    @MainActor
+    func chatSessionSwitchReconcilesTerminalAgentRunAtSameRevision() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let sessionA = try #require(viewModel.selectedChatSession)
+        viewModel.createChatSession()
+        let sessionB = try #require(viewModel.selectedChatSession)
+        #expect(sessionB.id != sessionA.id)
+
+        var run = makeAgentViewRun(
+            runID: "agent-session-reconciliation",
+            sessionID: sessionA.id,
+            branchID: sessionA.branchID,
+            approvalRequired: false,
+            updatedAtUnixMs: 1_800_000_000_100
+        )
+        run.toolCalls[0].resultSummary =
+            "Session A terminal tool summary."
+        let longEvidenceReference = "evidence://session-a/"
+            + String(repeating: "0123456789abcdef", count: 24)
+        run.toolCalls[0].evidenceReference = longEvidenceReference
+        await client.sendAgentRunStateChanged(run)
+
+        run.state = "completed"
+        run.assistantText = "Session A terminal assistant answer."
+        run.revision = 11
+        run.updatedAtUnixMs = 1_800_000_000_300
+        await client.configureAgentSnapshot(run)
+        await client.sendAgentRunStateChanged(
+            run,
+            changeKind: "completed"
+        )
+        #expect(
+            viewModel.chatTranscript.contains {
+                $0.id == DesktopChatTranscriptEntry.agentRunMarkerID(
+                    for: run.runID
+                )
+            } == false
+        )
+
+        viewModel.selectChatSession(id: sessionA.id)
+        await viewModel.refreshAgentRunsForOperator()
+        let markerID = DesktopChatTranscriptEntry.agentRunMarkerID(
+            for: run.runID
+        )
+        #expect(
+            viewModel.chatTranscript.filter { $0.id == markerID }.count == 1
+        )
+        #expect(
+            viewModel.chatTranscript.filter {
+                $0.id == "agent-assistant-\(run.runID)"
+            }.count == 1
+        )
+
+        let hosted = hostViewInWindow(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            ),
+            size: CGSize(width: 1_300, height: 2_200)
+        )
+        defer { hosted.window.close() }
+        settleHostedUI(for: 0.12)
+        let values = renderedTextValues(in: hosted.controller.view)
+        #expect(values.contains("Session A terminal tool summary."))
+        #expect(values.contains(longEvidenceReference))
+        #expect(
+            viewModel.chatTranscript.contains {
+                $0.id == "agent-assistant-\(run.runID)"
+                    && $0.body == "Session A terminal assistant answer."
+            }
+        )
+    }
+
+    @Test("Old terminal reconciliation preserves a newer Agent admission")
+    @MainActor
+    func oldTerminalAgentReconciliationPreservesNewAdmissionOwnership() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+        viewModel.setChatInteractionMode(.act)
+
+        viewModel.chatComposerText = "Start the older Agent run."
+        await viewModel.submitChatPrompt()
+        let olderRunID = try #require(
+            await client.recordedAgentStarts.last?.runID
+        )
+        var oldTerminal = makeAgentViewRun(
+            runID: olderRunID,
+            sessionID: session.id,
+            branchID: session.branchID,
+            approvalRequired: false,
+            updatedAtUnixMs: 1_800_000_000_200
+        )
+        oldTerminal.state = "completed"
+        oldTerminal.assistantText = "Older run final answer."
+        oldTerminal.revision = 20
+        await client.configureAgentSnapshot(oldTerminal)
+        await viewModel.refreshAgentRunsForOperator()
+
+        await client.configureAgentStartDelay(.milliseconds(180))
+        viewModel.chatComposerText = "Start the newer Agent run."
+
+        let submission = Task {
+            await viewModel.submitChatPrompt()
+        }
+        var startReachedBackend = false
+        for _ in 0..<60 {
+            if await client.recordedAgentStarts.count == 2 {
+                startReachedBackend = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(startReachedBackend)
+        let newRunID = try #require(
+            await client.recordedAgentStarts.last?.runID
+        )
+        #expect(viewModel.activeAgentRunID == newRunID)
+        #expect(viewModel.isChatBusy)
+        #expect(viewModel.chatStatusText == "Starting Agent")
+        await viewModel.refreshAgentRunsForOperator()
+
+        #expect(viewModel.activeAgentRunID == newRunID)
+        #expect(viewModel.isChatBusy)
+        #expect(viewModel.chatStatusText == "Starting Agent")
+        let olderUserIndex = try #require(
+            viewModel.chatTranscript.firstIndex {
+                $0.kind == .user
+                    && $0.body == "Start the older Agent run."
+            }
+        )
+        let olderMarkerIndex = try #require(
+            viewModel.chatTranscript.firstIndex {
+                $0.id == DesktopChatTranscriptEntry.agentRunMarkerID(
+                    for: olderRunID
+                )
+            }
+        )
+        let newerUserIndex = try #require(
+            viewModel.chatTranscript.firstIndex {
+                $0.kind == .user
+                    && $0.body == "Start the newer Agent run."
+            }
+        )
+        let newerMarkerIndex = try #require(
+            viewModel.chatTranscript.firstIndex {
+                $0.id == DesktopChatTranscriptEntry.agentRunMarkerID(
+                    for: newRunID
+                )
+            }
+        )
+        #expect(olderUserIndex < olderMarkerIndex)
+        #expect(olderMarkerIndex < newerUserIndex)
+        #expect(newerUserIndex < newerMarkerIndex)
+        await submission.value
+        #expect(
+            await client.recordedAgentActivations
+                == [olderRunID, newRunID]
+        )
+        #expect(await client.recordedAgentCancellations.isEmpty)
+    }
+
+    @Test("Chat renders one active Agent card when the stable marker is present")
+    @MainActor
+    func chatActiveAgentMarkerDoesNotDuplicateLiveCard() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Start one visible Agent run."
+
+        await viewModel.submitChatPrompt()
+
+        let run = try #require(viewModel.currentChatAgentRun)
+        #expect(viewModel.isActiveAgentRun(run))
+        #expect(
+            viewModel.chatTranscript.contains {
+                $0.id == DesktopChatTranscriptEntry.agentRunMarkerID(
+                    for: run.runID
+                )
+            }
+        )
+
+        let hosted = hostViewInWindow(
+            DesktopChatSessionWorkspace(
+                viewModel: viewModel,
+                showsSidebar: .constant(true),
+                showsInspector: .constant(true)
+            ),
+            size: CGSize(width: 1_300, height: 1_800)
+        )
+        defer { hosted.window.close() }
+        settleHostedUI(for: 0.12)
+
+        #expect(
+            DesktopChatAgentCardPlacement.shouldRenderFallback(
+                activeRunID: run.runID,
+                transcriptRunIDs: Set(
+                    viewModel.chatTranscript.compactMap(\.agentRunID)
+                )
+            ) == false
+        )
+        #expect(hosted.controller.view.subviews.isEmpty == false)
+    }
+
+    @Test("Agent views render rich live runtime truth across control states")
+    @MainActor
+    func agentViewsRenderAndOperateOnRichRuntimeTruth() async throws {
+        let fixture = try await makeAgentViewCoverageFixture()
+        let viewModel = fixture.viewModel
+
+        let hostedModeBar = hostViewInWindow(
+            DesktopChatAgentModeBar(viewModel: viewModel),
+            size: CGSize(width: 1_200, height: 220)
+        )
+        defer { hostedModeBar.window.close() }
+        settleHostedUI()
+        let modeBar = hostedModeBar.controller.view
+        let modeTexts = renderedTextValues(in: modeBar)
+        #expect(modeTexts.contains("Ask"))
+        #expect(modeTexts.contains("Act"))
+        #expect(modeTexts.contains { $0.contains("Fixture") })
+
+        let hostedLiveCard = hostViewInWindow(
+            ScrollView {
+                DesktopAgentLiveRunCard(viewModel: viewModel)
+                    .frame(maxWidth: .infinity)
+            },
+            size: CGSize(width: 1_200, height: 1_050)
+        )
+        defer { hostedLiveCard.window.close() }
+        settleHostedUI()
+        let liveCard = hostedLiveCard.controller.view
+        let liveTexts = renderedTextValues(in: liveCard)
+        #expect(liveTexts.contains { $0.contains("binding eeeeeeeeeeee") })
+        #expect(liveTexts.contains("workspace:/workspace"))
+        #expect(liveTexts.contains { $0.contains("[redacted]") })
+        #expect(liveTexts.contains { $0.contains("acceptance report") })
+        #expect(viewModel.currentComputerUseSessionPresentation?.state == "Open")
+        #expect(
+            viewModel.currentComputerUseSessionPresentation?
+                .additionalTargetCount == 1
+        )
+
+        let hostedAgents = hostViewInWindow(
+            DesktopAgentsView(viewModel: viewModel),
+            size: CGSize(width: 1_700, height: 1_250)
+        )
+        defer { hostedAgents.window.close() }
+        settleHostedUI()
+        let agents = hostedAgents.controller.view
+        let agentTexts = renderedTextValues(in: agents)
+        #expect(agents.subviews.isEmpty == false)
+        #expect(
+            viewModel.agentOperations.tools.contains {
+                $0.name == "workspace.write_file"
+            }
+        )
+        #expect(
+            viewModel.agentOperations.toolSources.contains {
+                $0.errorCode == "mcp_connect_failed"
+            }
+        )
+        #expect(agentTexts.isEmpty == false)
+
+        viewModel.selectAgentRun(id: "agent-view-rich-completed")
+        let hostedCompletedRun = hostViewInWindow(
+            DesktopAgentsView(viewModel: viewModel),
+            size: CGSize(width: 1_700, height: 1_250)
+        )
+        defer { hostedCompletedRun.window.close() }
+        settleHostedUI()
+        let completedRun = hostedCompletedRun.controller.view
+        #expect(
+            renderedTextValues(in: completedRun).contains {
+                $0.contains("Final response")
+            }
+        )
+        viewModel.selectAgentRun(id: "agent-view-rich-failed")
+        let hostedFailedRun = hostViewInWindow(
+            DesktopAgentsView(viewModel: viewModel),
+            size: CGSize(width: 1_700, height: 1_250)
+        )
+        defer { hostedFailedRun.window.close() }
+        settleHostedUI()
+        let failedTexts = renderedTextValues(
+            in: hostedFailedRun.controller.view
+        )
+        #expect(failedTexts.contains("The fixture tool execution failed."))
+        let selectedFailedRun = try #require(
+            viewModel.agentRuns.first {
+                $0.runID == "agent-view-rich-failed"
+            }
+        )
+        #expect(selectedFailedRun.failureStage == "tool_execution")
+        #expect(failedTexts.contains("agent_tool_execution_failed"))
+        viewModel.selectAgentRun(id: "agent-view-rich")
+
+        await viewModel.decideAgentApproval(.agentApprovalAllowOnce)
+        try await waitForDesktopFoundationCondition(
+            "expected rendered approval action to reach the typed runtime"
+        ) {
+            viewModel.pendingAgentApproval == nil
+        }
+        #expect(await fixture.client.recordedAgentApprovals.count == 1)
+
+        let hostedActiveAfterApproval = hostViewInWindow(
+            ScrollView {
+                DesktopAgentLiveRunCard(viewModel: viewModel)
+                    .frame(maxWidth: .infinity)
+            },
+            size: CGSize(width: 1_200, height: 1_050)
+        )
+        defer { hostedActiveAfterApproval.window.close() }
+        settleHostedUI()
+        let activeAfterApproval = hostedActiveAfterApproval.controller.view
+        #expect(activeAfterApproval.subviews.isEmpty == false)
+        _ = await viewModel.stopActiveComputerUse()
+        try await waitForDesktopFoundationCondition(
+            "expected rendered Computer Use Stop to receive a typed receipt"
+        ) {
+            viewModel.lastAgentCancellationReceipt != nil
+        }
+        #expect(await fixture.client.recordedAgentCancellations.count == 1)
+
+        if var runWithoutComputerSession = viewModel.currentChatAgentRun {
+            runWithoutComputerSession.clearComputerUseSession()
+            runWithoutComputerSession.revision += 1
+            runWithoutComputerSession.updatedAtUnixMs += 1
+            await fixture.client.configureAgentSnapshot(
+                runWithoutComputerSession
+            )
+            await viewModel.refreshAgentRunsForOperator()
+        }
+        #expect(viewModel.currentComputerUseSessionPresentation == nil)
+        #expect(viewModel.shouldDisplayActiveComputerUseControlStatus)
+
+        let hostedReceiptCard = hostViewInWindow(
+            ScrollView {
+                DesktopAgentLiveRunCard(viewModel: viewModel)
+                    .frame(maxWidth: .infinity)
+            },
+            size: CGSize(width: 1_200, height: 800)
+        )
+        defer { hostedReceiptCard.window.close() }
+        settleHostedUI()
+        let receiptCard = hostedReceiptCard.controller.view
+        #expect(receiptCard.subviews.isEmpty == false)
+        #expect(
+            viewModel.activeComputerUseControlStatus.contains(
+                "side effect committed"
+            )
+        )
+
+        let hostedCompletedAgents = hostViewInWindow(
+            DesktopAgentsView(viewModel: viewModel),
+            size: CGSize(width: 1_700, height: 1_250)
+        )
+        defer { hostedCompletedAgents.window.close() }
+        settleHostedUI()
+        let completedAgents = hostedCompletedAgents.controller.view
+        let completedTexts = renderedTextValues(in: completedAgents)
+        #expect(completedTexts.contains("cancel-agent-view-rich"))
+        let cancellationReceipt = try #require(
+            viewModel.lastAgentCancellationReceipt
+        )
+        #expect(
+            RuntimeViewModel.agentCancellationSideEffectSummary(
+                cancellationReceipt
+            ) == "Side effect committed"
+        )
+    }
+
+    @Test("Agent operations render distinct permission and discovery repair states")
+    @MainActor
+    func agentOperationsRenderDistinctRepairStates() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "computer-use-semantic-press",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.setChatInteractionMode(.act)
+        #expect(viewModel.activeComputerUseToolCall == nil)
+        #expect(viewModel.currentComputerUseSessionPresentation == nil)
+        #expect(viewModel.shouldDisplayActiveComputerUseControlStatus == false)
+
+        let cases: [(
+            Melix_Controlplane_V1_AgentComputerUseStatus,
+            String,
+            String
+        )] = [
+            (
+                makeAgentViewComputerStatus(brokerConfigured: false),
+                "Not configured",
+                "1 live window available"
+            ),
+            (
+                makeAgentViewComputerStatus(
+                    screenRecordingPermission: "denied",
+                    accessibilityPermission: "not_determined"
+                ),
+                "Computer Use needs macOS permission",
+                "1 live window available"
+            ),
+            (
+                makeAgentViewComputerStatus(
+                    screenRecordingPermission: "restart_required"
+                ),
+                "Computer Use permission is ready after restart",
+                "1 live window available"
+            ),
+            (
+                makeAgentViewComputerStatus(
+                    screenRecordingPermission: "unknown"
+                ),
+                "Computer Use status unavailable",
+                "1 live window available"
+            ),
+            (
+                makeAgentViewComputerStatus(
+                    targetDiscoveryState:
+                        .agentComputerUseTargetDiscoveryFailed,
+                    targetDiscoveryRetriable: true
+                ),
+                "Computer Use window refresh failed",
+                "Window refresh failed — try again"
+            ),
+            (
+                makeAgentViewComputerStatus(
+                    targetDiscoveryState:
+                        .agentComputerUseTargetDiscoveryFailed,
+                    targetDiscoveryRetriable: false
+                ),
+                "Computer Use window refresh failed",
+                "Window discovery unavailable"
+            ),
+            (
+                makeAgentViewComputerStatus(
+                    targetDiscoveryState:
+                        .agentComputerUseTargetDiscoveryEmpty
+                ),
+                "No eligible on-screen windows",
+                "No eligible on-screen windows"
+            ),
+            (
+                makeAgentViewComputerStatus(
+                    targetDiscoveryState:
+                        .agentComputerUseTargetDiscoveryNotRequested
+                ),
+                "Window discovery has not run",
+                "Window discovery has not run"
+            ),
+            (
+                makeAgentViewComputerStatus(
+                    screenRecordingPermission: "denied",
+                    targetDiscoveryState:
+                        .agentComputerUseTargetDiscoveryNotRequested
+                ),
+                "Grant Screen Recording",
+                "Grant Screen Recording to discover windows"
+            ),
+            (
+                makeAgentViewComputerStatus(
+                    targetDiscoveryState: .unspecified
+                ),
+                "status unavailable",
+                "Window discovery status unavailable"
+            ),
+        ]
+
+        for (computer, expectedText, expectedDiscoveryText) in cases {
+            await client.configureAgentOperations(
+                makeAgentViewOperations(computer: computer, rich: false)
+            )
+            await viewModel.refreshAgentOperationsForOperator()
+            #expect(
+                viewModel.computerUseTargetDiscoveryStatusText
+                    == expectedDiscoveryText
+            )
+            let capability = try #require(
+                viewModel.agentCapabilityRows.first { $0.id == "computer" }
+            )
+            #expect(
+                capability.isReady
+                    == (
+                        viewModel.isComputerUseSemanticPressAvailable
+                            && viewModel.selectedComputerUseTarget != nil
+                    )
+            )
+            _ = viewModel.isComputerUseTargetDiscoveryFailed
+            _ = viewModel.canRetryComputerUseTargetDiscovery
+            let hostedWindow = hostViewInWindow(
+                DesktopAgentsView(viewModel: viewModel),
+                size: CGSize(width: 1_700, height: 1_250)
+            )
+            settleHostedUI()
+            let hosted = hostedWindow.controller.view
+            #expect(hosted.subviews.isEmpty == false)
+            #expect(expectedText.isEmpty == false)
+            hostedWindow.window.close()
+
+            if computer.brokerConfigured {
+                let hostedModeBar = hostViewInWindow(
+                    DesktopChatAgentModeBar(viewModel: viewModel),
+                    size: CGSize(width: 1_200, height: 220)
+                )
+                settleHostedUI()
+                #expect(hostedModeBar.controller.view.subviews.isEmpty == false)
+                if viewModel.isComputerUseTargetDiscoveryFailed
+                    || viewModel.availableComputerUseTargets.isEmpty {
+                    #expect(
+                        viewModel.computerUseTargetDiscoveryStatusText
+                            == expectedDiscoveryText
+                    )
+                } else if viewModel.selectedComputerUseTarget == nil {
+                    #expect(
+                        viewModel.agentCapabilityRows.first {
+                            $0.id == "computer"
+                        }?.isReady == false
+                    )
+                }
+                hostedModeBar.window.close()
+            }
+        }
+
+        await client.configureAgentOperations(
+            makeAgentViewOperations(
+                computer: makeAgentViewComputerStatus(),
+                rich: false
+            )
+        )
+        await viewModel.refreshAgentOperationsForOperator()
+        let targetID = try #require(
+            viewModel.availableComputerUseTargets.first?.targetID
+        )
+        viewModel.selectComputerUseTarget(id: "missing-target")
+        #expect(viewModel.selectedComputerUseTarget == nil)
+        viewModel.selectComputerUseTarget(id: targetID)
+        #expect(
+            viewModel.agentCapabilityRows.first { $0.id == "computer" }?
+                .isReady == true
+        )
+        let hostedSelectedTarget = hostViewInWindow(
+            DesktopChatAgentModeBar(viewModel: viewModel),
+            size: CGSize(width: 1_200, height: 220)
+        )
+        defer { hostedSelectedTarget.window.close() }
+        settleHostedUI()
+        #expect(hostedSelectedTarget.controller.view.subviews.isEmpty == false)
+    }
+
+    @Test("Agent cancellation receipts preserve every typed side-effect meaning")
+    @MainActor
+    func agentCancellationReceiptsPreserveTypedSideEffectMeaning() async throws {
+        let cases: [(
+            Melix_Controlplane_V1_AgentToolSideEffectState,
+            Bool,
+            String
+        )] = [
+            (.agentToolSideEffectNone, false, "No side effect committed"),
+            (.agentToolSideEffectCommitted, true, "Side effect committed"),
+            (.agentToolSideEffectUnknown, false, "Side effect state unknown"),
+            (.unspecified, true, "Side effect committed (legacy receipt)"),
+            (.unspecified, false, "Side effect state unknown (legacy receipt)"),
+            (.UNRECOGNIZED(99), false, "Side effect state unrecognized"),
+        ]
+
+        for (index, testCase) in cases.enumerated() {
+            let fixture = try await makeAgentViewCoverageFixture(
+                runID: "agent-receipt-\(index)",
+                approvalRequired: false,
+                cancellationSideEffectState: testCase.0,
+                sideEffectCommitted: testCase.1
+            )
+            _ = await fixture.viewModel.stopAgentRun(
+                runID: "agent-receipt-\(index)",
+                reason: "coverage-receipt"
+            )
+            let hostedWindow = hostViewInWindow(
+                DesktopAgentsView(viewModel: fixture.viewModel),
+                size: CGSize(width: 1_700, height: 1_250)
+            )
+            settleHostedUI()
+            let hosted = hostedWindow.controller.view
+            let receipt = try #require(
+                fixture.viewModel.lastAgentCancellationReceipt
+            )
+            #expect(
+                RuntimeViewModel.agentCancellationSideEffectSummary(receipt)
+                    == testCase.2,
+                Comment(rawValue: testCase.2)
+            )
+            #expect(hosted.subviews.isEmpty == false)
+            hostedWindow.window.close()
+        }
+    }
+
+    @Test("Computer Use Stop preserves disposition and side-effect warnings")
+    @MainActor
+    func computerUseStopPreservesDispositionAndSideEffectWarnings() async throws {
+        let cases: [(
+            Melix_Controlplane_V1_AgentToolSideEffectState,
+            Bool,
+            String,
+            String,
+            Bool
+        )] = [
+            (
+                .agentToolSideEffectCommitted,
+                true,
+                "too_late",
+                "arrived too late",
+                true
+            ),
+            (
+                .agentToolSideEffectCommitted,
+                true,
+                "already_terminal",
+                "had already ended",
+                true
+            ),
+            (
+                .agentToolSideEffectCommitted,
+                true,
+                "accepted",
+                "side effect committed",
+                true
+            ),
+            (
+                .agentToolSideEffectUnknown,
+                false,
+                "too_late",
+                "side-effect state is unknown",
+                true
+            ),
+            (
+                .unspecified,
+                false,
+                "already_terminal",
+                "side-effect state is unknown",
+                true
+            ),
+            (
+                .agentToolSideEffectUnknown,
+                false,
+                "accepted",
+                "side-effect state is unknown",
+                true
+            ),
+            (
+                .agentToolSideEffectNone,
+                false,
+                "accepted",
+                "stopped before any side effect",
+                false
+            ),
+            (
+                .agentToolSideEffectNone,
+                false,
+                "already_terminal",
+                "had already ended",
+                true
+            ),
+            (
+                .agentToolSideEffectNone,
+                false,
+                "too_late",
+                "arrived too late",
+                true
+            ),
+            (
+                .agentToolSideEffectNone,
+                false,
+                "not_found",
+                "was not confirmed",
+                true
+            ),
+        ]
+
+        for (index, testCase) in cases.enumerated() {
+            let fixture = try await makeAgentViewCoverageFixture(
+                runID: "agent-stop-status-\(index)",
+                approvalRequired: false,
+                cancellationSideEffectState: testCase.0,
+                sideEffectCommitted: testCase.1,
+                cancellationDisposition: testCase.2
+            )
+
+            await fixture.viewModel.stopActiveComputerUse()
+
+            #expect(
+                fixture.viewModel.activeComputerUseControlStatus.contains(
+                    testCase.3
+                ),
+                Comment(rawValue: testCase.3)
+            )
+            #expect(
+                fixture.viewModel.activeComputerUseControlIsWarning
+                    == testCase.4
+            )
+            #expect(fixture.viewModel.shouldDisplayActiveComputerUseControlStatus)
+        }
+    }
+
+    @Test("Computer Use session projection preserves partial and unavailable evidence")
+    @MainActor
+    func computerUseSessionProjectionPreservesPartialEvidence() async throws {
+        let fixture = try await makeAgentViewCoverageFixture(
+            runID: "agent-session-projection",
+            approvalRequired: false
+        )
+        let session = try #require(fixture.viewModel.selectedChatSession)
+        var baseRun = makeAgentViewRun(
+            runID: "agent-session-projection",
+            sessionID: session.id,
+            branchID: session.branchID,
+            approvalRequired: false,
+            updatedAtUnixMs: 1_800_000_000_060
+        )
+
+        func target(
+            availability: Melix_Controlplane_V1_AgentComputerUseFieldAvailability =
+                .agentComputerUseFieldAvailable,
+            bundleID: String = "",
+            windowID: UInt32 = 0,
+            title: String = ""
+        ) -> Melix_Controlplane_V1_AgentComputerUseTargetProjection {
+            var value = Melix_Controlplane_V1_AgentComputerUseTargetProjection()
+            value.availability = availability
+            value.bundleID = bundleID
+            value.windowID = windowID
+            value.windowTitle = title
+            return value
+        }
+
+        func budget(
+            limitAvailable: Bool,
+            usedAvailable: Bool,
+            limit: UInt32,
+            used: UInt32
+        ) -> Melix_Controlplane_V1_AgentComputerUseBudgetProjection {
+            var value = Melix_Controlplane_V1_AgentComputerUseBudgetProjection()
+            value.limitAvailability = limitAvailable
+                ? .agentComputerUseFieldAvailable
+                : .agentComputerUseFieldUnavailable
+            value.usedAvailability = usedAvailable
+                ? .agentComputerUseFieldAvailable
+                : .agentComputerUseFieldUnavailable
+            value.limit = limit
+            value.used = used
+            return value
+        }
+
+        func publish(
+            _ computerSession:
+                Melix_Controlplane_V1_AgentComputerUseSessionProjection,
+            revision: UInt64
+        ) async {
+            baseRun.computerUseSession = computerSession
+            baseRun.revision = revision
+            baseRun.updatedAtUnixMs += 1
+            await fixture.client.configureAgentSnapshot(baseRun)
+            await fixture.viewModel.refreshAgentRunsForOperator()
+        }
+
+        var closed = makeAgentViewComputerSession()
+        closed.sessionState = .agentComputerUseSessionClosed
+        closed.clearActiveTarget()
+        closed.allowedTargetsAvailability = .agentComputerUseFieldUnavailable
+        closed.allowedTargets = []
+        closed.frameBudget = budget(
+            limitAvailable: true,
+            usedAvailable: false,
+            limit: 9,
+            used: 0
+        )
+        closed.actionBudget = budget(
+            limitAvailable: false,
+            usedAvailable: true,
+            limit: 0,
+            used: 4
+        )
+        closed.idleDeadline.availability = .agentComputerUseFieldUnavailable
+        closed.absoluteDeadline.unixMs = 0
+        closed.screenRecordingPermission = .agentComputerUsePermissionNotDetermined
+        closed.accessibilityPermission = .agentComputerUsePermissionDenied
+        closed.restartState = .agentComputerUseRestartRequired
+        closed.lastOperation = .agentComputerUseGetPermissions
+        closed.lastResult = .agentComputerUseResultFailed
+        await publish(closed, revision: 11)
+
+        var presentation = try #require(
+            fixture.viewModel.currentComputerUseSessionPresentation
+        )
+        #expect(presentation.state == "Closed")
+        #expect(presentation.targetHeading == "Allowed targets")
+        #expect(presentation.targets.isEmpty)
+        #expect(presentation.frameBudget == "Limit 9")
+        #expect(presentation.actionBudget == "4 used")
+        #expect(presentation.idleDeadline == nil)
+        #expect(presentation.absoluteDeadline == nil)
+        #expect(presentation.screenRecordingPermission == "Not Determined")
+        #expect(presentation.accessibilityPermission == "Denied")
+        #expect(presentation.restartStatus == "Required")
+        #expect(presentation.lastAction == "Check permissions")
+        #expect(presentation.lastResult == "Failed")
+        #expect(presentation.canStop == false)
+
+        var partial = makeAgentViewComputerSession()
+        partial.sessionState = .agentComputerUseSessionUnavailable
+        partial.clearActiveTarget()
+        partial.allowedTargets = [
+            target(title: "Title only"),
+            target(windowID: 32),
+            target(),
+            target(
+                availability: .agentComputerUseFieldUnavailable,
+                bundleID: "io.melix.hidden",
+                windowID: 33,
+                title: "Hidden"
+            ),
+        ]
+        partial.frameBudget = budget(
+            limitAvailable: false,
+            usedAvailable: false,
+            limit: 0,
+            used: 0
+        )
+        partial.actionBudget = partial.frameBudget
+        partial.screenRecordingPermission =
+            .agentComputerUsePermissionRestartRequired
+        partial.accessibilityPermission = .agentComputerUsePermissionUnavailable
+        partial.restartState = .agentComputerUseRestartUnavailable
+        partial.lastOperation = .agentComputerUseOpenSession
+        partial.lastResult = .agentComputerUseResultCancelled
+        await publish(partial, revision: 12)
+
+        presentation = try #require(
+            fixture.viewModel.currentComputerUseSessionPresentation
+        )
+        #expect(presentation.state == "Unavailable")
+        #expect(presentation.targets.map(\.window) == ["Title only", "Window #32"])
+        #expect(presentation.targets.map(\.app) == ["Unavailable", "Unavailable"])
+        #expect(presentation.frameBudget == "Unavailable")
+        #expect(presentation.screenRecordingPermission == "Restart Required")
+        #expect(presentation.accessibilityPermission == "Unavailable")
+        #expect(presentation.restartStatus == "Unavailable")
+        #expect(presentation.lastAction == "Open session")
+        #expect(presentation.lastResult == "Cancelled")
+
+        var active = makeAgentViewComputerSession()
+        active.activeTarget = target(bundleID: "io.melix.target")
+        active.lastOperation = .agentComputerUseCaptureFrame
+        active.lastResult = .agentComputerUseResultTimeout
+        await publish(active, revision: 13)
+
+        presentation = try #require(
+            fixture.viewModel.currentComputerUseSessionPresentation
+        )
+        #expect(presentation.targetHeading == "Active target")
+        #expect(presentation.targets.map(\.app) == ["io.melix.target"])
+        #expect(presentation.targets.map(\.window) == ["Unavailable"])
+        #expect(presentation.lastAction == "Capture frame")
+        #expect(presentation.lastResult == "Timed Out")
+        #expect(presentation.canStop)
+
+        var closing = active
+        closing.lastOperation = .agentComputerUseCloseSession
+        closing.lastResult = .unspecified
+        await publish(closing, revision: 14)
+        presentation = try #require(
+            fixture.viewModel.currentComputerUseSessionPresentation
+        )
+        #expect(presentation.lastAction == "Close session")
+        #expect(presentation.lastResult == "Unavailable")
+
+        var unavailable = closing
+        unavailable.lastOperation = .unavailable
+        unavailable.lastResult = .agentComputerUseResultCompleted
+        await publish(unavailable, revision: 15)
+        presentation = try #require(
+            fixture.viewModel.currentComputerUseSessionPresentation
+        )
+        #expect(presentation.lastAction == "Unavailable")
+        #expect(presentation.lastResult == "Completed")
+
+        for (state, expected) in [
+            ("requested", "Requested"),
+            ("waiting_for_approval", "Needs Approval"),
+            ("running", "Running"),
+            ("completed", "Completed"),
+            ("failed", "Failed"),
+            ("cancelled", "Stopped"),
+            ("", "Unknown"),
+            ("custom", "custom"),
+        ] {
+            #expect(
+                fixture.viewModel.agentToolStateDisplayName(state) == expected
+            )
+        }
     }
 
     @Test("titlebar pane toggles use the shared pane animation contract")
@@ -7862,8 +9460,8 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
-    @Test("chat provider picker is disabled while a response is streaming")
-    func chatProviderPickerIsDisabledWhileResponseIsStreaming() throws {
+    @Test("chat provider picker is disabled while chat or Agent work is active")
+    func chatProviderPickerIsDisabledWhileChatIsBusy() throws {
         let source = try String(
             contentsOf: repositoryRootForDesktopFoundationTests()
                 .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
@@ -7874,7 +9472,7 @@ struct DesktopFoundationViewTests {
         let pickerEnd = try #require(pickerTail.range(of: #".accessibilityLabel("Chat Provider")"#))
         let pickerImplementation = pickerTail[..<pickerEnd.upperBound]
 
-        #expect(pickerImplementation.contains(".disabled(viewModel.isChatStreaming)"))
+        #expect(pickerImplementation.contains(".disabled(viewModel.isChatBusy)"))
     }
 
     @Test("chat tab renders populated transcript rows and runtime metadata")
@@ -8065,6 +9663,7 @@ struct DesktopFoundationViewTests {
         )
         #expect(renderedTextValues(in: streamingToolView).contains("Calling tool"))
         #expect(source.contains("DesktopChatUserBubbleView"))
+        #expect(source.contains(".frame(maxWidth: 560, alignment: .trailing)"))
         #expect(source.contains("DesktopChatAssistantDocumentView"))
         #expect(source.contains("DesktopChatActivityBlockView"))
         #expect(source.contains(".accessibilityElement(children: .combine)"))
@@ -8172,7 +9771,8 @@ struct DesktopFoundationViewTests {
         #expect(source.contains("reasoningElapsedSeconds: entry.reasoningElapsedSeconds"))
         #expect(source.contains("Thought for \\(elapsedSeconds) seconds"))
         #expect(source.contains("viewModel.shouldDisplayChatTranscriptEntry(entry)"))
-        #expect(source.contains("animated: accessibilityReduceMotion == false"))
+        #expect(source.contains("private func scrollChatTranscript("))
+        #expect(source.contains("scrollChatTranscript(proxy, destination: snapshot.destination)"))
         #expect(source.contains("viewModel.setChatPresentationReduceMotion(accessibilityReduceMotion)"))
         #expect(source.contains("revealedGraphemeCount") == false)
         #expect(source.contains("announcesStreamingStart: true"))
@@ -8839,7 +10439,47 @@ struct DesktopFoundationViewTests {
         #expect(completed.lastEntryID == "assistant-2")
     }
 
-    @Test("chat transcript source wires bottom-anchor auto-scroll")
+    @Test("agent transcript preserves the stable marker without programmatic scrolling")
+    func agentTranscriptPreservesStableMarkerWithoutProgrammaticScrolling() {
+        let runID = "agent-run-scroll-stability"
+        let markerID = DesktopChatTranscriptEntry.agentRunMarkerID(for: runID)
+        let transcript = [
+            DesktopChatTranscriptEntry(
+                id: "user-agent-run-scroll-stability",
+                kind: .user,
+                title: "You",
+                body: "Use the selected Computer target",
+                detail: ""
+            ),
+            DesktopChatTranscriptEntry(
+                id: markerID,
+                kind: .agentRun,
+                title: "Agent",
+                body: "Agent run details are not currently available.",
+                detail: ""
+            ),
+        ]
+
+        let starting = DesktopChatTranscriptAutoScroll.snapshot(
+            transcript: transcript,
+            isStreaming: true,
+            statusText: "Agent Starting"
+        )
+        let waitingForApproval = DesktopChatTranscriptAutoScroll.snapshot(
+            transcript: transcript,
+            isStreaming: true,
+            statusText: "Agent Waiting for Approval"
+        )
+
+        #expect(starting == waitingForApproval)
+        #expect(
+            starting.destination
+                == DesktopChatTranscriptAutoScroll.Destination.none
+        )
+        #expect(starting.statusText.isEmpty)
+    }
+
+    @Test("chat transcript source auto-scrolls ordinary streaming content only")
     @MainActor
     func chatTranscriptSourceWiresBottomAnchorAutoScroll() throws {
         let source = try String(
@@ -8850,7 +10490,30 @@ struct DesktopFoundationViewTests {
 
         #expect(source.contains("ScrollViewReader"))
         #expect(source.contains("DesktopChatTranscriptAutoScroll.Anchor.bottom"))
-        #expect(source.contains("scrollChatTranscriptToBottom"))
+        #expect(source.contains("case .none:"))
+        #expect(source.contains("proxy.scrollTo(entryID, anchor: .top)") == false)
+        #expect(source.contains("scrollChatTranscript(proxy, destination:"))
+        #expect(source.contains("withAnimation(.easeOut(duration: 0.18))") == false)
+        #expect(source.contains("animated: accessibilityReduceMotion == false") == false)
+
+        let transcriptStart = try #require(
+            source.range(of: "ScrollViewReader { proxy in")
+        )
+        let transcriptEnd = try #require(
+            source.range(
+                of: "DesktopChatComposerSurface(",
+                range: transcriptStart.upperBound..<source.endIndex
+            )
+        )
+        let transcriptSource = source[
+            transcriptStart.lowerBound..<transcriptEnd.lowerBound
+        ]
+        #expect(transcriptSource.contains("LazyVStack") == false)
+        #expect(
+            transcriptSource.contains(
+                "VStack(alignment: .leading, spacing: 12)"
+            )
+        )
     }
 
     @Test("chat markdown parser builds assistant display blocks")
@@ -10296,6 +11959,8 @@ struct DesktopFoundationViewTests {
         #expect(composerSource.contains(".disabled(canSubmit == false)"))
         #expect(source.contains(".accessibilityLabel(\"Thinking\")"))
         #expect(source.contains("Button(\"Clear Conversation\", role: .destructive"))
+        #expect(source.contains(".disabled(destructiveActionsDisabled)"))
+        #expect(source.contains("Agent-backed Chats require permanent session closing"))
         #expect(source.contains("DesktopChatModelIdentityButton(providerTarget: providerTarget)"))
         #expect(source.contains("canonical ID \\(identity.canonicalID)"))
         #expect(composerSource.contains("statusText") == false)
@@ -10772,11 +12437,9 @@ struct DesktopFoundationViewTests {
                 in: hosted.controller.view
             )
         )
-        var textView: DesktopChatComposerCommandSubmitTextView? = try #require(
-            firstDescendant(
-                of: DesktopChatComposerCommandSubmitTextView.self,
-                in: hosted.controller.view
-            )
+        var textView: DesktopChatComposerCommandSubmitTextView? = firstDescendant(
+            of: DesktopChatComposerCommandSubmitTextView.self,
+            in: hosted.controller.view
         )
         do {
             let resolvedTextView = try #require(textView)
@@ -11854,6 +13517,95 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         }
     }
 
+    @Test("phase 8 export retries fail closed when the response path or artifact stays missing")
+    @MainActor
+    func phase8ExportRetriesFailClosedForMissingOutput() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("phase8-export-retry-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let missingArtifactPath = tempRoot.appendingPathComponent("missing-matrix-summary.csv").path
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .benchExportCSV(let options):
+                return .success(
+                    makeCLIExportResponseJSON(jobID: options.jobID, outputPath: "", rowCount: 0)
+                )
+            case .benchMatrixExportSummaryCSV(let options):
+                return .success(
+                    makeCLIExportResponseJSON(
+                        jobID: options.jobID,
+                        outputPath: missingArtifactPath,
+                        rowCount: 1
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+            }
+        }
+
+        let client = FakeControlPlaneXPCClient()
+        let runner = try Phase8WindowUIAcceptanceRunner(
+            viewModel: RuntimeViewModel(client: client, cliWorkflowRunner: workflowRunner),
+            cliWorkflowRunner: workflowRunner,
+            config: .init(
+                repoRoot: tempRoot.path,
+                melixHome: tempRoot.path,
+                modelID: "fixture-model",
+                localModelPath: tempRoot.appendingPathComponent("fixture-model").path,
+                trainingFixture: "fixture-dataset",
+                benchSuites: ["smoke"],
+                matrixSuites: ["smoke"],
+                evaluationSuites: ["mmlu"],
+                evaluationDataset: "mmlu.dev.v1",
+                serverSessionID: "server-session-1",
+                cliEvidenceBundlePath: tempRoot.appendingPathComponent("bundle.json").path,
+                timestamp: "2026-08-12T000000Z"
+            ),
+            renderer: RecordingPhase8WindowUIRenderer()
+        )
+
+        do {
+            _ = try await runner.runExport(
+                command: .benchExportCSV(.init(jobID: "bench-missing-path", outputPath: "", json: true)),
+                description: "benchmark csv"
+            )
+            Issue.record("expected an empty export path to fail after one retry")
+        } catch let error as Phase8WindowUIAcceptanceError {
+            guard case .workflowFailed(let detail) = error else {
+                Issue.record("expected workflowFailed, got \(error)")
+                return
+            }
+            #expect(detail == "Window UI acceptance did not produce benchmark csv.")
+        }
+
+        do {
+            _ = try await runner.runExport(
+                command: .benchMatrixExportSummaryCSV(
+                    .init(jobID: "matrix-missing-artifact", outputPath: missingArtifactPath, json: true)
+                ),
+                description: "benchmark matrix summary csv"
+            )
+            Issue.record("expected a missing export artifact to fail after one retry")
+        } catch let error as Phase8WindowUIAcceptanceError {
+            guard case .workflowFailed(let detail) = error else {
+                Issue.record("expected workflowFailed, got \(error)")
+                return
+            }
+            #expect(
+                detail == "Window UI acceptance expected benchmark matrix summary csv at \(missingArtifactPath), but the file was missing."
+            )
+        }
+
+        let commands = await workflowRunner.snapshotRecordedCommands()
+        #expect(commands.count == 4)
+        #expect(commands.filter { if case .benchExportCSV = $0 { true } else { false } }.count == 2)
+        #expect(commands.filter { if case .benchMatrixExportSummaryCSV = $0 { true } else { false } }.count == 2)
+    }
+
     @Test("phase 8 window ui acceptance runner writes a screenshot and evidence bundle")
     @MainActor
     func phase8WindowUIAcceptanceRunnerWritesEvidenceBundle() async throws {
@@ -11893,6 +13645,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
         await configurePhase8ReadyRegistrySnapshot(client, modelID: materializedModelID)
 
         let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        let matrixSummaryExportAttempts = Phase8FixtureExportAttemptCounter()
         await workflowRunner.configureHandler { command in
             switch command {
             case .modelImport(let options):
@@ -11970,6 +13723,15 @@ struct Phase8WindowUIAcceptanceRunnerTests {
                     contents: "metric,value\nbench,1\n"
                 )
             case .benchMatrixExportSummaryCSV(let options):
+                if matrixSummaryExportAttempts.incrementAndRead() == 1 {
+                    return .success(
+                        makeCLIExportResponseJSON(
+                            jobID: options.jobID,
+                            outputPath: options.outputPath,
+                            rowCount: 1
+                        )
+                    )
+                }
                 return makePhase8FixtureExportResponse(
                     command: command,
                     jobID: options.jobID,
@@ -12038,6 +13800,7 @@ struct Phase8WindowUIAcceptanceRunnerTests {
 
         let result = try await runner.run()
 
+        #expect(matrixSummaryExportAttempts.value == 2)
         #expect(FileManager.default.fileExists(atPath: result.bundlePath))
         #expect(FileManager.default.fileExists(atPath: result.screenshotPath))
         #expect((try Data(contentsOf: URL(fileURLWithPath: result.screenshotPath))).isEmpty == false)
@@ -12727,6 +14490,24 @@ private final class RecordingPhase8WindowUIRenderer: Phase8WindowUIRendering {
     }
 }
 
+private final class Phase8FixtureExportAttemptCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func incrementAndRead() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+        return count
+    }
+}
+
 private func makePhase8FixtureExportResponse(
     command: MelixCLICommand,
     jobID: String,
@@ -13015,6 +14796,427 @@ private func makeDesktopFoundationGatewayAccessSummary(
         return key
     }
     return summary
+}
+
+private struct AgentViewCoverageFixture {
+    let client: FakeControlPlaneXPCClient
+    let viewModel: RuntimeViewModel
+}
+
+@MainActor
+private func makeAgentViewCoverageFixture(
+    runID: String = "agent-view-rich",
+    approvalRequired: Bool = true,
+    cancellationSideEffectState:
+        Melix_Controlplane_V1_AgentToolSideEffectState =
+            .agentToolSideEffectCommitted,
+    sideEffectCommitted: Bool = true,
+    cancellationDisposition: String = "accepted"
+) async throws -> AgentViewCoverageFixture {
+    let client = FakeControlPlaneXPCClient()
+    await client.configureHandshakeFeatures([
+        "xpc",
+        "models",
+        "agent-runtime",
+        "computer-use-semantic-press",
+    ])
+    let viewModel = RuntimeViewModel(client: client)
+    await viewModel.start()
+    try bindSelectedChatSessionToPrimaryServer(viewModel)
+    let session = try #require(viewModel.selectedChatSession)
+
+    let richRun = makeAgentViewRun(
+        runID: runID,
+        sessionID: session.id,
+        branchID: session.branchID,
+        approvalRequired: approvalRequired,
+        updatedAtUnixMs: 1_800_000_000_050
+    )
+    await client.configureAgentSnapshot(richRun)
+    for (suffix, state, updatedAt) in [
+        ("completed", "completed", Int64(1_800_000_000_040)),
+        ("failed", "failed", Int64(1_800_000_000_030)),
+        ("cancelled", "cancelled", Int64(1_800_000_000_020)),
+    ] {
+        var terminal = makeAgentViewRun(
+            runID: "\(runID)-\(suffix)",
+            sessionID: session.id,
+            branchID: session.branchID,
+            approvalRequired: false,
+            updatedAtUnixMs: updatedAt
+        )
+        terminal.state = state
+        terminal.assistantText = state == "completed"
+            ? "Final response from the completed Agent run."
+            : "Terminal Agent run evidence."
+        if state == "failed" {
+            terminal.failureStage = "tool_execution"
+            terminal.error.code = "agent_tool_execution_failed"
+            terminal.error.message = "The fixture tool execution failed."
+        }
+        terminal.clearComputerUseSession()
+        await client.configureAgentSnapshot(terminal)
+    }
+    await client.configureAgentOperations(
+        makeAgentViewOperations(
+            computer: makeAgentViewComputerStatus(),
+            rich: true
+        )
+    )
+    await viewModel.refreshAgentOperationsForOperator()
+    viewModel.setChatInteractionMode(.act)
+    if let targetID = viewModel.availableComputerUseTargets.first?.targetID {
+        viewModel.selectComputerUseTarget(id: targetID)
+    }
+    await client.configureAgentApprovalPolicy(makeAgentViewApprovalPolicy())
+    var cancellation = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+    cancellation.cancellationID = "cancel-\(runID)"
+    cancellation.disposition = cancellationDisposition
+    cancellation.sideEffectState = cancellationSideEffectState
+    cancellation.sideEffectCommitted = sideEffectCommitted
+    cancellation.tool.callID = "computer-call"
+    cancellation.tool.adapterKind = "computer"
+    await client.configureAgentCancellationReceipt(cancellation)
+
+    await viewModel.refreshAgentRunsForOperator()
+    viewModel.selectAgentRun(id: runID)
+    #expect(viewModel.chatInteractionMode == .act)
+    #expect(viewModel.selectedComputerUseTargetID == "fixture-target")
+    #expect(viewModel.activeAgentRunID == runID)
+    return AgentViewCoverageFixture(client: client, viewModel: viewModel)
+}
+
+private func makeAgentViewComputerStatus(
+    brokerConfigured: Bool = true,
+    screenRecordingPermission: String = "granted",
+    accessibilityPermission: String = "granted",
+    targetDiscoveryState:
+        Melix_Controlplane_V1_AgentComputerUseTargetDiscoveryState =
+            .agentComputerUseTargetDiscoveryReady,
+    targetDiscoveryRetriable: Bool = false
+) -> Melix_Controlplane_V1_AgentComputerUseStatus {
+    var target = Melix_Controlplane_V1_AgentComputerUseTarget()
+    target.targetID = "fixture-target"
+    target.bundleID = "io.melix.fixture"
+    target.processID = 4_242
+    target.processLaunchIdentity = "fixture-launch"
+    target.windowID = 77
+    target.windowTitle = "Fixture Window"
+    target.applicationName = "Fixture"
+
+    var status = Melix_Controlplane_V1_AgentComputerUseStatus()
+    status.brokerConfigured = brokerConfigured
+    status.capabilityLevel = "ax_semantic_press_only"
+    status.supportedActions = ["capture_frame", "press_element"]
+    status.screenRecordingPermission = screenRecordingPermission
+    status.accessibilityPermission = accessibilityPermission
+    status.maximumFrames = 16
+    status.maximumActions = 8
+    status.maximumArtifactBytes = 8 * 1_024 * 1_024
+    status.idleTimeoutSeconds = 30
+    status.absoluteTimeoutSeconds = 300
+    status.transportIdentityState = "verified"
+    status.targetDiscoveryState = targetDiscoveryState
+    status.targetsObservedAtUnixMs = 1_800_000_000_000
+    if targetDiscoveryState == .agentComputerUseTargetDiscoveryReady {
+        status.availableTargets = [target]
+    }
+    if targetDiscoveryState == .agentComputerUseTargetDiscoveryFailed {
+        status.targetDiscoveryError.code = "fixture_discovery_failed"
+        status.targetDiscoveryError.message = "Fixture discovery failed."
+        status.targetDiscoveryError.retriable = targetDiscoveryRetriable
+    }
+    return status
+}
+
+private func makeAgentViewOperations(
+    computer: Melix_Controlplane_V1_AgentComputerUseStatus,
+    rich: Bool
+) -> Melix_Controlplane_V1_AgentOperationsSnapshot {
+    var snapshot = Melix_Controlplane_V1_AgentOperationsSnapshot()
+    snapshot.computerUse = computer
+    snapshot.catalogDigest = "agent-view-catalog"
+    snapshot.observedAtUnixMs = 1_800_000_000_000
+    guard rich else {
+        return snapshot
+    }
+
+    snapshot.toolSources = [
+        makeAgentViewToolSource(
+            id: "builtin",
+            transport: "in_process",
+            state: "ready",
+            toolCount: 1
+        ),
+        makeAgentViewToolSource(
+            id: "workspace",
+            transport: "stdio",
+            state: "live",
+            toolCount: 2
+        ),
+        makeAgentViewToolSource(
+            id: "docs",
+            transport: "streamable_http",
+            state: "failed",
+            toolCount: 0,
+            errorCode: "mcp_connect_failed"
+        ),
+        makeAgentViewToolSource(
+            id: "catalog",
+            transport: "catalog",
+            state: "catalog_only",
+            toolCount: 3,
+            catalogOnly: true
+        ),
+        makeAgentViewToolSource(
+            id: "unknown-source",
+            transport: "custom",
+            state: "warming",
+            toolCount: 0
+        ),
+    ]
+    snapshot.tools = [
+        makeAgentViewTool(
+            sourceID: "workspace",
+            name: "workspace.write_file",
+            risk: "high"
+        ),
+        makeAgentViewTool(
+            sourceID: "builtin",
+            name: "environment_info",
+            risk: "low"
+        ),
+    ]
+    return snapshot
+}
+
+private func makeAgentViewToolSource(
+    id: String,
+    transport: String,
+    state: String,
+    toolCount: UInt32,
+    errorCode: String = "",
+    catalogOnly: Bool = false
+) -> Melix_Controlplane_V1_AgentToolSourceStatus {
+    var source = Melix_Controlplane_V1_AgentToolSourceStatus()
+    source.sourceID = id
+    source.transportKind = transport
+    source.connectionState = state
+    source.serverName = "Fixture Server"
+    source.serverVersion = "1.0"
+    source.capabilities = ["tools"]
+    source.toolCount = toolCount
+    source.catalogDigest = "digest-\(id)"
+    source.errorCode = errorCode
+    source.catalogOnly = catalogOnly
+    return source
+}
+
+private func makeAgentViewTool(
+    sourceID: String,
+    name: String,
+    risk: String
+) -> Melix_Controlplane_V1_AgentToolDefinitionSummary {
+    var tool = Melix_Controlplane_V1_AgentToolDefinitionSummary()
+    tool.sourceID = sourceID
+    tool.adapterKind = sourceID == "builtin" ? "builtin" : "mcp"
+    tool.name = name
+    tool.title = name
+    tool.schemaDigest = String(repeating: "a", count: 64)
+    tool.riskClass = risk
+    tool.replayability = "idempotent"
+    tool.annotationsUntrusted = sourceID != "builtin"
+    return tool
+}
+
+private func makeAgentViewApprovalPolicy()
+    -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot {
+    var allow = Melix_Controlplane_V1_AgentApprovalPolicyRule()
+    allow.id = "allow-workspace-read"
+    allow.effect = .agentApprovalPolicyAllow
+    allow.sourceID = "workspace"
+    allow.toolName = "workspace.read_file"
+    allow.riskClass = .low
+    allow.operationKind = .agentApprovalOperationRead
+    allow.workspaceScope = "/workspace"
+    allow.schemaDigest = String(repeating: "b", count: 64)
+
+    var ask = Melix_Controlplane_V1_AgentApprovalPolicyRule()
+    ask.id = "ask-network-send"
+    ask.effect = .agentApprovalPolicyAsk
+    ask.sourceID = "network"
+    ask.toolName = "send_request"
+    ask.riskClass = .medium
+    ask.operationKind = .agentApprovalOperationSend
+    ask.networkHost = "example.test"
+
+    var deny = Melix_Controlplane_V1_AgentApprovalPolicyRule()
+    deny.id = "deny-secure-field"
+    deny.effect = .agentApprovalPolicyDeny
+    deny.sourceID = "computer"
+    deny.toolName = "secure_field"
+    deny.riskClass = .critical
+    deny.operationKind = .agentApprovalOperationSecureFieldInteraction
+    deny.appBundleID = "com.example.fixture"
+
+    var snapshot = Melix_Controlplane_V1_AgentApprovalPolicySnapshot()
+    snapshot.schemaVersion = "melix.agent-approval-policy.v1"
+    snapshot.revision = 7
+    snapshot.rules = [allow, ask, deny]
+    return snapshot
+}
+
+private func makeAgentViewRun(
+    runID: String,
+    sessionID: String,
+    branchID: String,
+    approvalRequired: Bool,
+    updatedAtUnixMs: Int64
+) -> Melix_Controlplane_V1_AgentRunSnapshot {
+    var binding = Melix_Controlplane_V1_AgentApprovalBinding()
+    binding.runID = runID
+    binding.callID = "workspace-call"
+    binding.schemaDigest = String(repeating: "c", count: 64)
+    binding.argumentDigest = String(repeating: "d", count: 64)
+    binding.policyRevision = "policy-7"
+    binding.bindingDigest = String(repeating: "e", count: 64)
+
+    var approval = Melix_Controlplane_V1_AgentPendingApproval()
+    approval.binding = binding
+    approval.sourceID = "workspace"
+    approval.toolName = "workspace.write_file"
+    approval.title = "Write the acceptance report"
+    approval.intendedEffect = "Write report.md in the selected workspace."
+    approval.riskClass = "high"
+    approval.operationKind = "write"
+    approval.redactedArgumentsJson = #"{"path":"report.md","content":"[redacted]"}"#
+    approval.targetScopes = ["workspace:/workspace", "file:report.md"]
+    approval.argumentsTruncated = true
+    approval.persistentAllowEligible = true
+
+    var workspace = Melix_Controlplane_V1_AgentToolCallSnapshot()
+    workspace.callID = binding.callID
+    workspace.sourceID = approval.sourceID
+    workspace.toolName = approval.toolName
+    workspace.title = approval.title
+    workspace.intendedEffect = approval.intendedEffect
+    workspace.riskClass = approval.riskClass
+    workspace.state = approvalRequired ? "waiting_for_approval" : "completed"
+    workspace.schemaDigest = binding.schemaDigest
+    workspace.argumentDigest = binding.argumentDigest
+    workspace.durationMs = 12.5
+    workspace.evidenceReference = "evidence://workspace/report"
+    workspace.resultSummary =
+        "The report was written with a bounded tool-result projection."
+    workspace.resultTruncated = true
+
+    var failed = workspace
+    failed.callID = "failed-call"
+    failed.sourceID = "docs"
+    failed.toolName = "docs.lookup"
+    failed.title = "Look up documentation"
+    failed.state = "failed"
+    failed.failureStage = "mcp_call"
+    failed.error.code = "fixture_failure"
+    failed.error.message = "The fixture documentation call failed."
+
+    var computer = workspace
+    computer.callID = "computer-call"
+    computer.sourceID = "computer"
+    computer.toolName = "computer_use"
+    computer.title = "Press Continue"
+    computer.state = "completed"
+    computer.evidenceReference = "evidence://computer/action"
+
+    var requested = workspace
+    requested.callID = "requested-call"
+    requested.sourceID = "builtin"
+    requested.toolName = "environment_info"
+    requested.title = "Inspect environment"
+    requested.state = "requested"
+    requested.intendedEffect = ""
+    requested.riskClass = ""
+    requested.durationMs = 0
+    requested.evidenceReference = ""
+
+    var snapshot = Melix_Controlplane_V1_AgentRunSnapshot()
+    snapshot.runID = runID
+    snapshot.sessionID = sessionID
+    snapshot.branchID = branchID
+    snapshot.modelID = "melix-dev-text"
+    snapshot.state = approvalRequired
+        ? "waiting_for_approval"
+        : "model_turn"
+    snapshot.modelTurnCount = 3
+    snapshot.toolCallCount = 4
+    snapshot.toolCalls = [workspace, failed, computer, requested]
+    if approvalRequired {
+        snapshot.pendingApproval = approval
+    }
+    snapshot.assistantText = "The Agent is preparing the acceptance report."
+    snapshot.startedAtUnixMs = 1_800_000_000_000
+    snapshot.updatedAtUnixMs = updatedAtUnixMs
+    snapshot.revision = 10
+    snapshot.computerUseSession = makeAgentViewComputerSession()
+    return snapshot
+}
+
+private func makeAgentViewComputerSession()
+    -> Melix_Controlplane_V1_AgentComputerUseSessionProjection {
+    func target(
+        bundleID: String,
+        windowID: UInt32,
+        title: String
+    ) -> Melix_Controlplane_V1_AgentComputerUseTargetProjection {
+        var target = Melix_Controlplane_V1_AgentComputerUseTargetProjection()
+        target.availability = .agentComputerUseFieldAvailable
+        target.bundleID = bundleID
+        target.windowID = windowID
+        target.windowTitle = title
+        return target
+    }
+
+    var frameBudget = Melix_Controlplane_V1_AgentComputerUseBudgetProjection()
+    frameBudget.limitAvailability = .agentComputerUseFieldAvailable
+    frameBudget.limit = 16
+    frameBudget.usedAvailability = .agentComputerUseFieldAvailable
+    frameBudget.used = 3
+    var actionBudget = Melix_Controlplane_V1_AgentComputerUseBudgetProjection()
+    actionBudget.limitAvailability = .agentComputerUseFieldAvailable
+    actionBudget.limit = 8
+    actionBudget.usedAvailability = .agentComputerUseFieldAvailable
+    actionBudget.used = 2
+    var idle = Melix_Controlplane_V1_AgentComputerUseDeadlineProjection()
+    idle.availability = .agentComputerUseFieldAvailable
+    idle.unixMs = 1_800_000_030_000
+    var absolute = Melix_Controlplane_V1_AgentComputerUseDeadlineProjection()
+    absolute.availability = .agentComputerUseFieldAvailable
+    absolute.unixMs = 1_800_000_300_000
+
+    var session = Melix_Controlplane_V1_AgentComputerUseSessionProjection()
+    session.schemaVersion = "melix.agent-computer-use-session.v1"
+    session.sessionID = "computer-session-rich"
+    session.sessionState = .agentComputerUseSessionOpen
+    session.allowedTargetsAvailability = .agentComputerUseFieldAvailable
+    session.allowedTargets = [
+        target(bundleID: "com.apple.Safari", windowID: 11, title: "Research"),
+        target(bundleID: "com.apple.TextEdit", windowID: 12, title: "Draft"),
+        target(bundleID: "com.apple.Preview", windowID: 13, title: "Evidence"),
+        target(bundleID: "com.apple.finder", windowID: 14, title: "Workspace"),
+    ]
+    session.frameBudget = frameBudget
+    session.actionBudget = actionBudget
+    session.idleDeadline = idle
+    session.absoluteDeadline = absolute
+    session.screenRecordingPermission = .agentComputerUsePermissionGranted
+    session.accessibilityPermission = .agentComputerUsePermissionGranted
+    session.restartState = .agentComputerUseRestartNotRequired
+    session.lastOperation = .agentComputerUsePressElement
+    session.lastResult = .agentComputerUseResultCompleted
+    session.lastActionID = "action-rich"
+    session.lastCallID = "computer-call"
+    session.updatedAtUnixMs = 1_800_000_004_000
+    return session
 }
 
 @MainActor

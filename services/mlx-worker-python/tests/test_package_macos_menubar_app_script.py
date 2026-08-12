@@ -245,6 +245,11 @@ def test_main_forwards_packaging_target_and_update_channel(
         "resolve_built_swift_text_worker_binary",
         lambda repo_root: tmp_path / "melix-text-worker-swift",
     )
+    monkeypatch.setattr(
+        module,
+        "resolve_built_computer_broker_binary",
+        lambda repo_root: tmp_path / "melix-computer-broker",
+    )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
     monkeypatch.setattr(
@@ -290,6 +295,7 @@ def test_main_forwards_packaging_target_and_update_channel(
     assert module.main() == 0
     assert seen["cli_executable_path"] == tmp_path / "melix"
     assert seen["control_plane_executable_path"] == tmp_path / "melix-control-plane"
+    assert seen["computer_broker_executable_path"] == tmp_path / "melix-computer-broker"
     assert seen["swift_mlx_metallib_path"] == tmp_path / "mlx.metallib"
     assert seen["swift_mlx_metallib_version"] == "0.31.1"
     assert seen["sparkle_framework_path"] == tmp_path / "Sparkle.framework"
@@ -315,13 +321,24 @@ def test_resolve_built_products_use_direct_release_candidate_before_debug(
     cli_binary = repo_root / ".build/release/melix"
     control_plane_binary = repo_root / "services/control-plane-swift/.build/release/melix-control-plane"
     swift_worker_binary = repo_root / "services/mlx-text-worker-swift/.build/release/melix-text-worker-swift"
+    computer_broker_binary = (
+        repo_root
+        / "services/computer-use-broker-swift/.build/release/melix-computer-broker"
+    )
     debug_binaries = (
         repo_root / "apps/macos-menubar/.build/debug/melix-menubar",
         repo_root / ".build/debug/melix",
         repo_root / "services/control-plane-swift/.build/debug/melix-control-plane",
         repo_root / "services/mlx-text-worker-swift/.build/debug/melix-text-worker-swift",
     )
-    for binary in (menubar_binary, cli_binary, control_plane_binary, swift_worker_binary, *debug_binaries):
+    for binary in (
+        menubar_binary,
+        cli_binary,
+        control_plane_binary,
+        swift_worker_binary,
+        computer_broker_binary,
+        *debug_binaries,
+    ):
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
@@ -334,6 +351,7 @@ def test_resolve_built_products_use_direct_release_candidate_before_debug(
     assert module.resolve_built_cli_binary(repo_root) == cli_binary
     assert module.resolve_built_control_plane_binary(repo_root) == control_plane_binary
     assert module.resolve_built_swift_text_worker_binary(repo_root) == swift_worker_binary
+    assert module.resolve_built_computer_broker_binary(repo_root) == computer_broker_binary
 
 
 def test_resolve_built_control_plane_requires_built_product(tmp_path: Path) -> None:
@@ -341,6 +359,18 @@ def test_resolve_built_control_plane_requires_built_product(tmp_path: Path) -> N
 
     with pytest.raises(FileNotFoundError, match="Unable to find built `melix-control-plane`"):
         module.resolve_built_control_plane_binary(tmp_path / "repo")
+
+
+def test_resolve_built_computer_broker_requires_built_product(
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+
+    with pytest.raises(
+        FileNotFoundError,
+        match="Unable to find built `melix-computer-broker`",
+    ):
+        module.resolve_built_computer_broker_binary(tmp_path / "repo")
 
 
 def _write_complete_sparkle_framework(framework_path: Path) -> None:
@@ -849,6 +879,11 @@ def test_package_workflow_builds_required_swift_products_before_packaging_app() 
         ),
         find_run_workflow_step(
             workflow,
+            "Build Computer Use broker",
+            "swift build -c release --package-path services/computer-use-broker-swift --product melix-computer-broker --disable-automatic-resolution",
+        ),
+        find_run_workflow_step(
+            workflow,
             "Build menu bar app executable",
             "swift build -c release --package-path apps/macos-menubar --disable-automatic-resolution",
         ),
@@ -861,6 +896,9 @@ def test_package_workflow_builds_required_swift_products_before_packaging_app() 
         assert build_step.end() < package_step.start()
         assert "scripts/ci_progress.sh" in build_step.group(0)
         previous_step_end = build_step.end()
+
+    assert workflow.count('- "services/computer-use-broker-swift/**"') == 2
+    assert "services/computer-use-broker-swift/.build" in workflow
 
 
 def test_package_workflow_builds_isolated_tag_candidate_without_release_trust() -> None:
@@ -1280,9 +1318,19 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
     swift_worker_binary = (
         repo_root / "services/mlx-text-worker-swift/.build/arm64-apple-macosx/release/melix-text-worker-swift"
     )
+    computer_broker_binary = (
+        repo_root / "services/computer-use-broker-swift/.build/release/melix-computer-broker"
+    )
     python_executable = repo_root / ".venv/bin/python"
     site_packages = repo_root / ".venv/lib/python3.13/site-packages"
-    for path in (menubar_binary, cli_binary, control_plane_binary, swift_worker_binary, python_executable):
+    for path in (
+        menubar_binary,
+        cli_binary,
+        control_plane_binary,
+        swift_worker_binary,
+        computer_broker_binary,
+        python_executable,
+    ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     site_packages.mkdir(parents=True)
@@ -1328,6 +1376,7 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
     assert seen["cli_executable_path"] == cli_binary.resolve()
     assert seen["control_plane_executable_path"] == control_plane_binary.resolve()
     assert seen["swift_text_worker_executable_path"] == swift_worker_binary.resolve()
+    assert seen["computer_broker_executable_path"] == computer_broker_binary.resolve()
     assert seen["swift_mlx_metallib_path"] == tmp_path / "mlx.metallib"
     assert seen["swift_mlx_metallib_version"] == "0.31.1"
     assert seen["sparkle_framework_path"] == tmp_path / "Sparkle.framework"
@@ -1355,6 +1404,11 @@ def test_main_records_archive_timing_in_json_manifest(
         module,
         "resolve_built_swift_text_worker_binary",
         lambda repo_root: tmp_path / "melix-text-worker-swift",
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_built_computer_broker_binary",
+        lambda repo_root: tmp_path / "melix-computer-broker",
     )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
@@ -1485,6 +1539,11 @@ def test_main_stable_release_signs_and_reverifies_certificate_identity(
         "resolve_built_swift_text_worker_binary",
         lambda repo_root: tmp_path / "melix-text-worker-swift",
     )
+    monkeypatch.setattr(
+        module,
+        "resolve_built_computer_broker_binary",
+        lambda repo_root: tmp_path / "melix-computer-broker",
+    )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
     monkeypatch.setattr(
@@ -1597,6 +1656,11 @@ def test_main_stops_before_archive_when_adhoc_signing_or_deep_verification_fails
         "resolve_built_swift_text_worker_binary",
         lambda repo_root: tmp_path / "melix-text-worker-swift",
     )
+    monkeypatch.setattr(
+        module,
+        "resolve_built_computer_broker_binary",
+        lambda repo_root: tmp_path / "melix-computer-broker",
+    )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
     monkeypatch.setattr(
@@ -1665,6 +1729,11 @@ def test_main_propagates_extracted_archive_verification_failure_before_success_o
         module,
         "resolve_built_swift_text_worker_binary",
         lambda repo_root: tmp_path / "melix-text-worker-swift",
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_built_computer_broker_binary",
+        lambda repo_root: tmp_path / "melix-computer-broker",
     )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
@@ -2270,6 +2339,11 @@ def test_main_requires_write_timing_when_archive_is_requested(
         module,
         "resolve_built_swift_text_worker_binary",
         lambda repo_root: tmp_path / "melix-text-worker-swift",
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_built_computer_broker_binary",
+        lambda repo_root: tmp_path / "melix-computer-broker",
     )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")

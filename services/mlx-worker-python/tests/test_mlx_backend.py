@@ -35,7 +35,7 @@ def _install_fake_mlx_core(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
 class FakeTokenizer:
     def __init__(self) -> None:
-        self.calls: list[tuple[list[dict[str, str]], dict[str, object]]] = []
+        self.calls: list[tuple[list[dict[str, object]], dict[str, object]]] = []
         self.eos_token = "</s>"
         self.eos_token_id = 2
 
@@ -183,6 +183,64 @@ def test_runtime_passes_message_names_into_tokenizer_calls() -> None:
                 "tokenize": False,
                 "add_generation_prompt": False,
                 "continue_final_message": True,
+            },
+        )
+    ]
+
+
+def test_runtime_passes_structured_tool_history_into_tokenizer_calls() -> None:
+    runtime = MLXTextRuntime(backend=object())
+    tokenizer = FakeTokenizer()
+
+    prompt = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="assistant",
+                tool_calls=[
+                    common_pb2.ChatToolCall(
+                        id="call_weather_123",
+                        type="function",
+                        name="weather",
+                        arguments_json='{"city":"Tokyo"}',
+                    )
+                ],
+            ),
+            common_pb2.ChatMessage(
+                role="tool",
+                tool_call_id="call_weather_123",
+                parts=[common_pb2.MessagePart(text='{"temperature_c":22}')],
+            ),
+        ],
+        loaded_model={"tokenizer": tokenizer},
+    )
+
+    assert prompt == "<prompt-from-template>"
+    assert tokenizer.calls == [
+        (
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_weather_123",
+                            "type": "function",
+                            "function": {
+                                "name": "weather",
+                                "arguments": '{"city":"Tokyo"}',
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "content": '{"temperature_c":22}',
+                    "tool_call_id": "call_weather_123",
+                },
+            ],
+            {
+                "tokenize": False,
+                "add_generation_prompt": True,
             },
         )
     ]

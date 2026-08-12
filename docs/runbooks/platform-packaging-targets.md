@@ -91,8 +91,15 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
   atomically replaces the JSON so App CLI updates reach the resident HTTP sidecar without lost
   session records or an App restart
 - atomically publishes a mode-`0600` `run/active-runtime.json` descriptor after readiness; a
-  separately launched `melix` CLI may use its validated process and socket paths when explicit
-  worker socket overrides are absent
+  separately launched `melix` CLI validates the live control-plane process and private socket,
+  then reuses that daemon instead of creating a second mutable control plane; explicit malformed
+  control-plane socket configuration fails closed
+- keeps metrics, caches, logs, and `active-runtime.json` under the configured
+  `MELIX_RUNTIME_DIR`, while placing all per-launch worker, control-plane, and
+  Computer Use UDS endpoints plus broker trust files in one unpredictable
+  current-user `0700` directory under `/tmp`; the launcher validates
+  every socket pathname against the macOS 103-byte limit before forking and
+  removes only that exact private directory on exit
 - keeps a lightweight watchdog alive across the final launcher `exec` so crash and force-quit
   exits also remove the descriptor and terminate the bundled control plane and workers
 - starts bundled Python workers and readiness probes with `PYTHONSAFEPATH=1`,

@@ -1997,8 +1997,11 @@ public struct DesktopChatTranscriptEntry: Identifiable, Equatable, Sendable {
         case assistant
         case reasoning
         case tool
+        case agentRun = "agent_run"
         case error
     }
+
+    private static let agentRunMarkerPrefix = "agent-run-marker-"
 
     public let id: String
     public let kind: Kind
@@ -2021,6 +2024,20 @@ public struct DesktopChatTranscriptEntry: Identifiable, Equatable, Sendable {
         self.body = body
         self.detail = detail
         self.reasoningElapsedSeconds = reasoningElapsedSeconds
+    }
+
+    public static func agentRunMarkerID(for runID: String) -> String {
+        "\(agentRunMarkerPrefix)\(runID)"
+    }
+
+    public var agentRunID: String? {
+        guard kind == .agentRun,
+              id.hasPrefix(Self.agentRunMarkerPrefix)
+        else {
+            return nil
+        }
+        let runID = String(id.dropFirst(Self.agentRunMarkerPrefix.count))
+        return runID.isEmpty ? nil : runID
     }
 }
 
@@ -2060,10 +2077,47 @@ public struct DesktopChatCapabilityRow: Identifiable, Equatable, Sendable {
             return "waveform.badge.mic"
         case "speech":
             return "speaker.wave.2"
+        case "agent":
+            return "bolt.horizontal.circle"
+        case "mcp":
+            return "wrench.and.screwdriver"
+        case "computer":
+            return "macwindow"
+        case "provider-local":
+            return "desktopcomputer"
+        case "provider-remote":
+            return "network"
         default:
             return "square.grid.2x2"
         }
     }
+}
+
+public struct DesktopComputerUseTargetPresentation:
+    Identifiable,
+    Equatable,
+    Sendable
+{
+    public let id: String
+    public let app: String
+    public let window: String
+}
+
+public struct DesktopComputerUseSessionPresentation: Equatable, Sendable {
+    public let state: String
+    public let targetHeading: String
+    public let targets: [DesktopComputerUseTargetPresentation]
+    public let additionalTargetCount: Int
+    public let frameBudget: String
+    public let actionBudget: String
+    public let idleDeadline: Date?
+    public let absoluteDeadline: Date?
+    public let screenRecordingPermission: String
+    public let accessibilityPermission: String
+    public let restartStatus: String
+    public let lastAction: String
+    public let lastResult: String
+    public let canStop: Bool
 }
 
 private struct GatewayAccessProjection: Equatable, Sendable {
@@ -2161,6 +2215,12 @@ private struct ChatPresentationFragment: Sendable {
 private struct ChatRequestOwnership: Equatable, Sendable {
     let sessionID: String
     let generation: UInt64
+}
+
+private struct AgentAdmissionCancellationIntent: Equatable, Sendable {
+    let reason: String
+    let sessionID: String
+    let presentationGeneration: UInt64
 }
 
 private enum ChatPresentationPhase: Equatable, Sendable {
@@ -2719,6 +2779,33 @@ public final class RuntimeViewModel {
     public private(set) var chatStatusText = "Idle"
     public private(set) var lastChatUsageText = ""
     public private(set) var isChatStreaming = false
+    public var chatInteractionMode: DesktopChatInteractionMode = .ask
+    public private(set) var agentRuns: [Melix_Controlplane_V1_AgentRunSnapshot] = []
+    public private(set) var activeAgentRunID = ""
+    public private(set) var agentRunConflictRunIDs: [String] = []
+    public private(set) var agentRunReconciliationInProgress = false
+    public private(set) var selectedAgentRunID = ""
+    public private(set) var agentApprovalDecisionInProgress = false
+    public private(set) var agentApprovalPolicy =
+        Melix_Controlplane_V1_AgentApprovalPolicySnapshot()
+    public private(set) var agentApprovalPolicyMutationInProgress = false
+    public private(set) var agentApprovalPolicyStatusText = ""
+    public private(set) var agentOperations =
+        Melix_Controlplane_V1_AgentOperationsSnapshot()
+    public private(set) var selectedComputerUseTargetID = ""
+    public private(set) var agentOperationsStatusText = "Not inspected"
+    public private(set) var lastAgentCancellationReceipt:
+        Melix_Controlplane_V1_AgentRunCancellationReceipt?
+    private static let maximumCachedAgentApprovalDecisionReceipts = 100
+    private static let maximumAuthoritativeAgentRunInventory: UInt32 = 500
+    private static let maximumAgentRunHistory: UInt32 = 100
+    private var latestAgentApprovalDecisionReceiptsByRunID:
+        [String: Melix_Controlplane_V1_AgentApprovalDecisionReceipt] = [:]
+    public private(set) var lastChatCancellationReceipt:
+        ControlPlaneChatCancellationReceipt?
+    public private(set) var activeComputerUseControlStatus = ""
+    public private(set) var activeComputerUseControlIsWarning = false
+    private var activeComputerUseControlRunID = ""
     public private(set) var chatPresentationReduceMotion = false
     public private(set) var lastChatRequestID = ""
     public private(set) var imageJobs: [Melix_Controlplane_V1_ImageJobSummary] = []
@@ -3356,6 +3443,767 @@ public final class RuntimeViewModel {
         ServingAccelerationProfiles.all
     }
 
+    public var isChatBusy: Bool {
+        isChatStreaming
+            || isAgentRunning
+            || activeChatRequestOwnership != nil
+            || hasPendingAgentAdmissionCleanup
+            || selectedChatHasConflictingAgentOwnership
+            || selectedChatAgentRunReconciliationIsBlocking
+            || agentRunStartupHydrationInProgress
+    }
+
+    public var isChatGenerationInProgress: Bool {
+        isChatStreaming
+            || activeChatRequestOwnership != nil
+            || (isAgentRunning && hasPendingAgentAdmissionCleanup == false)
+    }
+
+    public var canStopActiveChatOrAgent: Bool {
+        guard selectedChatHasConflictingAgentOwnership == false else {
+            return false
+        }
+        return activeAgentRunID.isEmpty == false
+            || activeChatExecution != nil
+            || activeChatRequestOwnership != nil
+            || isChatStreaming
+    }
+
+    public var isAgentRunReconciliationBlocking: Bool {
+        selectedChatAgentRunReconciliationIsBlocking
+            || agentRunStartupHydrationInProgress
+    }
+
+    public var agentRunReconciliationNeedsRetry: Bool {
+        selectedChatAgentRunReconciliationIsBlocking
+            && agentRunReconciliationInProgress == false
+    }
+
+    private var hasPendingAgentAdmissionCleanup: Bool {
+        activeAgentRunID.isEmpty == false
+            && agentAdmissionCancellationIntentsByRunID[activeAgentRunID] != nil
+    }
+
+    private var selectedChatAgentRunReconciliationIsBlocking: Bool {
+        agentRunReconciliationSessionID.isEmpty == false
+            && agentRunReconciliationSessionID == selectedChatSessionID
+    }
+
+    private var selectedChatHasConflictingAgentOwnership: Bool {
+        guard agentRunConflictRunIDs.isEmpty == false,
+              selectedChatSessionID.isEmpty == false
+        else {
+            return false
+        }
+        return agentRunConflictRunIDs.contains { runID in
+            guard let run = agentRuns.first(where: { $0.runID == runID }) else {
+                return true
+            }
+            return run.sessionID == selectedChatSessionID
+        }
+    }
+
+    public var isAgentRuntimeAvailable: Bool {
+        features.contains("agent-runtime")
+    }
+
+    public func chatSessionDestructiveActionsRequireAgentClose(
+        sessionID: String
+    ) -> Bool {
+        guard isAgentRuntimeAvailable, sessionID.isEmpty == false else {
+            return false
+        }
+        if agentRuns.contains(where: { $0.sessionID == sessionID }) {
+            return true
+        }
+        if sessionID == selectedChatSessionID,
+           chatTranscript.contains(where: { $0.agentRunID != nil }) {
+            return true
+        }
+        return chatSessions.first(where: { $0.id == sessionID })?
+            .transcript.contains(where: { $0.agentRunID != nil }) == true
+    }
+
+    public var isAgentRunning: Bool {
+        guard let run = agentRuns.first(where: { $0.runID == activeAgentRunID }) else {
+            return false
+        }
+        return Self.isActiveAgentState(run.state)
+    }
+
+    public var selectedAgentRun: Melix_Controlplane_V1_AgentRunSnapshot? {
+        if let selected = agentRuns.first(where: { $0.runID == selectedAgentRunID }) {
+            return selected
+        }
+        return agentRuns.first
+    }
+
+    public func agentCancellationReceipt(
+        for runID: String
+    ) -> Melix_Controlplane_V1_AgentRunCancellationReceipt? {
+        if let run = agentRuns.first(where: { $0.runID == runID }),
+           run.hasCancellationReceipt {
+            return run.cancellationReceipt
+        }
+        if let receipt = lastAgentCancellationReceipt,
+           receipt.runID == runID {
+            return receipt
+        }
+        return nil
+    }
+
+    public func agentApprovalDecisionReceipt(
+        for runID: String
+    ) -> Melix_Controlplane_V1_AgentApprovalDecisionReceipt? {
+        latestAgentApprovalDecisionReceiptsByRunID[runID]
+    }
+
+    public func agentRunSnapshot(
+        for runID: String
+    ) -> Melix_Controlplane_V1_AgentRunSnapshot? {
+        agentRuns.first(where: { $0.runID == runID })
+    }
+
+    public func isActiveAgentRun(
+        _ run: Melix_Controlplane_V1_AgentRunSnapshot
+    ) -> Bool {
+        Self.isActiveAgentState(run.state)
+    }
+
+    public var currentChatAgentRun: Melix_Controlplane_V1_AgentRunSnapshot? {
+        guard let sessionID = selectedChatSession?.id else {
+            return nil
+        }
+        if let active = agentRuns.first(where: {
+            $0.runID == activeAgentRunID && $0.sessionID == sessionID
+        }) {
+            return active
+        }
+        return agentRuns.first(where: { $0.sessionID == sessionID })
+    }
+
+    public var pendingAgentApproval: Melix_Controlplane_V1_AgentPendingApproval? {
+        guard let run = currentChatAgentRun, run.hasPendingApproval else {
+            return nil
+        }
+        return run.pendingApproval
+    }
+
+    public var activeComputerUseToolCall:
+        Melix_Controlplane_V1_AgentToolCallSnapshot? {
+        guard let run = currentChatAgentRun, Self.isActiveAgentState(run.state) else {
+            return nil
+        }
+        return run.toolCalls.last(where: {
+            $0.sourceID == "computer"
+                && $0.toolName == "computer_use"
+                && ["requested", "waiting_for_approval", "running"].contains($0.state)
+        })
+    }
+
+    public var currentComputerUseSessionPresentation:
+        DesktopComputerUseSessionPresentation? {
+        guard let run = currentChatAgentRun,
+              Self.isActiveAgentState(run.state),
+              run.hasComputerUseSession
+        else {
+            return nil
+        }
+
+        let session = run.computerUseSession
+        let activeTarget = session.hasActiveTarget
+            ? Self.computerUseTargetPresentation(
+                session.activeTarget,
+                fallbackID: "active"
+            )
+            : nil
+        let allowedTargets = session.allowedTargetsAvailability
+            == .agentComputerUseFieldAvailable
+            ? session.allowedTargets.enumerated().compactMap { index, target in
+                Self.computerUseTargetPresentation(
+                    target,
+                    fallbackID: "allowed-\(index)"
+                )
+            }
+            : []
+        let allTargets = activeTarget.map { [$0] } ?? allowedTargets
+        let visibleTargets = Array(allTargets.prefix(3))
+        let hasInFlightComputerUseCall = run.toolCalls.contains {
+            $0.sourceID == "computer"
+                && $0.toolName == "computer_use"
+                && ["requested", "waiting_for_approval", "running"].contains($0.state)
+        }
+
+        return DesktopComputerUseSessionPresentation(
+            state: Self.computerUseSessionStateLabel(session.sessionState),
+            targetHeading: activeTarget == nil ? "Allowed targets" : "Active target",
+            targets: visibleTargets,
+            additionalTargetCount: max(0, allTargets.count - visibleTargets.count),
+            frameBudget: Self.computerUseBudgetLabel(session.frameBudget),
+            actionBudget: Self.computerUseBudgetLabel(session.actionBudget),
+            idleDeadline: Self.computerUseDeadline(session.idleDeadline),
+            absoluteDeadline: Self.computerUseDeadline(session.absoluteDeadline),
+            screenRecordingPermission: Self.computerUsePermissionLabel(
+                session.screenRecordingPermission
+            ),
+            accessibilityPermission: Self.computerUsePermissionLabel(
+                session.accessibilityPermission
+            ),
+            restartStatus: Self.computerUseRestartLabel(session.restartState),
+            lastAction: Self.computerUseLastActionLabel(session),
+            lastResult: Self.computerUseResultLabel(session.lastResult),
+            canStop: session.sessionState == .agentComputerUseSessionOpen
+                || hasInFlightComputerUseCall
+        )
+    }
+
+    public var shouldDisplayActiveComputerUseControlStatus: Bool {
+        guard activeComputerUseControlStatus.isEmpty == false,
+              activeComputerUseControlRunID.isEmpty == false
+        else {
+            return false
+        }
+        return currentChatAgentRun?.runID == activeComputerUseControlRunID
+    }
+
+    public var agentCapabilityRows: [DesktopChatCapabilityRow] {
+        let liveMCPSourceCount = agentOperations.toolSources.filter {
+            $0.transportKind != "in_process"
+                && $0.sourceID != "computer"
+                && ["ready", "live"].contains($0.connectionState)
+                && !$0.catalogOnly
+        }.count
+        let computerStatus = agentOperations.computerUse
+        let computerReady = computerStatus.brokerConfigured
+            && computerStatus.capabilityLevel == "ax_semantic_press_only"
+            && computerStatus.screenRecordingPermission == "granted"
+            && computerStatus.accessibilityPermission == "granted"
+        let computerDetail: String
+        if computerReady,
+           computerStatus.targetDiscoveryState
+            == .agentComputerUseTargetDiscoveryFailed {
+            computerDetail = computerUseTargetDiscoveryStatusText
+        } else if computerReady,
+                  computerStatus.targetDiscoveryState
+                    == .agentComputerUseTargetDiscoveryEmpty {
+            computerDetail = computerUseTargetDiscoveryStatusText
+        } else if computerReady {
+            computerDetail = selectedComputerUseTarget == nil
+                ? "Select one live window to enable Computer Use."
+                : "The selected live window will be frozen into the next run; text, key, scroll, and pointer actions remain unavailable."
+        } else {
+            computerDetail = "The live broker or required macOS permissions are unavailable."
+        }
+        return [
+            DesktopChatCapabilityRow(
+                id: "agent",
+                title: "Agent",
+                modelID: selectedChatModelID,
+                detail: isAgentRuntimeAvailable
+                    ? "Realtime tool loop and approval policy are available."
+                    : "This runtime does not advertise Agent support.",
+                isReady: isAgentRuntimeAvailable
+            ),
+            DesktopChatCapabilityRow(
+                id: "mcp",
+                title: "MCP Tools",
+                modelID: "",
+                detail: liveMCPSourceCount > 0
+                    ? "\(liveMCPSourceCount) live MCP source\(liveMCPSourceCount == 1 ? "" : "s") verified by the worker."
+                    : "No executable MCP source is currently live.",
+                isReady: liveMCPSourceCount > 0
+            ),
+            DesktopChatCapabilityRow(
+                id: "computer",
+                title: "Computer Use · Semantic Press",
+                modelID: "",
+                detail: computerDetail,
+                isReady: computerReady && selectedComputerUseTarget != nil
+            ),
+        ]
+    }
+
+    public var isComputerUseSemanticPressAvailable: Bool {
+        agentOperations.computerUse.brokerConfigured
+            && agentOperations.computerUse.capabilityLevel
+                == "ax_semantic_press_only"
+            && agentOperations.computerUse.screenRecordingPermission == "granted"
+            && agentOperations.computerUse.accessibilityPermission == "granted"
+    }
+
+    public var availableComputerUseTargets:
+        [Melix_Controlplane_V1_AgentComputerUseTarget] {
+        agentOperations.computerUse.availableTargets
+    }
+
+    public var computerUseTargetDiscoveryStatusText: String {
+        let status = agentOperations.computerUse
+        switch status.targetDiscoveryState {
+        case .agentComputerUseTargetDiscoveryReady:
+            let count = status.availableTargets.count
+            return "\(count) live window\(count == 1 ? "" : "s") available"
+        case .agentComputerUseTargetDiscoveryEmpty:
+            return "No eligible on-screen windows"
+        case .agentComputerUseTargetDiscoveryFailed:
+            return status.hasTargetDiscoveryError
+                && status.targetDiscoveryError.retriable
+                ? "Window refresh failed — try again"
+                : "Window discovery unavailable"
+        case .agentComputerUseTargetDiscoveryNotRequested:
+            return status.screenRecordingPermission == "granted"
+                ? "Window discovery has not run"
+                : "Grant Screen Recording to discover windows"
+        case .unspecified, .UNRECOGNIZED(_):
+            return "Window discovery status unavailable"
+        }
+    }
+
+    public var isComputerUseTargetDiscoveryFailed: Bool {
+        agentOperations.computerUse.targetDiscoveryState
+            == .agentComputerUseTargetDiscoveryFailed
+    }
+
+    public var canRetryComputerUseTargetDiscovery: Bool {
+        let status = agentOperations.computerUse
+        return status.targetDiscoveryState
+            == .agentComputerUseTargetDiscoveryFailed
+            && status.hasTargetDiscoveryError
+            && status.targetDiscoveryError.retriable
+    }
+
+    public var selectedComputerUseTarget:
+        Melix_Controlplane_V1_AgentComputerUseTarget? {
+        availableComputerUseTargets.first {
+            $0.targetID == selectedComputerUseTargetID
+        }
+    }
+
+    public func selectComputerUseTarget(id: String) {
+        guard id.isEmpty || availableComputerUseTargets.contains(where: {
+            $0.targetID == id
+        }) else {
+            return
+        }
+        selectedComputerUseTargetID = id
+        notifyStateChanged()
+    }
+
+    public func setChatInteractionMode(_ mode: DesktopChatInteractionMode) {
+        guard isChatBusy == false else {
+            return
+        }
+        if mode == .act, agentRunConflictRunIDs.isEmpty == false {
+            selectedSurface = .agents
+            selectedAgentRunID = agentRunConflictRunIDs.first ?? ""
+            chatStatusText = "Agent Admission Blocked • Review Agents"
+            setLastError(
+                "Melix found active Agent work outside this Chat. Review or stop the orphaned run before starting another Agent."
+            )
+            notifyStateChanged()
+            return
+        }
+        chatInteractionMode = mode
+        if let sessionID = selectedChatSession?.id {
+            replaceChatSession(id: sessionID) { session in
+                session.interactionMode = mode
+                session.updatedAt = Date()
+            }
+        }
+        notifyStateChanged()
+    }
+
+    public func selectAgentRun(id: String) {
+        guard agentRuns.contains(where: { $0.runID == id }) else {
+            return
+        }
+        selectedAgentRunID = id
+        notifyStateChanged()
+    }
+
+    public func refreshAgentRunsForOperator() async {
+        if let sessionID = selectedChatSession?.id {
+            await refreshSelectedChatAgentRunsAuthoritatively(
+                sessionID: sessionID
+            )
+        } else {
+            _ = await refreshAgentRuns()
+        }
+        await refreshAgentApprovalPolicy()
+        await refreshAgentOperations()
+    }
+
+    public func refreshAgentApprovalPolicyForOperator() async {
+        await refreshAgentApprovalPolicy()
+    }
+
+    public func refreshAgentOperationsForOperator() async {
+        await refreshAgentOperations()
+    }
+
+    public func revokeAgentApprovalPolicyRule(id: String) async {
+        guard agentApprovalPolicyMutationInProgress == false,
+              agentApprovalPolicy.rules.contains(where: { $0.id == id })
+        else {
+            return
+        }
+        let expectedRevision = agentApprovalPolicy.revision
+        let remainingRules = agentApprovalPolicy.rules.filter { $0.id != id }
+        agentApprovalPolicyMutationInProgress = true
+        agentApprovalPolicyStatusText = "Revoking saved policy…"
+        notifyStateChanged()
+        do {
+            let updated = try await client.replaceAgentApprovalPolicy(
+                rules: remainingRules,
+                expectedRevision: expectedRevision
+            )
+            guard updated.revision > expectedRevision,
+                  updated.rules.contains(where: { $0.id == id }) == false
+            else {
+                throw ControlPlaneXPCClientError.requestFailed(
+                    code: "agent_policy_receipt_mismatch",
+                    message: "The updated approval policy did not confirm the requested revocation."
+                )
+            }
+            agentApprovalPolicy = updated
+            agentApprovalPolicyStatusText = "Saved policy revoked."
+        } catch {
+            let failure = chatFailureDisplay(for: error)
+            agentApprovalPolicyStatusText = failure.code.isEmpty
+                ? "Policy update failed"
+                : "Policy update failed • \(failure.code)"
+            if let clientError = error as? ControlPlaneXPCClientError,
+               case .requestFailed(let code, _) = clientError,
+               code == "agent_policy_revision_conflict" {
+                await refreshAgentApprovalPolicy()
+            } else {
+                setLastError(failure.message)
+            }
+        }
+        agentApprovalPolicyMutationInProgress = false
+        notifyStateChanged()
+    }
+
+    public func agentStateDisplayName(_ state: String) -> String {
+        Self.agentStateLabel(state)
+    }
+
+    public func agentToolStateDisplayName(_ state: String) -> String {
+        switch state {
+        case "requested":
+            return "Requested"
+        case "waiting_for_approval":
+            return "Needs Approval"
+        case "running":
+            return "Running"
+        case "completed":
+            return "Completed"
+        case "failed":
+            return "Failed"
+        case "cancelled":
+            return "Stopped"
+        default:
+            return state.isEmpty ? "Unknown" : state
+        }
+    }
+
+    public func decideAgentApproval(
+        _ choice: Melix_Controlplane_V1_AgentApprovalChoice
+    ) async {
+        guard agentApprovalDecisionInProgress == false,
+              let approval = pendingAgentApproval,
+              approval.hasBinding
+        else {
+            return
+        }
+
+        let decisionStartedAt = Date()
+        agentApprovalDecisionInProgress = true
+        chatStatusText = "Recording Approval"
+        notifyStateChanged()
+        if let run = agentRuns.first(where: {
+            $0.runID == approval.binding.runID
+        }), run.updatedAtUnixMs > 0 {
+            let waitMs = max(
+                0,
+                Date().timeIntervalSince1970 * 1_000
+                    - Double(run.updatedAtUnixMs)
+            )
+            await metrics.record(
+                name: "agent.approval.wait_ms",
+                valueMs: waitMs
+            )
+        }
+
+        var command = Melix_Controlplane_V1_DecideAgentApproval()
+        command.binding = approval.binding
+        command.choice = choice
+
+        do {
+            let receipt = try await client.decideAgentApproval(command)
+            guard receipt.binding == approval.binding,
+                  receipt.choice == choice
+            else {
+                throw ControlPlaneXPCClientError.requestFailed(
+                    code: "approval_receipt_binding_mismatch",
+                    message: "The approval receipt did not match the exact pending decision."
+                )
+            }
+            latestAgentApprovalDecisionReceiptsByRunID[
+                approval.binding.runID
+            ] = receipt
+            pruneAgentApprovalDecisionReceipts()
+            let alwaysAllowWasNotSaved =
+                choice == .agentApprovalAlwaysAllow
+                    && receipt.policyPersistenceDisposition
+                        == .agentApprovalPolicyPersistenceNotApplied
+            if let refreshed = try? await client.agentRun(
+                runID: approval.binding.runID
+            ) {
+                applyAgentSnapshot(refreshed, changeKind: "approval")
+            }
+            if choice == .agentApprovalAlwaysAllow,
+               receipt.policyPersistenceDisposition
+                != .agentApprovalPolicyPersistenceNotApplied {
+                await refreshAgentApprovalPolicy()
+            }
+            // Snapshot application deliberately derives the ordinary live-run
+            // status. Restore the decision outcome afterwards so a degraded
+            // Always Allow is not visually overwritten by "Using Tool".
+            if alwaysAllowWasNotSaved {
+                chatStatusText =
+                    "Agent • Allowed This Call • Always Allow Not Saved"
+                setLastError(
+                    receipt.hasPolicyPersistenceError
+                        && !receipt.policyPersistenceError.message.isEmpty
+                        ? receipt.policyPersistenceError.message
+                        : "This call was approved, but Always Allow could not be saved."
+                )
+            } else {
+                chatStatusText = choice == .agentApprovalDeny
+                    ? "Agent • Approval Denied"
+                    : "Agent • Approval Recorded"
+            }
+        } catch {
+            let failure = chatFailureDisplay(for: error)
+            chatStatusText = failure.code.isEmpty
+                ? "Approval Failed"
+                : "Approval Failed • \(failure.code)"
+            setLastError(failure.message)
+        }
+
+        await metrics.record(
+            name: "agent.approval.decision_propagation_ms",
+            valueMs: Date().timeIntervalSince(decisionStartedAt) * 1_000
+        )
+
+        agentApprovalDecisionInProgress = false
+        notifyStateChanged()
+    }
+
+    @discardableResult
+    public func stopActiveChatOrAgent(
+        reason: String = "operator_stop"
+    ) async -> Bool {
+        if selectedChatHasConflictingAgentOwnership {
+            selectedSurface = .agents
+            selectedAgentRunID = agentRunConflictRunIDs.first ?? ""
+            chatStatusText = "Agent Conflict • Review Agents"
+            setLastError(
+                "Melix found multiple active Agent runs for this Chat. Open Agents and stop each run before sending or changing Chat."
+            )
+            notifyStateChanged()
+            return false
+        }
+        if let run = currentChatAgentRun,
+           Self.isActiveAgentState(run.state) {
+            return await stopAgentRun(runID: run.runID, reason: reason)
+        }
+        if !activeAgentRunID.isEmpty {
+            return await stopAgentRun(runID: activeAgentRunID, reason: reason)
+        }
+
+        guard let execution = activeChatExecution else {
+            guard activeChatRequestOwnership != nil else {
+                if agentRunConflictRunIDs.isEmpty == false {
+                    selectedSurface = .agents
+                    selectedAgentRunID = agentRunConflictRunIDs.first ?? ""
+                    notifyStateChanged()
+                }
+                return false
+            }
+            invalidateActiveChatRequest(
+                markCurrentSessionInterrupted: false,
+                cancelBackend: false
+            )
+            chatStatusText = "Stop Requested"
+            notifyStateChanged()
+            return true
+        }
+        chatStatusText = "Stopping…"
+        notifyStateChanged()
+        let receipt = await execution.cancel()
+        lastChatCancellationReceipt = receipt
+        switch receipt.disposition {
+        case .accepted, .alreadyTerminal:
+            activeChatExecution = nil
+            invalidateActiveChatRequest(
+                markCurrentSessionInterrupted: false,
+                cancelBackend: false
+            )
+            chatStatusText = receipt.disposition == .accepted
+                ? "Stopped"
+                : "Already Finished"
+            notifyStateChanged()
+            return true
+        case .notFound:
+            chatStatusText = "Stop Failed • Request Not Found"
+            setLastError("The active request could not be found by the runtime.")
+        case .unavailable:
+            chatStatusText = "Stop Failed • Unavailable"
+            setLastError("The active provider does not support reliable cancellation.")
+        }
+        notifyStateChanged()
+        return false
+    }
+
+    @discardableResult
+    public func stopAgentRun(
+        runID: String,
+        reason: String = "operator_stop"
+    ) async -> Bool {
+        let normalizedRunID = runID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let run = agentRuns.first(where: { $0.runID == normalizedRunID })
+        let isAdmitting = normalizedRunID == activeAgentRunID
+            && run == nil
+            && (
+                activeChatRequestOwnership != nil
+                    || agentAdmissionCancellationIntentsByRunID[normalizedRunID]
+                        != nil
+            )
+        guard !normalizedRunID.isEmpty,
+              isAdmitting || run.map({ Self.isActiveAgentState($0.state) }) == true else {
+            return false
+        }
+        if isAdmitting {
+            if activeChatRequestOwnership != nil {
+                let admissionSessionID = activeChatRequestOwnership?.sessionID
+                    ?? selectedChatSessionID
+                invalidateActiveChatRequest(
+                    markCurrentSessionInterrupted: false,
+                    cancelBackend: false
+                )
+                agentAdmissionCancellationIntentsByRunID[normalizedRunID] =
+                    AgentAdmissionCancellationIntent(
+                        reason: reason,
+                        sessionID: admissionSessionID,
+                        presentationGeneration: chatRequestGeneration
+                    )
+            }
+        }
+        let cancellationStartedAt = Date()
+        chatStatusText = "Stopping Agent…"
+        notifyStateChanged()
+        do {
+            let receipt = try await client.cancelAgentRun(
+                runID: normalizedRunID,
+                reason: reason
+            )
+            guard receipt.runID == normalizedRunID else {
+                throw ControlPlaneXPCClientError.requestFailed(
+                    code: "cancellation_receipt_binding_mismatch",
+                    message: "The cancellation receipt did not match the selected Agent run."
+                )
+            }
+            lastAgentCancellationReceipt = receipt
+            if isAdmitting, receipt.disposition == "not_found" {
+                chatStatusText = "Stop Requested • Awaiting Admission Cleanup"
+                await metrics.record(
+                    name: "agent.cancel.total_ms",
+                    valueMs: Date().timeIntervalSince(cancellationStartedAt) * 1_000
+                )
+                notifyStateChanged()
+                return true
+            }
+            if ["accepted", "already_terminal"].contains(receipt.disposition),
+               activeAgentRunID == normalizedRunID {
+                activeAgentRunID = ""
+            }
+            if ["accepted", "already_terminal"].contains(receipt.disposition) {
+                agentAdmissionCancellationIntentsByRunID.removeValue(
+                    forKey: normalizedRunID
+                )
+            }
+            if let refreshed = try? await client.agentRun(runID: normalizedRunID) {
+                applyAgentSnapshot(refreshed, changeKind: "cancel")
+            }
+            let dispositionConfirmed = [
+                "accepted",
+                "already_terminal",
+            ].contains(receipt.disposition)
+            let confirmed = dispositionConfirmed
+                && receipt.sideEffectState == .agentToolSideEffectNone
+            presentAgentCancellationReceiptStatus(receipt)
+            await metrics.record(
+                name: "agent.cancel.total_ms",
+                valueMs: Date().timeIntervalSince(cancellationStartedAt) * 1_000
+            )
+            notifyStateChanged()
+            return confirmed
+        } catch {
+            let failure = chatFailureDisplay(for: error)
+            chatStatusText = failure.code.isEmpty
+                ? "Agent Stop Failed"
+                : "Agent Stop Failed • \(failure.code)"
+            setLastError(failure.message)
+        }
+        await metrics.record(
+            name: "agent.cancel.total_ms",
+            valueMs: Date().timeIntervalSince(cancellationStartedAt) * 1_000
+        )
+        notifyStateChanged()
+        return false
+    }
+
+    public func stopActiveComputerUse() async {
+        guard let run = currentChatAgentRun,
+              Self.isActiveAgentState(run.state)
+        else {
+            activeComputerUseControlRunID = currentChatAgentRun?.runID ?? ""
+            activeComputerUseControlIsWarning = true
+            activeComputerUseControlStatus =
+                "Computer Use stop was not confirmed. No active Agent run was available."
+            notifyStateChanged()
+            return
+        }
+        activeComputerUseControlRunID = run.runID
+        let previousReceipt = lastAgentCancellationReceipt
+        // Clear the observation slot for this attempt so an RPC failure cannot
+        // be mistaken for the previous Stop receipt. Restore it only when no
+        // fresh typed receipt arrives.
+        lastAgentCancellationReceipt = nil
+        activeComputerUseControlStatus = "Stopping Computer Use…"
+        activeComputerUseControlIsWarning = false
+        notifyStateChanged()
+        _ = await stopAgentRun(
+            runID: run.runID,
+            reason: "operator_stop_computer_use"
+        )
+        guard let receipt = lastAgentCancellationReceipt,
+              receipt.runID == run.runID
+        else {
+            lastAgentCancellationReceipt = previousReceipt
+            activeComputerUseControlIsWarning = true
+            activeComputerUseControlStatus =
+                "Computer Use stop was not confirmed. Review the last available receipt before interacting with the target."
+            notifyStateChanged()
+            return
+        }
+        let status = Self.computerUseStopStatus(receipt)
+        activeComputerUseControlStatus = status.text
+        activeComputerUseControlIsWarning = status.isWarning
+        notifyStateChanged()
+    }
+
     public func isPendingAssistantTranscriptEntry(_ entry: DesktopChatTranscriptEntry) -> Bool {
         isEmptyPendingAssistantEntry(entry)
     }
@@ -3389,7 +4237,7 @@ public final class RuntimeViewModel {
             return entry.id == streamingReasoningEntryID
         case .tool:
             return streamingToolEntryIDs.contains(entry.id)
-        case .user, .error:
+        case .user, .agentRun, .error:
             return false
         }
     }
@@ -3423,7 +4271,14 @@ public final class RuntimeViewModel {
     private var streamingReasoningEntryID: String?
     private var activeToolEntryIDs: [String: String] = [:]
     private var streamingToolEntryIDs: Set<String> = []
+    private var activeChatExecution: ControlPlaneChatExecution?
     private var activeChatRequestOwnership: ChatRequestOwnership?
+    private var chatContextTransitionInProgress = false
+    private var agentRunStartupHydrationInProgress = true
+    private var agentRunReconciliationGeneration: UInt64 = 0
+    private var agentRunReconciliationSessionID = ""
+    private var agentAdmissionCancellationIntentsByRunID:
+        [String: AgentAdmissionCancellationIntent] = [:]
     private var chatRequestGeneration: UInt64 = 0
     private var activeChatPresentationPhase: ChatPresentationPhase?
     private var chatReasoningPhaseStartedAt: ContinuousClock.Instant?
@@ -3902,6 +4757,13 @@ public final class RuntimeViewModel {
         selectedSurface = resolvedSurface(for: surface)
         if selectedSurface == .server {
             refreshServerModelOptionsIfNeeded(rescan: false)
+        }
+        if selectedSurface == .agents {
+            Task { [weak self] in
+                await self?.refreshAgentRuns()
+                await self?.refreshAgentApprovalPolicy()
+                await self?.refreshAgentOperations()
+            }
         }
         if selectedSurface.isDomainSurface {
             selectedToolSection = defaultToolSection(for: selectedSurface, current: selectedToolSection)
@@ -6766,6 +7628,12 @@ public final class RuntimeViewModel {
             return
         }
 
+        if deferChatContextChangeUntilActiveAgentStops({ [weak self] in
+            self?.createChatSession()
+        }) {
+            return
+        }
+
         invalidateActiveChatRequest(markCurrentSessionInterrupted: true)
 
         let nextIndex = chatSessions.count + 1
@@ -6776,6 +7644,7 @@ public final class RuntimeViewModel {
             statusText: "Choose Provider"
         )
         chatSessions.append(session)
+        chatInteractionMode = .ask
         loadChatSession(session)
         selectedSurface = .chat
         notifyStateChanged()
@@ -6784,6 +7653,12 @@ public final class RuntimeViewModel {
     public func forkSelectedChatSession() {
         guard selectedChatSession != nil else {
             createChatSession()
+            return
+        }
+
+        if deferChatContextChangeUntilActiveAgentStops({ [weak self] in
+            self?.forkSelectedChatSession()
+        }) {
             return
         }
 
@@ -6808,6 +7683,43 @@ public final class RuntimeViewModel {
             exportPath: source.exportPath
         )
         chatSessions.append(forked)
+        chatInteractionMode = .ask
+        loadChatSession(forked)
+        selectedSurface = .chat
+        notifyStateChanged()
+    }
+
+    public func forkChatSession(id: String) {
+        guard let source = chatSessions.first(where: { $0.id == id }) else {
+            return
+        }
+        guard source.id != selectedChatSessionID else {
+            forkSelectedChatSession()
+            return
+        }
+        if deferChatContextChangeUntilActiveAgentStops({ [weak self] in
+            self?.forkChatSession(id: id)
+        }) {
+            return
+        }
+        invalidateActiveChatRequest(markCurrentSessionInterrupted: true)
+        let nextIndex = chatSessions.count + 1
+        let forked = DesktopChatSessionState(
+            id: "chat-session-\(UUID().uuidString)",
+            title: "\(source.title) Fork",
+            serverSessionID: source.serverSessionID,
+            providerTargetID: source.providerTargetID,
+            branchID: "branch-\(nextIndex)",
+            branchTitle: "Branch \(nextIndex)",
+            transcript: source.transcript,
+            statusText: source.statusText,
+            usageText: source.usageText,
+            requestID: source.requestID,
+            isStreaming: false,
+            exportPath: source.exportPath
+        )
+        chatSessions.append(forked)
+        chatInteractionMode = .ask
         loadChatSession(forked)
         selectedSurface = .chat
         notifyStateChanged()
@@ -6818,20 +7730,47 @@ public final class RuntimeViewModel {
             return
         }
         if selectedChatSessionID != id {
+            if deferChatContextChangeUntilActiveAgentStops({ [weak self] in
+                self?.selectChatSession(id: id)
+            }) {
+                return
+            }
             invalidateActiveChatRequest(markCurrentSessionInterrupted: true)
         }
         loadChatSession(session)
+        if isAgentRuntimeAvailable {
+            scheduleSelectedChatAgentRunReconciliation(sessionID: id)
+        }
         notifyStateChanged()
     }
 
     public func deleteChatSession(id: String) {
-        guard let index = chatSessions.firstIndex(where: { $0.id == id }) else {
+        guard chatSessions.contains(where: { $0.id == id }) else {
+            return
+        }
+        if blockAgentSessionDestructiveAction(
+            sessionID: id,
+            actionTitle: "Delete Chat"
+        ) {
             return
         }
         let deletingSelectedSession = selectedChatSession?.id == id
         if deletingSelectedSession {
+            if deferChatContextChangeUntilActiveAgentStops({ [weak self] in
+                self?.deleteChatSession(id: id)
+            }) {
+                return
+            }
             invalidateActiveChatRequest(markCurrentSessionInterrupted: false)
         }
+        performDeleteChatSession(id: id)
+    }
+
+    private func performDeleteChatSession(id: String) {
+        guard let index = chatSessions.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let deletingSelectedSession = selectedChatSession?.id == id
         chatSessions.remove(at: index)
 
         if chatSessions.isEmpty {
@@ -6846,7 +7785,13 @@ public final class RuntimeViewModel {
             clearActiveChatPresentationState()
         } else if deletingSelectedSession {
             let nextIndex = min(index, chatSessions.count - 1)
-            loadChatSession(chatSessions[nextIndex])
+            let nextSession = chatSessions[nextIndex]
+            loadChatSession(nextSession)
+            if isAgentRuntimeAvailable {
+                scheduleSelectedChatAgentRunReconciliation(
+                    sessionID: nextSession.id
+                )
+            }
         }
         notifyStateChanged()
     }
@@ -6859,6 +7804,13 @@ public final class RuntimeViewModel {
             return
         }
         if selectedChatSession.providerTargetID != target.id {
+            if deferChatContextChangeUntilActiveAgentStops({ [weak self] in
+                self?.bindSelectedChatSessionToProvider(
+                    providerTargetID: providerTargetID
+                )
+            }) {
+                return
+            }
             invalidateActiveChatRequest(markCurrentSessionInterrupted: true)
         }
 
@@ -6900,7 +7852,15 @@ public final class RuntimeViewModel {
 
     @discardableResult
     public func exportSelectedChatSession() -> String? {
-        guard let session = selectedChatSession else {
+        guard let sessionID = selectedChatSession?.id else {
+            return nil
+        }
+        return exportChatSession(id: sessionID)
+    }
+
+    @discardableResult
+    public func exportChatSession(id: String) -> String? {
+        guard let session = chatSessions.first(where: { $0.id == id }) else {
             return nil
         }
         let sanitizedName = session.title.replacingOccurrences(of: " ", with: "-").lowercased()
@@ -7061,6 +8021,67 @@ public final class RuntimeViewModel {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .isEmpty == false
             return hasConfiguration && hasCredential
+        }
+    }
+
+    public var isSelectedChatActReady: Bool {
+        guard isSelectedChatProviderReady,
+              isAgentRuntimeAvailable,
+              agentRunConflictRunIDs.isEmpty
+        else {
+            return false
+        }
+        if let remoteServer = selectedChatRemoteServer {
+            guard remoteServer.toolSupportMode != .forceOff,
+                  remoteServer.providerKind.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                  ).lowercased() == "openai-compatible"
+            else {
+                return false
+            }
+        }
+        return true
+    }
+
+    public var isSelectedChatInteractionReady: Bool {
+        switch chatInteractionMode {
+        case .ask:
+            return isSelectedChatProviderReady
+        case .act:
+            return isSelectedChatActReady
+        }
+    }
+
+    public var selectedAgentProviderCapability: DesktopChatCapabilityRow {
+        guard let target = selectedChatProviderTarget else {
+            return DesktopChatCapabilityRow(
+                id: "provider",
+                title: "No Provider",
+                modelID: "",
+                detail: "Choose a Provider before starting an Agent run.",
+                isReady: false
+            )
+        }
+        switch target.kind {
+        case .localServer:
+            return DesktopChatCapabilityRow(
+                id: "provider-local",
+                title: "Local · On this Mac",
+                modelID: target.modelID,
+                detail: "Model prompts stay on this Mac. A selected tool may still access its explicitly approved destination.",
+                isReady: isSelectedChatProviderReady
+            )
+        case .remoteServer:
+            let toolSupportDisabled = selectedChatRemoteServer?.toolSupportMode == .forceOff
+            return DesktopChatCapabilityRow(
+                id: "provider-remote",
+                title: "Remote · Data egress",
+                modelID: target.modelID,
+                detail: toolSupportDisabled
+                    ? "Prompt data leaves this Mac, and this Provider profile explicitly disables tool calling."
+                    : "Prompt and tool-result data leave this Mac for the selected Provider.",
+                isReady: isSelectedChatProviderReady && toolSupportDisabled == false
+            )
         }
     }
 
@@ -7999,11 +9020,20 @@ public final class RuntimeViewModel {
                 name: "menu.hydration_ms",
                 valueMs: Date().timeIntervalSince(hydrationStartedAt) * 1_000
             )
+            if isAgentRuntimeAvailable,
+               selectedChatSessionID.isEmpty == false {
+                await refreshSelectedChatAgentRunsAuthoritatively(
+                    sessionID: selectedChatSessionID
+                )
+            }
             await startSubscription(lastSeenSeq: lastSeenSeq, isReconnect: false)
+            agentRunStartupHydrationInProgress = false
+            await refreshAgentOperations()
             if selectedSurface == .server {
                 refreshServerModelOptionsIfNeeded(rescan: false)
             }
         } catch {
+            agentRunStartupHydrationInProgress = false
             await transitionConnectionState(to: "Degraded", detail: "Handshake failed")
             if let diagnostic = productInstallStateProvider.startupFailureDiagnostic(for: error) {
                 setLastError(diagnostic.userMessage)
@@ -8098,11 +9128,15 @@ public final class RuntimeViewModel {
     }
 
     public func submitChatPrompt() async {
+        if chatInteractionMode == .act {
+            await submitAgentPrompt()
+            return
+        }
         let prompt = chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
             return
         }
-        guard !isChatStreaming else {
+        guard !isChatBusy else {
             return
         }
 
@@ -8253,8 +9287,17 @@ public final class RuntimeViewModel {
         do {
             let execution = try await client.startChat(chatRequest)
             guard isActiveChatRequest(requestOwnership) else {
+                let receipt = await execution.cancel()
+                if selectedChatSessionID == requestOwnership.sessionID {
+                    lastChatCancellationReceipt = receipt
+                    chatStatusText = receipt.disposition == .accepted
+                        ? "Stopped"
+                        : "Already Finished"
+                    notifyStateChanged()
+                }
                 return
             }
+            activeChatExecution = execution
             lastChatRequestID = execution.requestID
             await metrics.record(
                 name: "menu.chat_submit_ms",
@@ -8453,11 +9496,550 @@ public final class RuntimeViewModel {
         guard isActiveChatRequest(requestOwnership) else {
             return
         }
+        activeChatExecution = nil
         activeChatRequestOwnership = nil
         isChatStreaming = false
         resetChatPresentationState()
         clearActiveChatPresentationState()
         notifyStateChanged()
+    }
+
+    private func submitAgentPrompt() async {
+        let prompt = chatComposerText.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !prompt.isEmpty, !isChatBusy else {
+            return
+        }
+        guard agentRunConflictRunIDs.isEmpty else {
+            selectedSurface = .agents
+            selectedAgentRunID = agentRunConflictRunIDs.first ?? ""
+            chatStatusText = "Agent Admission Blocked • Review Agents"
+            setLastError(
+                "Melix found active Agent work outside this Chat. Review or stop the orphaned run before starting another Agent."
+            )
+            notifyStateChanged()
+            return
+        }
+        guard isAgentRuntimeAvailable else {
+            chatStatusText = "Agent Unavailable"
+            setLastError(
+                "This Melix runtime does not advertise realtime Agent support."
+            )
+            notifyStateChanged()
+            return
+        }
+        guard let originatingSession = selectedChatSession else {
+            chatStatusText = "Choose Provider"
+            setLastError("Choose a Provider before starting an Agent run.")
+            selectedSurface = .chat
+            notifyStateChanged()
+            return
+        }
+        guard let providerTarget = selectedChatProviderTarget else {
+            chatStatusText = "Choose Provider"
+            setLastError("Choose a Provider before starting an Agent run.")
+            selectedSurface = .chat
+            notifyStateChanged()
+            return
+        }
+
+        let preflightGeneration = chatRequestGeneration
+        let localServerSession: DesktopServerSessionState?
+        let remoteTarget: ControlPlaneChatRequest.RemoteTarget?
+        switch providerTarget.kind {
+        case .localServer:
+            guard let serverSession = selectedChatServerSession else {
+                chatStatusText = "Choose Provider"
+                setLastError("Choose a Provider before starting an Agent run.")
+                selectedSurface = .chat
+                notifyStateChanged()
+                return
+            }
+            guard serverSession.isInteractiveReady else {
+                chatStatusText = serverSession.lifecycle.rawValue
+                setLastError(chatSubmissionBlockedMessage(for: serverSession))
+                notifyStateChanged()
+                return
+            }
+            localServerSession = serverSession
+            remoteTarget = nil
+        case .remoteServer:
+            guard let remoteServer = selectedChatRemoteServer else {
+                chatStatusText = "Provider Unavailable"
+                setLastError("Remote Provider was not found.")
+                selectedSurface = .chat
+                notifyStateChanged()
+                return
+            }
+            guard remoteServer.toolSupportMode != .forceOff else {
+                chatStatusText = "Agent Unavailable"
+                setLastError(
+                    "Remote Provider \(remoteServer.id) has tool calling disabled. Enable tool support before using Act."
+                )
+                notifyStateChanged()
+                return
+            }
+            guard remoteServer.providerKind.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).lowercased() == "openai-compatible" else {
+                chatStatusText = "Agent Unavailable"
+                setLastError(
+                    "Remote Provider \(remoteServer.id) does not expose Melix-compatible structured tool streaming."
+                )
+                notifyStateChanged()
+                return
+            }
+            do {
+                localServerSession = nil
+                remoteTarget = try chatRemoteTarget(
+                    for: remoteServer,
+                    modelID: providerTarget.modelID
+                )
+            } catch {
+                chatStatusText = "Provider Unavailable"
+                setLastError(error.localizedDescription)
+                selectedSurface = .chat
+                notifyStateChanged()
+                return
+            }
+        }
+
+        let modelID = resolvedChatModelID()
+        if providerTarget.kind == .localServer,
+           models.contains(where: { $0.modelID == modelID }) == false
+        {
+            await refreshDesktopFoundation()
+        }
+        guard chatRequestGeneration == preflightGeneration,
+              activeChatRequestOwnership == nil,
+              isChatStreaming == false,
+              selectedChatSessionID == originatingSession.id
+        else {
+            return
+        }
+        if !selectedComputerUseTargetID.isEmpty {
+            guard await revalidateSelectedComputerUseTargetBeforeAgentRun() else {
+                return
+            }
+            guard chatRequestGeneration == preflightGeneration,
+                  activeChatRequestOwnership == nil,
+                  isChatStreaming == false,
+                  selectedChatSessionID == originatingSession.id
+            else {
+                return
+            }
+        }
+        if providerTarget.kind == .localServer,
+           hasInteractiveServerSession(for: modelID) == false,
+           let missingModel = runtimeCacheMissingModel(for: modelID) {
+            chatStatusText = "Failed • \(ModelRuntimeAvailability.missingRuntimeCacheCode)"
+            setLastError(missingModel.runtimeCacheDetailText)
+            notifyStateChanged()
+            return
+        }
+
+        let ownership = beginChatRequest(sessionID: originatingSession.id)
+        let proposedRunID = "agent-run-\(UUID().uuidString.lowercased())"
+        chatStatusText = "Preparing Agent"
+        lastChatUsageText = ""
+        notifyStateChanged()
+
+        var preloadedModel = false
+        if localServerSession != nil,
+           hasInteractiveServerSession(for: modelID) == false,
+           shouldPreloadChatModel(modelID: modelID) {
+            preloadedModel = true
+            await loadModel(modelID: modelID)
+            guard isActiveChatRequest(ownership) else {
+                return
+            }
+        }
+        if preloadedModel, !selectedComputerUseTargetID.isEmpty {
+            guard await revalidateSelectedComputerUseTargetBeforeAgentRun()
+            else {
+                if isActiveChatRequest(ownership) {
+                    activeChatRequestOwnership = nil
+                    notifyStateChanged()
+                }
+                return
+            }
+            guard isActiveChatRequest(ownership) else {
+                return
+            }
+        }
+
+        chatComposerText = ""
+        chatConversationMessages.append(
+            ControlPlaneChatRequest.Message(role: "user", content: prompt)
+        )
+        appendChatEntry(
+            id: "user-\(UUID().uuidString)",
+            kind: .user,
+            title: "User",
+            body: prompt,
+            detail: ""
+        )
+        appendChatEntry(
+            id: DesktopChatTranscriptEntry.agentRunMarkerID(
+                for: proposedRunID
+            ),
+            kind: .agentRun,
+            title: "Melix Agent Run",
+            body: "Agent run details are not currently available.",
+            detail: proposedRunID
+        )
+        notifyStateChanged()
+
+        var command = Melix_Controlplane_V1_StartAgentRun()
+        command.sessionID = originatingSession.id
+        command.branchID = originatingSession.branchID
+        command.serverSessionID = providerTarget.serverID
+        command.modelID = modelID
+        command.providerServerID = providerTarget.serverID
+        command.runID = proposedRunID
+        command.deferActivation = true
+        command.mode = .act
+        command.maxModelTurns = 8
+        command.maxToolCalls = 8
+        command.deadlineUnixMs = Int64(
+            Date().addingTimeInterval(15 * 60).timeIntervalSince1970 * 1_000
+        )
+        command.messages = Self.agentRunMessages(
+            from: chatRequestMessages(publicModelID: modelID)
+        )
+        if let selectedComputerUseTarget {
+            command.computerUseTargets = [selectedComputerUseTarget]
+        }
+        activeAgentRunID = command.runID
+        lastChatRequestID = command.runID
+        chatStatusText = "Starting Agent"
+        notifyStateChanged()
+
+        var admittedSnapshot: Melix_Controlplane_V1_AgentRunSnapshot?
+        do {
+            let started = try await client.startAgentRun(
+                command,
+                remoteTarget: remoteTarget
+            )
+            admittedSnapshot = started
+            guard started.runID == command.runID else {
+                throw ControlPlaneXPCClientError.requestFailed(
+                    code: "agent_start_receipt_binding_mismatch",
+                    message: "The Agent start receipt did not match the admitted run."
+                )
+            }
+            guard isActiveChatRequest(ownership) else {
+                let cancellationIntent =
+                    agentAdmissionCancellationIntentsByRunID[command.runID]
+                    ?? AgentAdmissionCancellationIntent(
+                        reason: "chat_session_changed",
+                        sessionID: originatingSession.id,
+                        presentationGeneration: ownership.generation
+                    )
+                agentAdmissionCancellationIntentsByRunID[command.runID] =
+                    cancellationIntent
+                let cancellationReason = cancellationIntent.reason
+                let receipt: Melix_Controlplane_V1_AgentRunCancellationReceipt?
+                if lastAgentCancellationReceipt?.runID == started.runID,
+                   ["accepted", "already_terminal"].contains(
+                    lastAgentCancellationReceipt?.disposition ?? ""
+                   ) {
+                    receipt = lastAgentCancellationReceipt
+                } else {
+                    receipt = try? await client.cancelAgentRun(
+                        runID: started.runID,
+                        reason: cancellationReason
+                    )
+                }
+                if let receipt, receipt.runID == command.runID {
+                    lastAgentCancellationReceipt = receipt
+                    if let refreshed = try? await client.agentRun(
+                        runID: command.runID
+                    ) {
+                        applyAgentSnapshot(
+                            refreshed,
+                            changeKind: "admission_cleanup"
+                        )
+                    }
+                }
+                let cleanupConfirmed = receipt.map {
+                    $0.runID == command.runID
+                        && ["accepted", "already_terminal"].contains(
+                            $0.disposition
+                        )
+                } ?? false
+                if cleanupConfirmed {
+                    agentAdmissionCancellationIntentsByRunID.removeValue(
+                        forKey: command.runID
+                    )
+                    if activeAgentRunID == command.runID {
+                        activeAgentRunID = ""
+                    }
+                } else {
+                    activeAgentRunID = command.runID
+                }
+                if shouldPresentAgentAdmissionCleanup(
+                    cancellationIntent,
+                    runID: command.runID
+                ) {
+                    if let receipt, receipt.runID == command.runID {
+                        presentAgentCancellationReceiptStatus(receipt)
+                    } else {
+                        chatStatusText = "Agent Cleanup • Stop Not Confirmed"
+                        setLastError(
+                            "Melix could not confirm cleanup of the suspended Agent run. Retry Stop before starting another Agent."
+                        )
+                    }
+                    notifyStateChanged()
+                }
+                return
+            }
+            let activated = try await client.activateAgentRun(
+                runID: started.runID
+            )
+            guard activated.runID == started.runID else {
+                throw ControlPlaneXPCClientError.requestFailed(
+                    code: "agent_activation_receipt_binding_mismatch",
+                    message: "The Agent activation receipt did not match the admitted run."
+                )
+            }
+            guard isActiveChatRequest(ownership) else {
+                let cancellationIntent =
+                    agentAdmissionCancellationIntentsByRunID[command.runID]
+                    ?? AgentAdmissionCancellationIntent(
+                        reason: "chat_session_changed",
+                        sessionID: originatingSession.id,
+                        presentationGeneration: ownership.generation
+                    )
+                agentAdmissionCancellationIntentsByRunID[command.runID] =
+                    cancellationIntent
+                let cancellationReason = cancellationIntent.reason
+                let receipt = try? await client.cancelAgentRun(
+                    runID: activated.runID,
+                    reason: cancellationReason
+                )
+                if let receipt, receipt.runID == command.runID {
+                    lastAgentCancellationReceipt = receipt
+                    if let refreshed = try? await client.agentRun(
+                        runID: command.runID
+                    ) {
+                        applyAgentSnapshot(
+                            refreshed,
+                            changeKind: "activation_cleanup"
+                        )
+                    }
+                }
+                let cleanupConfirmed = receipt.map {
+                    $0.runID == command.runID
+                        && ["accepted", "already_terminal"].contains(
+                            $0.disposition
+                        )
+                } ?? false
+                if cleanupConfirmed {
+                    agentAdmissionCancellationIntentsByRunID.removeValue(
+                        forKey: command.runID
+                    )
+                    if activeAgentRunID == command.runID {
+                        activeAgentRunID = ""
+                    }
+                } else {
+                    activeAgentRunID = command.runID
+                }
+                if shouldPresentAgentAdmissionCleanup(
+                    cancellationIntent,
+                    runID: command.runID
+                ) {
+                    if let receipt, receipt.runID == command.runID {
+                        presentAgentCancellationReceiptStatus(receipt)
+                    } else {
+                        chatStatusText = "Agent Cleanup • Stop Not Confirmed"
+                        setLastError(
+                            "Melix could not confirm cleanup of the Agent run. It may still be running; retry Stop before starting another Agent."
+                        )
+                    }
+                    notifyStateChanged()
+                }
+                return
+            }
+            activeAgentRunID = activated.runID
+            selectedAgentRunID = activated.runID
+            lastChatRequestID = activated.runID
+            applyAgentSnapshot(activated, changeKind: "started")
+            activeChatRequestOwnership = nil
+            chatStatusText = "Agent • \(Self.agentStateLabel(activated.state))"
+            notifyStateChanged()
+        } catch {
+            let cancellationIntent =
+                agentAdmissionCancellationIntentsByRunID[command.runID]
+                ?? AgentAdmissionCancellationIntent(
+                    reason: "agent_start_or_activation_failed",
+                    sessionID: originatingSession.id,
+                    presentationGeneration: ownership.generation
+                )
+            agentAdmissionCancellationIntentsByRunID[command.runID] =
+                cancellationIntent
+            let cleanupReceipt:
+                Melix_Controlplane_V1_AgentRunCancellationReceipt?
+            if lastAgentCancellationReceipt?.runID != command.runID
+                || !["accepted", "already_terminal"].contains(
+                    lastAgentCancellationReceipt?.disposition ?? ""
+                ) {
+                cleanupReceipt = try? await client.cancelAgentRun(
+                    runID: command.runID,
+                    reason: cancellationIntent.reason
+                )
+            } else {
+                cleanupReceipt = lastAgentCancellationReceipt
+            }
+            if let cleanupReceipt, cleanupReceipt.runID == command.runID {
+                lastAgentCancellationReceipt = cleanupReceipt
+                if let refreshed = try? await client.agentRun(
+                    runID: command.runID
+                ) {
+                    applyAgentSnapshot(
+                        refreshed,
+                        changeKind: "failed_start_cleanup"
+                    )
+                }
+            }
+            let cleanupConfirmed = cleanupReceipt.map {
+                $0.runID == command.runID
+                    && ["accepted", "already_terminal"].contains(
+                        $0.disposition
+                    )
+            } ?? false
+            if cleanupConfirmed {
+                agentAdmissionCancellationIntentsByRunID.removeValue(
+                    forKey: command.runID
+                )
+                if activeAgentRunID == command.runID {
+                    activeAgentRunID = ""
+                }
+            } else {
+                activeAgentRunID = command.runID
+                if let admittedSnapshot {
+                    applyAgentSnapshot(
+                        admittedSnapshot,
+                        changeKind: "cleanup_pending"
+                    )
+                }
+            }
+            let failure = chatFailureDisplay(for: error)
+            let requestStillActive = isActiveChatRequest(ownership)
+            let shouldPresentCleanup = shouldPresentAgentAdmissionCleanup(
+                cancellationIntent,
+                runID: command.runID
+            )
+            guard requestStillActive || shouldPresentCleanup else {
+                return
+            }
+            if requestStillActive {
+                activeChatRequestOwnership = nil
+            }
+            if let cleanupReceipt,
+               cleanupReceipt.runID == command.runID {
+                presentAgentCancellationReceiptStatus(cleanupReceipt)
+                let cancellationDetail = lastError
+                if let cancellationDetail,
+                   cleanupReceipt.sideEffectState
+                       != .agentToolSideEffectNone {
+                    setLastError(
+                        "\(failure.message) \(cancellationDetail)"
+                    )
+                } else {
+                    setLastError(failure.message)
+                }
+            } else {
+                chatStatusText = "Agent Cleanup • Stop Not Confirmed"
+                setLastError(
+                    "\(failure.message) Melix could not confirm cleanup of the admitted Agent run; retry Stop before continuing."
+                )
+            }
+            appendChatEntry(
+                id: "agent-start-error-\(UUID().uuidString)",
+                kind: .error,
+                title: "Agent Error",
+                body: failure.message,
+                detail: failure.code
+            )
+            notifyStateChanged()
+        }
+    }
+
+    private func revalidateSelectedComputerUseTargetBeforeAgentRun() async -> Bool {
+        guard !selectedComputerUseTargetID.isEmpty else {
+            return true
+        }
+
+        do {
+            let snapshot = try await client.agentOperations()
+            agentOperations = snapshot
+            let unavailableCount = snapshot.toolSources.filter {
+                ["unavailable", "failed", "blocked"].contains(
+                    $0.connectionState
+                )
+            }.count
+            let targetID = selectedComputerUseTargetID
+            switch snapshot.computerUse.targetDiscoveryState {
+            case .agentComputerUseTargetDiscoveryFailed:
+                let code = snapshot.computerUse.hasTargetDiscoveryError
+                    ? snapshot.computerUse.targetDiscoveryError.code
+                    : ""
+                agentOperationsStatusText = code.isEmpty
+                    ? "Computer target refresh failed"
+                    : "Computer target refresh failed • \(code)"
+                chatStatusText = "Computer Target Refresh Failed"
+                setLastError(
+                    "The selected Computer Use window could not be refreshed, so Melix did not start the Agent run. Refresh windows and try again."
+                )
+                notifyStateChanged()
+                return false
+            case .agentComputerUseTargetDiscoveryNotRequested,
+                 .unspecified,
+                 .UNRECOGNIZED:
+                agentOperationsStatusText = "Computer target refresh incomplete"
+                chatStatusText = "Computer Target Refresh Required"
+                setLastError(
+                    "Melix could not verify the selected Computer Use window. Refresh windows before starting the Agent run."
+                )
+                notifyStateChanged()
+                return false
+            case .agentComputerUseTargetDiscoveryReady,
+                 .agentComputerUseTargetDiscoveryEmpty:
+                break
+            }
+            guard snapshot.computerUse.availableTargets.contains(where: {
+                $0.targetID == targetID
+            }) else {
+                selectedComputerUseTargetID = ""
+                agentOperationsStatusText = "Computer target changed"
+                chatStatusText = "Choose Computer Target"
+                setLastError(
+                    "The selected Computer Use window is no longer available. Refresh windows and choose a live window before starting the Agent run."
+                )
+                notifyStateChanged()
+                return false
+            }
+
+            agentOperationsStatusText = unavailableCount == 0
+                ? "Live runtime snapshot"
+                : "\(unavailableCount) source\(unavailableCount == 1 ? "" : "s") need attention"
+
+            notifyStateChanged()
+            return true
+        } catch {
+            let failure = chatFailureDisplay(for: error)
+            agentOperationsStatusText = failure.code.isEmpty
+                ? "Computer target refresh failed"
+                : "Computer target refresh failed • \(failure.code)"
+            chatStatusText = "Computer Target Refresh Failed"
+            setLastError(
+                "The selected Computer Use window could not be refreshed, so Melix did not start the Agent run. Refresh windows and try again."
+            )
+            notifyStateChanged()
+            return false
+        }
     }
 
     private func beginChatRequest(sessionID: String) -> ChatRequestOwnership {
@@ -8476,8 +10058,158 @@ public final class RuntimeViewModel {
             && selectedChatSessionID == ownership.sessionID
     }
 
-    private func invalidateActiveChatRequest(markCurrentSessionInterrupted: Bool) {
-        let hadInFlightRequest = activeChatRequestOwnership != nil || isChatStreaming
+    private func shouldPresentAgentAdmissionCleanup(
+        _ intent: AgentAdmissionCancellationIntent,
+        runID: String
+    ) -> Bool {
+        selectedChatSessionID == intent.sessionID
+            && chatRequestGeneration == intent.presentationGeneration
+            && activeChatRequestOwnership == nil
+            && (activeAgentRunID.isEmpty || activeAgentRunID == runID)
+    }
+
+    private func blockAgentSessionDestructiveAction(
+        sessionID: String,
+        actionTitle: String
+    ) -> Bool {
+        guard chatSessionDestructiveActionsRequireAgentClose(
+            sessionID: sessionID
+        ) else {
+            return false
+        }
+        let status = "\(actionTitle) Unavailable • Session Close Required"
+        if sessionID == selectedChatSessionID {
+            chatStatusText = status
+        }
+        replaceChatSession(id: sessionID) { session in
+            session.statusText = status
+            session.updatedAt = Date()
+        }
+        setLastError(
+            "\(actionTitle) is unavailable while permanent Agent session closing is not enabled. Review Agent runs before continuing."
+        )
+        notifyStateChanged()
+        return true
+    }
+
+    private func deferChatContextChangeUntilActiveAgentStops(
+        _ transition: @escaping @MainActor () -> Void
+    ) -> Bool {
+        guard chatContextTransitionInProgress == false else {
+            return true
+        }
+        if selectedChatAgentRunReconciliationIsBlocking {
+            chatStatusText = agentRunReconciliationInProgress
+                ? "Checking Agent Status…"
+                : "Agent Status Unavailable • Retry"
+            setLastError(
+                agentRunReconciliationInProgress
+                    ? "Melix is checking this Chat for an active Agent before changing context."
+                    : "Melix could not verify whether this Chat has an active Agent. Refresh Agent history before changing Chat context."
+            )
+            notifyStateChanged()
+            return true
+        }
+        if selectedChatHasConflictingAgentOwnership {
+            selectedSurface = .agents
+            selectedAgentRunID = agentRunConflictRunIDs.first ?? ""
+            chatStatusText = "Agent Conflict • Multiple Active Runs"
+            setLastError(
+                "Melix found multiple active Agent runs for this Chat. Open Agents and stop each run before sending or changing Chat."
+            )
+            notifyStateChanged()
+            return true
+        }
+        let runID = activeAgentRunID
+        guard runID.isEmpty == false else {
+            return false
+        }
+        let run = agentRuns.first(where: { $0.runID == runID })
+        let isAdmitting = run == nil
+            && (
+                activeChatRequestOwnership != nil
+                    || agentAdmissionCancellationIntentsByRunID[runID] != nil
+            )
+        guard isAdmitting || run.map({ Self.isActiveAgentState($0.state) }) == true else {
+            return false
+        }
+
+        chatContextTransitionInProgress = true
+        chatStatusText = "Stopping Agent Before Chat Change…"
+        notifyStateChanged()
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            let previousReceipt = self.lastAgentCancellationReceipt
+            self.lastAgentCancellationReceipt = nil
+            _ = await self.stopAgentRun(
+                runID: runID,
+                reason: "chat_context_changed"
+            )
+            let receipt = self.lastAgentCancellationReceipt
+            if receipt == nil {
+                self.lastAgentCancellationReceipt = previousReceipt
+            }
+            let cancellationConfirmed = receipt?.runID == runID
+                && ["accepted", "already_terminal"].contains(
+                    receipt?.disposition ?? ""
+                )
+            let suspendedAdmissionCleanupPending = isAdmitting
+                && receipt?.runID == runID
+                && receipt?.disposition == "not_found"
+            var exactRunIsTerminal = self.agentRuns.contains { snapshot in
+                snapshot.runID == runID
+                    && Self.isTerminalAgentState(snapshot.state)
+            }
+            if exactRunIsTerminal == false,
+               let refreshed = try? await self.client.agentRun(runID: runID),
+               Self.isTerminalAgentState(refreshed.state) {
+                self.applyAgentSnapshot(
+                    refreshed,
+                    changeKind: "chat_context_change"
+                )
+                exactRunIsTerminal = true
+            }
+            guard cancellationConfirmed
+                    || suspendedAdmissionCleanupPending
+                    || exactRunIsTerminal
+            else {
+                self.chatContextTransitionInProgress = false
+                self.chatStatusText = "Chat Change Blocked • Stop Not Confirmed"
+                self.setLastError(
+                    "Melix kept this Chat selected because the active Agent cancellation was not confirmed. Retry Stop before changing Chat context."
+                )
+                self.notifyStateChanged()
+                return
+            }
+            if self.activeAgentRunID == runID {
+                self.activeAgentRunID = ""
+            }
+            self.activeChatRequestOwnership = nil
+            self.chatContextTransitionInProgress = false
+            transition()
+        }
+        return true
+    }
+
+    private func invalidateActiveChatRequest(
+        markCurrentSessionInterrupted: Bool,
+        cancelBackend: Bool = true
+    ) {
+        let execution = activeChatExecution
+        let hadInFlightRequest = activeChatRequestOwnership != nil
+            || isChatStreaming
+            || execution != nil
+            || activeAgentRunID.isEmpty == false
+        if cancelBackend {
+            activeChatExecution = nil
+            Task {
+                if let execution {
+                    _ = await execution.cancel()
+                }
+            }
+        }
         chatRequestGeneration &+= 1
         activeChatRequestOwnership = nil
         resetChatPresentationState()
@@ -8507,6 +10239,13 @@ public final class RuntimeViewModel {
     }
 
     private func chatFailureDisplay(for error: Error) -> (code: String, message: String) {
+        if let error = error as? ControlPlaneXPCClientError {
+            switch error {
+            case .requestFailed(let code, let message):
+                let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                return (code, trimmed.isEmpty ? code : trimmed)
+            }
+        }
         if let error = error as? ControlPlaneChatExecutionError {
             switch error {
             case .requestFailed(let code, let message):
@@ -8526,6 +10265,36 @@ public final class RuntimeViewModel {
 
     private func chatRequestMessages(publicModelID: String) -> [ControlPlaneChatRequest.Message] {
         [Self.trustedChatRuntimeIdentityMessage(publicModelID: publicModelID)] + chatConversationMessages
+    }
+
+    static func agentRunMessages(
+        from messages: [ControlPlaneChatRequest.Message]
+    ) -> [Melix_Controlplane_V1_AgentRunMessage] {
+        messages.flatMap { message in
+            let toolCalls = message.role == "assistant"
+                ? message.toolCalls
+                : []
+            var result: [Melix_Controlplane_V1_AgentRunMessage] = []
+            if toolCalls.isEmpty || message.content.isEmpty == false {
+                var projected = Melix_Controlplane_V1_AgentRunMessage()
+                projected.role = message.role
+                projected.content = message.content
+                projected.toolCallID = message.toolCallID ?? ""
+                if message.role == "tool" {
+                    projected.toolName = message.name ?? ""
+                }
+                result.append(projected)
+            }
+            for toolCall in toolCalls {
+                var projected = Melix_Controlplane_V1_AgentRunMessage()
+                projected.role = "assistant"
+                projected.toolCallID = toolCall.callID
+                projected.toolName = toolCall.toolName
+                projected.toolArgumentsJson = toolCall.argumentsJSON
+                result.append(projected)
+            }
+            return result
+        }
     }
 
     private func chatRemoteTarget(
@@ -8599,6 +10368,17 @@ public final class RuntimeViewModel {
     }
 
     public func clearChatTranscript() {
+        if blockAgentSessionDestructiveAction(
+            sessionID: selectedChatSessionID,
+            actionTitle: "Clear Chat"
+        ) {
+            return
+        }
+        if deferChatContextChangeUntilActiveAgentStops({ [weak self] in
+            self?.clearChatTranscript()
+        }) {
+            return
+        }
         invalidateActiveChatRequest(markCurrentSessionInterrupted: false)
         chatTranscript = []
         chatConversationMessages = []
@@ -8608,6 +10388,38 @@ public final class RuntimeViewModel {
         isChatStreaming = false
         clearActiveChatPresentationState()
         replaceChatSession(id: selectedChatSessionID) { session in
+            session.transcript = []
+            session.statusText = "Idle"
+            session.usageText = ""
+            session.requestID = ""
+            session.isStreaming = false
+            session.updatedAt = Date()
+        }
+        notifyStateChanged()
+    }
+
+    public func clearChatTranscript(sessionID: String) {
+        guard chatSessions.contains(where: { $0.id == sessionID }) else {
+            return
+        }
+        if blockAgentSessionDestructiveAction(
+            sessionID: sessionID,
+            actionTitle: "Clear Chat"
+        ) {
+            return
+        }
+        guard sessionID != selectedChatSessionID else {
+            clearChatTranscript()
+            return
+        }
+        performClearChatTranscript(sessionID: sessionID)
+    }
+
+    private func performClearChatTranscript(sessionID: String) {
+        guard chatSessions.contains(where: { $0.id == sessionID }) else {
+            return
+        }
+        replaceChatSession(id: sessionID) { session in
             session.transcript = []
             session.statusText = "Idle"
             session.usageText = ""
@@ -12379,6 +14191,7 @@ public final class RuntimeViewModel {
 
     private func loadChatSession(_ session: DesktopChatSessionState) {
         selectedChatSessionID = session.id
+        chatInteractionMode = session.interactionMode
         if let target = selectedChatProviderTarget {
             selectedProviderTargetID = target.id
             selectedChatModelID = target.modelID
@@ -12878,9 +14691,17 @@ public final class RuntimeViewModel {
         guard let session = selectedChatSession else {
             return
         }
+        // Reconciliation copy is transient UI state. Persisting it would turn
+        // a successful empty refresh into a durable "Checking Agent Status…"
+        // session status and would also make a retry error survive relaunch.
+        let shouldPersistStatusText =
+            selectedChatAgentRunReconciliationIsBlocking == false
         replaceChatSession(id: session.id) { current in
             current.transcript = persistableChatTranscript()
-            current.statusText = chatStatusText
+            current.interactionMode = chatInteractionMode
+            if shouldPersistStatusText {
+                current.statusText = chatStatusText
+            }
             current.usageText = lastChatUsageText
             current.requestID = lastChatRequestID
             current.isStreaming = isChatStreaming
@@ -12934,6 +14755,11 @@ public final class RuntimeViewModel {
         case .imageJob(let imageJobChanged):
             upsert(imageJob: imageJobChanged.job)
             imageStatusText = Self.imageStatusText(for: imageJobChanged.job)
+        case .agentRun(let agentRunChanged):
+            applyAgentSnapshot(
+                agentRunChanged.run,
+                changeKind: agentRunChanged.changeKind
+            )
         default:
             break
         }
@@ -15438,6 +17264,832 @@ public final class RuntimeViewModel {
         }
     }
 
+    private func applyAgentSnapshot(
+        _ snapshot: Melix_Controlplane_V1_AgentRunSnapshot,
+        changeKind _: String
+    ) {
+        guard snapshot.runID.isEmpty == false else {
+            return
+        }
+        let snapshotForPresentation: Melix_Controlplane_V1_AgentRunSnapshot
+        if let index = agentRuns.firstIndex(where: {
+            $0.runID == snapshot.runID
+        }) {
+            let current = agentRuns[index]
+            if Self.shouldApplyAgentSnapshot(
+                snapshot,
+                over: current
+            ) {
+                var merged = snapshot
+                if !merged.hasCancellationReceipt,
+                   current.hasCancellationReceipt {
+                    merged.cancellationReceipt = current.cancellationReceipt
+                }
+                agentRuns[index] = merged
+                snapshotForPresentation = merged
+            } else {
+                // Storage freshness and transcript reconciliation are separate.
+                // A terminal event may have been stored while another chat
+                // session was selected; a same-revision refresh must still be
+                // able to backfill that run's transcript marker and terminal
+                // assistant/error row after the operator returns.
+                snapshotForPresentation = current
+            }
+        } else {
+            agentRuns.append(snapshot)
+            snapshotForPresentation = snapshot
+        }
+        agentRuns.sort {
+            if $0.updatedAtUnixMs == $1.updatedAtUnixMs {
+                return $0.runID > $1.runID
+            }
+            return $0.updatedAtUnixMs > $1.updatedAtUnixMs
+        }
+        pruneAgentApprovalDecisionReceipts()
+        if selectedAgentRunID.isEmpty {
+            selectedAgentRunID = snapshotForPresentation.runID
+        }
+
+        guard snapshotForPresentation.sessionID == selectedChatSessionID else {
+            reconcileSelectedChatAgentOwnership()
+            return
+        }
+        let hasDifferentActiveRun = (
+            activeAgentRunID.isEmpty == false
+                && activeAgentRunID != snapshotForPresentation.runID
+        ) || agentRuns.contains { run in
+            run.sessionID == selectedChatSessionID
+                && run.runID != snapshotForPresentation.runID
+                && Self.isActiveAgentState(run.state)
+        }
+        if hasDifferentActiveRun == false {
+            chatStatusText =
+                "Agent • \(Self.agentStateLabel(snapshotForPresentation.state))"
+        }
+        guard Self.isTerminalAgentState(snapshotForPresentation.state) else {
+            reconcileSelectedChatAgentOwnership()
+            return
+        }
+
+        if activeAgentRunID == snapshotForPresentation.runID {
+            activeAgentRunID = ""
+            activeChatRequestOwnership = nil
+        }
+
+        let runMarkerID = DesktopChatTranscriptEntry.agentRunMarkerID(
+            for: snapshotForPresentation.runID
+        )
+        if chatTranscript.contains(where: { $0.id == runMarkerID }) == false {
+            appendChatEntry(
+                id: runMarkerID,
+                kind: .agentRun,
+                title: "Melix Agent Run",
+                body: "Run details are stored in Agent history.",
+                detail: snapshotForPresentation.runID
+            )
+        }
+
+        let transcriptEntryID = "agent-assistant-\(snapshotForPresentation.runID)"
+        if snapshotForPresentation.state == "completed",
+           snapshotForPresentation.assistantText.isEmpty == false,
+           chatTranscript.contains(where: { $0.id == transcriptEntryID }) == false {
+            insertAgentRunCompanionEntry(
+                id: transcriptEntryID,
+                kind: .assistant,
+                title: "Melix Agent",
+                body: snapshotForPresentation.assistantText,
+                detail: "\(snapshotForPresentation.modelTurnCount) turns • \(snapshotForPresentation.toolCallCount) tools",
+                runID: snapshotForPresentation.runID
+            )
+            synchronizeChatConversationMessagesWithTranscript()
+        } else if snapshotForPresentation.state != "completed" {
+            let failureEntryID = "agent-terminal-\(snapshotForPresentation.runID)"
+            if chatTranscript.contains(where: { $0.id == failureEntryID }) == false {
+                let message = snapshotForPresentation.error.message.isEmpty
+                    ? "The Agent run \(Self.agentStateLabel(snapshotForPresentation.state).lowercased())."
+                    : snapshotForPresentation.error.message
+                insertAgentRunCompanionEntry(
+                    id: failureEntryID,
+                    kind: .error,
+                    title: snapshotForPresentation.state == "cancelled"
+                        ? "Agent Stopped"
+                        : "Agent Error",
+                    body: message,
+                    detail: snapshotForPresentation.error.code,
+                    runID: snapshotForPresentation.runID
+                )
+            }
+        }
+        reconcileSelectedChatAgentOwnership()
+    }
+
+    private func pruneAgentApprovalDecisionReceipts() {
+        guard latestAgentApprovalDecisionReceiptsByRunID.count
+            > Self.maximumCachedAgentApprovalDecisionReceipts
+        else {
+            return
+        }
+        let retainedRunIDs = Set(
+            agentRuns.prefix(Self.maximumCachedAgentApprovalDecisionReceipts)
+                .map(\.runID)
+        )
+        latestAgentApprovalDecisionReceiptsByRunID =
+            latestAgentApprovalDecisionReceiptsByRunID.filter {
+                retainedRunIDs.contains($0.key)
+            }
+    }
+
+    private static func shouldApplyAgentSnapshot(
+        _ incoming: Melix_Controlplane_V1_AgentRunSnapshot,
+        over current: Melix_Controlplane_V1_AgentRunSnapshot
+    ) -> Bool {
+        let currentIsTerminal = isTerminalAgentState(current.state)
+        let incomingIsTerminal = isTerminalAgentState(incoming.state)
+        if currentIsTerminal {
+            guard incomingIsTerminal, incoming.state == current.state else {
+                return false
+            }
+        }
+        if current.revision > 0 || incoming.revision > 0 {
+            guard incoming.revision > 0 else {
+                return false
+            }
+            if incoming.revision == current.revision,
+               incoming.hasCancellationReceipt,
+               !current.hasCancellationReceipt {
+                return true
+            }
+            return current.revision == 0
+                || incoming.revision > current.revision
+        }
+        return incoming.updatedAtUnixMs > current.updatedAtUnixMs
+    }
+
+    @discardableResult
+    private func refreshAgentRuns(sessionID: String = "") async -> Bool {
+        guard isAgentRuntimeAvailable else {
+            return true
+        }
+        do {
+            _ = try await authoritativeAgentRuns(sessionID: sessionID)
+            do {
+                let history = try await client.agentRuns(
+                    sessionID: sessionID,
+                    limit: Self.maximumAgentRunHistory
+                )
+                for snapshot in history {
+                    applyAgentSnapshot(snapshot, changeKind: "refresh")
+                }
+                reconcileSelectedChatAgentOwnership()
+                if selectedAgentRunID.isEmpty {
+                    selectedAgentRunID = agentRuns.first?.runID ?? ""
+                }
+                notifyStateChanged()
+            } catch {
+                recordLocalError(
+                    "Agent history refresh failed after the active-run inventory was verified: \(error)"
+                )
+                notifyStateChanged()
+            }
+            return true
+        } catch {
+            recordLocalError("Agent run refresh failed: \(error)")
+            notifyStateChanged()
+            return false
+        }
+    }
+
+    private func authoritativeAgentRuns(
+        sessionID: String
+    ) async throws -> [Melix_Controlplane_V1_AgentRunSnapshot] {
+        let inventory = try await client.nonterminalAgentRuns(
+            sessionID: sessionID,
+            limit: Self.maximumAuthoritativeAgentRunInventory
+        )
+        guard inventory.isComplete else {
+            throw ControlPlaneXPCClientError.requestFailed(
+                code: "agent_run_inventory_incomplete",
+                message: "The authoritative active Agent inventory is incomplete."
+            )
+        }
+        let snapshots = inventory.runs
+        let returnedRunIDs = Set(snapshots.map(\.runID))
+        agentRuns.removeAll { existing in
+            let belongsToScope = sessionID.isEmpty
+                || existing.sessionID == sessionID
+            return belongsToScope
+                && Self.isTerminalAgentState(existing.state) == false
+                && returnedRunIDs.contains(existing.runID) == false
+        }
+        for snapshot in snapshots {
+            applyAgentSnapshot(snapshot, changeKind: "refresh")
+        }
+        reconcileSelectedChatAgentOwnership()
+        if selectedAgentRunID.isEmpty {
+            selectedAgentRunID = agentRuns.first?.runID ?? ""
+        }
+        notifyStateChanged()
+        return snapshots
+    }
+
+    private func scheduleSelectedChatAgentRunReconciliation(
+        sessionID: String
+    ) {
+        let generation = beginSelectedChatAgentRunReconciliation(
+            sessionID: sessionID
+        )
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            let succeeded = await self.refreshAgentRuns()
+            self.finishSelectedChatAgentRunReconciliation(
+                sessionID: sessionID,
+                generation: generation,
+                succeeded: succeeded
+            )
+        }
+    }
+
+    private func refreshSelectedChatAgentRunsAuthoritatively(
+        sessionID: String
+    ) async {
+        let generation = beginSelectedChatAgentRunReconciliation(
+            sessionID: sessionID
+        )
+        let succeeded = await refreshAgentRuns()
+        finishSelectedChatAgentRunReconciliation(
+            sessionID: sessionID,
+            generation: generation,
+            succeeded: succeeded
+        )
+    }
+
+    private func beginSelectedChatAgentRunReconciliation(
+        sessionID: String
+    ) -> UInt64 {
+        agentRunReconciliationGeneration &+= 1
+        agentRunReconciliationSessionID = sessionID
+        agentRunReconciliationInProgress = true
+        agentRunConflictRunIDs = []
+        if canStopActiveChatOrAgent == false {
+            chatStatusText = "Checking Agent Status…"
+        }
+        notifyStateChanged()
+        return agentRunReconciliationGeneration
+    }
+
+    private func finishSelectedChatAgentRunReconciliation(
+        sessionID: String,
+        generation: UInt64,
+        succeeded: Bool
+    ) {
+        guard generation == agentRunReconciliationGeneration,
+              sessionID == agentRunReconciliationSessionID,
+              sessionID == selectedChatSessionID
+        else {
+            return
+        }
+        agentRunReconciliationInProgress = false
+        if succeeded {
+            agentRunReconciliationSessionID = ""
+            reconcileSelectedChatAgentOwnership()
+            if activeAgentRunID.isEmpty,
+               agentRunConflictRunIDs.isEmpty,
+               chatStatusText == "Checking Agent Status…",
+               let selectedChatSession {
+                chatStatusText = selectedChatSession.statusText
+            }
+        } else {
+            chatStatusText = "Agent Status Unavailable • Retry"
+            setLastError(
+                "Melix could not verify whether this Chat has an active Agent. Refresh Agent history before sending or changing Chat."
+            )
+        }
+        notifyStateChanged()
+    }
+
+    private func reconcileSelectedChatAgentOwnership() {
+        guard let selectedSessionID = selectedChatSession?.id else {
+            activeAgentRunID = ""
+            agentRunConflictRunIDs = agentRuns.filter {
+                Self.isTerminalAgentState($0.state) == false
+            }.map(\.runID).sorted()
+            return
+        }
+
+        let nonterminalRuns = agentRuns.filter {
+            Self.isTerminalAgentState($0.state) == false
+        }
+        let selectedNonterminalRuns = nonterminalRuns.filter { run in
+            run.sessionID == selectedSessionID
+        }
+        let knownSessionIDs = Set(chatSessions.map(\.id))
+        let orphanRuns = nonterminalRuns.filter { run in
+            !knownSessionIDs.contains(run.sessionID)
+        }
+        let activeRuns = selectedNonterminalRuns.filter {
+            Self.isActiveAgentState($0.state)
+        }
+        let unknownRuns = selectedNonterminalRuns.filter {
+            Self.isActiveAgentState($0.state) == false
+        }
+        let orphanUnknownRuns = orphanRuns.filter {
+            Self.isActiveAgentState($0.state) == false
+        }
+
+        if orphanRuns.isEmpty == false {
+            let conflictingRunIDs = Set(
+                orphanRuns.map(\.runID)
+                    + selectedNonterminalRuns.map(\.runID)
+                    + (activeAgentRunID.isEmpty ? [] : [activeAgentRunID])
+            ).sorted()
+            activeAgentRunID = ""
+            agentRunConflictRunIDs = conflictingRunIDs
+            selectedAgentRunID = orphanRuns.first?.runID
+                ?? conflictingRunIDs.first
+                ?? selectedAgentRunID
+            let hasUnknownState = unknownRuns.isEmpty == false
+                || orphanUnknownRuns.isEmpty == false
+            chatStatusText = hasUnknownState
+                ? "Agent Conflict • Unknown Run State"
+                : orphanRuns.count == 1
+                    && selectedNonterminalRuns.isEmpty
+                    ? "Agent Recovery • Active Run Outside This Chat"
+                    : "Agent Conflict • Multiple Active Runs"
+            setLastError(
+                hasUnknownState
+                    ? "Melix found an Agent run with an unknown nonterminal state. Open Agents and inspect each run before continuing."
+                    : "Melix found active Agent work whose Chat is no longer available. Open Agents and stop or inspect each orphaned run before continuing."
+            )
+            return
+        }
+
+        if selectedNonterminalRuns.isEmpty {
+            if activeAgentRunID.isEmpty == false,
+               agentAdmissionCancellationIntentsByRunID[activeAgentRunID]
+                   == nil,
+               activeChatRequestOwnership == nil {
+                activeAgentRunID = ""
+            }
+            agentRunConflictRunIDs = []
+            return
+        }
+
+        if unknownRuns.isEmpty, activeRuns.count == 1 {
+            let recovered = activeRuns[0]
+            if activeAgentRunID.isEmpty || activeAgentRunID == recovered.runID {
+                agentRunConflictRunIDs = []
+                activeAgentRunID = recovered.runID
+                if selectedAgentRunID.isEmpty {
+                    selectedAgentRunID = recovered.runID
+                }
+                chatStatusText =
+                    "Agent • \(Self.agentStateLabel(recovered.state))"
+                return
+            }
+        }
+
+        let conflictingRunIDs = Set(
+            activeRuns.map(\.runID)
+                + unknownRuns.map(\.runID)
+                + (activeAgentRunID.isEmpty ? [] : [activeAgentRunID])
+        ).sorted()
+        guard unknownRuns.isEmpty == false || conflictingRunIDs.count > 1 else {
+            agentRunConflictRunIDs = []
+            return
+        }
+
+        activeAgentRunID = ""
+        agentRunConflictRunIDs = conflictingRunIDs
+        selectedAgentRunID = conflictingRunIDs.first ?? selectedAgentRunID
+        chatStatusText = unknownRuns.isEmpty
+            ? "Agent Conflict • Multiple Active Runs"
+            : "Agent Conflict • Unknown Run State"
+        setLastError(
+            unknownRuns.isEmpty
+                ? "Melix found multiple active Agent runs for this Chat. Open Agents and stop each run before sending or changing Chat."
+                : "Melix found an Agent run with an unknown nonterminal state. Open Agents and inspect the run before sending or changing Chat."
+        )
+    }
+
+    private func refreshAgentApprovalPolicy() async {
+        guard isAgentRuntimeAvailable else {
+            return
+        }
+        do {
+            agentApprovalPolicy = try await client.agentApprovalPolicy()
+            agentApprovalPolicyStatusText = agentApprovalPolicy.rules.isEmpty
+                ? "No saved overrides. Risk defaults remain active."
+                : "Revision \(agentApprovalPolicy.revision) • \(agentApprovalPolicy.rules.count) saved"
+        } catch {
+            let failure = chatFailureDisplay(for: error)
+            agentApprovalPolicyStatusText = failure.code.isEmpty
+                ? "Policy unavailable"
+                : "Policy unavailable • \(failure.code)"
+            recordLocalError("Agent approval policy refresh failed: \(error)")
+        }
+        notifyStateChanged()
+    }
+
+    private func refreshAgentOperations() async {
+        guard isAgentRuntimeAvailable else {
+            agentOperations = Melix_Controlplane_V1_AgentOperationsSnapshot()
+            agentOperationsStatusText = "Agent runtime unavailable"
+            notifyStateChanged()
+            return
+        }
+        do {
+            let snapshot = try await client.agentOperations()
+            agentOperations = snapshot
+            let targetInventoryIsAuthoritative: Bool = switch snapshot
+                .computerUse.targetDiscoveryState {
+            case .agentComputerUseTargetDiscoveryReady,
+                 .agentComputerUseTargetDiscoveryEmpty:
+                true
+            case .agentComputerUseTargetDiscoveryFailed,
+                 .agentComputerUseTargetDiscoveryNotRequested,
+                 .unspecified,
+                 .UNRECOGNIZED:
+                false
+            }
+            if targetInventoryIsAuthoritative,
+               !selectedComputerUseTargetID.isEmpty,
+               !snapshot.computerUse.availableTargets.contains(where: {
+                   $0.targetID == selectedComputerUseTargetID
+               }) {
+                selectedComputerUseTargetID = ""
+            }
+            let unavailableCount = snapshot.toolSources.filter {
+                ["unavailable", "failed", "blocked"].contains(
+                    $0.connectionState
+                )
+            }.count
+            if snapshot.computerUse.targetDiscoveryState
+                == .agentComputerUseTargetDiscoveryFailed {
+                let code = snapshot.computerUse.hasTargetDiscoveryError
+                    ? snapshot.computerUse.targetDiscoveryError.code
+                    : ""
+                agentOperationsStatusText = code.isEmpty
+                    ? "Computer target refresh failed"
+                    : "Computer target refresh failed • \(code)"
+            } else {
+                agentOperationsStatusText = unavailableCount == 0
+                    ? "Live runtime snapshot"
+                    : "\(unavailableCount) source\(unavailableCount == 1 ? "" : "s") need attention"
+            }
+        } catch {
+            let failure = chatFailureDisplay(for: error)
+            agentOperationsStatusText = failure.code.isEmpty
+                ? "Runtime inventory unavailable"
+                : "Runtime inventory unavailable • \(failure.code)"
+            recordLocalError("Agent operations refresh failed: \(error)")
+        }
+        notifyStateChanged()
+    }
+
+    private static func isActiveAgentState(_ state: String) -> Bool {
+        [
+            "created",
+            "model_turn",
+            "waiting_for_approval",
+            "tool_running",
+        ].contains(state)
+    }
+
+    private static func isTerminalAgentState(_ state: String) -> Bool {
+        ["completed", "failed", "cancelled"].contains(state)
+    }
+
+    private static func computerUseTargetPresentation(
+        _ target: Melix_Controlplane_V1_AgentComputerUseTargetProjection,
+        fallbackID: String
+    ) -> DesktopComputerUseTargetPresentation? {
+        guard target.availability == .agentComputerUseFieldAvailable else {
+            return nil
+        }
+        let bundleID = boundedComputerUseField(target.bundleID, maximumLength: 160)
+        let title = boundedComputerUseField(target.windowTitle, maximumLength: 200)
+        guard bundleID != nil || title != nil || target.windowID > 0 else {
+            return nil
+        }
+
+        let window: String
+        switch (title, target.windowID) {
+        case let (.some(title), windowID) where windowID > 0:
+            window = "\(title) · Window #\(windowID)"
+        case let (.some(title), _):
+            window = title
+        case let (.none, windowID) where windowID > 0:
+            window = "Window #\(windowID)"
+        default:
+            window = "Unavailable"
+        }
+
+        return DesktopComputerUseTargetPresentation(
+            id: fallbackID,
+            app: bundleID ?? "Unavailable",
+            window: window
+        )
+    }
+
+    private static func boundedComputerUseField(
+        _ value: String,
+        maximumLength: Int
+    ) -> String? {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.isEmpty == false else {
+            return nil
+        }
+        return String(normalized.prefix(maximumLength))
+    }
+
+    private static func computerUseSessionStateLabel(
+        _ state: Melix_Controlplane_V1_AgentComputerUseSessionState
+    ) -> String {
+        switch state {
+        case .agentComputerUseSessionOpen:
+            return "Open"
+        case .agentComputerUseSessionClosed:
+            return "Closed"
+        case .agentComputerUseSessionUnavailable,
+             .unspecified,
+             .UNRECOGNIZED:
+            return "Unavailable"
+        }
+    }
+
+    private static func computerUseBudgetLabel(
+        _ budget: Melix_Controlplane_V1_AgentComputerUseBudgetProjection
+    ) -> String {
+        let limitIsAvailable = budget.limitAvailability
+            == .agentComputerUseFieldAvailable
+        let usedIsAvailable = budget.usedAvailability
+            == .agentComputerUseFieldAvailable
+        switch (limitIsAvailable, usedIsAvailable) {
+        case (true, true):
+            return "\(budget.used) / \(budget.limit) used"
+        case (true, false):
+            return "Limit \(budget.limit)"
+        case (false, true):
+            return "\(budget.used) used"
+        case (false, false):
+            return "Unavailable"
+        }
+    }
+
+    private static func computerUseDeadline(
+        _ deadline: Melix_Controlplane_V1_AgentComputerUseDeadlineProjection
+    ) -> Date? {
+        guard deadline.availability == .agentComputerUseFieldAvailable,
+              deadline.unixMs > 0
+        else {
+            return nil
+        }
+        let seconds = Double(deadline.unixMs) / 1_000
+        guard seconds.isFinite else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    private static func computerUsePermissionLabel(
+        _ state: Melix_Controlplane_V1_AgentComputerUsePermissionState
+    ) -> String {
+        switch state {
+        case .agentComputerUsePermissionNotDetermined:
+            return "Not Determined"
+        case .agentComputerUsePermissionDenied:
+            return "Denied"
+        case .agentComputerUsePermissionGranted:
+            return "Granted"
+        case .agentComputerUsePermissionRestartRequired:
+            return "Restart Required"
+        case .agentComputerUsePermissionUnavailable,
+             .unspecified,
+             .UNRECOGNIZED:
+            return "Unavailable"
+        }
+    }
+
+    private static func computerUseRestartLabel(
+        _ state: Melix_Controlplane_V1_AgentComputerUseRestartState
+    ) -> String {
+        switch state {
+        case .agentComputerUseRestartNotRequired:
+            return "Not Required"
+        case .agentComputerUseRestartRequired:
+            return "Required"
+        case .agentComputerUseRestartUnavailable,
+             .unspecified,
+             .UNRECOGNIZED:
+            return "Unavailable"
+        }
+    }
+
+    private static func computerUseLastActionLabel(
+        _ session: Melix_Controlplane_V1_AgentComputerUseSessionProjection
+    ) -> String {
+        let operation: String
+        switch session.lastOperation {
+        case .agentComputerUseGetPermissions:
+            operation = "Check permissions"
+        case .agentComputerUseOpenSession:
+            operation = "Open session"
+        case .agentComputerUseCaptureFrame:
+            operation = "Capture frame"
+        case .agentComputerUsePressElement:
+            operation = "Press element"
+        case .agentComputerUseCloseSession:
+            operation = "Close session"
+        case .unavailable, .unspecified, .UNRECOGNIZED:
+            return "Unavailable"
+        }
+        guard session.lastOperation == .agentComputerUsePressElement,
+              let actionID = boundedComputerUseField(
+                session.lastActionID,
+                maximumLength: 96
+              )
+        else {
+            return operation
+        }
+        return "\(operation) · \(actionID)"
+    }
+
+    private static func computerUseResultLabel(
+        _ state: Melix_Controlplane_V1_AgentComputerUseResultState
+    ) -> String {
+        switch state {
+        case .agentComputerUseResultCompleted:
+            return "Completed"
+        case .agentComputerUseResultFailed:
+            return "Failed"
+        case .agentComputerUseResultCancelled:
+            return "Cancelled"
+        case .agentComputerUseResultTimeout:
+            return "Timed Out"
+        case .agentComputerUseResultUnavailable,
+             .unspecified,
+             .UNRECOGNIZED:
+            return "Unavailable"
+        }
+    }
+
+    private static func computerUseStopStatus(
+        _ receipt: Melix_Controlplane_V1_AgentRunCancellationReceipt
+    ) -> (text: String, isWarning: Bool) {
+        if receipt.sideEffectCommitted
+            || receipt.sideEffectState == .agentToolSideEffectCommitted {
+            if receipt.disposition == "too_late" {
+                return (
+                    "Warning: the Computer Use stop arrived too late, and a side effect committed before cancellation was reported. Review the receipt and verify the target state.",
+                    true
+                )
+            }
+            if receipt.disposition == "already_terminal" {
+                return (
+                    "Warning: Computer Use had already ended, and a side effect committed before cancellation was reported. Review the receipt and verify the target state.",
+                    true
+                )
+            }
+            return (
+                "Warning: a Computer Use side effect committed before cancellation was reported. Review the receipt and verify the target state.",
+                true
+            )
+        }
+
+        switch receipt.sideEffectState {
+        case .agentToolSideEffectCommitted:
+            return (
+                "Warning: a Computer Use side effect committed before cancellation was reported. Review the receipt and verify the target state.",
+                true
+            )
+        case .agentToolSideEffectUnknown, .unspecified, .UNRECOGNIZED:
+            if receipt.disposition == "too_late" {
+                return (
+                    "Warning: the Computer Use stop arrived too late, and its side-effect state is unknown. Review the receipt and verify the target state.",
+                    true
+                )
+            }
+            if receipt.disposition == "already_terminal" {
+                return (
+                    "Warning: Computer Use had already ended, and its side-effect state is unknown. Review the receipt and verify the target state.",
+                    true
+                )
+            }
+            return (
+                "Warning: Computer Use side-effect state is unknown. Review the receipt and verify the target state.",
+                true
+            )
+        case .agentToolSideEffectNone:
+            switch receipt.disposition {
+            case "accepted":
+                return (
+                    "Computer Use stopped before any side effect was reported.",
+                    false
+                )
+            case "already_terminal":
+                return (
+                    "Computer Use had already ended. Review the cancellation receipt before relying on the target state.",
+                    true
+                )
+            case "too_late":
+                return (
+                    "Computer Use stop arrived too late. Review the cancellation receipt and verify the target state.",
+                    true
+                )
+            default:
+                return (
+                    "Computer Use stop was not confirmed. Review the cancellation receipt before interacting with the target.",
+                    true
+                )
+            }
+        }
+    }
+
+    private static func agentStateLabel(_ state: String) -> String {
+        switch state {
+        case "created":
+            return "Starting"
+        case "model_turn":
+            return "Thinking"
+        case "waiting_for_approval":
+            return "Needs Approval"
+        case "tool_running":
+            return "Using Tool"
+        case "completed":
+            return "Completed"
+        case "failed":
+            return "Failed"
+        case "cancelled":
+            return "Stopped"
+        default:
+            return state.isEmpty ? "Unknown" : state
+        }
+    }
+
+    static func agentCancellationSideEffectSummary(
+        _ receipt: Melix_Controlplane_V1_AgentRunCancellationReceipt
+    ) -> String {
+        switch receipt.sideEffectState {
+        case .agentToolSideEffectNone:
+            return "No side effect committed"
+        case .agentToolSideEffectCommitted:
+            return "Side effect committed"
+        case .agentToolSideEffectUnknown:
+            return "Side effect state unknown"
+        case .unspecified:
+            return receipt.sideEffectCommitted
+                ? "Side effect committed (legacy receipt)"
+                : "Side effect state unknown (legacy receipt)"
+        case .UNRECOGNIZED:
+            return "Side effect state unrecognized"
+        }
+    }
+
+    private static func cancellationDispositionLabel(
+        _ disposition: String
+    ) -> String {
+        switch disposition {
+        case "accepted":
+            return "Accepted"
+        case "already_terminal":
+            return "Already Finished"
+        case "not_found":
+            return "Not Found"
+        case "too_late":
+            return "Too Late"
+        default:
+            return disposition.isEmpty ? "Unknown" : disposition
+        }
+    }
+
+    private func presentAgentCancellationReceiptStatus(
+        _ receipt: Melix_Controlplane_V1_AgentRunCancellationReceipt
+    ) {
+        let dispositionConfirmed = [
+            "accepted",
+            "already_terminal",
+        ].contains(receipt.disposition)
+        chatStatusText =
+            "Agent Stop • \(Self.cancellationDispositionLabel(receipt.disposition))"
+        guard dispositionConfirmed,
+              receipt.sideEffectState == .agentToolSideEffectNone
+        else {
+            let presentation = desktopAgentCancellationOutcomePresentation(
+                receipt
+            )
+            setLastError(presentation.detail)
+            if dispositionConfirmed {
+                chatStatusText = receipt.sideEffectState
+                    == .agentToolSideEffectCommitted
+                    ? "Agent Stop • Side Effect Already Committed"
+                    : "Agent Stop • Side Effect Unknown"
+            }
+            return
+        }
+    }
+
     private func refreshLoraSelectionState() {
         if loraCapableModels.contains(where: { $0.modelID == selectedLoraModelID }) == false,
            let textModel = loraCapableModels.first {
@@ -16339,7 +18991,7 @@ public final class RuntimeViewModel {
             return characterCount <= 32 ? 1 : catchUpBudget
         case .assistant, .tool:
             return max(chatPresentationBaselineChunkSize, catchUpBudget)
-        case .user, .error:
+        case .user, .agentRun, .error:
             return catchUpBudget
         }
     }
@@ -16426,20 +19078,103 @@ public final class RuntimeViewModel {
             body: body,
             detail: detail
         )
+        chatTranscript = Self.insertingChatTranscriptEntry(
+            entry,
+            into: chatTranscript
+        )
+    }
+
+    static func insertingChatTranscriptEntry(
+        _ entry: DesktopChatTranscriptEntry,
+        into transcript: [DesktopChatTranscriptEntry]
+    ) -> [DesktopChatTranscriptEntry] {
+        var updated = transcript
         guard
-            let rank = Self.chatTurnPresentationRank(for: kind),
-            let turnStart = chatTranscript.lastIndex(where: { $0.kind == .user }).map({ $0 + 1 })
+            let rank = chatTurnPresentationRank(for: entry.kind),
+            let turnStart = updated.lastIndex(where: { $0.kind == .user })
+                .map({ $0 + 1 })
         else {
-            chatTranscript.append(entry)
-            return
+            updated.append(entry)
+            return updated
         }
-        let insertionIndex = chatTranscript[turnStart...].firstIndex { existing in
-            guard let existingRank = Self.chatTurnPresentationRank(for: existing.kind) else {
+        let insertionIndex = updated[turnStart...].firstIndex { existing in
+            guard let existingRank = chatTurnPresentationRank(
+                for: existing.kind
+            ) else {
                 return false
             }
             return existingRank > rank
-        } ?? chatTranscript.endIndex
-        chatTranscript.insert(entry, at: insertionIndex)
+        } ?? updated.endIndex
+        updated.insert(entry, at: insertionIndex)
+        return updated
+    }
+
+    private func insertAgentRunCompanionEntry(
+        id: String,
+        kind: DesktopChatTranscriptEntry.Kind,
+        title: String,
+        body: String,
+        detail: String,
+        runID: String
+    ) {
+        let entry = DesktopChatTranscriptEntry(
+            id: id,
+            kind: kind,
+            title: title,
+            body: body,
+            detail: detail
+        )
+        chatTranscript = Self.insertingAgentRunCompanion(
+            entry,
+            runID: runID,
+            into: chatTranscript
+        )
+    }
+
+    static func insertingAgentRunCompanion(
+        _ entry: DesktopChatTranscriptEntry,
+        runID: String,
+        into transcript: [DesktopChatTranscriptEntry]
+    ) -> [DesktopChatTranscriptEntry] {
+        guard transcript.contains(where: { $0.id == entry.id }) == false else {
+            return transcript
+        }
+        let markerID = DesktopChatTranscriptEntry.agentRunMarkerID(for: runID)
+        guard let markerIndex = transcript.firstIndex(where: {
+            $0.id == markerID
+        }) else {
+            return insertingChatTranscriptEntry(entry, into: transcript)
+        }
+        var updated = transcript
+        updated.insert(entry, at: markerIndex + 1)
+        return updated
+    }
+
+    private func synchronizeChatConversationMessagesWithTranscript() {
+        chatConversationMessages = Self.chatConversationMessages(
+            from: chatTranscript
+        )
+    }
+
+    static func chatConversationMessages(
+        from transcript: [DesktopChatTranscriptEntry]
+    ) -> [ControlPlaneChatRequest.Message] {
+        transcript.compactMap { entry in
+            switch entry.kind {
+            case .user:
+                return ControlPlaneChatRequest.Message(
+                    role: "user",
+                    content: entry.body
+                )
+            case .assistant:
+                return ControlPlaneChatRequest.Message(
+                    role: "assistant",
+                    content: entry.body
+                )
+            default:
+                return nil
+            }
+        }
     }
 
     private static func chatTurnPresentationRank(
@@ -16450,10 +19185,12 @@ public final class RuntimeViewModel {
             return 0
         case .tool:
             return 1
-        case .assistant:
+        case .agentRun:
             return 2
-        case .error:
+        case .assistant:
             return 3
+        case .error:
+            return 4
         case .user:
             return nil
         }
@@ -16596,16 +19333,43 @@ public final class RuntimeViewModel {
         )
 
         let startedAt = Date()
+        let reconciliation: (sessionID: String, generation: UInt64)?
+        if isAgentRuntimeAvailable,
+           selectedChatSessionID.isEmpty == false {
+            reconciliation = (
+                selectedChatSessionID,
+                beginSelectedChatAgentRunReconciliation(
+                    sessionID: selectedChatSessionID
+                )
+            )
+        } else {
+            reconciliation = nil
+        }
         do {
             let snapshot = try await client.serverSnapshot()
             resetAppliedGatewayAccessState()
             apply(snapshot: snapshot)
+            if let reconciliation {
+                let succeeded = await refreshAgentRuns()
+                finishSelectedChatAgentRunReconciliation(
+                    sessionID: reconciliation.sessionID,
+                    generation: reconciliation.generation,
+                    succeeded: succeeded
+                )
+            }
             await metrics.record(
                 name: "desktop.reconnect_attempt_ms",
                 valueMs: Date().timeIntervalSince(startedAt) * 1_000
             )
             await startSubscription(lastSeenSeq: lastSeenSeq, isReconnect: true)
         } catch {
+            if let reconciliation {
+                finishSelectedChatAgentRunReconciliation(
+                    sessionID: reconciliation.sessionID,
+                    generation: reconciliation.generation,
+                    succeeded: false
+                )
+            }
             await metrics.record(name: "desktop.reconnect_failure_count", valueMs: 1)
             await transitionConnectionState(to: "Degraded", detail: "Reconnect failed")
             recordLocalError("Reconnect failed: \(error)")

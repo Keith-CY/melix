@@ -3,13 +3,31 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import plistlib
+import re
+import socket
+import subprocess
+import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import worker.productization.macos_app_bundle as macos_app_bundle_module
+import worker.productization.packaged_socket_root as packaged_socket_root_module
+from worker.productization.mcp_credential_environment import (
+    CLI_PARENT_ENVIRONMENT_KEYS,
+    COMMON_CHILD_ENVIRONMENT_KEYS,
+    CONTROL_PLANE_PARENT_ENVIRONMENT_KEYS,
+    LAUNCHER_INTERNAL_ENVIRONMENT_KEYS,
+    MCP_CREDENTIAL_RESERVED_ENVIRONMENT_KEYS,
+    PRIVATE_SERVICE_ENVIRONMENT_KEYS,
+    PYTHON_WORKER_OWNED_ENVIRONMENT_KEYS,
+    STRIP_ONLY_RESERVED_ENVIRONMENT_KEYS,
+    SWIFT_WORKER_PARENT_ENVIRONMENT_KEYS,
+)
 
 from worker.productization.macos_app_bundle import (
     _copy_swiftpm_resource_bundles,
@@ -38,6 +56,12 @@ from worker.productization.macos_app_bundle import (
     sign_macos_app_bundle,
     write_unsigned_macos_app_bundle,
 )
+from worker.productization.packaged_socket_root import (
+    DARWIN_UNIX_SOCKET_PATH_MAX_BYTES,
+    PackagedSocketRootError,
+    create_packaged_socket_root,
+    packaged_socket_paths,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -52,14 +76,32 @@ def test_build_macos_app_bundle_layout_uses_standard_app_structure(tmp_path: Pat
     assert layout.resources_path == layout.contents_path / "Resources"
     assert layout.launcher_path == layout.macos_path / "Melix"
     assert layout.launcher_script_path == layout.resources_path / "Melix.sh"
-    assert layout.bundled_app_binary_path == layout.resources_path / "melix-menubar"
+    assert layout.bundled_app_binary_path == layout.macos_path / "melix-menubar"
     assert layout.bundled_cli_binary_path == layout.resources_path / "melix"
     assert layout.bundled_control_plane_binary_path == layout.resources_path / "melix-control-plane"
     assert layout.bundled_swift_worker_binary_path == layout.resources_path / "melix-text-worker-swift"
+    assert (
+        layout.bundled_computer_broker_binary_path
+        == layout.resources_path
+        / "MelixComputerUseBroker.app/Contents/MacOS/melix-computer-broker"
+    )
+    assert (
+        layout.bundled_computer_broker_plist_path
+        == layout.resources_path / "MelixComputerUseBroker.app/Contents/Info.plist"
+    )
     assert layout.bundled_swift_mlx_metallib_path == layout.resources_path / "swift-mlx/mlx.metallib"
     assert layout.swift_mlx_metallib_link_path == layout.resources_path / "mlx.metallib"
     assert layout.bundled_icon_path == layout.resources_path / "MelixAppIcon.icns"
     assert layout.bundled_sparkle_framework_path == layout.frameworks_path / "Sparkle.framework"
+
+
+def test_macos_app_bundle_places_visible_ui_binary_inside_contents_macos(
+    tmp_path: Path,
+) -> None:
+    layout = build_macos_app_bundle_layout(tmp_path / "Melix.app")
+
+    assert layout.bundled_app_binary_path == layout.macos_path / "melix-menubar"
+    assert layout.bundled_app_binary_path != layout.launcher_path
 
 
 def test_render_info_plist_sets_bundle_icon_and_dock_visible_defaults() -> None:
@@ -105,6 +147,7 @@ def test_bundle_writer_rejects_noncanonical_minimum_system_version(tmp_path: Pat
             cli_executable_path=tmp_path / "cli",
             control_plane_executable_path=tmp_path / "control",
             swift_text_worker_executable_path=tmp_path / "worker",
+            computer_broker_executable_path=tmp_path / "broker",
             swift_mlx_metallib_path=tmp_path / "mlx.metallib",
             swift_mlx_metallib_version="0.29.1",
             python_runtime_root=tmp_path / "python",
@@ -218,6 +261,7 @@ def test_write_unsigned_bundle_separates_preview_and_signed_release_identity(
         "cli_executable_path": tmp_path / "melix",
         "control_plane_executable_path": tmp_path / "melix-control-plane",
         "swift_text_worker_executable_path": tmp_path / "melix-text-worker-swift",
+        "computer_broker_executable_path": tmp_path / "melix-computer-broker",
         "swift_mlx_metallib_path": tmp_path / "mlx.metallib",
         "swift_mlx_metallib_version": "0.31.1",
         "python_runtime_root": tmp_path / "python-runtime",
@@ -349,6 +393,7 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
         bundled_cli_binary_name="melix",
         bundled_control_plane_binary_name="melix-control-plane",
         bundled_swift_worker_binary_name="melix-text-worker-swift",
+        bundled_computer_broker_binary_relative_path="MelixComputerUseBroker.app/Contents/MacOS/melix-computer-broker",
         bundled_python_executable_relative_path="python-runtime/bin/python3",
         bundled_site_packages_relative_path="python-site-packages",
         wait_script_relative_path="repo/scripts/wait_for_worker_ready.py",
@@ -360,32 +405,837 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
     assert 'export MELIX_MENU_BAR_STARTUP_SURFACE="console"' in script
     assert 'export MELIX_MENU_BAR_PRESENTATION_MODE="dock-and-tray"' in script
     assert 'export MELIX_PYTHON_BRIDGE_EXECUTABLE="$RESOURCES_DIR/python-runtime/bin/python3"' in script
+    assert "worker.productization.packaged_socket_root" in script
+    assert 'MELIX_WORKER_SOCKET_PATH="$MELIX_SOCKET_ROOT/python.sock"' in script
+    assert 'MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$MELIX_SOCKET_ROOT/swift.sock"' in script
+    assert 'export MELIX_CONTROL_PLANE_SOCKET_PATH="$MELIX_SOCKET_ROOT/control.sock"' in script
     assert '"$RESOURCES_DIR/melix-text-worker-swift"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" -m worker.bootstrap' in script
     assert '--backend-mode "$MELIX_BACKEND_MODE"' in script
-    assert "export MELIX_SWIFT_WORKER_PID" in script
-    assert "export MELIX_PYTHON_WORKER_PID" in script
+    assert "export MELIX_SWIFT_WORKER_PID" not in script
+    assert "export MELIX_PYTHON_WORKER_PID" not in script
     assert '"$RESOURCES_DIR/melix-control-plane"' in script
-    assert "export MELIX_CONTROL_PLANE_PID" in script
+    assert "export MELIX_CONTROL_PLANE_PID" not in script
+    assert (
+        '"$RESOURCES_DIR/MelixComputerUseBroker.app/Contents/MacOS/melix-computer-broker" '
+        'serve --socket'
+    ) in script
+    assert "MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_FD=3" in script
+    assert "MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_FD=4" in script
+    assert "MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_BASE64" in script
+    assert '--python-worker-socket-path ""' in script
+    assert '--swift-text-worker-socket-path ""' in script
     assert 'http://$MELIX_HTTP_CONNECT_HOST:$MELIX_HTTP_PORT/health' in script
     assert "socket.create_connection" in script
     assert "Melix HTTP port %s is already in use" in script
     assert script.index("socket.create_connection") < script.index('"$RESOURCES_DIR/melix-control-plane"')
     assert 'export MELIX_ACTIVE_RUNTIME_PATH=' in script
     assert '-m worker.productization.active_runtime' in script
-    assert '--app-process-id "$$"' in script
+    assert '--app-process-id "$MELIX_APP_PROCESS_PID"' in script
     assert '--control-plane-process-id "$MELIX_CONTROL_PLANE_PID"' in script
-    assert 'MELIX_APP_PROCESS_PID=$$' in script
+    assert 'MELIX_APP_PROCESS_PID=$!' in script
+    assert 'MELIX_APP_PROCESS_PID=$$' not in script
     assert 'while kill -0 "$MELIX_APP_PROCESS_PID"' in script
-    assert 'MELIX_WATCHDOG_CONTROL_PLANE_PID=""' in script
-    assert script.count('rm -f "$MELIX_ACTIVE_RUNTIME_PATH"') == 2
-    assert script.index('MELIX_APP_PROCESS_PID=$$') < script.index('exec "$RESOURCES_DIR/melix-menubar"')
+    assert 'MELIX_WATCHDOG_COMPUTER_BROKER_PID="$MELIX_COMPUTER_BROKER_PID"' in script
+    assert 'kill "$MELIX_APP_PROCESS_PID"' in script
+    assert script.count('for cleanup_path in "$MELIX_ACTIVE_RUNTIME_PATH"') == 1
+    assert script.index('"$CONTENTS_DIR/MacOS/melix-menubar" "$@" &') < script.index(
+        'MELIX_APP_PROCESS_PID=$!'
+    )
     assert '"$MELIX_RUNTIME_DIR/python-bytecode-cache"' in script
     assert '"$MELIX_MODEL_OPS_JOBS_ROOT"' in script
     assert '"$MELIX_EVALUATION_JOBS_ROOT"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" "$RESOURCES_DIR/repo/scripts/wait_for_worker_ready.py"' in script
-    assert 'exec "$RESOURCES_DIR/melix-menubar" "$@"' in script
+    assert 'MELIX_CONTROL_PLANE_PID="$MELIX_CONTROL_PLANE_PID"' in script
+    assert 'MELIX_SWIFT_WORKER_PID="$MELIX_SWIFT_WORKER_PID"' in script
+    assert 'MELIX_PYTHON_WORKER_PID="$MELIX_PYTHON_WORKER_PID"' in script
+    assert (
+        'MELIX_MCP_CREDENTIAL_ENV_KEYS="$(join_frozen_mcp_credential_keys)" '
+        '"$CONTENTS_DIR/MacOS/melix-menubar" "$@" &'
+    ) in script
+    assert '/usr/bin/env -i "${PYTHON_WORKER_CHILD_ENVIRONMENT[@]}"' in script
     assert "backend-mode deterministic" not in script
+
+
+def test_packaged_socket_root_is_private_bounded_and_unique() -> None:
+    first = create_packaged_socket_root("boundary")
+    second = create_packaged_socket_root("boundary")
+    try:
+        assert first != second
+        for root in (first, second):
+            info = os.lstat(root)
+            assert info.st_uid == os.geteuid()
+            assert info.st_mode & 0o777 == 0o700
+            assert all(
+                len(os.fsencode(path)) <= DARWIN_UNIX_SOCKET_PATH_MAX_BYTES
+                for path in packaged_socket_paths(root)
+            )
+    finally:
+        first.rmdir()
+        second.rmdir()
+
+
+def test_packaged_socket_root_creation_failure_is_typed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_creation(*_args: object, **_kwargs: object) -> str:
+        raise OSError("fixture create failure")
+
+    monkeypatch.setattr(packaged_socket_root_module.tempfile, "mkdtemp", fail_creation)
+
+    with pytest.raises(PackagedSocketRootError, match="fixture create failure"):
+        create_packaged_socket_root("failure", parent=tmp_path)
+
+
+def test_packaged_socket_root_removes_unsafe_factory_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unsafe = tmp_path / "melix-unsafe"
+
+    def create_unsafe(*, prefix: str, dir: str) -> str:
+        assert prefix.startswith(f"melix-{os.geteuid()}-unsafe.")
+        assert Path(dir) == tmp_path
+        unsafe.mkdir(mode=0o700)
+        unsafe.chmod(0o755)
+        return os.fspath(unsafe)
+
+    monkeypatch.setattr(packaged_socket_root_module.tempfile, "mkdtemp", create_unsafe)
+
+    with pytest.raises(PackagedSocketRootError, match="mode 0700"):
+        create_packaged_socket_root("unsafe", parent=tmp_path)
+    assert not unsafe.exists()
+
+
+def test_packaged_socket_root_validation_rejects_untrusted_shapes(tmp_path: Path) -> None:
+    with pytest.raises(PackagedSocketRootError, match="direct child"):
+        packaged_socket_root_module.validate_packaged_socket_root(
+            "relative/socket-root",
+            parent=tmp_path,
+        )
+
+    missing = tmp_path / "missing"
+    with pytest.raises(PackagedSocketRootError, match="unable to inspect"):
+        packaged_socket_root_module.validate_packaged_socket_root(
+            missing,
+            parent=tmp_path,
+        )
+
+    regular_file = tmp_path / "regular"
+    regular_file.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(PackagedSocketRootError, match="not a real directory"):
+        packaged_socket_root_module.validate_packaged_socket_root(
+            regular_file,
+            parent=tmp_path,
+        )
+
+    owned_directory = tmp_path / "owned"
+    owned_directory.mkdir(mode=0o700)
+    with pytest.raises(PackagedSocketRootError, match="not owned"):
+        packaged_socket_root_module.validate_packaged_socket_root(
+            owned_directory,
+            effective_uid=os.geteuid() + 1,
+            parent=tmp_path,
+        )
+
+
+def test_packaged_socket_root_validation_rejects_overlong_socket_paths(
+    tmp_path: Path,
+) -> None:
+    long_parent = tmp_path / ("p" * 80)
+    long_parent.mkdir()
+    socket_root = long_parent / "socket-root"
+    socket_root.mkdir(mode=0o700)
+
+    with pytest.raises(PackagedSocketRootError, match="103-byte"):
+        packaged_socket_root_module.validate_packaged_socket_root(
+            socket_root,
+            parent=long_parent,
+        )
+
+
+def test_packaged_socket_root_rejects_invalid_run_token() -> None:
+    with pytest.raises(PackagedSocketRootError, match="run token"):
+        create_packaged_socket_root("not valid")
+
+
+def test_packaged_socket_root_reports_unsafe_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unsafe = tmp_path / "melix-unsafe-cleanup"
+
+    def create_unsafe(*, prefix: str, dir: str) -> str:
+        assert prefix.startswith(f"melix-{os.geteuid()}-unsafe.")
+        assert Path(dir) == tmp_path
+        unsafe.mkdir(mode=0o755)
+        return os.fspath(unsafe)
+
+    def fail_cleanup(path: str | os.PathLike[str]) -> None:
+        assert Path(path) == unsafe
+        raise OSError("fixture cleanup failure")
+
+    monkeypatch.setattr(packaged_socket_root_module.tempfile, "mkdtemp", create_unsafe)
+    monkeypatch.setattr(packaged_socket_root_module.os, "rmdir", fail_cleanup)
+
+    with pytest.raises(PackagedSocketRootError, match="could not be removed"):
+        create_packaged_socket_root("unsafe", parent=tmp_path)
+
+
+def test_packaged_socket_root_main_reports_success_and_typed_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    socket_root = tmp_path / "socket-root"
+    socket_root.mkdir(mode=0o700)
+    monkeypatch.setattr(
+        packaged_socket_root_module,
+        "create_packaged_socket_root",
+        lambda run_token: socket_root,
+    )
+
+    assert packaged_socket_root_module.main(["--run-token", "fixture"]) == 0
+    assert capsys.readouterr().out.strip() == os.fspath(socket_root)
+
+    def fail_creation(_run_token: str) -> Path:
+        raise PackagedSocketRootError("fixture typed failure")
+
+    monkeypatch.setattr(
+        packaged_socket_root_module,
+        "create_packaged_socket_root",
+        fail_creation,
+    )
+    assert packaged_socket_root_module.main(["--run-token", "fixture"]) == 1
+    assert "fixture typed failure" in capsys.readouterr().err
+
+
+def test_render_launcher_script_fails_closed_and_removes_broker_trust_material() -> None:
+    script = render_launcher_script(
+        app_name="Melix",
+        bundle_repo_root=Path("repo"),
+        bundled_app_binary_name="melix-menubar",
+        bundled_cli_binary_name="melix",
+        bundled_control_plane_binary_name="melix-control-plane",
+        bundled_swift_worker_binary_name="melix-text-worker-swift",
+        bundled_computer_broker_binary_relative_path="MelixComputerUseBroker.app/Contents/MacOS/melix-computer-broker",
+        bundled_python_executable_relative_path="python-runtime/bin/python3",
+        bundled_site_packages_relative_path="python-site-packages",
+        wait_script_relative_path="repo/scripts/wait_for_worker_ready.py",
+    )
+
+    assert script.index("trap cleanup EXIT INT TERM") < script.index("os.urandom(32)")
+    assert script.index('MELIX_CONTROL_PLANE_PID=$!') < script.index(
+        'rm -f "$MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE"',
+        script.index('MELIX_CONTROL_PLANE_PID=$!'),
+    )
+    assert script.index('rm -f "$MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE"') < script.index(
+        '"$RESOURCES_DIR/MelixComputerUseBroker.app/Contents/MacOS/melix-computer-broker"'
+    )
+    assert "stat.S_ISSOCK(info.st_mode)" in script
+    assert "info.st_uid == os.geteuid()" in script
+    assert "stat.S_IMODE(info.st_mode) == 0o600" in script
+    assert 'terminate_private_process "${MELIX_COMPUTER_BROKER_PID:-}"' in script
+    assert 'private_process_state="$(/bin/ps -o stat= -p "$private_pid"' in script
+    assert 'wait "$private_pid" >/dev/null 2>&1 || true' in script
+    assert '"${MELIX_COMPUTER_BROKER_SOCKET:-}"' in script
+    assert '"$MELIX_COMPUTER_BROKER_CAPABILITY_FILE"' in script
+    assert '"$MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE"' in script
+    assert '"$MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE"' in script
+    assert (
+        'exec_app_service MELIX_CONTROL_PLANE_SOCKET_PATH="$MELIX_CONTROL_PLANE_SOCKET_PATH" '
+        'MELIX_CONTROL_PLANE_PID="$MELIX_CONTROL_PLANE_PID" '
+        'MELIX_SWIFT_WORKER_PID="$MELIX_SWIFT_WORKER_PID" '
+        'MELIX_PYTHON_WORKER_PID="$MELIX_PYTHON_WORKER_PID" '
+        'MELIX_MCP_CREDENTIAL_ENV_KEYS="$(join_frozen_mcp_credential_keys)" '
+        '"$CONTENTS_DIR/MacOS/melix-menubar" "$@" &'
+    ) in script
+    assert 'MELIX_APP_PROCESS_PID=$!' in script
+    assert '--app-process-id "$MELIX_APP_PROCESS_PID"' in script
+    assert 'wait "$MELIX_APP_PROCESS_PID"' in script
+    assert 'MELIX_APP_PROCESS_PID=$$' not in script
+    for private_key in (
+        "MELIX_WORKER_SOCKET_PATH",
+        "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH",
+        "MELIX_SWIFT_VISION_WORKER_SOCKET_PATH",
+        "MELIX_COMPUTER_BROKER_SOCKET",
+        "MELIX_COMPUTER_BROKER_VERIFICATION_CAPABILITY_FILE",
+        "MELIX_COMPUTER_BROKER_AUTHORIZATION_PRIVATE_KEY_FD",
+        "MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_FD",
+        "MELIX_COMPUTER_BROKER_AUTHORIZATION_PUBLIC_KEY_BASE64",
+    ):
+        assert f'"-u" "{private_key}"' in script
+
+
+def test_render_launcher_script_limits_dynamic_mcp_credentials_and_inherited_fds(
+    tmp_path: Path,
+) -> None:
+    script = render_launcher_script(
+        app_name="Melix",
+        bundle_repo_root=Path("repo"),
+        bundled_app_binary_name="melix-menubar",
+        bundled_cli_binary_name="melix",
+        bundled_control_plane_binary_name="melix-control-plane",
+        bundled_swift_worker_binary_name="melix-text-worker-swift",
+        bundled_computer_broker_binary_relative_path="MelixComputerUseBroker.app/Contents/MacOS/melix-computer-broker",
+        bundled_python_executable_relative_path="python-runtime/bin/python3",
+        bundled_site_packages_relative_path="python-site-packages",
+        wait_script_relative_path="repo/scripts/wait_for_worker_ready.py",
+    )
+    script_path = tmp_path / "Melix.sh"
+    script_path.write_text(script, encoding="utf-8")
+
+    subprocess.run(["/bin/bash", "-n", str(script_path)], check=True)
+    assert (
+        "-m worker.productization.mcp_credential_environment --melix-home "
+        '"$MELIX_HOME"'
+    ) in script
+    assert 'INITIAL_MCP_CREDENTIAL_KEYS=("${CURRENT_MCP_CREDENTIAL_KEYS[@]}")' in script
+    assert "--validate-frozen-key-snapshot" in script
+    assert 'MCP_CREDENTIALS_CAPTURED_BY_PYTHON_WORKER=1' in script
+    assert 'unset "$key"' in script
+    assert 'join_frozen_mcp_credential_keys' in script
+    assert (
+        'exec_python_worker_service MELIX_WORKER_SOCKET_PATH="$MELIX_WORKER_SOCKET_PATH" '
+        'MELIX_COMPUTER_BROKER_SOCKET="$MELIX_COMPUTER_BROKER_SOCKET"'
+    ) in script
+    assert (
+            'exec_swift_worker_service MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH='
+        '"$MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"'
+    ) in script
+    assert "os.closerange(3, int(os.sysconf(\"SC_OPEN_MAX\")))" in script
+    assert "os.closerange(5, int(os.sysconf(\"SC_OPEN_MAX\")))" in script
+    assert 'exec_control_plane_service MELIX_WORKER_SOCKET_PATH=' in script
+    assert 'run_private_service /usr/bin/curl' in script
+
+
+def test_app_boundary_declares_every_shared_reserved_environment_key() -> None:
+    app_main_source = (
+        Path(__file__).resolve().parents[3]
+        / "apps/macos-menubar/Sources/AppMain/AppMain.swift"
+    ).read_text(encoding="utf-8")
+
+    reserved_block = app_main_source.split("// MCP_RESERVED_ENVIRONMENT_KEYS_BEGIN", 1)[1]
+    reserved_block = reserved_block.split("// MCP_RESERVED_ENVIRONMENT_KEYS_END", 1)[0]
+    swift_reserved_keys = set(re.findall(r'"([A-Z_][A-Z0-9_]*)"', reserved_block))
+
+    assert swift_reserved_keys == MCP_CREDENTIAL_RESERVED_ENVIRONMENT_KEYS
+
+
+def test_role_manifests_cover_source_environment_key_inventories() -> None:
+    def literals(root: Path, pattern: str) -> set[str]:
+        keys: set[str] = set()
+        for source_path in root.rglob(pattern):
+            keys.update(
+                re.findall(
+                    r'["\'](MELIX_[A-Z0-9_]+)["\']',
+                    source_path.read_text(encoding="utf-8"),
+                )
+            )
+        return keys
+
+    common = set(COMMON_CHILD_ENVIRONMENT_KEYS)
+    private = set(PRIVATE_SERVICE_ENVIRONMENT_KEYS)
+    launcher_internal = set(LAUNCHER_INTERNAL_ENVIRONMENT_KEYS)
+    control_plane_literals = literals(
+        REPO_ROOT / "services/control-plane-swift/Sources",
+        "*.swift",
+    )
+    swift_worker_literals = literals(
+        REPO_ROOT / "services/mlx-text-worker-swift/Sources",
+        "*.swift",
+    )
+    python_worker_literals = literals(
+        REPO_ROOT / "services/mlx-worker-python/worker",
+        "*.py",
+    )
+    cli_literals = literals(REPO_ROOT / "Sources/MelixCLICore", "*.swift")
+
+    assert control_plane_literals <= (
+        common
+        | set(CONTROL_PLANE_PARENT_ENVIRONMENT_KEYS)
+        | private
+        | launcher_internal
+        | set(STRIP_ONLY_RESERVED_ENVIRONMENT_KEYS)
+    )
+    assert set(CONTROL_PLANE_PARENT_ENVIRONMENT_KEYS) <= control_plane_literals
+    assert swift_worker_literals <= (
+        common
+        | set(SWIFT_WORKER_PARENT_ENVIRONMENT_KEYS)
+        | private
+        | launcher_internal
+    )
+    assert set(SWIFT_WORKER_PARENT_ENVIRONMENT_KEYS) <= swift_worker_literals
+    assert python_worker_literals <= MCP_CREDENTIAL_RESERVED_ENVIRONMENT_KEYS
+    assert set(PYTHON_WORKER_OWNED_ENVIRONMENT_KEYS) <= python_worker_literals
+    assert set(STRIP_ONLY_RESERVED_ENVIRONMENT_KEYS).isdisjoint(
+        CONTROL_PLANE_PARENT_ENVIRONMENT_KEYS
+    )
+    denied_cli_private_keys = {
+        "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH",
+        "MELIX_WORKER_SOCKET_PATH",
+    }
+    assert cli_literals - denied_cli_private_keys <= (
+        common
+        | set(CLI_PARENT_ENVIRONMENT_KEYS)
+        | {"MELIX_CONTROL_PLANE_SOCKET_PATH"}
+    )
+    assert set(CLI_PARENT_ENVIRONMENT_KEYS) <= cli_literals
+    assert denied_cli_private_keys.isdisjoint(CLI_PARENT_ENVIRONMENT_KEYS)
+
+
+@pytest.mark.parametrize(
+    "rotation_mode",
+    (
+        "initially-authorized",
+        "new-key",
+        "cross-kind-reference",
+        "cleanup-residue",
+        "no-credentials",
+    ),
+)
+def test_rendered_launcher_enforces_runtime_environment_and_fd_boundaries(
+    tmp_path: Path,
+    rotation_mode: str,
+    request: pytest.FixtureRequest,
+) -> None:
+    contents_dir = tmp_path / "Melix.app/Contents"
+    resources_dir = contents_dir / "Resources"
+    resources_dir.mkdir(parents=True)
+    repo_services = resources_dir / "repo/services"
+    repo_services.mkdir(parents=True)
+    repo_services.joinpath("mlx-worker-python").symlink_to(
+        Path(__file__).resolve().parents[1],
+        target_is_directory=True,
+    )
+    record_dir = tmp_path / "records"
+    record_dir.mkdir()
+    melix_home = tmp_path / "home"
+    config_path = melix_home / "config/mcp-tools.json"
+    config_path.parent.mkdir(parents=True)
+    initial_references = {"TOKEN": "INITIAL_SECRET"}
+    if rotation_mode in ("initially-authorized", "cleanup-residue"):
+        initial_references["ROTATED_TOKEN"] = "ROTATED_SECRET"
+    rotation_references = {"Authorization": "ROTATED_SECRET"}
+    initial_transport = {
+        "kind": "stdio",
+        "command": "/usr/bin/true",
+        "environment_references": initial_references,
+    }
+    if rotation_mode == "cross-kind-reference":
+        initial_transport["header_environment_references"] = {
+            "Authorization": "CROSS_KIND_SECRET"
+        }
+    initial_sources = [] if rotation_mode == "no-credentials" else [
+        {
+            "source_id": "initial-source",
+            "transport": initial_transport,
+        }
+    ]
+    config_path.write_text(
+        json.dumps(
+            {
+                "sources": initial_sources
+            }
+        ),
+        encoding="utf-8",
+    )
+    python_runtime = resources_dir / "python-runtime/bin/python3"
+    python_runtime.parent.mkdir(parents=True)
+    python_runtime.write_text(
+        f"""#!{sys.executable}
+import json, os, socket, stat, sys, time
+REAL_PYTHON = {sys.executable!r}
+RECORD_KEYS = ("INITIAL_SECRET", "ROTATED_SECRET", "CROSS_KIND_SECRET", "UNREFERENCED_SECRET", "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "MELIX_MCP_CREDENTIAL_ENV_KEYS", "MELIX_WORKER_SOCKET_PATH", "MELIX_COMPUTER_BROKER_SOCKET", "MELIX_COMPUTER_BROKER_VERIFICATION_CAPABILITY_FILE", "MELIX_COMPUTER_BROKER_CAPABILITY_FILE", "MELIX_COMPUTER_BROKER_DIR", "MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE", "MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE", "MELIX_GATEWAY_AUTH_MODE", "MELIX_GATEWAY_API_KEYS_JSON", "MELIX_GATEWAY_BEARER_TOKEN", "MELIX_MCP_HIGH_RISK_ALLOWLIST", "MELIX_API_KEY", "MELIX_HF_TOKEN", "MELIX_HUGGINGFACE_TOKEN")
+def fds():
+    result = []
+    for fd in range(3, 64):
+        try: os.fstat(fd)
+        except OSError: continue
+        result.append(fd)
+    return result
+def record(role, socket_path=None):
+    root = os.path.dirname(os.environ["MELIX_WORKER_SOCKET_PATH"])
+    root_info = os.lstat(root)
+    payload = {{"environment": {{key: os.environ.get(key) for key in RECORD_KEYS}}, "fds": fds(), "socket_root": {{"path": root, "uid": root_info.st_uid, "mode": stat.S_IMODE(root_info.st_mode)}}}}
+    with open(os.path.join({str(record_dir)!r}, role + ".json"), "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True)
+args = sys.argv[1:]
+if args[:2] == ["-m", "worker.bootstrap"]:
+    record("python-worker")
+    config_path = os.environ.get("MELIX_MCP_CONFIG_PATH") or os.path.join(os.environ["MELIX_HOME"], "config/mcp-tools.json")
+    with open(config_path, encoding="utf-8") as handle: config = json.load(handle)
+    if {rotation_mode != "no-credentials"!r}:
+        config["sources"].append({{"source_id": "rotated-source", "transport": {{"kind": "streamable_http", "url": "https://mcp.example.test/rpc", "header_environment_references": {rotation_references!r}}}}})
+        replacement = config_path + ".next"
+        with open(replacement, "w", encoding="utf-8") as handle: json.dump(config, handle)
+        os.replace(replacement, config_path)
+    socket_path = args[args.index("--socket-path") + 1]
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(socket_path)
+    while True: time.sleep(1)
+if args[:2] == ["-m", "worker.productization.active_runtime"]:
+    output_path = args[args.index("--output-path") + 1]
+    with open(output_path, "w", encoding="utf-8") as handle: handle.write("{{}}")
+    with open(os.path.join({str(record_dir)!r}, "active-runtime.json"), "w", encoding="utf-8") as handle:
+        json.dump({{"args": args}}, handle, sort_keys=True)
+    raise SystemExit(0)
+if args and args[0].endswith("wait.py"):
+    socket_path = args[args.index("--socket-path") + 1]
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if os.path.exists(socket_path): raise SystemExit(0)
+        time.sleep(0.02)
+    raise SystemExit(1)
+os.execve(REAL_PYTHON, [REAL_PYTHON, *args], os.environ)
+""",
+        encoding="utf-8",
+    )
+    python_runtime.chmod(0o755)
+
+    recorder_prelude = f"""#!{sys.executable}
+import json, os, stat
+RECORD_DIR = {str(record_dir)!r}
+def record(role, socket_path=None):
+    fds = []
+    for fd in range(3, 64):
+        try: os.fstat(fd)
+        except OSError: continue
+        fds.append(fd)
+    keys = ("INITIAL_SECRET", "ROTATED_SECRET", "UNREFERENCED_SECRET", "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "MELIX_WORKER_SOCKET_PATH", "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH", "MELIX_CONTROL_PLANE_SOCKET_PATH", "MELIX_COMPUTER_BROKER_SOCKET", "MELIX_COMPUTER_BROKER_VERIFICATION_CAPABILITY_FILE", "MELIX_COMPUTER_BROKER_CAPABILITY_FILE", "MELIX_COMPUTER_BROKER_DIR", "MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE", "MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE", "MELIX_GATEWAY_AUTH_MODE", "MELIX_GATEWAY_API_KEYS_JSON", "MELIX_GATEWAY_BEARER_TOKEN", "MELIX_MCP_HIGH_RISK_ALLOWLIST", "MELIX_API_KEY", "MELIX_HF_TOKEN", "MELIX_HUGGINGFACE_TOKEN", "MELIX_MCP_CONFIG_PATH", "MELIX_HTTP_HOST", "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE", "MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT", "MELIX_MENU_BAR_TERMINATION_MODE", "MELIX_BATCH_RUN_ID", "MELIX_CONTROL_PLANE_PID", "MELIX_SWIFT_WORKER_PID", "MELIX_PYTHON_WORKER_PID")
+    if socket_path is None:
+        socket_path = next(os.environ[key] for key in ("MELIX_WORKER_SOCKET_PATH", "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH", "MELIX_CONTROL_PLANE_SOCKET_PATH", "MELIX_COMPUTER_BROKER_SOCKET") if os.environ.get(key))
+    root = os.path.dirname(socket_path)
+    if socket_path.endswith("/computer-broker/broker.sock"):
+        root = os.path.dirname(root)
+    root_info = os.lstat(root)
+    with open(os.path.join(RECORD_DIR, role + ".json"), "w", encoding="utf-8") as handle:
+        json.dump({{"environment": {{key: os.environ.get(key) for key in keys}}, "fds": fds, "effective_socket_path": socket_path, "pid": os.getpid(), "socket_root": {{"path": root, "uid": root_info.st_uid, "mode": stat.S_IMODE(root_info.st_mode)}}}}, handle, sort_keys=True)
+"""
+    swift_worker = resources_dir / "melix-text-worker-swift"
+    swift_worker.write_text(
+        recorder_prelude
+        + """import socket, time
+record("swift-worker")
+listener = socket.socket(socket.AF_UNIX)
+listener.bind(os.environ["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"])
+while True: time.sleep(1)
+""",
+        encoding="utf-8",
+    )
+    control_plane = resources_dir / "melix-control-plane"
+    control_plane.write_text(
+        recorder_prelude
+        + """from http.server import BaseHTTPRequestHandler, HTTPServer
+record("control-plane")
+with open(os.environ["MELIX_CONTROL_PLANE_SOCKET_PATH"] + ".lock", "w", encoding="utf-8") as handle:
+    handle.write("fixture control-plane lease\\n")
+os.write(4, b"p" * 32)
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, format, *args): pass
+HTTPServer((os.environ["MELIX_HTTP_CONNECT_HOST"], int(os.environ["MELIX_HTTP_PORT"])), Handler).serve_forever()
+""",
+        encoding="utf-8",
+    )
+    broker = resources_dir / "melix-computer-broker"
+    broker.write_text(
+        recorder_prelude
+        + """import socket, sys, time
+socket_path = sys.argv[sys.argv.index("--socket") + 1]
+record("broker", socket_path)
+with open(socket_path + ".lock", "w", encoding="utf-8") as handle:
+    handle.write("fixture broker lease\\n")
+listener = socket.socket(socket.AF_UNIX)
+listener.bind(socket_path)
+os.chmod(socket_path, 0o600)
+while True: time.sleep(1)
+""",
+        encoding="utf-8",
+    )
+    app = contents_dir / "MacOS/melix-menubar"
+    app.parent.mkdir(parents=True)
+    app_source = recorder_prelude + 'record("app")\n'
+    if rotation_mode == "cleanup-residue":
+        app_source += (
+            'socket_root = os.path.dirname(os.environ["MELIX_CONTROL_PLANE_SOCKET_PATH"])\n'
+            'with open(os.path.join(socket_root, "unexpected-residue"), "w", encoding="utf-8") as handle:\n'
+            '    handle.write("fixture residue\\n")\n'
+        )
+    app.write_text(app_source, encoding="utf-8")
+    for executable in (swift_worker, control_plane, broker, app):
+        executable.chmod(0o755)
+
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        http_port = reservation.getsockname()[1]
+    (resources_dir / "melix-product-env.sh").write_text(
+        render_portable_environment_script(
+            product_version="test",
+            update_channel_path=tmp_path / "updates",
+            logical_product_identity="melix.test",
+            packaging_target_id="test",
+            packaging_kind="test",
+            http_port=http_port,
+        ),
+        encoding="utf-8",
+    )
+    launcher_path = resources_dir / "Melix.sh"
+    launcher_path.write_text(
+        render_launcher_script(
+            app_name="Melix",
+            bundle_repo_root=Path("repo"),
+            bundled_app_binary_name=app.name,
+            bundled_cli_binary_name="melix",
+            bundled_control_plane_binary_name=control_plane.name,
+            bundled_swift_worker_binary_name=swift_worker.name,
+            bundled_computer_broker_binary_relative_path=broker.relative_to(
+                resources_dir
+            ).as_posix(),
+            bundled_python_executable_relative_path="python-runtime/bin/python3",
+            bundled_site_packages_relative_path="python-site-packages",
+            wait_script_relative_path="wait.py",
+        ),
+        encoding="utf-8",
+    )
+    launcher_path.chmod(0o755)
+
+    runtime_target = tmp_path / ("runtime-" + ("x" * 120))
+    runtime_target.mkdir()
+    assert len(os.fsencode(runtime_target / "python-worker-boundary-test.sock")) > 103
+    sibling_socket_root = None
+    if rotation_mode == "initially-authorized":
+        sibling_socket_root = create_packaged_socket_root("boundary-test")
+        request.addfinalizer(
+            lambda: sibling_socket_root.rmdir()
+            if sibling_socket_root is not None and sibling_socket_root.exists()
+            else None
+        )
+    inherited_path = tmp_path / "inherited-fd"
+    inherited_fd = os.open(inherited_path, os.O_WRONLY | os.O_CREAT, 0o600)
+    os.set_inheritable(inherited_fd, True)
+    try:
+        result = subprocess.run(
+            ["/bin/bash", str(launcher_path)],
+            env={
+                **os.environ,
+                "HOME": str(melix_home),
+                "MELIX_HOME": str(melix_home),
+                "MELIX_MCP_CONFIG_PATH": "~/config/mcp-tools.json",
+                "MELIX_RUNTIME_DIR": str(runtime_target),
+                "MELIX_HTTP_PORT": str(http_port),
+                "MELIX_RUN_TOKEN": "boundary-test",
+                "RECORD_DIR": str(record_dir),
+                "REAL_PYTHON": sys.executable,
+                "INITIAL_SECRET": "initial-value",
+                "ROTATED_SECRET": "rotated-value",
+                "CROSS_KIND_SECRET": "cross-kind-sensitive-value",
+                "UNREFERENCED_SECRET": "unreferenced-sensitive-value",
+                "AWS_SECRET_ACCESS_KEY": "aws-sensitive-value",
+                "GITHUB_TOKEN": "github-sensitive-value",
+                "MELIX_HTTP_HOST": "0.0.0.0",
+                "MELIX_GATEWAY_AUTH_MODE": "api-key",
+                "MELIX_GATEWAY_API_KEYS_JSON": '[{"id":"test","secret":"gateway-secret"}]',
+                "MELIX_GATEWAY_BEARER_TOKEN": "gateway-bearer-secret",
+                "MELIX_API_KEY": "parent-api-key",
+                "MELIX_HF_TOKEN": "parent-hf-token",
+                "MELIX_HUGGINGFACE_TOKEN": "parent-huggingface-token",
+                "MELIX_MCP_HIGH_RISK_ALLOWLIST": "trusted.exec",
+                "MELIX_PHASE8_WINDOW_UI_ACCEPTANCE": "1",
+                "MELIX_MENU_BAR_TERMINATION_MODE": "terminate-bundled-workers",
+                "MELIX_BATCH_RUN_ID": "cli-batch-run",
+                "MELIX_COMPUTER_BROKER_CAPABILITY_FILE": "parent-capability-path",
+                "MELIX_COMPUTER_BROKER_DIR": "parent-broker-dir",
+                "MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE": "parent-private-key-path",
+                "MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE": "parent-public-key-path",
+                "MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT": "1",
+            },
+            pass_fds=(inherited_fd,),
+            capture_output=True,
+            text=True,
+            timeout=60 if os.environ.get("CI") else 30,
+        )
+    finally:
+        os.close(inherited_fd)
+
+    if rotation_mode == "cross-kind-reference":
+        assert result.returncode != 0
+        assert "invalid" in result.stderr
+        assert not any(record_dir.iterdir())
+        assert "CROSS_KIND_SECRET" not in result.stderr
+        assert "cross-kind-sensitive-value" not in result.stderr
+        return
+
+    if rotation_mode == "new-key":
+        assert result.returncode != 0
+        assert "restart Melix" in result.stderr
+        assert not (record_dir / "app.json").exists()
+        python_record = json.loads(
+            (record_dir / "python-worker.json").read_text(encoding="utf-8")
+        )
+        assert python_record["environment"]["INITIAL_SECRET"] == "initial-value"
+        assert python_record["environment"]["ROTATED_SECRET"] is None
+        assert python_record["environment"]["MELIX_MCP_CREDENTIAL_ENV_KEYS"] == (
+            "INITIAL_SECRET"
+        )
+        for unreferenced_key in (
+            "UNREFERENCED_SECRET",
+            "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN",
+        ):
+            assert python_record["environment"][unreferenced_key] is None
+        assert "ROTATED_SECRET" not in result.stderr
+        assert "rotated-value" not in result.stderr
+        assert "parent-private-key-path" not in result.stderr
+        failed_socket_root = Path(python_record["socket_root"]["path"])
+        deadline = time.monotonic() + 5
+        while failed_socket_root.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not failed_socket_root.exists()
+        return
+
+    if rotation_mode == "cleanup-residue":
+        assert result.returncode == 1, result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+    records = {
+        role: json.loads((record_dir / f"{role}.json").read_text(encoding="utf-8"))
+        for role in ("swift-worker", "python-worker", "control-plane", "broker", "app")
+    }
+    active_runtime_args = json.loads(
+        (record_dir / "active-runtime.json").read_text(encoding="utf-8")
+    )["args"]
+    assert int(
+        active_runtime_args[active_runtime_args.index("--app-process-id") + 1]
+    ) == records["app"]["pid"]
+    if rotation_mode == "no-credentials":
+        assert records["python-worker"]["environment"]["INITIAL_SECRET"] is None
+        assert records["python-worker"]["environment"]["ROTATED_SECRET"] is None
+        assert records["python-worker"]["environment"]["MELIX_MCP_CREDENTIAL_ENV_KEYS"] == ""
+    else:
+        assert records["python-worker"]["environment"]["INITIAL_SECRET"] == "initial-value"
+        assert records["python-worker"]["environment"]["ROTATED_SECRET"] == "rotated-value"
+        assert records["python-worker"]["environment"]["MELIX_MCP_CREDENTIAL_ENV_KEYS"] == (
+            "INITIAL_SECRET,ROTATED_SECRET"
+        )
+    for unreferenced_key in (
+        "UNREFERENCED_SECRET",
+        "AWS_SECRET_ACCESS_KEY",
+        "GITHUB_TOKEN",
+    ):
+        assert all(
+            record["environment"][unreferenced_key] is None
+            for record in records.values()
+        )
+    assert records["python-worker"]["fds"] == []
+    for role in ("swift-worker", "control-plane", "broker", "app"):
+        assert records[role]["environment"]["INITIAL_SECRET"] is None
+    assert records["swift-worker"]["environment"]["ROTATED_SECRET"] is None
+    for role in ("control-plane", "broker", "app"):
+        assert records[role]["environment"]["ROTATED_SECRET"] is None
+    assert records["swift-worker"]["fds"] == []
+    assert records["broker"]["fds"] == []
+    assert records["app"]["fds"] == []
+    assert records["control-plane"]["fds"] == [3, 4]
+    assert records["control-plane"]["environment"]["MELIX_HTTP_HOST"] == "0.0.0.0"
+    assert records["control-plane"]["environment"]["MELIX_MCP_CONFIG_PATH"] == str(config_path)
+    assert records["control-plane"]["environment"]["MELIX_GATEWAY_AUTH_MODE"] == "api-key"
+    assert "gateway-secret" in records["control-plane"]["environment"]["MELIX_GATEWAY_API_KEYS_JSON"]
+    assert records["control-plane"]["environment"]["MELIX_GATEWAY_BEARER_TOKEN"] == (
+        "gateway-bearer-secret"
+    )
+    assert records["control-plane"]["environment"]["MELIX_MCP_HIGH_RISK_ALLOWLIST"] == "trusted.exec"
+    assert records["app"]["environment"]["MELIX_PHASE8_WINDOW_UI_ACCEPTANCE"] == "1"
+    assert records["app"]["environment"]["MELIX_MENU_BAR_TERMINATION_MODE"] == (
+        "terminate-bundled-workers"
+    )
+    assert records["app"]["environment"]["MELIX_BATCH_RUN_ID"] == "cli-batch-run"
+    for pid_key in (
+        "MELIX_CONTROL_PLANE_PID",
+        "MELIX_SWIFT_WORKER_PID",
+        "MELIX_PYTHON_WORKER_PID",
+    ):
+        assert int(records["app"]["environment"][pid_key]) > 0
+    assert records["swift-worker"]["environment"]["MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT"] == "1"
+    for role in ("swift-worker", "python-worker", "broker", "app"):
+        for control_plane_only_key in (
+            "MELIX_GATEWAY_AUTH_MODE",
+            "MELIX_GATEWAY_API_KEYS_JSON",
+            "MELIX_GATEWAY_BEARER_TOKEN",
+            "MELIX_MCP_HIGH_RISK_ALLOWLIST",
+        ):
+            assert records[role]["environment"].get(control_plane_only_key) is None
+    for role in records.values():
+        for strip_only_key in STRIP_ONLY_RESERVED_ENVIRONMENT_KEYS:
+            assert role["environment"].get(strip_only_key) is None
+        for internal_key in (
+            "MELIX_COMPUTER_BROKER_CAPABILITY_FILE",
+            "MELIX_COMPUTER_BROKER_DIR",
+            "MELIX_COMPUTER_BROKER_PRIVATE_KEY_FILE",
+            "MELIX_COMPUTER_BROKER_PUBLIC_KEY_FILE",
+        ):
+            assert role["environment"].get(internal_key) is None
+
+    socket_paths = (
+        records["python-worker"]["environment"]["MELIX_WORKER_SOCKET_PATH"],
+        records["swift-worker"]["environment"]["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"],
+        records["control-plane"]["environment"]["MELIX_CONTROL_PLANE_SOCKET_PATH"],
+        records["broker"]["effective_socket_path"],
+    )
+    assert all(path is not None for path in socket_paths)
+    assert all(
+        len(os.fsencode(path)) <= DARWIN_UNIX_SOCKET_PATH_MAX_BYTES
+        for path in socket_paths
+        if path is not None
+    )
+    socket_roots = {
+        Path(path).parent.parent
+        if path.endswith("/computer-broker/broker.sock")
+        else Path(path).parent
+        for path in socket_paths
+        if path is not None
+    }
+    assert len(socket_roots) == 1
+    socket_root = socket_roots.pop()
+    assert socket_root.parent == Path("/tmp")
+    assert socket_root.name.startswith(f"melix-{os.geteuid()}-boundary-test.")
+    assert all(
+        record["socket_root"]
+        == {"path": os.fspath(socket_root), "uid": os.geteuid(), "mode": 0o700}
+        for record in records.values()
+    )
+    if rotation_mode == "cleanup-residue":
+        residue_path = socket_root / "unexpected-residue"
+
+        def remove_fixture_residue() -> None:
+            residue_path.unlink(missing_ok=True)
+            if socket_root.exists():
+                socket_root.rmdir()
+
+        request.addfinalizer(remove_fixture_residue)
+        cleanup_log = melix_home / "logs/launcher-cleanup.log"
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if cleanup_log.exists() and "retained private runtime directory" in cleanup_log.read_text(
+                encoding="utf-8"
+            ):
+                break
+            time.sleep(0.02)
+        assert residue_path.read_text(encoding="utf-8") == "fixture residue\n"
+        cleanup_text = cleanup_log.read_text(encoding="utf-8")
+        assert f"Melix retained private runtime directory {socket_root}" in cleanup_text
+        assert "inspect this log before relaunching" in cleanup_text
+        assert "run_pending_traps" not in cleanup_text
+        return
+
+    deadline = time.monotonic() + 5
+    while socket_root.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not socket_root.exists()
+    if sibling_socket_root is not None:
+        assert sibling_socket_root.exists()
 
 
 def test_render_native_launcher_source_execs_packaged_launcher_script() -> None:
@@ -526,7 +1376,8 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     cli = tmp_path / "melix"
     control_plane = tmp_path / "melix-control-plane"
     swift_worker = tmp_path / "swift-worker-release/melix-text-worker-swift"
-    for executable in (menubar, cli, control_plane, swift_worker):
+    computer_broker = tmp_path / "melix-computer-broker"
+    for executable in (menubar, cli, control_plane, swift_worker, computer_broker):
         executable.parent.mkdir(parents=True, exist_ok=True)
         executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
         executable.chmod(0o755)
@@ -582,6 +1433,7 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
         cli_executable_path=cli,
         control_plane_executable_path=control_plane,
         swift_text_worker_executable_path=swift_worker,
+        computer_broker_executable_path=computer_broker,
         swift_mlx_metallib_path=swift_mlx_metallib,
         swift_mlx_metallib_version="0.31.1",
         python_runtime_root=python_runtime,
@@ -609,6 +1461,20 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     assert Path(manifest["bundled_cli_binary_path"]).exists() is True
     assert Path(manifest["bundled_control_plane_binary_path"]).exists() is True
     assert Path(manifest["bundled_swift_worker_binary_path"]).exists() is True
+    assert Path(manifest["bundled_computer_broker_binary_path"]).exists() is True
+    broker_plist_path = Path(manifest["bundled_computer_broker_plist_path"])
+    assert broker_plist_path.exists() is True
+    broker_plist = plistlib.loads(broker_plist_path.read_bytes())
+    assert broker_plist == {
+        "CFBundleExecutable": "melix-computer-broker",
+        "CFBundleIdentifier": "io.melix.menubar.computer-broker",
+        "CFBundleName": "MelixComputerUseBroker",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleVersion": "0.1.0",
+        "LSBackgroundOnly": True,
+        "LSMinimumSystemVersion": "15.0",
+    }
     bundled_swift_mlx_metallib = Path(manifest["bundled_swift_mlx_metallib_path"])
     swift_mlx_metallib_link = app_path / "Contents/Resources/mlx.metallib"
     assert bundled_swift_mlx_metallib.read_bytes() == b"matching-swift-mlx-metallib"
@@ -660,12 +1526,18 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
     assert 'export MELIX_MENU_BAR_PRESENTATION_MODE="dock-and-tray"' in launcher
     assert 'export MELIX_APP_BUNDLE_PATH="$(cd "$CONTENTS_DIR/.." && pwd)"' in launcher
     assert '"$MELIX_RUNTIME_DIR/python-bytecode-cache"' in launcher
-    assert "export MELIX_SWIFT_WORKER_PID" in launcher
-    assert "export MELIX_PYTHON_WORKER_PID" in launcher
-    assert "export MELIX_CONTROL_PLANE_PID" in launcher
+    assert "export MELIX_SWIFT_WORKER_PID" not in launcher
+    assert "export MELIX_PYTHON_WORKER_PID" not in launcher
+    assert "export MELIX_CONTROL_PLANE_PID" not in launcher
     assert 'http://$MELIX_HTTP_CONNECT_HOST:$MELIX_HTTP_PORT/health' in launcher
     assert '-m worker.productization.active_runtime' in launcher
-    assert 'exec "$RESOURCES_DIR/melix-menubar" "$@"' in launcher
+    assert 'MELIX_CONTROL_PLANE_PID="$MELIX_CONTROL_PLANE_PID"' in launcher
+    assert 'MELIX_SWIFT_WORKER_PID="$MELIX_SWIFT_WORKER_PID"' in launcher
+    assert 'MELIX_PYTHON_WORKER_PID="$MELIX_PYTHON_WORKER_PID"' in launcher
+    assert (
+        'MELIX_MCP_CREDENTIAL_ENV_KEYS="$(join_frozen_mcp_credential_keys)" '
+        '"$CONTENTS_DIR/MacOS/melix-menubar" "$@" &'
+    ) in launcher
     plist_payload = plistlib.loads(Path(manifest["plist_path"]).read_bytes())
     assert plist_payload["CFBundleIdentifier"] == "io.melix.menubar"
     assert plist_payload["CFBundleIconFile"] == "MelixAppIcon.icns"
@@ -765,7 +1637,8 @@ def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
     cli = tmp_path / "melix"
     control_plane = tmp_path / "melix-control-plane"
     swift_worker = tmp_path / "melix-text-worker-swift"
-    for executable in (menubar, cli, control_plane, swift_worker):
+    computer_broker = tmp_path / "melix-computer-broker"
+    for executable in (menubar, cli, control_plane, swift_worker, computer_broker):
         executable.write_text("#!/usr/bin/env bash\necho debug-symbols\n", encoding="utf-8")
         executable.chmod(0o755)
 
@@ -846,6 +1719,7 @@ def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
         cli_executable_path=cli,
         control_plane_executable_path=control_plane,
         swift_text_worker_executable_path=swift_worker,
+        computer_broker_executable_path=computer_broker,
         swift_mlx_metallib_path=swift_mlx_metallib,
         swift_mlx_metallib_version="0.31.1",
         python_runtime_root=python_runtime,
@@ -868,6 +1742,7 @@ def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
     assert "melix" in strip_calls
     assert "melix-control-plane" in strip_calls
     assert "melix-text-worker-swift" in strip_calls
+    assert "melix-computer-broker" in strip_calls
     assert "python3" in strip_calls
     assert "libpython3.12.dylib" in strip_calls
     assert "module.cpython-312-darwin.so" in strip_calls
@@ -875,7 +1750,7 @@ def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
     assert external_native_extension.read_text(encoding="utf-8") == "external-native-debug-symbols\n"
     assert (native_package / "tests").is_dir()
     slimming = manifest["slimming"]
-    assert slimming["swift_binaries_stripped"] == 4
+    assert slimming["swift_binaries_stripped"] == 5
     assert slimming["python_native_binaries_stripped"] == 3
     assert slimming["python_package_directories_pruned"] == 6
     assert slimming["python_runtime_baggage_bytes_saved"] > 0
@@ -1988,13 +2863,43 @@ def test_sparkle_code_signing_plan_is_official_inside_out_order(tmp_path: Path) 
     ]
 
 
+def test_code_signing_plan_seals_computer_broker_helper_before_outer_app(
+    tmp_path: Path,
+) -> None:
+    app = tmp_path / "Melix.app"
+    helper = app / "Contents/Resources/MelixComputerUseBroker.app"
+    broker = helper / "Contents/MacOS/melix-computer-broker"
+    broker.parent.mkdir(parents=True)
+    broker.write_bytes(b"\xcf\xfa\xed\xfe" + b"mach-o")
+    (helper / "Contents/Info.plist").write_bytes(
+        plistlib.dumps(
+            {
+                "CFBundleExecutable": broker.name,
+                "CFBundleIdentifier": "io.melix.menubar.computer-broker",
+                "CFBundlePackageType": "APPL",
+            }
+        )
+    )
+
+    plan = macos_code_signing_plan(app)
+
+    assert [target.role for target in plan] == [
+        "nested_macho",
+        "computer_broker_helper_app",
+        "outer_app",
+    ]
+    assert plan[0].path == broker.resolve()
+    assert plan[1].path == helper.resolve()
+    assert plan[2].path == app.resolve()
+
+
 def test_code_signing_plan_limits_library_validation_exception_to_dynamic_code_hosts(
     tmp_path: Path,
 ) -> None:
     app = tmp_path / "Melix.app"
     resources = app / "Contents/Resources"
     expected_hosts = {
-        resources / "melix-menubar",
+        app / "Contents/MacOS/melix-menubar",
         resources / "melix-text-worker-swift",
         resources / "python-runtime/bin/python3.12",
     }
@@ -2214,7 +3119,7 @@ def test_sign_macos_app_bundle_uses_stable_identity_and_verifies_requirement(
     tmp_path: Path,
 ) -> None:
     app_path = tmp_path / "Melix.app"
-    native_binary = app_path / "Contents/Resources/melix-menubar"
+    native_binary = app_path / "Contents/MacOS/melix-menubar"
     native_binary.parent.mkdir(parents=True)
     native_binary.write_bytes(b"\xcf\xfa\xed\xfemach-o")
     keychain_path = tmp_path / "release-signing.keychain-db"
@@ -2328,7 +3233,7 @@ def test_sign_macos_app_bundle_applies_and_verifies_library_validation_exception
     tmp_path: Path,
 ) -> None:
     app_path = tmp_path / "Melix.app"
-    host = app_path / "Contents/Resources/melix-menubar"
+    host = app_path / "Contents/MacOS/melix-menubar"
     host.parent.mkdir(parents=True)
     host.write_bytes(b"\xcf\xfa\xed\xfe" + b"mach-o")
     target = macos_app_bundle_module.MacOSCodeSigningTarget(
@@ -2673,6 +3578,38 @@ def test_write_unsigned_macos_app_bundle_requires_control_plane_executable(tmp_p
             cli_executable_path=cli,
             control_plane_executable_path=tmp_path / "missing-melix-control-plane",
             swift_text_worker_executable_path=tmp_path / "melix-text-worker-swift",
+            computer_broker_executable_path=tmp_path / "melix-computer-broker",
+            swift_mlx_metallib_path=tmp_path / "mlx.metallib",
+            swift_mlx_metallib_version="0.31.1",
+            python_runtime_root=tmp_path / "python-runtime",
+            python_site_packages_path=tmp_path / "python-site-packages",
+            output_path=tmp_path / "Melix.app",
+        )
+
+
+def test_write_unsigned_macos_app_bundle_requires_computer_broker_executable(
+    tmp_path: Path,
+) -> None:
+    executables = [
+        tmp_path / name
+        for name in (
+            "melix-menubar",
+            "melix",
+            "melix-control-plane",
+            "melix-text-worker-swift",
+        )
+    ]
+    for executable in executables:
+        executable.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="Missing Computer Use broker executable"):
+        write_unsigned_macos_app_bundle(
+            repo_root=tmp_path / "repo",
+            executable_path=executables[0],
+            cli_executable_path=executables[1],
+            control_plane_executable_path=executables[2],
+            swift_text_worker_executable_path=executables[3],
+            computer_broker_executable_path=tmp_path / "missing-melix-computer-broker",
             swift_mlx_metallib_path=tmp_path / "mlx.metallib",
             swift_mlx_metallib_version="0.31.1",
             python_runtime_root=tmp_path / "python-runtime",
@@ -2695,7 +3632,16 @@ def test_write_unsigned_macos_app_bundle_validates_swift_mlx_metallib(
     error_type: type[Exception],
     message: str,
 ) -> None:
-    executables = [tmp_path / name for name in ("melix-menubar", "melix", "melix-control-plane", "melix-text-worker-swift")]
+    executables = [
+        tmp_path / name
+        for name in (
+            "melix-menubar",
+            "melix",
+            "melix-control-plane",
+            "melix-text-worker-swift",
+            "melix-computer-broker",
+        )
+    ]
     for executable in executables:
         executable.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     metallib_path = tmp_path / "mlx.metallib"
@@ -2709,6 +3655,7 @@ def test_write_unsigned_macos_app_bundle_validates_swift_mlx_metallib(
             cli_executable_path=executables[1],
             control_plane_executable_path=executables[2],
             swift_text_worker_executable_path=executables[3],
+            computer_broker_executable_path=executables[4],
             swift_mlx_metallib_path=metallib_path,
             swift_mlx_metallib_version=metallib_version,
             python_runtime_root=tmp_path / "python-runtime",
@@ -2731,7 +3678,8 @@ def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -
     cli = tmp_path / "melix"
     control_plane = tmp_path / "melix-control-plane"
     swift_worker = tmp_path / "melix-text-worker-swift"
-    for executable in (menubar, cli, control_plane, swift_worker):
+    computer_broker = tmp_path / "melix-computer-broker"
+    for executable in (menubar, cli, control_plane, swift_worker, computer_broker):
         executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
         executable.chmod(0o755)
 
@@ -2753,6 +3701,7 @@ def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -
             cli_executable_path=cli,
             control_plane_executable_path=control_plane,
             swift_text_worker_executable_path=swift_worker,
+            computer_broker_executable_path=computer_broker,
             swift_mlx_metallib_path=swift_mlx_metallib,
             swift_mlx_metallib_version="0.31.1",
             python_runtime_root=python_runtime,

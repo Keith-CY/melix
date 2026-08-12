@@ -37,6 +37,13 @@ public actor MetricsStore {
             "http.tool_delta_count": 0,
             "http.preset_shaped_count": 0,
             "http.workflow_shaped_count": 0,
+            "agent.run.terminal_duplicate_event_count": 0,
+            "agent.run.observation_count": 0,
+            "agent.run.turn_transition_ms": 0,
+            "agent.run.tool_admission_ms": 0,
+            "agent.run.healing_nudge_count": 0,
+            "agent.approval.bypass_count": 0,
+            "agent.cancel.late_event_count": 0,
         ]
     }
 

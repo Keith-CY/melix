@@ -6255,6 +6255,11 @@ struct RequestCoordinatorTests {
         #expect(translated.workerRequest.execution.ext["melix.gateway.max_concurrent_requests"] == "3")
         #expect(translated.workerRequest.execution.ext["melix.gateway.draft_model_id"] == nil)
         #expect(translated.workerRequest.execution.ext["melix.gateway.num_draft_tokens"] == "0")
+        #expect(
+            await workerClient.waitForRequestStream(
+                requestID: "req-gateway-speculative-vlm-downgrade"
+            )
+        )
         let generatedRequest = try #require(await workerClient.generatedRequests.last)
         #expect(generatedRequest.execution.acceleration.mode == .baseline)
         #expect(generatedRequest.execution.acceleration.profileID == "balanced")

@@ -3635,9 +3635,11 @@ struct RuntimeViewModelTests {
 
         #expect(exportPath == nil)
         #expect(await client.recordedActions.isEmpty)
-        #expect(viewModel.chatStatusText == "Choose Provider")
-        #expect(viewModel.lastError == "Choose a Provider before sending chat prompts.")
-        #expect(viewModel.selectedSurface == .chat)
+        #expect(viewModel.chatSessions.isEmpty)
+        #expect(viewModel.chatComposerText == "hello from a cold start")
+        #expect(viewModel.chatStatusText == "No Provider")
+        #expect(viewModel.lastError == "Create a Provider before opening chat.")
+        #expect(viewModel.selectedSurface == .server)
     }
 
     @Test("server session sync keeps missing bindings unavailable and surfaces recovery banners")
@@ -13492,6 +13494,3097 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.chat_presentation_flush_count"] != nil)
     }
 
+    @Test("Act starts one typed Agent run and interaction mode remains session scoped")
+    @MainActor
+    func actStartsTypedAgentRunAndNewChatResetsToAsk() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+            "computer-use",
+        ])
+        var mcpSource = Melix_Controlplane_V1_AgentToolSourceStatus()
+        mcpSource.sourceID = "fixture-mcp"
+        mcpSource.transportKind = "streamable_http"
+        mcpSource.connectionState = "ready"
+        mcpSource.toolCount = 1
+        let target = try TrustedComputerUseTarget(
+            bundleID: "io.melix.fixture",
+            processID: 4242,
+            processLaunchIdentity: "launch-fixture-1",
+            windowID: 77,
+            windowTitle: "Fixture Window",
+            applicationName: "Fixture"
+        ).protocolValue
+        var computer = Melix_Controlplane_V1_AgentComputerUseStatus()
+        computer.brokerConfigured = true
+        computer.capabilityLevel = "ax_semantic_press_only"
+        computer.screenRecordingPermission = "granted"
+        computer.accessibilityPermission = "granted"
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryReady
+        computer.availableTargets = [target]
+        var operations = Melix_Controlplane_V1_AgentOperationsSnapshot()
+        operations.toolSources = [mcpSource]
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let actSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.selectComputerUseTarget(id: target.targetID)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Inspect the workspace and summarize it."
+
+        await viewModel.submitChatPrompt()
+
+        let command = try #require(await client.recordedAgentStarts.last)
+        #expect(command.mode == .act)
+        #expect(command.sessionID == viewModel.selectedChatSession?.id)
+        #expect(command.branchID == viewModel.selectedChatSession?.branchID)
+        #expect(command.maxModelTurns == 8)
+        #expect(command.maxToolCalls == 8)
+        #expect(command.deferActivation)
+        #expect(command.messages.last?.role == "user")
+        #expect(command.messages.last?.content == "Inspect the workspace and summarize it.")
+        #expect(command.computerUseTargets == [target])
+        #expect(command.runID.isEmpty == false)
+        #expect(viewModel.activeAgentRunID == command.runID)
+        #expect(await client.recordedAgentActivations == [command.runID])
+        #expect(viewModel.isAgentRunning)
+        #expect(viewModel.agentCapabilityRows.map(\.id) == ["agent", "mcp", "computer"])
+        #expect(viewModel.agentCapabilityRows.map(\.isReady) == [true, true, true])
+
+        viewModel.createChatSession()
+        try await waitForRuntimeViewModelCondition(
+            "the new Chat should open after the active Agent Stop receipt"
+        ) {
+            viewModel.selectedChatSession?.id != actSessionID
+        }
+        #expect(viewModel.chatInteractionMode == .ask)
+        let askSessionID = try #require(viewModel.selectedChatSession?.id)
+        #expect(askSessionID != actSessionID)
+
+        viewModel.selectChatSession(id: actSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "the Act Chat should finish authoritative Agent reconciliation"
+        ) {
+            viewModel.selectedChatSession?.id == actSessionID
+                && viewModel.agentRunReconciliationInProgress == false
+        }
+        #expect(viewModel.chatInteractionMode == .act)
+
+        viewModel.selectChatSession(id: askSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "the Ask Chat should finish authoritative Agent reconciliation"
+        ) {
+            viewModel.selectedChatSession?.id == askSessionID
+                && viewModel.agentRunReconciliationInProgress == false
+        }
+        #expect(viewModel.chatInteractionMode == .ask)
+    }
+
+    @Test("Act revalidates and clears a stale Computer Use window before starting")
+    @MainActor
+    func actRejectsStaleComputerUseTargetBeforeStarting() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "computer-use",
+        ])
+        let target = try TrustedComputerUseTarget(
+            bundleID: "io.melix.fixture",
+            processID: 4242,
+            processLaunchIdentity: "launch-stale-1",
+            windowID: 77,
+            windowTitle: "Closing Window",
+            applicationName: "Fixture"
+        ).protocolValue
+        var computer = Melix_Controlplane_V1_AgentComputerUseStatus()
+        computer.brokerConfigured = true
+        computer.capabilityLevel = "ax_semantic_press_only"
+        computer.screenRecordingPermission = "granted"
+        computer.accessibilityPermission = "granted"
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryReady
+        computer.availableTargets = [target]
+        var operations = Melix_Controlplane_V1_AgentOperationsSnapshot()
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.selectComputerUseTarget(id: target.targetID)
+
+        computer.availableTargets = []
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryEmpty
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Use the selected window."
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedAgentStarts.isEmpty)
+        #expect(viewModel.selectedComputerUseTargetID.isEmpty)
+        #expect(viewModel.chatComposerText == "Use the selected window.")
+        #expect(viewModel.chatStatusText == "Choose Computer Target")
+        #expect(viewModel.agentOperationsStatusText == "Computer target changed")
+        #expect(
+            viewModel.lastError
+                == "The selected Computer Use window is no longer available. Refresh windows and choose a live window before starting the Agent run."
+        )
+    }
+
+    @Test("Act preserves a selected Computer Use window when discovery fails")
+    @MainActor
+    func actPreservesComputerUseTargetAcrossDiscoveryFailure() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "computer-use",
+        ])
+        let target = try TrustedComputerUseTarget(
+            bundleID: "io.melix.fixture",
+            processID: 4242,
+            processLaunchIdentity: "launch-retry-1",
+            windowID: 77,
+            windowTitle: "Retry Window",
+            applicationName: "Fixture"
+        ).protocolValue
+        var computer = Melix_Controlplane_V1_AgentComputerUseStatus()
+        computer.brokerConfigured = true
+        computer.capabilityLevel = "ax_semantic_press_only"
+        computer.screenRecordingPermission = "granted"
+        computer.accessibilityPermission = "granted"
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryReady
+        computer.availableTargets = [target]
+        var operations = Melix_Controlplane_V1_AgentOperationsSnapshot()
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.selectComputerUseTarget(id: target.targetID)
+
+        computer.availableTargets = []
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryFailed
+        computer.targetDiscoveryError.code =
+            "computer_target_discovery_timeout"
+        computer.targetDiscoveryError.retriable = true
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Retry the selected window."
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedAgentStarts.isEmpty)
+        #expect(viewModel.selectedComputerUseTargetID == target.targetID)
+        #expect(viewModel.chatComposerText == "Retry the selected window.")
+        #expect(viewModel.chatStatusText == "Computer Target Refresh Failed")
+        #expect(
+            viewModel.agentOperationsStatusText
+                == "Computer target refresh failed • computer_target_discovery_timeout"
+        )
+        #expect(
+            viewModel.lastError
+                == "The selected Computer Use window could not be refreshed, so Melix did not start the Agent run. Refresh windows and try again."
+        )
+    }
+
+    @Test("Act revalidates its Computer Use target after model preload")
+    @MainActor
+    func actRejectsComputerUseTargetThatChangesDuringModelPreload() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "melix-agent-target-preload-\(UUID().uuidString)"
+            )
+        try FileManager.default.createDirectory(
+            at: temporaryRoot,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+        let operatorSessionStore = OperatorSessionStore(
+            melixHome: MelixHome(
+                environment: ["MELIX_HOME": temporaryRoot.path]
+            )
+        )
+        let preloadServer = DesktopServerSessionState(
+            id: "server-session-preload",
+            title: "Preload Provider",
+            modelID: "",
+            lifecycle: .running
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .chat,
+                selectedServerSessionID: preloadServer.id,
+                serverSessions: [preloadServer]
+            )
+        )
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "computer-use",
+        ])
+        await client.configureModelLoadDelay(.seconds(1))
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(state: .modelDiscovered)],
+                runtimeSessions: [
+                    makeRuntimeSession(
+                        serverSessionID: preloadServer.id
+                    ),
+                ]
+            )
+        )
+        let target = try TrustedComputerUseTarget(
+            bundleID: "io.melix.fixture",
+            processID: 4242,
+            processLaunchIdentity: "launch-preload-1",
+            windowID: 77,
+            windowTitle: "Preload Window",
+            applicationName: "Fixture"
+        ).protocolValue
+        var computer = Melix_Controlplane_V1_AgentComputerUseStatus()
+        computer.brokerConfigured = true
+        computer.capabilityLevel = "ax_semantic_press_only"
+        computer.screenRecordingPermission = "granted"
+        computer.accessibilityPermission = "granted"
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryReady
+        computer.availableTargets = [target]
+        var operations = Melix_Controlplane_V1_AgentOperationsSnapshot()
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+
+        let viewModel = RuntimeViewModel(
+            client: client,
+            operatorSessionStore: operatorSessionStore
+        )
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.selectComputerUseTarget(id: target.targetID)
+        viewModel.setChatInteractionMode(.act)
+        let prompt = "Do not submit a window that changes while loading."
+        viewModel.chatComposerText = prompt
+
+        let submission = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+        try await waitForFakeControlPlaneCondition(
+            "the local model preload should begin before the target changes"
+        ) {
+            await client.recordedActions.contains("load:melix-dev-text")
+        }
+        computer.availableTargets = []
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryEmpty
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+
+        await submission.value
+
+        #expect(await client.recordedAgentStarts.isEmpty)
+        #expect(viewModel.chatComposerText == prompt)
+        #expect(viewModel.selectedComputerUseTargetID.isEmpty)
+        #expect(viewModel.isChatBusy == false)
+        #expect(
+            viewModel.chatTranscript.contains {
+                $0.kind == .user && $0.body == prompt
+            } == false
+        )
+        #expect(
+            viewModel.chatTranscript.contains { $0.kind == .agentRun }
+                == false
+        )
+        #expect(
+            await client.recordedActions.filter {
+                $0 == "agent.operations.get"
+            }.count >= 2
+        )
+    }
+
+    @Test("Agent snapshots reject stale revisions and preserve terminal dominance")
+    @MainActor
+    func agentSnapshotsRemainMonotonicAndTerminal() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let session = try #require(viewModel.selectedChatSession)
+
+        var active = Melix_Controlplane_V1_AgentRunSnapshot()
+        active.runID = "agent-run-revision-order"
+        active.sessionID = session.id
+        active.branchID = session.branchID
+        active.modelID = "melix-dev-text"
+        active.state = "tool_running"
+        active.startedAtUnixMs = 1_800_000_000_000
+        active.updatedAtUnixMs = 1_800_000_000_100
+        active.revision = 2
+        await client.sendAgentRunStateChanged(active)
+        try await waitForRuntimeViewModelCondition(
+            "The current Agent revision should arrive"
+        ) {
+            viewModel.agentRuns.first(where: {
+                $0.runID == active.runID
+            })?.revision == 2
+        }
+
+        var terminal = active
+        terminal.state = "completed"
+        terminal.assistantText = "Done at the durable terminal revision."
+        terminal.updatedAtUnixMs = 1_800_000_000_300
+        terminal.revision = 4
+        await client.sendAgentRunStateChanged(terminal, changeKind: "completed")
+        try await waitForRuntimeViewModelCondition(
+            "The terminal Agent revision should arrive"
+        ) {
+            viewModel.agentRuns.first(where: {
+                $0.runID == active.runID
+            })?.revision == 4
+        }
+
+        var receiptEnriched = terminal
+        receiptEnriched.cancellationReceipt.runID = active.runID
+        receiptEnriched.cancellationReceipt.cancellationID =
+            "durable-cancellation-receipt"
+        receiptEnriched.cancellationReceipt.disposition = "already_terminal"
+        receiptEnriched.cancellationReceipt.sideEffectState =
+            .agentToolSideEffectNone
+        await client.sendAgentRunStateChanged(
+            receiptEnriched,
+            changeKind: "cancellation_receipt"
+        )
+        try await waitForRuntimeViewModelCondition(
+            "A same-revision durable cancellation receipt should arrive"
+        ) {
+            viewModel.agentCancellationReceipt(for: active.runID)?
+                .cancellationID == "durable-cancellation-receipt"
+        }
+
+        var stale = active
+        stale.assistantText = "stale"
+        stale.updatedAtUnixMs = 1_800_000_000_400
+        stale.revision = 3
+        await client.sendAgentRunStateChanged(stale)
+        var invalidPostTerminal = active
+        invalidPostTerminal.assistantText = "invalid post-terminal"
+        invalidPostTerminal.updatedAtUnixMs = 1_800_000_000_500
+        invalidPostTerminal.revision = 5
+        await client.sendAgentRunStateChanged(invalidPostTerminal)
+        try await Task.sleep(for: .milliseconds(25))
+
+        let retained = try #require(viewModel.agentRuns.first(where: {
+            $0.runID == active.runID
+        }))
+        #expect(retained.state == "completed")
+        #expect(retained.revision == 4)
+        #expect(retained.assistantText == terminal.assistantText)
+        #expect(retained.hasCancellationReceipt)
+    }
+
+    @Test("Agent refresh adopts one active run after reconnect and keeps Stop addressable")
+    @MainActor
+    func agentRefreshAdoptsSingleActiveRunAfterReconnect() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+        var active = makeBasicAgentRunSnapshot(
+            runID: "agent-reconnect-active",
+            sessionID: session.id,
+            branchID: session.branchID,
+            updatedAtUnixMs: 1_800_000_010_000
+        )
+        active.state = "tool_running"
+        await client.configureAgentSnapshot(active)
+
+        await viewModel.refreshAgentRunsForOperator()
+
+        #expect(viewModel.activeAgentRunID == active.runID)
+        #expect(viewModel.currentChatAgentRun?.runID == active.runID)
+        #expect(viewModel.isAgentRunning)
+        #expect(viewModel.isChatBusy)
+        #expect(viewModel.agentRunConflictRunIDs.isEmpty)
+
+        let originalSessionID = session.id
+        viewModel.createChatSession()
+        try await waitForRuntimeViewModelCondition(
+            "the recovered run should be stopped before changing Chat"
+        ) {
+            viewModel.selectedChatSession?.id != originalSessionID
+        }
+        #expect(
+            await client.recordedAgentCancellations.last?.runID
+                == active.runID
+        )
+        #expect(viewModel.activeAgentRunID.isEmpty)
+    }
+
+    @Test("Event-stream reconnect rehydrates Agent ownership before Chat unlocks")
+    @MainActor
+    func reconnectRehydratesAgentOwnershipBeforeSubmission() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+        var active = makeBasicAgentRunSnapshot(
+            runID: "agent-stream-reconnect-active",
+            sessionID: session.id,
+            branchID: session.branchID,
+            updatedAtUnixMs: 1_800_000_010_500
+        )
+        active.state = "model_turn"
+        await client.configureAgentSnapshot(active)
+        await client.configureAgentRunsDelay(.milliseconds(500))
+
+        await client.finishLatestSubscription()
+        try await waitForRuntimeViewModelCondition(
+            "reconnect should block Chat while Agent ownership is refreshed"
+        ) {
+            viewModel.agentRunReconciliationInProgress
+        }
+        #expect(viewModel.isChatBusy)
+        viewModel.chatInteractionMode = .act
+        viewModel.chatComposerText = "Do not race reconnect hydration."
+        await viewModel.submitChatPrompt()
+        #expect(await client.recordedAgentStarts.isEmpty)
+        try await waitForRuntimeViewModelCondition(
+            "reconnect should adopt the durable active Agent"
+        ) {
+            viewModel.activeAgentRunID == active.runID
+                && viewModel.agentRunReconciliationInProgress == false
+        }
+    }
+
+    @Test("Agent refresh blocks Chat when multiple active runs are recovered")
+    @MainActor
+    func agentRefreshFailsClosedOnConflictingRecoveredRuns() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+        var first = makeBasicAgentRunSnapshot(
+            runID: "agent-conflict-a",
+            sessionID: session.id,
+            branchID: session.branchID,
+            updatedAtUnixMs: 1_800_000_011_000
+        )
+        first.state = "model_turn"
+        var second = makeBasicAgentRunSnapshot(
+            runID: "agent-conflict-b",
+            sessionID: session.id,
+            branchID: session.branchID,
+            updatedAtUnixMs: 1_800_000_011_100
+        )
+        second.state = "waiting_for_approval"
+        await client.configureAgentSnapshot(first)
+        await client.configureAgentSnapshot(second)
+
+        await viewModel.refreshAgentRunsForOperator()
+
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(
+            viewModel.agentRunConflictRunIDs
+                == [first.runID, second.runID]
+        )
+        #expect(viewModel.isChatBusy)
+        #expect(
+            viewModel.chatStatusText
+                == "Agent Conflict • Multiple Active Runs"
+        )
+        viewModel.chatComposerText = "Do not start a third run."
+        await viewModel.submitChatPrompt()
+        #expect(await client.recordedAgentStarts.isEmpty)
+
+        let selectedSessionID = session.id
+        viewModel.createChatSession()
+        #expect(viewModel.selectedChatSession?.id == selectedSessionID)
+        #expect(
+            await viewModel.stopActiveChatOrAgent(
+                reason: "operator_stop_conflict"
+            ) == false
+        )
+        #expect(viewModel.selectedSurface == .agents)
+        #expect(await client.recordedAgentCancellations.isEmpty)
+    }
+
+    @Test("Startup blocks Agent submission until the selected Chat is reconciled")
+    @MainActor
+    func startupAgentReconciliationBlocksSubmissionAndAdoptsActiveRun() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentRunsDelay(.seconds(1))
+        let viewModel = RuntimeViewModel(client: client)
+
+        let startup = Task { @MainActor in
+            await viewModel.start()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "startup should expose its selected Chat before Agent reconciliation finishes"
+        ) {
+            viewModel.selectedChatSession != nil
+                && viewModel.agentRunReconciliationInProgress
+        }
+        let session = try #require(viewModel.selectedChatSession)
+        var active = makeBasicAgentRunSnapshot(
+            runID: "agent-startup-active",
+            sessionID: session.id,
+            branchID: session.branchID,
+            updatedAtUnixMs: 1_800_000_012_000
+        )
+        active.state = "created"
+        await client.configureAgentSnapshot(active)
+        viewModel.chatInteractionMode = .act
+        viewModel.chatComposerText = "Do not start during reconciliation."
+        await viewModel.submitChatPrompt()
+        #expect(await client.recordedAgentStarts.isEmpty)
+
+        await startup.value
+
+        #expect(viewModel.agentRunReconciliationInProgress == false)
+        #expect(viewModel.activeAgentRunID == active.runID)
+        #expect(viewModel.isChatBusy)
+    }
+
+    @Test("Startup globally discovers an active Agent from an orphaned Chat")
+    @MainActor
+    func startupGlobalAgentInventoryBlocksOrphanedRun() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let previousViewModel = RuntimeViewModel(client: client)
+        await previousViewModel.start()
+        let previousSession = try #require(
+            previousViewModel.selectedChatSession
+        )
+        var orphaned = makeBasicAgentRunSnapshot(
+            runID: "agent-orphaned-after-restart",
+            sessionID: previousSession.id,
+            branchID: previousSession.branchID,
+            updatedAtUnixMs: 1_800_000_012_200
+        )
+        orphaned.state = "tool_running"
+        await client.configureAgentSnapshot(orphaned)
+
+        let restartedViewModel = RuntimeViewModel(client: client)
+        await restartedViewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(restartedViewModel)
+
+        #expect(restartedViewModel.selectedChatSession?.id != previousSession.id)
+        #expect(
+            restartedViewModel.agentRunConflictRunIDs == [orphaned.runID]
+        )
+        #expect(
+            restartedViewModel.chatStatusText
+                == "Agent Recovery • Active Run Outside This Chat"
+        )
+        #expect(restartedViewModel.isChatBusy == false)
+        await client.configureScheduledChatEvents([
+            .init(
+                delay: .seconds(1),
+                event: .tokenDelta("delayed Ask answer")
+            ),
+            .init(
+                event: .completed(
+                    finishReason: "stop",
+                    assistantText: "delayed Ask answer",
+                    reasoningText: ""
+                )
+            ),
+        ])
+        restartedViewModel.chatInteractionMode = .ask
+        restartedViewModel.chatComposerText = "Answer without starting another Agent."
+        let askSubmission = Task { @MainActor in
+            await restartedViewModel.submitChatPrompt()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "the pure-orphan Chat should still start an Ask response"
+        ) {
+            restartedViewModel.isChatStreaming
+        }
+        let askControls = desktopChatAgentModeBarControls(
+            for: restartedViewModel
+        )
+        #expect(askControls.showsReviewAgents)
+        #expect(askControls.showsStop)
+        #expect(
+            await restartedViewModel.stopActiveChatOrAgent(
+                reason: "stop_ask_while_reviewing_orphan"
+            )
+        )
+        await askSubmission.value
+        #expect(await client.recordedChatRequests.count == 1)
+        let askSessionID = try #require(
+            restartedViewModel.selectedChatSession?.id
+        )
+        restartedViewModel.createChatSession()
+        #expect(restartedViewModel.selectedChatSession?.id != askSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "pure orphan recovery should not prevent the new Chat from hydrating"
+        ) {
+            restartedViewModel.agentRunReconciliationInProgress == false
+        }
+        restartedViewModel.setChatInteractionMode(.act)
+        #expect(restartedViewModel.chatInteractionMode == .ask)
+        restartedViewModel.chatInteractionMode = .act
+        restartedViewModel.chatComposerText = "Do not start over the orphan."
+        await restartedViewModel.submitChatPrompt()
+        #expect(await client.recordedAgentStarts.isEmpty)
+        #expect(
+            await restartedViewModel.stopActiveChatOrAgent(
+                reason: "review_orphaned_agent"
+            ) == false
+        )
+        #expect(restartedViewModel.selectedSurface == .agents)
+        #expect(
+            await restartedViewModel.stopAgentRun(
+                runID: orphaned.runID,
+                reason: "stop_orphaned_agent"
+            )
+        )
+        #expect(
+            await client.recordedAgentCancellations.last?.runID
+                == orphaned.runID
+        )
+        #expect(restartedViewModel.agentRunConflictRunIDs.isEmpty)
+    }
+
+    @Test("Selected-Chat Agent ownership conflict still blocks Ask")
+    @MainActor
+    func selectedChatAgentConflictBlocksAskTranscriptMutation() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+        for (runID, updatedAt) in [
+            ("agent-selected-conflict-a", Int64(1_800_000_012_500)),
+            ("agent-selected-conflict-b", Int64(1_800_000_012_600)),
+        ] {
+            var run = makeBasicAgentRunSnapshot(
+                runID: runID,
+                sessionID: session.id,
+                branchID: session.branchID,
+                updatedAtUnixMs: updatedAt
+            )
+            run.state = "tool_running"
+            await client.configureAgentSnapshot(run)
+        }
+
+        await viewModel.refreshAgentRunsForOperator()
+
+        #expect(viewModel.agentRunConflictRunIDs.count == 2)
+        #expect(viewModel.isChatBusy)
+        viewModel.chatInteractionMode = .ask
+        viewModel.chatComposerText = "Do not mutate a conflicted transcript."
+        await viewModel.submitChatPrompt()
+        #expect(await client.recordedChatRequests.isEmpty)
+    }
+
+    @Test("Startup stays blocked when the global Agent inventory is unavailable")
+    @MainActor
+    func startupGlobalAgentInventoryFailureStaysBlocked() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentRunsError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "agent_runs_unavailable",
+                message: "The global Agent inventory is unavailable."
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.agentRunReconciliationNeedsRetry)
+        #expect(viewModel.isChatBusy)
+        #expect(viewModel.chatStatusText == "Agent Status Unavailable • Retry")
+        viewModel.chatInteractionMode = .act
+        viewModel.chatComposerText = "Do not start without global truth."
+        await viewModel.submitChatPrompt()
+        #expect(await client.recordedAgentStarts.isEmpty)
+    }
+
+    @Test("Startup stays blocked when the authoritative active-run inventory is incomplete")
+    @MainActor
+    func startupIncompleteAgentInventoryStaysBlocked() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentRunInventoryIsComplete(false)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.agentRunReconciliationNeedsRetry)
+        #expect(viewModel.isChatBusy)
+        #expect(viewModel.chatStatusText == "Agent Status Unavailable • Retry")
+        viewModel.chatInteractionMode = .act
+        viewModel.chatComposerText = "Do not start from an incomplete inventory."
+        await viewModel.submitChatPrompt()
+        #expect(await client.recordedAgentStarts.isEmpty)
+    }
+
+    @Test("Terminal history at the display bound does not make the active-run inventory incomplete")
+    @MainActor
+    func terminalAgentHistoryDoesNotBlockAnEmptyCompleteInventory() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        for index in 0..<500 {
+            var terminal = makeBasicAgentRunSnapshot(
+                runID: "terminal-history-\(index)",
+                sessionID: "historical-chat-\(index)",
+                branchID: "historical-branch-\(index)",
+                updatedAtUnixMs: 1_800_000_100_000 + Int64(index)
+            )
+            terminal.state = "completed"
+            await client.configureAgentSnapshot(terminal)
+        }
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+
+        #expect(viewModel.agentRunReconciliationNeedsRetry == false)
+        #expect(viewModel.agentRunConflictRunIDs.isEmpty)
+        #expect(viewModel.isChatBusy == false)
+    }
+
+    @Test("A known background Chat Agent does not block the selected Chat")
+    @MainActor
+    func knownBackgroundAgentDoesNotBecomeAnOrphanConflict() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let selectedSession = try #require(viewModel.selectedChatSession)
+        viewModel.createChatSession()
+        let backgroundSession = try #require(viewModel.selectedChatSession)
+        viewModel.selectChatSession(id: selectedSession.id)
+        try await waitForRuntimeViewModelCondition(
+            "the selected Chat should finish reconciliation"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+        }
+        var background = makeBasicAgentRunSnapshot(
+            runID: "agent-known-background",
+            sessionID: backgroundSession.id,
+            branchID: backgroundSession.branchID,
+            updatedAtUnixMs: 1_800_000_012_400
+        )
+        background.state = "tool_running"
+        await client.configureAgentSnapshot(background)
+
+        await viewModel.refreshAgentRunsForOperator()
+
+        #expect(viewModel.agentRunConflictRunIDs.isEmpty)
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(viewModel.isChatBusy == false)
+    }
+
+    @Test("Empty Agent reconciliation restores stable Chat status without persisting checking copy")
+    @MainActor
+    func emptyAgentReconciliationPreservesStableChatStatus() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let stableStatus = try #require(
+            viewModel.selectedChatSession?.statusText
+        )
+
+        #expect(viewModel.agentRunReconciliationInProgress == false)
+        #expect(viewModel.agentRunReconciliationNeedsRetry == false)
+        #expect(stableStatus != "Checking Agent Status…")
+        #expect(viewModel.chatStatusText == stableStatus)
+
+        await viewModel.refreshAgentRunsForOperator()
+
+        #expect(viewModel.chatStatusText == stableStatus)
+        #expect(viewModel.selectedChatSession?.statusText == stableStatus)
+    }
+
+    @Test("Terminal Agent refresh preserves the derived terminal status")
+    @MainActor
+    func terminalAgentReconciliationPreservesDerivedStatus() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let session = try #require(viewModel.selectedChatSession)
+        var completed = makeBasicAgentRunSnapshot(
+            runID: "agent-terminal-refresh-status",
+            sessionID: session.id,
+            branchID: session.branchID,
+            updatedAtUnixMs: 1_800_000_012_500
+        )
+        completed.state = "completed"
+        completed.assistantText = "A durable terminal answer."
+        await client.configureAgentSnapshot(completed)
+
+        await viewModel.refreshAgentRunsForOperator()
+
+        #expect(viewModel.chatStatusText == "Agent • Completed")
+        #expect(viewModel.selectedChatSession?.statusText == "Agent • Completed")
+        #expect(
+            viewModel.chatTranscript.contains {
+                $0.kind == .assistant
+                    && $0.body == "A durable terminal answer."
+            }
+        )
+    }
+
+    @Test("Selecting an existing Chat stays blocked until Agent status is authoritative")
+    @MainActor
+    func selectedChatAgentReconciliationBlocksAndRetriesAfterFailure() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let sessionA = try #require(viewModel.selectedChatSession)
+        viewModel.createChatSession()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let sessionB = try #require(viewModel.selectedChatSession)
+        viewModel.selectChatSession(id: sessionA.id)
+        try await waitForRuntimeViewModelCondition(
+            "the first Chat refresh should settle"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+        }
+
+        var active = makeBasicAgentRunSnapshot(
+            runID: "agent-selected-chat-active",
+            sessionID: sessionB.id,
+            branchID: sessionB.branchID,
+            updatedAtUnixMs: 1_800_000_013_000
+        )
+        active.state = "tool_running"
+        await client.configureAgentSnapshot(active)
+        await client.configureAgentRunsDelay(.seconds(1))
+        viewModel.selectChatSession(id: sessionB.id)
+        #expect(viewModel.agentRunReconciliationInProgress)
+        #expect(viewModel.isChatBusy)
+        viewModel.chatInteractionMode = .act
+        viewModel.chatComposerText = "Do not race the authoritative refresh."
+        await viewModel.submitChatPrompt()
+        #expect(await client.recordedAgentStarts.isEmpty)
+        try await waitForRuntimeViewModelCondition(
+            "the selected Chat active run should be adopted"
+        ) {
+            viewModel.activeAgentRunID == active.runID
+                && viewModel.agentRunReconciliationInProgress == false
+        }
+
+        await client.configureAgentRunsError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "agent_runs_unavailable",
+                message: "Agent history is temporarily unavailable."
+            )
+        )
+        let failedActiveRefresh = Task { @MainActor in
+            await viewModel.refreshAgentRunsForOperator()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "the known active run should remain stoppable during a slow refresh"
+        ) {
+            viewModel.agentRunReconciliationInProgress
+        }
+        #expect(viewModel.canStopActiveChatOrAgent)
+        await failedActiveRefresh.value
+        #expect(viewModel.agentRunReconciliationNeedsRetry)
+        #expect(viewModel.canStopActiveChatOrAgent)
+
+        await client.configureAgentRunsError(nil)
+        await viewModel.stopActiveChatOrAgent(reason: "settle_selected_chat")
+        await client.configureAgentRunsDelay(.zero)
+        await client.configureAgentRunsError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "agent_runs_unavailable",
+                message: "Agent history is temporarily unavailable."
+            )
+        )
+        viewModel.selectChatSession(id: sessionA.id)
+        try await waitForRuntimeViewModelCondition(
+            "a failed authoritative refresh should remain blocked"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+                && viewModel.chatStatusText
+                    == "Agent Status Unavailable • Retry"
+        }
+        #expect(viewModel.isChatBusy)
+        let selectedBeforeRetry = viewModel.selectedChatSession?.id
+        viewModel.createChatSession()
+        #expect(viewModel.selectedChatSession?.id == selectedBeforeRetry)
+
+        await client.configureAgentRunsError(nil)
+        await viewModel.refreshAgentRunsForOperator()
+        #expect(viewModel.isChatBusy == false)
+    }
+
+    @Test("Deleting an ordinary selected Chat remains available with Agent runtime enabled")
+    @MainActor
+    func deletingOrdinarySelectedChatRemainsAvailable() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let sessionA = try #require(viewModel.selectedChatSession)
+        viewModel.createChatSession()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let sessionB = try #require(viewModel.selectedChatSession)
+        viewModel.selectChatSession(id: sessionA.id)
+        try await waitForRuntimeViewModelCondition(
+            "the selected Chat refresh should settle before deletion"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+        }
+        #expect(
+            viewModel.chatSessionDestructiveActionsRequireAgentClose(
+                sessionID: sessionA.id
+            ) == false
+        )
+
+        viewModel.deleteChatSession(id: sessionA.id)
+
+        #expect(viewModel.selectedChatSession?.id == sessionB.id)
+        #expect(viewModel.chatSessions.contains { $0.id == sessionA.id } == false)
+        #expect(viewModel.chatSessions.contains { $0.id == sessionB.id })
+        #expect(viewModel.selectedSurface == .chat)
+        #expect(viewModel.lastError == nil)
+    }
+
+    @Test("Act remains available with the builtin catalog when MCP and Computer Use are absent")
+    @MainActor
+    func actUsesBuiltinCatalogWithoutOptionalToolSources() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+
+        #expect(viewModel.isSelectedChatActReady)
+        viewModel.chatComposerText = "Use a builtin read-only tool."
+        await viewModel.submitChatPrompt()
+        #expect(await client.recordedAgentStarts.count == 1)
+    }
+
+    @Test("Act sends a remote Provider target and blocks profiles with tools disabled")
+    @MainActor
+    func actRoutesRemoteProviderAndHonorsToolSupportPolicy() async throws {
+        let remoteServerID = "lay2-agent"
+        let remoteModelID = "deepseek-v4-flash"
+        let remoteStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: remoteServerID,
+                    title: "LAY2 Agent",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://agent.example/v1",
+                    defaultModelID: remoteModelID,
+                    timeoutSeconds: 120,
+                    rateLimitPerMinute: 20,
+                    toolSupportMode: .forceOn,
+                    credentialRef: RemoteServerStore.credentialRef(
+                        for: remoteServerID
+                    ),
+                    apiKeyHint: "meli...auth",
+                    healthStatus: "ready"
+                ),
+            ],
+            apiKeys: [remoteServerID: "melix-no-auth"]
+        )
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            remoteServerStore: remoteStore
+        )
+
+        await viewModel.start()
+        viewModel.bindSelectedChatSessionToProvider(
+            providerTargetID: "remote:\(remoteServerID)"
+        )
+        viewModel.setChatInteractionMode(.act)
+
+        #expect(viewModel.isSelectedChatActReady)
+        #expect(viewModel.selectedAgentProviderCapability.title == "Remote · Data egress")
+        #expect(viewModel.selectedAgentProviderCapability.isReady)
+
+        viewModel.chatComposerText = "Inspect the remote workspace."
+        await viewModel.submitChatPrompt()
+
+        let command = try #require(await client.recordedAgentStarts.last)
+        let remoteTarget = try #require(
+            await client.recordedAgentRemoteTargets.last
+        )
+        #expect(command.serverSessionID == remoteServerID)
+        #expect(command.providerServerID == remoteServerID)
+        #expect(command.modelID == remoteModelID)
+        #expect(remoteTarget.serverID == remoteServerID)
+        #expect(remoteTarget.providerKind == "openai-compatible")
+        #expect(remoteTarget.baseURL == "https://agent.example/v1")
+        #expect(remoteTarget.apiKey == "melix-no-auth")
+        #expect(remoteTarget.modelID == remoteModelID)
+        #expect(remoteTarget.timeoutSeconds == 120)
+        #expect(remoteTarget.rateLimitPerMinute == 20)
+
+        let disabledStore = FakeRemoteServerStore(
+            servers: [
+                RemoteServer(
+                    id: remoteServerID,
+                    title: "LAY2 Agent",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://agent.example/v1",
+                    defaultModelID: remoteModelID,
+                    toolSupportMode: .forceOff,
+                    credentialRef: RemoteServerStore.credentialRef(
+                        for: remoteServerID
+                    ),
+                    apiKeyHint: "meli...auth",
+                    healthStatus: "ready"
+                ),
+            ],
+            apiKeys: [remoteServerID: "melix-no-auth"]
+        )
+        let disabledClient = FakeControlPlaneXPCClient()
+        await disabledClient.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let disabledViewModel = RuntimeViewModel(
+            client: disabledClient,
+            remoteServerStore: disabledStore
+        )
+        await disabledViewModel.start()
+        disabledViewModel.bindSelectedChatSessionToProvider(
+            providerTargetID: "remote:\(remoteServerID)"
+        )
+        disabledViewModel.setChatInteractionMode(.act)
+        disabledViewModel.chatComposerText = "Keep this draft."
+
+        #expect(disabledViewModel.isSelectedChatActReady == false)
+        #expect(disabledViewModel.selectedAgentProviderCapability.isReady == false)
+        await disabledViewModel.submitChatPrompt()
+        #expect(await disabledClient.recordedAgentStarts.isEmpty)
+        #expect(disabledViewModel.chatComposerText == "Keep this draft.")
+        #expect(
+            disabledViewModel.lastError
+                == "Remote Provider lay2-agent has tool calling disabled. Enable tool support before using Act."
+        )
+    }
+
+    @Test("Stop during Agent admission cancels the pre-bound backend run immediately")
+    @MainActor
+    func stopDuringAgentAdmissionPreservesTheCancellationReason() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentStartDelay(.seconds(1))
+        await client.configureUnknownAgentCancellationDisposition("not_found")
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Start, then stop while admitting."
+
+        let submission = Task {
+            await viewModel.submitChatPrompt()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "Agent admission should become busy before a run ID is returned"
+        ) {
+            viewModel.isChatBusy && viewModel.activeAgentRunID.isEmpty == false
+        }
+        try await waitForFakeControlPlaneCondition(
+            "Agent start should reach the backend before Stop"
+        ) {
+            await client.recordedAgentStarts.isEmpty == false
+        }
+
+        let stopped = await viewModel.stopActiveChatOrAgent(
+            reason: "operator_stop_during_start"
+        )
+        let cancellation = try #require(
+            await client.recordedAgentCancellations.last
+        )
+        let start = try #require(await client.recordedAgentStarts.last)
+        #expect(start.runID.isEmpty == false)
+        #expect(cancellation.runID == start.runID)
+        #expect(cancellation.reason == "operator_stop_during_start")
+        #expect(viewModel.lastAgentCancellationReceipt?.runID == start.runID)
+        #expect(viewModel.lastAgentCancellationReceipt?.disposition == "not_found")
+        #expect(
+            viewModel.chatStatusText
+                == "Stop Requested • Awaiting Admission Cleanup"
+        )
+        #expect(viewModel.isChatBusy)
+        #expect(stopped == true)
+
+        await submission.value
+        #expect(await client.recordedAgentCancellations.count == 2)
+        #expect(await client.recordedAgentActivations.isEmpty)
+        #expect(viewModel.chatStatusText == "Agent Stop • Accepted")
+        #expect(viewModel.isChatBusy == false)
+    }
+
+    @Test("Stop delivered before Agent Start retries cleanup after admission")
+    @MainActor
+    func stopBeforeAgentStartDeliveryRetriesAfterAdmission() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentStartDeliveryDelay(.seconds(1))
+        await client.configureUnknownAgentCancellationDisposition("not_found")
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Stop before Start reaches the daemon."
+
+        let submission = Task {
+            await viewModel.submitChatPrompt()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "The App should publish its caller-bound run ID before Start delivery"
+        ) {
+            viewModel.isChatBusy && viewModel.activeAgentRunID.isEmpty == false
+        }
+        #expect(await client.recordedAgentStarts.isEmpty)
+
+        #expect(
+            await viewModel.stopActiveChatOrAgent(
+                reason: "operator_stop_before_start_delivery"
+            )
+        )
+        let firstCancellation = try #require(
+            await client.recordedAgentCancellations.first
+        )
+        #expect(firstCancellation.reason == "operator_stop_before_start_delivery")
+        #expect(viewModel.chatStatusText == "Stop Requested • Awaiting Admission Cleanup")
+
+        await submission.value
+
+        let start = try #require(await client.recordedAgentStarts.last)
+        let cancellations = await client.recordedAgentCancellations
+        #expect(cancellations.count == 2)
+        #expect(cancellations.allSatisfy { $0.runID == start.runID })
+        #expect(await client.recordedAgentActivations.isEmpty)
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(viewModel.chatStatusText == "Agent Stop • Accepted")
+    }
+
+    @Test("lost Agent start replies cancel the pre-bound suspended run")
+    @MainActor
+    func lostAgentStartReplyCancelsPreboundRun() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentStartResponseError(
+            .requestFailed(
+                code: "agent_start_response_lost",
+                message: "The admitted Agent start reply was lost."
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Admit, then lose the reply."
+
+        await viewModel.submitChatPrompt()
+
+        let start = try #require(await client.recordedAgentStarts.last)
+        let cancellation = try #require(
+            await client.recordedAgentCancellations.last
+        )
+        #expect(start.deferActivation)
+        #expect(cancellation.runID == start.runID)
+        #expect(cancellation.reason == "agent_start_or_activation_failed")
+        #expect(await client.recordedAgentActivations.isEmpty)
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(viewModel.chatStatusText == "Agent Stop • Accepted")
+        #expect(viewModel.lastAgentCancellationReceipt?.runID == start.runID)
+        #expect(viewModel.lastError?.contains("start reply was lost") == true)
+        #expect(
+            viewModel.chatTranscript.contains {
+                $0.kind == .error
+                    && $0.detail == "agent_start_response_lost"
+            }
+        )
+    }
+
+    @Test("Stop retries cleanup when an admitted Agent reply is lost")
+    @MainActor
+    func stopRetriesCleanupAfterLostAgentStartReply() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentStartDeliveryDelay(.milliseconds(180))
+        await client.configureUnknownAgentCancellationDisposition("not_found")
+        await client.configureAgentStartResponseError(
+            .requestFailed(
+                code: "agent_start_response_lost",
+                message: "The admitted Agent start reply was lost."
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Stop before the reply is lost."
+
+        let submission = Task {
+            await viewModel.submitChatPrompt()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "The App should publish its run ID before the delayed Start delivery"
+        ) {
+            viewModel.isChatBusy && viewModel.activeAgentRunID.isEmpty == false
+        }
+        #expect(await client.recordedAgentStarts.isEmpty)
+        #expect(
+            await viewModel.stopActiveChatOrAgent(
+                reason: "operator_stop_before_lost_reply"
+            )
+        )
+        #expect(
+            viewModel.chatStatusText
+                == "Stop Requested • Awaiting Admission Cleanup"
+        )
+
+        await submission.value
+
+        let start = try #require(await client.recordedAgentStarts.last)
+        let cancellations = await client.recordedAgentCancellations
+        #expect(cancellations.count == 2)
+        #expect(cancellations.allSatisfy { $0.runID == start.runID })
+        #expect(await client.recordedAgentActivations.isEmpty)
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(viewModel.chatStatusText == "Agent Stop • Accepted")
+    }
+
+    @Test("Activation reply loss keeps the exact run retryable until cleanup is confirmed")
+    @MainActor
+    func activationReplyLossAndCleanupFailureRetainRunOwnership() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentActivationResponseError(
+            .requestFailed(
+                code: "agent_activation_response_lost",
+                message: "The activation reply was lost after commit."
+            )
+        )
+        await client.configureAgentCancellationError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "cancel_transport_failed",
+                message: "The cancellation transport failed."
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Keep activation cleanup addressable."
+
+        await viewModel.submitChatPrompt()
+
+        let runID = try #require(await client.recordedAgentStarts.last?.runID)
+        #expect(await client.recordedAgentActivations == [runID])
+        #expect(viewModel.activeAgentRunID == runID)
+        #expect(viewModel.isChatBusy)
+        #expect(viewModel.chatStatusText == "Agent Cleanup • Stop Not Confirmed")
+
+        await client.configureAgentCancellationError(nil)
+        var committed = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        committed.disposition = "accepted"
+        committed.sideEffectState = .agentToolSideEffectCommitted
+        await client.configureAgentCancellationReceipt(committed)
+        #expect(
+            await viewModel.stopActiveChatOrAgent(
+                reason: "retry_activation_cleanup"
+            ) == false
+        )
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(viewModel.isChatBusy == false)
+        #expect(
+            viewModel.chatStatusText
+                == "Agent Stop • Side Effect Already Committed"
+        )
+        #expect(viewModel.lastError?.contains("a side effect committed") == true)
+    }
+
+    @Test("Automatic activation cleanup preserves committed side-effect truth")
+    @MainActor
+    func activationReplyLossPresentsAutomaticCleanupSideEffects() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentActivationResponseError(
+            .requestFailed(
+                code: "agent_activation_response_lost",
+                message: "The activation reply was lost after commit."
+            )
+        )
+        var committed = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        committed.disposition = "accepted"
+        committed.sideEffectState = .agentToolSideEffectCommitted
+        await client.configureAgentCancellationReceipt(committed)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Preserve automatic cleanup truth."
+
+        await viewModel.submitChatPrompt()
+
+        let runID = try #require(await client.recordedAgentStarts.last?.runID)
+        #expect(viewModel.lastAgentCancellationReceipt?.runID == runID)
+        #expect(viewModel.lastAgentCancellationReceipt?.disposition == "accepted")
+        #expect(
+            viewModel.lastAgentCancellationReceipt?.sideEffectState
+                == .agentToolSideEffectCommitted
+        )
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(viewModel.isChatBusy == false)
+        #expect(
+            viewModel.chatStatusText
+                == "Agent Stop • Side Effect Already Committed"
+        )
+        #expect(viewModel.lastError?.contains("a side effect committed") == true)
+    }
+
+    @Test("Automatic activation cleanup rejects a cancellation receipt for another run")
+    @MainActor
+    func activationCleanupRejectsMismatchedReceiptBinding() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentActivationResponseError(
+            .requestFailed(
+                code: "agent_activation_response_lost",
+                message: "The activation reply was lost after commit."
+            )
+        )
+        var wrongRun = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        wrongRun.runID = "another-agent-run"
+        wrongRun.disposition = "accepted"
+        wrongRun.sideEffectState = .agentToolSideEffectNone
+        await client.configureAgentCancellationReceipt(
+            wrongRun,
+            preserveRunID: true
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Reject the wrong cleanup receipt."
+
+        await viewModel.submitChatPrompt()
+
+        let runID = try #require(await client.recordedAgentStarts.last?.runID)
+        #expect(viewModel.activeAgentRunID == runID)
+        #expect(viewModel.isChatBusy)
+        #expect(viewModel.lastAgentCancellationReceipt?.runID != "another-agent-run")
+        #expect(viewModel.chatStatusText == "Agent Cleanup • Stop Not Confirmed")
+    }
+
+    @Test("Lost Start reply plus lost cleanup keeps the suspended run retryable")
+    @MainActor
+    func startReplyLossAndCleanupFailureRetainRunOwnership() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentStartResponseError(
+            .requestFailed(
+                code: "agent_start_response_lost",
+                message: "The admitted Start reply was lost."
+            )
+        )
+        await client.configureAgentCancellationError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "cancel_transport_failed",
+                message: "The cancellation transport failed."
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Keep Start cleanup addressable."
+
+        await viewModel.submitChatPrompt()
+
+        let runID = try #require(await client.recordedAgentStarts.last?.runID)
+        #expect(viewModel.activeAgentRunID == runID)
+        #expect(viewModel.isChatBusy)
+        #expect(viewModel.chatStatusText == "Agent Cleanup • Stop Not Confirmed")
+
+        await client.configureAgentCancellationError(nil)
+        #expect(
+            await viewModel.stopActiveChatOrAgent(
+                reason: "retry_start_cleanup"
+            )
+        )
+        #expect(viewModel.lastAgentCancellationReceipt?.runID == runID)
+        #expect(viewModel.lastAgentCancellationReceipt?.disposition == "accepted")
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(viewModel.isChatBusy == false)
+    }
+
+    @Test("Chat context changes wait for a bound Agent cancellation receipt")
+    @MainActor
+    func chatContextChangeWaitsForBoundAgentCancellation() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let originalSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Keep this Agent bound to the original Chat."
+        await viewModel.submitChatPrompt()
+        let runID = try #require(viewModel.currentChatAgentRun?.runID)
+
+        viewModel.createChatSession()
+
+        try await waitForRuntimeViewModelCondition(
+            "the new Chat should open only after Agent cancellation is confirmed"
+        ) {
+            viewModel.selectedChatSession?.id != originalSessionID
+        }
+        let cancellation = try #require(
+            await client.recordedAgentCancellations.last
+        )
+        #expect(cancellation.runID == runID)
+        #expect(cancellation.reason == "chat_context_changed")
+        #expect(viewModel.lastAgentCancellationReceipt?.runID == runID)
+        #expect(viewModel.lastAgentCancellationReceipt?.disposition == "accepted")
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(viewModel.currentChatAgentRun?.sessionID != originalSessionID)
+    }
+
+    @Test("Unconfirmed Agent cancellation keeps the old Chat selected and can retry")
+    @MainActor
+    func unconfirmedAgentContextCancellationKeepsChatSelected() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let originalSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.createChatSession()
+        let targetSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.selectChatSession(id: originalSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "the original Chat should finish Agent reconciliation before submission"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+                && viewModel.agentRunReconciliationNeedsRetry == false
+        }
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Do not leave until Stop is confirmed."
+        await viewModel.submitChatPrompt()
+        let runID = try #require(viewModel.currentChatAgentRun?.runID)
+
+        var unavailable = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        unavailable.disposition = "unavailable"
+        unavailable.sideEffectState = .agentToolSideEffectUnknown
+        await client.configureAgentCancellationReceipt(unavailable)
+        viewModel.selectChatSession(id: targetSessionID)
+
+        try await waitForRuntimeViewModelCondition(
+            "an unconfirmed Stop should block the Chat transition"
+        ) {
+            viewModel.chatStatusText
+                == "Chat Change Blocked • Stop Not Confirmed"
+        }
+        #expect(viewModel.selectedChatSession?.id == originalSessionID)
+        #expect(viewModel.activeAgentRunID == runID)
+        #expect(viewModel.currentChatAgentRun?.runID == runID)
+
+        var accepted = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        accepted.disposition = "accepted"
+        accepted.sideEffectState = .agentToolSideEffectNone
+        await client.configureAgentCancellationReceipt(accepted)
+        viewModel.selectChatSession(id: targetSessionID)
+
+        try await waitForRuntimeViewModelCondition(
+            "a fresh accepted receipt should allow the queued Chat transition"
+        ) {
+            viewModel.selectedChatSession?.id == targetSessionID
+        }
+        #expect(viewModel.activeAgentRunID.isEmpty)
+        #expect(await client.recordedAgentCancellations.count == 2)
+    }
+
+    @Test("Agent admission cancellation failure stays retryable before changing Chat")
+    @MainActor
+    func agentAdmissionContextCancellationFailureCanRetry() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        await client.configureAgentStartDeliveryDelay(.milliseconds(220))
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let originalSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.createChatSession()
+        let targetSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.selectChatSession(id: originalSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "the original Chat should finish Agent reconciliation before admission"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+                && viewModel.agentRunReconciliationNeedsRetry == false
+        }
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Keep the suspended admission retryable."
+
+        let submission = Task {
+            await viewModel.submitChatPrompt()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "the caller-bound run ID should exist before Start delivery"
+        ) {
+            viewModel.activeAgentRunID.isEmpty == false
+        }
+        let runID = viewModel.activeAgentRunID
+        await client.configureAgentCancellationError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "cancel_transport_failed",
+                message: "The cancellation transport failed."
+            )
+        )
+        viewModel.selectChatSession(id: targetSessionID)
+
+        try await waitForRuntimeViewModelCondition(
+            "the failed cancellation should leave a retryable Stop state"
+        ) {
+            viewModel.chatStatusText
+                == "Chat Change Blocked • Stop Not Confirmed"
+        }
+        #expect(viewModel.selectedChatSession?.id == originalSessionID)
+        #expect(viewModel.activeAgentRunID == runID)
+        #expect(viewModel.isChatBusy)
+
+        await client.configureAgentCancellationError(nil)
+        await client.configureUnknownAgentCancellationDisposition("not_found")
+        viewModel.selectChatSession(id: targetSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "the retry should accept suspended-admission cleanup and change Chat"
+        ) {
+            viewModel.selectedChatSession?.id == targetSessionID
+        }
+        await submission.value
+        #expect(await client.recordedAgentActivations.isEmpty)
+        #expect(
+            await client.recordedAgentCancellations.allSatisfy {
+                $0.runID == runID
+            }
+        )
+    }
+
+    @Test("A late old Agent completion stays with its marker and model turn")
+    @MainActor
+    func lateOldAgentCompletionPreservesTranscriptAndModelOrder() throws {
+        let oldRunID = "agent-old"
+        let newRunID = "agent-new"
+        let oldMarkerID = DesktopChatTranscriptEntry.agentRunMarkerID(
+            for: oldRunID
+        )
+        let newMarkerID = DesktopChatTranscriptEntry.agentRunMarkerID(
+            for: newRunID
+        )
+        let transcript = [
+            DesktopChatTranscriptEntry(
+                id: "old-user",
+                kind: .user,
+                title: "You",
+                body: "Old Agent user turn.",
+                detail: ""
+            ),
+            DesktopChatTranscriptEntry(
+                id: oldMarkerID,
+                kind: .agentRun,
+                title: "Melix Agent Run",
+                body: "Run details are stored in Agent history.",
+                detail: oldRunID
+            ),
+            DesktopChatTranscriptEntry(
+                id: "new-user",
+                kind: .user,
+                title: "You",
+                body: "New Agent user turn.",
+                detail: ""
+            ),
+            DesktopChatTranscriptEntry(
+                id: newMarkerID,
+                kind: .agentRun,
+                title: "Melix Agent Run",
+                body: "Run details are stored in Agent history.",
+                detail: newRunID
+            ),
+        ]
+        let oldAssistantID = "agent-assistant-\(oldRunID)"
+        let updatedTranscript = RuntimeViewModel.insertingAgentRunCompanion(
+            DesktopChatTranscriptEntry(
+                id: oldAssistantID,
+                kind: .assistant,
+                title: "Melix Agent",
+                body: "Old Agent completed answer.",
+                detail: "2 turns • 1 tools"
+            ),
+            runID: oldRunID,
+            into: transcript
+        )
+
+        let oldMarkerIndex = try #require(
+            updatedTranscript.firstIndex { $0.id == oldMarkerID }
+        )
+        let oldAssistantIndex = try #require(
+            updatedTranscript.firstIndex { $0.id == oldAssistantID }
+        )
+        let newUserIndex = try #require(
+            updatedTranscript.firstIndex { $0.id == "new-user" }
+        )
+        let newMarkerIndex = try #require(
+            updatedTranscript.firstIndex { $0.id == newMarkerID }
+        )
+        #expect(oldMarkerIndex < oldAssistantIndex)
+        #expect(oldAssistantIndex < newUserIndex)
+        #expect(newUserIndex < newMarkerIndex)
+        let conversation = RuntimeViewModel.chatConversationMessages(
+            from: updatedTranscript
+        )
+            .map { "\($0.role):\($0.content)" }
+        #expect(conversation == [
+            "user:Old Agent user turn.",
+            "assistant:Old Agent completed answer.",
+            "user:New Agent user turn.",
+        ])
+    }
+
+    @Test("A terminal-before-cancel Chat transition preserves the previous receipt")
+    @MainActor
+    func terminalBeforeContextCancellationPreservesPreviousReceipt() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let originalSession = try #require(viewModel.selectedChatSession)
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Create the previous cancellation receipt."
+        await viewModel.submitChatPrompt()
+        let previousRunID = try #require(viewModel.currentChatAgentRun?.runID)
+        #expect(await viewModel.stopActiveChatOrAgent(reason: "first_stop"))
+        #expect(viewModel.lastAgentCancellationReceipt?.runID == previousRunID)
+
+        viewModel.createChatSession()
+        let targetSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.selectChatSession(id: originalSession.id)
+        try await waitForRuntimeViewModelCondition(
+            "the original Chat should finish Agent reconciliation before the terminal race"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+                && viewModel.agentRunReconciliationNeedsRetry == false
+        }
+        await client.configureAgentStartDelay(.milliseconds(120))
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Finish while context cancellation is in flight."
+        let secondSubmission = Task {
+            await viewModel.submitChatPrompt()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "the second run should publish its caller-bound ID"
+        ) {
+            viewModel.activeAgentRunID.isEmpty == false
+                && viewModel.activeAgentRunID != previousRunID
+        }
+        let secondRunID = viewModel.activeAgentRunID
+        var secondSnapshot = makeBasicAgentRunSnapshot(
+            runID: secondRunID,
+            sessionID: originalSession.id,
+            branchID: originalSession.branchID,
+            updatedAtUnixMs: 1_800_000_001_000
+        )
+        await client.configureAgentSnapshot(secondSnapshot)
+        await secondSubmission.value
+        await client.configureAgentStartDelay(.zero)
+
+        await client.configureAgentCancellationDelay(.milliseconds(180))
+        await client.configureAgentCancellationError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "cancel_transport_lost",
+                message: "The cancellation transport reply was lost."
+            )
+        )
+        viewModel.selectChatSession(id: targetSessionID)
+        try await waitForFakeControlPlaneCondition(
+            "the exact second-run cancellation should be in flight"
+        ) {
+            await client.recordedAgentCancellations.contains {
+                $0.runID == secondRunID
+            }
+        }
+        secondSnapshot.state = "completed"
+        secondSnapshot.revision = 2
+        secondSnapshot.updatedAtUnixMs += 100
+        secondSnapshot.assistantText = "The second run finished first."
+        await client.configureAgentSnapshot(secondSnapshot)
+        await viewModel.refreshAgentRunsForOperator()
+
+        try await waitForRuntimeViewModelCondition(
+            "the exact terminal snapshot should allow the context transition"
+        ) {
+            viewModel.selectedChatSession?.id == targetSessionID
+        }
+        #expect(viewModel.lastAgentCancellationReceipt?.runID == previousRunID)
+    }
+
+    @Test("Sidebar target actions keep export and clear scoped and fork atomically")
+    @MainActor
+    func sidebarTargetActionsPreserveActiveChatScope() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let activeSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.createChatSession()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let targetSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.chatComposerText = "Target Chat transcript."
+        await viewModel.submitChatPrompt()
+        viewModel.selectChatSession(id: activeSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "the active Chat should finish Agent reconciliation before submission"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+                && viewModel.agentRunReconciliationNeedsRetry == false
+        }
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Keep this Agent active during target actions."
+        await viewModel.submitChatPrompt()
+        let activeRunID = try #require(viewModel.currentChatAgentRun?.runID)
+
+        let exportPath = try #require(
+            viewModel.exportChatSession(id: targetSessionID)
+        )
+        #expect(exportPath.contains("chat-2-export.md"))
+        #expect(viewModel.selectedChatSession?.id == activeSessionID)
+        #expect(await client.recordedAgentCancellations.isEmpty)
+
+        #expect(
+            viewModel.chatSessionDestructiveActionsRequireAgentClose(
+                sessionID: targetSessionID
+            ) == false
+        )
+        viewModel.clearChatTranscript(sessionID: targetSessionID)
+        #expect(
+            viewModel.chatSessions.first(where: { $0.id == targetSessionID })?
+                .transcript.isEmpty == true
+        )
+        #expect(viewModel.selectedChatSession?.id == activeSessionID)
+        #expect(await client.recordedAgentCancellations.isEmpty)
+
+        viewModel.forkChatSession(id: targetSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "target Fork should stop the active Agent and open the new branch atomically"
+        ) {
+            guard let selected = viewModel.selectedChatSession else {
+                return false
+            }
+            return selected.id != activeSessionID
+                && selected.id != targetSessionID
+                && selected.title.hasSuffix(" Fork")
+        }
+        let cancellation = try #require(
+            await client.recordedAgentCancellations.last
+        )
+        #expect(cancellation.runID == activeRunID)
+        #expect(cancellation.reason == "chat_context_changed")
+    }
+
+    @Test("Ordinary Ask Chats remain clearable and deletable with Agent runtime available")
+    @MainActor
+    func ordinaryChatDestructiveActionsRemainAvailable() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let retainedSessionID = try #require(viewModel.selectedChatSession?.id)
+
+        viewModel.createChatSession()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let ordinarySessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.chatComposerText = "Keep ordinary Chat actions working."
+        await viewModel.submitChatPrompt()
+        viewModel.selectChatSession(id: retainedSessionID)
+        try await waitForRuntimeViewModelCondition(
+            "the retained Chat should finish Agent reconciliation"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+        }
+
+        #expect(
+            viewModel.chatSessionDestructiveActionsRequireAgentClose(
+                sessionID: ordinarySessionID
+            ) == false
+        )
+        viewModel.clearChatTranscript(sessionID: ordinarySessionID)
+        #expect(
+            viewModel.chatSessions.first(where: { $0.id == ordinarySessionID })?
+                .transcript.isEmpty == true
+        )
+
+        viewModel.deleteChatSession(id: ordinarySessionID)
+        #expect(
+            viewModel.chatSessions.contains(where: { $0.id == ordinarySessionID })
+                == false
+        )
+        #expect(viewModel.selectedChatSession?.id == retainedSessionID)
+        #expect(viewModel.selectedSurface == .chat)
+    }
+
+    @Test("Off-session Clear and Delete fail closed until Agent session close is implemented")
+    @MainActor
+    func targetChatDestructiveActionsRequirePermanentSessionClose() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let selectedSession = try #require(viewModel.selectedChatSession)
+
+        viewModel.createChatSession()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let clearTarget = try #require(viewModel.selectedChatSession)
+        viewModel.chatComposerText = "Keep this target transcript."
+        await viewModel.submitChatPrompt()
+        let clearTranscript = try #require(
+            viewModel.selectedChatSession
+        ).transcript
+        viewModel.selectChatSession(id: selectedSession.id)
+        try await waitForRuntimeViewModelCondition(
+            "the selected Chat should finish global Agent reconciliation"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+        }
+        var clearRun = makeBasicAgentRunSnapshot(
+            runID: "agent-target-clear",
+            sessionID: clearTarget.id,
+            branchID: clearTarget.branchID,
+            updatedAtUnixMs: 1_800_000_018_000
+        )
+        clearRun.state = "tool_running"
+        await client.configureAgentSnapshot(clearRun)
+        await viewModel.refreshAgentRunsForOperator()
+
+        viewModel.clearChatTranscript(sessionID: clearTarget.id)
+
+        #expect(viewModel.selectedChatSession?.id == selectedSession.id)
+        #expect(
+            viewModel.chatSessions.first { $0.id == clearTarget.id }?.transcript
+                == clearTranscript
+        )
+        #expect(await client.recordedAgentCancellations.isEmpty)
+        #expect(
+            viewModel.chatSessions.first { $0.id == clearTarget.id }?.statusText
+                == "Clear Chat Unavailable • Session Close Required"
+        )
+
+        viewModel.createChatSession()
+        let deleteTarget = try #require(viewModel.selectedChatSession)
+        viewModel.selectChatSession(id: selectedSession.id)
+        try await waitForRuntimeViewModelCondition(
+            "the selected Chat should rehydrate before target Delete"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+        }
+        var deleteRun = makeBasicAgentRunSnapshot(
+            runID: "agent-target-delete",
+            sessionID: deleteTarget.id,
+            branchID: deleteTarget.branchID,
+            updatedAtUnixMs: 1_800_000_018_100
+        )
+        deleteRun.state = "waiting_for_approval"
+        await client.configureAgentSnapshot(deleteRun)
+        await viewModel.refreshAgentRunsForOperator()
+
+        viewModel.deleteChatSession(id: deleteTarget.id)
+
+        #expect(viewModel.selectedChatSession?.id == selectedSession.id)
+        #expect(viewModel.chatSessions.contains { $0.id == deleteTarget.id })
+        #expect(await client.recordedAgentCancellations.isEmpty)
+        #expect(
+            viewModel.chatSessions.first { $0.id == deleteTarget.id }?.statusText
+                == "Delete Chat Unavailable • Session Close Required"
+        )
+    }
+
+    @Test("Off-session Delete does not attempt cancellation before session-close support exists")
+    @MainActor
+    func targetChatDeleteDoesNotUseAListThenCancelApproximation() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let selectedSession = try #require(viewModel.selectedChatSession)
+        viewModel.createChatSession()
+        let targetSession = try #require(viewModel.selectedChatSession)
+        viewModel.selectChatSession(id: selectedSession.id)
+        try await waitForRuntimeViewModelCondition(
+            "the selected Chat should finish global Agent reconciliation"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+        }
+        var active = makeBasicAgentRunSnapshot(
+            runID: "agent-target-delete-binding",
+            sessionID: targetSession.id,
+            branchID: targetSession.branchID,
+            updatedAtUnixMs: 1_800_000_018_200
+        )
+        active.state = "model_turn"
+        await client.configureAgentSnapshot(active)
+        await viewModel.refreshAgentRunsForOperator()
+        var mismatched = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        mismatched.runID = "another-agent-run"
+        mismatched.disposition = "accepted"
+        mismatched.sideEffectState = .agentToolSideEffectNone
+        await client.configureAgentCancellationReceipt(
+            mismatched,
+            preserveRunID: true
+        )
+
+        viewModel.deleteChatSession(id: targetSession.id)
+
+        #expect(
+            viewModel.chatSessions.contains(where: {
+                $0.id == targetSession.id
+            })
+        )
+        #expect(viewModel.selectedChatSession?.id == selectedSession.id)
+        #expect(viewModel.selectedSurface == .chat)
+        #expect(await client.recordedAgentCancellations.isEmpty)
+        #expect(
+            viewModel.lastError?.contains(
+                "permanent Agent session closing is not enabled"
+            ) == true
+        )
+    }
+
+    @Test("Off-session Clear remains unavailable regardless of cached Agent count")
+    @MainActor
+    func targetChatClearRejectsMultipleActiveAgents() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let selectedSession = try #require(viewModel.selectedChatSession)
+        viewModel.createChatSession()
+        let targetSession = try #require(viewModel.selectedChatSession)
+        viewModel.selectChatSession(id: selectedSession.id)
+        try await waitForRuntimeViewModelCondition(
+            "the selected Chat should finish global Agent reconciliation"
+        ) {
+            viewModel.agentRunReconciliationInProgress == false
+        }
+        for (runID, updatedAt) in [
+            ("agent-target-clear-a", Int64(1_800_000_018_300)),
+            ("agent-target-clear-b", Int64(1_800_000_018_400)),
+        ] {
+            var active = makeBasicAgentRunSnapshot(
+                runID: runID,
+                sessionID: targetSession.id,
+                branchID: targetSession.branchID,
+                updatedAtUnixMs: updatedAt
+            )
+            active.state = "tool_running"
+            await client.configureAgentSnapshot(active)
+        }
+        await viewModel.refreshAgentRunsForOperator()
+
+        viewModel.clearChatTranscript(sessionID: targetSession.id)
+
+        #expect(
+            viewModel.chatSessions.first(where: {
+                $0.id == targetSession.id
+            })?.statusText
+                == "Clear Chat Unavailable • Session Close Required"
+        )
+        #expect(await client.recordedAgentCancellations.isEmpty)
+        #expect(viewModel.selectedChatSession?.id == selectedSession.id)
+        #expect(viewModel.selectedSurface == .chat)
+        #expect(
+            viewModel.lastError?.contains(
+                "permanent Agent session closing is not enabled"
+            ) == true
+        )
+    }
+
+    @Test("Forking another Chat cancels the current Ask stream before opening the fork")
+    @MainActor
+    func sidebarTargetForkInvalidatesCurrentAskStream() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(
+                delay: .seconds(1),
+                event: .tokenDelta("stale Ask answer")
+            ),
+            .init(
+                event: .completed(
+                    finishReason: "stop",
+                    assistantText: "stale Ask answer",
+                    reasoningText: ""
+                )
+            ),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let activeSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.createChatSession()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let targetSessionID = try #require(viewModel.selectedChatSession?.id)
+        viewModel.selectChatSession(id: activeSessionID)
+        viewModel.chatComposerText = "Cancel this Ask stream before forking."
+        let submission = Task { @MainActor in
+            await viewModel.submitChatPrompt()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "the Ask stream should be active before target Fork"
+        ) {
+            viewModel.isChatStreaming
+        }
+
+        viewModel.forkChatSession(id: targetSessionID)
+        let forkedSessionID = try #require(viewModel.selectedChatSession?.id)
+        #expect(forkedSessionID != activeSessionID)
+        #expect(forkedSessionID != targetSessionID)
+        #expect(viewModel.selectedChatSession?.title.hasSuffix(" Fork") == true)
+        try await waitForFakeControlPlaneCondition(
+            "the previous Ask execution should receive backend cancellation"
+        ) {
+            await client.recordedChatCancellationRequestIDs.isEmpty == false
+        }
+        await submission.value
+
+        let interrupted = try #require(
+            viewModel.chatSessions.first { $0.id == activeSessionID }
+        )
+        #expect(interrupted.statusText == "Interrupted")
+        #expect(
+            viewModel.chatTranscript.contains {
+                $0.body.contains("stale Ask answer")
+            } == false
+        )
+    }
+
+    @Test("Agent approval and Stop wait for bound typed receipts")
+    @MainActor
+    func agentApprovalAndStopWaitForBoundTypedReceipts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let metrics = MenuBarMetricsStore()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "mcp-tools",
+            "computer-use",
+        ])
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+
+        var binding = Melix_Controlplane_V1_AgentApprovalBinding()
+        binding.runID = "agent-run-approval"
+        binding.callID = "call-save"
+        binding.schemaDigest = "schema-v1"
+        binding.argumentDigest = "argument-v1"
+        binding.policyRevision = "policy-v1"
+        binding.bindingDigest = "binding-v1"
+
+        var approval = Melix_Controlplane_V1_AgentPendingApproval()
+        approval.binding = binding
+        approval.sourceID = "workspace"
+        approval.toolName = "workspace.write_file"
+        approval.title = "Write report"
+        approval.intendedEffect = "Write report.md in the selected workspace."
+        approval.riskClass = "high"
+
+        var tool = Melix_Controlplane_V1_AgentToolCallSnapshot()
+        tool.callID = binding.callID
+        tool.sourceID = approval.sourceID
+        tool.toolName = approval.toolName
+        tool.title = approval.title
+        tool.intendedEffect = approval.intendedEffect
+        tool.riskClass = approval.riskClass
+        tool.state = "waiting_for_approval"
+        tool.schemaDigest = binding.schemaDigest
+        tool.argumentDigest = binding.argumentDigest
+
+        var snapshot = Melix_Controlplane_V1_AgentRunSnapshot()
+        snapshot.runID = binding.runID
+        snapshot.sessionID = session.id
+        snapshot.branchID = session.branchID
+        snapshot.modelID = "melix-dev-text"
+        snapshot.state = "waiting_for_approval"
+        snapshot.toolCalls = [tool]
+        snapshot.pendingApproval = approval
+        snapshot.startedAtUnixMs = 1_800_000_000_000
+        snapshot.updatedAtUnixMs = snapshot.startedAtUnixMs
+        await client.configureAgentSnapshot(snapshot)
+        var degradedReceipt =
+            Melix_Controlplane_V1_AgentApprovalDecisionReceipt()
+        degradedReceipt.binding = binding
+        degradedReceipt.choice = .agentApprovalAlwaysAllow
+        degradedReceipt.decisionID = "decision-policy-save-failed"
+        degradedReceipt.actorID = "test-operator"
+        degradedReceipt.decidedAtUnixMs = 1_800_000_000_100
+        degradedReceipt.policyRevisionAfterDecision = binding.policyRevision
+        degradedReceipt.policyPersistenceDisposition =
+            .agentApprovalPolicyPersistenceNotApplied
+        degradedReceipt.policyPersistenceError.code =
+            "agent_approval_policy_persistence_failed"
+        degradedReceipt.policyPersistenceError.message =
+            "This call was approved, but Always Allow could not be saved."
+        await client.configureAgentApprovalDecisionReceipt(degradedReceipt)
+
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Write the report."
+        await viewModel.submitChatPrompt()
+
+        let admittedRunID = try #require(
+            await client.recordedAgentStarts.last?.runID
+        )
+        #expect(admittedRunID.isEmpty == false)
+        #expect(viewModel.pendingAgentApproval?.binding.bindingDigest == "binding-v1")
+        await viewModel.decideAgentApproval(.agentApprovalAlwaysAllow)
+
+        let decision = try #require(await client.recordedAgentApprovals.last)
+        #expect(decision.binding.runID == admittedRunID)
+        #expect(decision.binding.bindingDigest == "binding-v1")
+        #expect(decision.choice == .agentApprovalAlwaysAllow)
+        #expect(viewModel.pendingAgentApproval == nil)
+        #expect(viewModel.currentChatAgentRun?.state == "tool_running")
+        #expect(
+            viewModel.chatStatusText
+                == "Agent • Allowed This Call • Always Allow Not Saved"
+        )
+        #expect(
+            viewModel.lastError
+                == "This call was approved, but Always Allow could not be saved."
+        )
+
+        await viewModel.stopActiveChatOrAgent(reason: "test_stop")
+
+        let cancellation = try #require(await client.recordedAgentCancellations.last)
+        #expect(cancellation.runID == admittedRunID)
+        #expect(cancellation.reason == "test_stop")
+        #expect(viewModel.lastAgentCancellationReceipt?.runID == admittedRunID)
+        #expect(viewModel.lastAgentCancellationReceipt?.disposition == "accepted")
+        #expect(
+            viewModel.lastAgentCancellationReceipt?.sideEffectState
+                == .agentToolSideEffectNone
+        )
+        #expect(viewModel.currentChatAgentRun?.state == "cancelled")
+        #expect(viewModel.isAgentRunning == false)
+        let metricSnapshot = await metrics.snapshot()
+        #expect(metricSnapshot["agent.approval.wait_ms"] != nil)
+        #expect(metricSnapshot["agent.approval.decision_propagation_ms"] != nil)
+        // The current cancellation RPC returns the terminal receipt, not a
+        // control-plane admission acknowledgement. Recording the whole round
+        // trip under this narrower metric would be false precision.
+        #expect(metricSnapshot["agent.cancel.ui_to_control_plane_ms"] == nil)
+        #expect(metricSnapshot["agent.cancel.total_ms"] != nil)
+    }
+
+    @Test("Agent approval rejects a receipt with a changed exact binding")
+    @MainActor
+    func agentApprovalRejectsChangedExactReceiptBinding() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+
+        var binding = Melix_Controlplane_V1_AgentApprovalBinding()
+        binding.runID = "agent-run-receipt-binding"
+        binding.callID = "call-receipt-binding"
+        binding.schemaDigest = "schema-v1"
+        binding.argumentDigest = "argument-v1"
+        binding.policyRevision = "policy-v1"
+        binding.bindingDigest = "binding-v1"
+
+        var approval = Melix_Controlplane_V1_AgentPendingApproval()
+        approval.binding = binding
+        approval.sourceID = "builtin"
+        approval.toolName = "workspace_file"
+        approval.title = "Write report"
+        approval.intendedEffect = "Write report.md."
+        approval.riskClass = "high"
+        approval.operationKind = "write"
+
+        var snapshot = Melix_Controlplane_V1_AgentRunSnapshot()
+        snapshot.runID = binding.runID
+        snapshot.sessionID = session.id
+        snapshot.branchID = session.branchID
+        snapshot.modelID = "melix-dev-text"
+        snapshot.state = "waiting_for_approval"
+        snapshot.pendingApproval = approval
+        snapshot.startedAtUnixMs = 1_800_000_000_000
+        snapshot.updatedAtUnixMs = snapshot.startedAtUnixMs
+        await client.configureAgentSnapshot(snapshot)
+
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Write the report."
+        await viewModel.submitChatPrompt()
+        let pendingBinding = try #require(
+            viewModel.pendingAgentApproval?.binding
+        )
+        var changedBinding = pendingBinding
+        changedBinding.schemaDigest = "schema-v2"
+        changedBinding.bindingDigest = "binding-v2"
+        var mismatchedReceipt =
+            Melix_Controlplane_V1_AgentApprovalDecisionReceipt()
+        mismatchedReceipt.binding = changedBinding
+        mismatchedReceipt.choice = .agentApprovalAllowOnce
+        mismatchedReceipt.decisionID = "decision-mismatch"
+        await client.configureAgentApprovalDecisionReceipt(mismatchedReceipt)
+        await viewModel.decideAgentApproval(.agentApprovalAllowOnce)
+
+        #expect(
+            viewModel.chatStatusText
+                == "Approval Failed • approval_receipt_binding_mismatch"
+        )
+        #expect(viewModel.pendingAgentApproval?.binding == pendingBinding)
+    }
+
+    @Test("Computer Use remains visible while the next model turn is running")
+    @MainActor
+    func computerUseRemainsVisibleDuringNextModelTurn() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "computer-use-semantic-press",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+
+        let snapshot = makeActiveComputerUseAgentSnapshot(
+            runID: "agent-run-computer",
+            sessionID: session.id,
+            branchID: session.branchID
+        )
+        await client.configureAgentSnapshot(snapshot)
+
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Inspect the active window."
+        await viewModel.submitChatPrompt()
+
+        #expect(viewModel.activeComputerUseToolCall == nil)
+        let presentation = try #require(
+            viewModel.currentComputerUseSessionPresentation
+        )
+        #expect(presentation.state == "Open")
+        #expect(presentation.targetHeading == "Active target")
+        #expect(presentation.targets.map(\.app) == ["com.apple.Safari"])
+        #expect(
+            presentation.targets.map(\.window)
+                == ["Melix acceptance · Window #42"]
+        )
+        #expect(presentation.additionalTargetCount == 0)
+        #expect(presentation.frameBudget == "2 / 8 used")
+        #expect(presentation.actionBudget == "1 / 4 used")
+        #expect(presentation.idleDeadline != nil)
+        #expect(presentation.absoluteDeadline != nil)
+        #expect(presentation.screenRecordingPermission == "Granted")
+        #expect(presentation.accessibilityPermission == "Granted")
+        #expect(presentation.restartStatus == "Not Required")
+        #expect(presentation.lastAction == "Press element · action-1")
+        #expect(presentation.lastResult == "Completed")
+        #expect(presentation.canStop)
+    }
+
+    @Test("Computer Use Stop copy stays bound to disposition and side-effect state")
+    @MainActor
+    func computerUseStopCopyUsesTypedCancellationReceipt() async throws {
+        let cases: [(
+            name: String,
+            disposition: String,
+            sideEffectState: Melix_Controlplane_V1_AgentToolSideEffectState,
+            sideEffectCommitted: Bool,
+            expectedStatus: String,
+            isWarning: Bool,
+            expectsTerminal: Bool
+        )] = [
+            (
+                "accepted-none",
+                "accepted",
+                .agentToolSideEffectNone,
+                false,
+                "Computer Use stopped before any side effect was reported.",
+                false,
+                true
+            ),
+            (
+                "already-terminal-none",
+                "already_terminal",
+                .agentToolSideEffectNone,
+                false,
+                "Computer Use had already ended. Review the cancellation receipt before relying on the target state.",
+                true,
+                true
+            ),
+            (
+                "too-late-none",
+                "too_late",
+                .agentToolSideEffectNone,
+                false,
+                "Computer Use stop arrived too late. Review the cancellation receipt and verify the target state.",
+                true,
+                false
+            ),
+            (
+                "accepted-committed",
+                "accepted",
+                .agentToolSideEffectCommitted,
+                true,
+                "Warning: a Computer Use side effect committed before cancellation was reported. Review the receipt and verify the target state.",
+                true,
+                true
+            ),
+            (
+                "accepted-unknown",
+                "accepted",
+                .agentToolSideEffectUnknown,
+                false,
+                "Warning: Computer Use side-effect state is unknown. Review the receipt and verify the target state.",
+                true,
+                true
+            ),
+        ]
+
+        for testCase in cases {
+            let client = FakeControlPlaneXPCClient()
+            await client.configureHandshakeFeatures([
+                "xpc",
+                "models",
+                "agent-runtime",
+                "computer-use-semantic-press",
+            ])
+            let viewModel = RuntimeViewModel(client: client)
+            await viewModel.start()
+            try bindSelectedChatSessionToPrimaryServer(viewModel)
+            let session = try #require(viewModel.selectedChatSession)
+            let runID = "agent-run-\(testCase.name)"
+            await client.configureAgentSnapshot(
+                makeActiveComputerUseAgentSnapshot(
+                    runID: runID,
+                    sessionID: session.id,
+                    branchID: session.branchID
+                )
+            )
+            var receipt = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+            receipt.cancellationID = "cancel-\(testCase.name)"
+            receipt.disposition = testCase.disposition
+            receipt.sideEffectState = testCase.sideEffectState
+            receipt.sideEffectCommitted = testCase.sideEffectCommitted
+            await client.configureAgentCancellationReceipt(receipt)
+
+            viewModel.setChatInteractionMode(.act)
+            viewModel.chatComposerText = "Stop Computer Use."
+            await viewModel.submitChatPrompt()
+            #expect(viewModel.currentComputerUseSessionPresentation != nil)
+
+            await viewModel.stopActiveComputerUse()
+
+            #expect(
+                viewModel.activeComputerUseControlStatus
+                    == testCase.expectedStatus,
+                Comment(rawValue: testCase.name)
+            )
+            #expect(
+                viewModel.activeComputerUseControlIsWarning
+                    == testCase.isWarning,
+                Comment(rawValue: testCase.name)
+            )
+            #expect(
+                viewModel.activeComputerUseControlStatus.contains(
+                    "cancellation confirmed"
+                ) == false,
+                Comment(rawValue: testCase.name)
+            )
+            #expect(
+                (viewModel.currentComputerUseSessionPresentation == nil)
+                    == testCase.expectsTerminal,
+                Comment(rawValue: testCase.name)
+            )
+            #expect(
+                viewModel.shouldDisplayActiveComputerUseControlStatus,
+                Comment(rawValue: testCase.name)
+            )
+        }
+    }
+
+    @Test("Repeated Computer Use Stop keeps the exact idempotent receipt meaning")
+    @MainActor
+    func repeatedComputerUseStopKeepsTypedReceiptMeaning() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "computer-use-semantic-press",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+        let runID = "agent-run-repeat-computer-stop"
+        await client.configureAgentSnapshot(
+            makeActiveComputerUseAgentSnapshot(
+                runID: runID,
+                sessionID: session.id,
+                branchID: session.branchID
+            )
+        )
+        var receipt = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        receipt.cancellationID = "cancel-repeat-computer-stop"
+        receipt.disposition = "too_late"
+        receipt.sideEffectState = .agentToolSideEffectNone
+        await client.configureAgentCancellationReceipt(receipt)
+
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Stop Computer Use twice."
+        await viewModel.submitChatPrompt()
+
+        await viewModel.stopActiveComputerUse()
+        let firstStatus = viewModel.activeComputerUseControlStatus
+        await viewModel.stopActiveComputerUse()
+
+        #expect(
+            firstStatus
+                == "Computer Use stop arrived too late. Review the cancellation receipt and verify the target state."
+        )
+        #expect(viewModel.activeComputerUseControlStatus == firstStatus)
+        #expect(viewModel.activeComputerUseControlIsWarning)
+    }
+
+    @Test("Agent message projection keeps structured tool-call history")
+    @MainActor
+    func agentRunMessageProjectionKeepsStructuredToolHistory() {
+        let firstCall = ControlPlaneChatRequest.Message.ToolCall(
+            callID: "call-read",
+            toolName: "read_file",
+            argumentsJSON: #"{"path":"README.md"}"#
+        )
+        let secondCall = ControlPlaneChatRequest.Message.ToolCall(
+            callID: "call-list",
+            toolName: "list_directory",
+            argumentsJSON: #"{"path":"docs"}"#
+        )
+        let messages = RuntimeViewModel.agentRunMessages(from: [
+            .init(
+                role: "assistant",
+                content: "I will inspect both paths.",
+                toolCalls: [firstCall, secondCall]
+            ),
+            .init(
+                role: "tool",
+                content: #"{"status":"completed"}"#,
+                name: "read_file",
+                toolCallID: "call-read"
+            ),
+        ])
+
+        #expect(messages.count == 4)
+        #expect(messages[0].role == "assistant")
+        #expect(messages[0].content == "I will inspect both paths.")
+        #expect(messages[1].toolCallID == "call-read")
+        #expect(messages[1].toolName == "read_file")
+        #expect(messages[1].toolArgumentsJson == #"{"path":"README.md"}"#)
+        #expect(messages[2].toolCallID == "call-list")
+        #expect(messages[2].toolName == "list_directory")
+        #expect(messages[2].toolArgumentsJson == #"{"path":"docs"}"#)
+        #expect(messages[3].role == "tool")
+        #expect(messages[3].toolCallID == "call-read")
+        #expect(messages[3].toolName == "read_file")
+        #expect(messages[3].content == #"{"status":"completed"}"#)
+    }
+
+    @Test("Agents refreshes and revokes a saved approval rule with revision CAS")
+    @MainActor
+    func agentApprovalPolicyRefreshAndRevokeUsesCAS() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+        ])
+        var rule = Melix_Controlplane_V1_AgentApprovalPolicyRule()
+        rule.id = "allow-filesystem-read"
+        rule.effect = .agentApprovalPolicyAllow
+        rule.sourceID = "filesystem"
+        rule.toolName = "read_file"
+        rule.riskClass = .low
+        rule.operationKind = .agentApprovalOperationRead
+        rule.workspaceScope = "/workspace"
+        rule.schemaDigest = String(repeating: "a", count: 64)
+        var policy = Melix_Controlplane_V1_AgentApprovalPolicySnapshot()
+        policy.schemaVersion = "melix.agent-approval-policy.v1"
+        policy.revision = 7
+        policy.rules = [rule]
+        await client.configureAgentApprovalPolicy(policy)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshAgentApprovalPolicyForOperator()
+
+        #expect(viewModel.agentApprovalPolicy.revision == 7)
+        #expect(viewModel.agentApprovalPolicy.rules.map(\.id) == [rule.id])
+        #expect(viewModel.agentApprovalPolicyStatusText.contains("1 saved"))
+
+        await viewModel.revokeAgentApprovalPolicyRule(id: rule.id)
+
+        #expect(viewModel.agentApprovalPolicy.revision == 8)
+        #expect(viewModel.agentApprovalPolicy.rules.isEmpty)
+        #expect(viewModel.agentApprovalPolicyStatusText == "Saved policy revoked.")
+        #expect(
+            await client.recordedActions.contains("agent.policy.replace:7")
+        )
+    }
+
+    @Test("Agent policy revocation fails closed on mismatched and stale receipts")
+    @MainActor
+    func agentApprovalPolicyRevocationRejectsInvalidReceipts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+        ])
+        var rule = Melix_Controlplane_V1_AgentApprovalPolicyRule()
+        rule.id = "allow-workspace-write"
+        rule.effect = .agentApprovalPolicyAllow
+        rule.sourceID = "workspace"
+        rule.toolName = "write_file"
+        rule.riskClass = .high
+        rule.operationKind = .agentApprovalOperationWrite
+        var policy = Melix_Controlplane_V1_AgentApprovalPolicySnapshot()
+        policy.schemaVersion = "melix.agent-approval-policy.v1"
+        policy.revision = 11
+        policy.rules = [rule]
+        await client.configureAgentApprovalPolicy(policy)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshAgentApprovalPolicyForOperator()
+
+        var mismatched = policy
+        mismatched.revision = 12
+        await client.configureAgentApprovalPolicyReplacement(mismatched)
+        await viewModel.revokeAgentApprovalPolicyRule(id: rule.id)
+
+        #expect(
+            viewModel.agentApprovalPolicyStatusText
+                == "Policy update failed • agent_policy_receipt_mismatch"
+        )
+        #expect(viewModel.agentApprovalPolicy.rules.map(\.id) == [rule.id])
+        #expect(
+            viewModel.lastError
+                == "The updated approval policy did not confirm the requested revocation."
+        )
+
+        await client.configureAgentApprovalPolicyReplacement(nil)
+        var concurrentPolicy = policy
+        concurrentPolicy.revision = 12
+        await client.configureAgentApprovalPolicy(concurrentPolicy)
+        await viewModel.revokeAgentApprovalPolicyRule(id: rule.id)
+
+        #expect(viewModel.agentApprovalPolicy.revision == 12)
+        #expect(viewModel.agentApprovalPolicy.rules.map(\.id) == [rule.id])
+        #expect(viewModel.agentApprovalPolicyStatusText.contains("1 saved"))
+    }
+
+    @Test("Computer Use Stop preserves the last receipt when transport fails")
+    @MainActor
+    func computerUseStopPreservesReceiptAcrossTransportFailure() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "computer-use-semantic-press",
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        let session = try #require(viewModel.selectedChatSession)
+        let runID = "agent-run-computer-stop-transport"
+        await client.configureAgentSnapshot(
+            makeActiveComputerUseAgentSnapshot(
+                runID: runID,
+                sessionID: session.id,
+                branchID: session.branchID
+            )
+        )
+        var receipt = Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        receipt.cancellationID = "cancel-before-transport-failure"
+        receipt.disposition = "too_late"
+        receipt.sideEffectState = .agentToolSideEffectNone
+        await client.configureAgentCancellationReceipt(receipt)
+
+        viewModel.setChatInteractionMode(.act)
+        viewModel.chatComposerText = "Stop Computer Use reliably."
+        await viewModel.submitChatPrompt()
+        await viewModel.stopActiveComputerUse()
+        #expect(
+            viewModel.lastAgentCancellationReceipt?.cancellationID
+                == receipt.cancellationID
+        )
+
+        await client.configureAgentCancellationError(
+            ControlPlaneXPCClientError.requestFailed(
+                code: "cancel_transport_failed",
+                message: "The cancellation transport failed."
+            )
+        )
+        await viewModel.stopActiveComputerUse()
+
+        #expect(
+            viewModel.lastAgentCancellationReceipt?.cancellationID
+                == receipt.cancellationID
+        )
+        #expect(viewModel.activeComputerUseControlIsWarning)
+        #expect(
+            viewModel.activeComputerUseControlStatus
+                == "Computer Use stop was not confirmed. Review the last available receipt before interacting with the target."
+        )
+        #expect(
+            viewModel.chatStatusText
+                == "Agent Stop Failed • cancel_transport_failed"
+        )
+        #expect(viewModel.lastError == "The cancellation transport failed.")
+    }
+
+    @Test("Agents refreshes the live tool and Computer permission read model")
+    @MainActor
+    func agentOperationsRefreshUsesTypedRuntimeSnapshot() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "computer-use-semantic-press",
+        ])
+        var source = Melix_Controlplane_V1_AgentToolSourceStatus()
+        source.sourceID = "builtin"
+        source.transportKind = "in_process"
+        source.connectionState = "ready"
+        source.toolCount = 1
+        var failedSource = Melix_Controlplane_V1_AgentToolSourceStatus()
+        failedSource.sourceID = "docs"
+        failedSource.transportKind = "streamable_http"
+        failedSource.connectionState = "failed"
+        failedSource.errorCode = "mcp_connect_failed"
+        var tool = Melix_Controlplane_V1_AgentToolDefinitionSummary()
+        tool.sourceID = "builtin"
+        tool.adapterKind = "builtin"
+        tool.name = "environment_info"
+        tool.schemaDigest = String(repeating: "a", count: 64)
+        tool.riskClass = "low"
+        var computer = Melix_Controlplane_V1_AgentComputerUseStatus()
+        computer.brokerConfigured = true
+        computer.capabilityLevel = "ax_semantic_press_only"
+        computer.screenRecordingPermission = "granted"
+        computer.accessibilityPermission = "denied"
+        computer.maximumFrames = 16
+        computer.maximumActions = 8
+        var operations = Melix_Controlplane_V1_AgentOperationsSnapshot()
+        operations.toolSources = [source, failedSource]
+        operations.tools = [tool]
+        operations.computerUse = computer
+        operations.catalogDigest = "catalog-1"
+        operations.observedAtUnixMs = 1_800_000_000_000
+        await client.configureAgentOperations(operations)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshAgentOperationsForOperator()
+
+        #expect(viewModel.agentOperations.catalogDigest == "catalog-1")
+        #expect(viewModel.agentOperations.toolSources.map(\.sourceID) == [
+            "builtin",
+            "docs",
+        ])
+        #expect(viewModel.agentOperations.tools.map(\.name) == [
+            "environment_info",
+        ])
+        #expect(
+            viewModel.agentOperations.computerUse.accessibilityPermission
+                == "denied"
+        )
+        #expect(viewModel.agentOperationsStatusText == "1 source need attention")
+        #expect(await client.recordedActions.contains("agent.operations.get"))
+    }
+
+    @Test("Computer target discovery copy distinguishes failure from an empty result")
+    @MainActor
+    func computerTargetDiscoveryPresentationIsTruthful() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureHandshakeFeatures([
+            "xpc",
+            "models",
+            "agent-runtime",
+            "computer-use-semantic-press",
+        ])
+        var computer = Melix_Controlplane_V1_AgentComputerUseStatus()
+        computer.brokerConfigured = true
+        computer.capabilityLevel = "ax_semantic_press_only"
+        computer.screenRecordingPermission = "granted"
+        computer.accessibilityPermission = "granted"
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryFailed
+        computer.targetDiscoveryError.code =
+            "computer_target_discovery_timeout"
+        computer.targetDiscoveryError.retriable = true
+        var operations = Melix_Controlplane_V1_AgentOperationsSnapshot()
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        #expect(viewModel.isComputerUseTargetDiscoveryFailed)
+        #expect(viewModel.canRetryComputerUseTargetDiscovery)
+        #expect(
+            viewModel.computerUseTargetDiscoveryStatusText
+                == "Window refresh failed — try again"
+        )
+        #expect(
+            viewModel.agentCapabilityRows.last?.detail
+                == "Window refresh failed — try again"
+        )
+
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryEmpty
+        computer.clearTargetDiscoveryError()
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+        await viewModel.refreshAgentOperationsForOperator()
+
+        #expect(!viewModel.isComputerUseTargetDiscoveryFailed)
+        #expect(!viewModel.canRetryComputerUseTargetDiscovery)
+        #expect(
+            viewModel.computerUseTargetDiscoveryStatusText
+                == "No eligible on-screen windows"
+        )
+        #expect(
+            viewModel.agentCapabilityRows.last?.detail
+                == "No eligible on-screen windows"
+        )
+
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryNotRequested
+        computer.screenRecordingPermission = "denied"
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+        await viewModel.refreshAgentOperationsForOperator()
+
+        #expect(
+            viewModel.computerUseTargetDiscoveryStatusText
+                == "Grant Screen Recording to discover windows"
+        )
+
+        computer.screenRecordingPermission = "granted"
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+        await viewModel.refreshAgentOperationsForOperator()
+
+        #expect(
+            viewModel.computerUseTargetDiscoveryStatusText
+                == "Window discovery has not run"
+        )
+
+        computer.targetDiscoveryState =
+            .agentComputerUseTargetDiscoveryReady
+        computer.availableTargets = [
+            try TrustedComputerUseTarget(
+                bundleID: "io.melix.fixture",
+                processID: 4242,
+                processLaunchIdentity: "launch-fixture-ready",
+                windowID: 77,
+                windowTitle: "Fixture Window",
+                applicationName: "Fixture"
+            ).protocolValue,
+        ]
+        operations.computerUse = computer
+        await client.configureAgentOperations(operations)
+        await viewModel.refreshAgentOperationsForOperator()
+
+        #expect(
+            viewModel.computerUseTargetDiscoveryStatusText
+                == "1 live window available"
+        )
+        #expect(
+            viewModel.agentCapabilityRows.last?.detail
+                == "Select one live window to enable Computer Use."
+        )
+        #expect(viewModel.agentCapabilityRows.last?.isReady == false)
+
+        viewModel.selectComputerUseTarget(
+            id: try #require(computer.availableTargets.first).targetID
+        )
+
+        #expect(
+            viewModel.agentCapabilityRows.last?.detail
+                == "The selected live window will be frozen into the next run; text, key, scroll, and pointer actions remain unavailable."
+        )
+        #expect(viewModel.agentCapabilityRows.last?.isReady == true)
+    }
+
+    @Test("Chat Stop records backend cancellation before leaving streaming state")
+    @MainActor
+    func chatStopRecordsBackendCancellationBeforeLeavingStreamingState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureScheduledChatEvents([
+            .init(
+                delay: .milliseconds(250),
+                event: .tokenDelta("late")
+            ),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Keep working."
+
+        let submission = Task {
+            await viewModel.submitChatPrompt()
+        }
+        try await waitForRuntimeViewModelCondition(
+            "chat should enter streaming state before Stop"
+        ) {
+            viewModel.isChatStreaming
+        }
+
+        await viewModel.stopActiveChatOrAgent()
+
+        #expect(
+            await client.recordedChatCancellationRequestIDs
+                == ["chat-request-1"]
+        )
+        #expect(viewModel.lastChatCancellationReceipt?.disposition == .accepted)
+        #expect(viewModel.isChatStreaming == false)
+        #expect(viewModel.chatStatusText == "Stopped")
+        await submission.value
+    }
+
     @Test("desktop chat sends trusted public identity and explicit Thinking policy")
     @MainActor
     func desktopChatSendsTrustedIdentityAndThinkingPolicy() async throws {
@@ -15847,6 +18940,94 @@ struct RuntimeViewModelTests {
     }
 }
 
+private func makeActiveComputerUseAgentSnapshot(
+    runID: String,
+    sessionID: String,
+    branchID: String
+) -> Melix_Controlplane_V1_AgentRunSnapshot {
+    var tool = Melix_Controlplane_V1_AgentToolCallSnapshot()
+    tool.callID = "computer-call-1"
+    tool.sourceID = "computer"
+    tool.toolName = "computer_use"
+    tool.state = "completed"
+
+    var target = Melix_Controlplane_V1_AgentComputerUseTargetProjection()
+    target.availability = .agentComputerUseFieldAvailable
+    target.bundleID = "com.apple.Safari"
+    target.windowID = 42
+    target.windowTitle = "Melix acceptance"
+
+    var frameBudget = Melix_Controlplane_V1_AgentComputerUseBudgetProjection()
+    frameBudget.limitAvailability = .agentComputerUseFieldAvailable
+    frameBudget.limit = 8
+    frameBudget.usedAvailability = .agentComputerUseFieldAvailable
+    frameBudget.used = 2
+
+    var actionBudget = Melix_Controlplane_V1_AgentComputerUseBudgetProjection()
+    actionBudget.limitAvailability = .agentComputerUseFieldAvailable
+    actionBudget.limit = 4
+    actionBudget.usedAvailability = .agentComputerUseFieldAvailable
+    actionBudget.used = 1
+
+    var idleDeadline = Melix_Controlplane_V1_AgentComputerUseDeadlineProjection()
+    idleDeadline.availability = .agentComputerUseFieldAvailable
+    idleDeadline.unixMs = 1_800_000_300_000
+
+    var absoluteDeadline = Melix_Controlplane_V1_AgentComputerUseDeadlineProjection()
+    absoluteDeadline.availability = .agentComputerUseFieldAvailable
+    absoluteDeadline.unixMs = 1_800_001_800_000
+
+    var projection = Melix_Controlplane_V1_AgentComputerUseSessionProjection()
+    projection.schemaVersion = "melix.agent-computer-use-session.v1"
+    projection.sessionID = "computer-session-1"
+    projection.sessionState = .agentComputerUseSessionOpen
+    projection.allowedTargetsAvailability = .agentComputerUseFieldAvailable
+    projection.allowedTargets = [target]
+    projection.activeTarget = target
+    projection.frameBudget = frameBudget
+    projection.actionBudget = actionBudget
+    projection.idleDeadline = idleDeadline
+    projection.absoluteDeadline = absoluteDeadline
+    projection.screenRecordingPermission = .agentComputerUsePermissionGranted
+    projection.accessibilityPermission = .agentComputerUsePermissionGranted
+    projection.restartState = .agentComputerUseRestartNotRequired
+    projection.lastOperation = .agentComputerUsePressElement
+    projection.lastResult = .agentComputerUseResultCompleted
+    projection.lastActionID = "action-1"
+    projection.lastCallID = tool.callID
+    projection.updatedAtUnixMs = 1_800_000_001_000
+
+    var snapshot = Melix_Controlplane_V1_AgentRunSnapshot()
+    snapshot.runID = runID
+    snapshot.sessionID = sessionID
+    snapshot.branchID = branchID
+    snapshot.modelID = "melix-dev-text"
+    snapshot.state = "model_turn"
+    snapshot.toolCalls = [tool]
+    snapshot.computerUseSession = projection
+    snapshot.startedAtUnixMs = 1_800_000_000_000
+    snapshot.updatedAtUnixMs = snapshot.startedAtUnixMs + 1_000
+    return snapshot
+}
+
+private func makeBasicAgentRunSnapshot(
+    runID: String,
+    sessionID: String,
+    branchID: String,
+    updatedAtUnixMs: Int64
+) -> Melix_Controlplane_V1_AgentRunSnapshot {
+    var snapshot = Melix_Controlplane_V1_AgentRunSnapshot()
+    snapshot.runID = runID
+    snapshot.sessionID = sessionID
+    snapshot.branchID = branchID
+    snapshot.modelID = "melix-dev-text"
+    snapshot.state = "created"
+    snapshot.startedAtUnixMs = updatedAtUnixMs
+    snapshot.updatedAtUnixMs = updatedAtUnixMs
+    snapshot.revision = 1
+    return snapshot
+}
+
 @MainActor
 private func bindSelectedChatSessionToPrimaryServer(_ viewModel: RuntimeViewModel) throws {
     let serverSessionID = try #require(viewModel.selectedServerSession?.id)
@@ -15863,6 +19044,24 @@ private func waitForRuntimeViewModelCondition(
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
         if condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw MenuBarTestError(description: description)
+}
+
+@MainActor
+private func waitForFakeControlPlaneCondition(
+    _ description: String,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10),
+    condition: @escaping @MainActor () async -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await condition() {
             return
         }
         try await Task.sleep(for: pollInterval)

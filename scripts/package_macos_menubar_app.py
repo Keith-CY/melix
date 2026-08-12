@@ -250,6 +250,20 @@ def resolve_built_swift_text_worker_binary(repo_root: Path) -> Path:
     )
 
 
+def resolve_built_computer_broker_binary(repo_root: Path) -> Path:
+    candidate = _resolve_built_product(
+        repo_root / "services/computer-use-broker-swift/.build",
+        "melix-computer-broker",
+    )
+    if candidate is not None:
+        return candidate
+    raise FileNotFoundError(
+        "Unable to find built `melix-computer-broker`. Run `swift build -c "
+        "release --package-path services/computer-use-broker-swift --product "
+        "melix-computer-broker` first."
+    )
+
+
 def resolve_sparkle_framework(
     repo_root: Path,
     configured_path: str | Path | None = None,
@@ -452,7 +466,7 @@ def verify_archived_macos_app_bundle(
                     + ", ".join(str(path) for path in missing_sparkle_paths)
                 )
 
-            app_binary = extracted_app / "Contents/Resources/melix-menubar"
+            app_binary = extracted_app / "Contents/MacOS/melix-menubar"
             otool = shutil.which("otool")
             if otool is None:
                 raise RuntimeError("otool is required to verify packaged Sparkle linkage")
@@ -572,6 +586,7 @@ def main() -> int:
     cli_binary = resolve_built_cli_binary(repo_root)
     control_plane_binary = resolve_built_control_plane_binary(repo_root)
     swift_worker_binary = resolve_built_swift_text_worker_binary(repo_root)
+    computer_broker_binary = resolve_built_computer_broker_binary(repo_root)
     swift_mlx_metallib, swift_mlx_metallib_version = resolve_swift_mlx_metallib(
         repo_root,
         args.swift_mlx_metallib_path or None,
@@ -596,6 +611,7 @@ def main() -> int:
         cli_executable_path=cli_binary,
         control_plane_executable_path=control_plane_binary,
         swift_text_worker_executable_path=swift_worker_binary,
+        computer_broker_executable_path=computer_broker_binary,
         swift_mlx_metallib_path=swift_mlx_metallib,
         swift_mlx_metallib_version=swift_mlx_metallib_version,
         python_runtime_root=python_runtime_root,

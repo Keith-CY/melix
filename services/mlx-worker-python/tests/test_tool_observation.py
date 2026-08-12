@@ -5,7 +5,9 @@ import json
 import pytest
 
 from worker.runtime.tool_observation import (
+    DEFAULT_TOOL_OBSERVATION_SERIALIZED_BYTE_LIMIT,
     TOOL_OBSERVATION_SCHEMA_VERSION,
+    TOOL_OBSERVATION_TRUNCATION_SCHEMA_VERSION,
     ToolObservationError,
     ToolObservationPolicy,
     normalize_tool_observation,
@@ -57,6 +59,47 @@ def test_tool_observation_truncates_utf8_safely_and_records_byte_metrics() -> No
     assert emitted["metrics"]["tool_observation.original_bytes"] == len("AB界CD".encode("utf-8"))
     assert emitted["metrics"]["tool_observation.emitted_bytes"] == 2
     assert emitted["metrics"]["tool_observation.truncated_count"] == 1
+
+
+def test_tool_observation_globally_bounds_many_individually_valid_strings() -> None:
+    payload = {
+        "content": [
+            {"type": "text", "text": "x" * 8_192}
+            for _ in range(160)
+        ]
+    }
+    first = normalize_tool_observation(
+        tool_name="mcp.large_result",
+        tool_call_id="call-large-result",
+        observation_kind="mcp_tool_result",
+        status="completed",
+        payload=payload,
+    )
+    second = normalize_tool_observation(
+        tool_name="mcp.large_result",
+        tool_call_id="call-large-result",
+        observation_kind="mcp_tool_result",
+        status="completed",
+        payload=payload,
+    )
+
+    emitted = first.as_agentic_trace_observation()
+    serialized = json.dumps(
+        emitted,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    truncation = emitted["payload"]["melix_truncation"]
+    assert len(serialized) <= DEFAULT_TOOL_OBSERVATION_SERIALIZED_BYTE_LIMIT
+    assert emitted["globally_truncated"] is True
+    assert truncation["schema_version"] == TOOL_OBSERVATION_TRUNCATION_SCHEMA_VERSION
+    assert truncation["reason"] == "serialized_observation_limit"
+    assert truncation["original_payload_bytes"] > 1_048_576
+    assert truncation["preview_json"]
+    assert emitted["metrics"]["tool_observation.truncated_count"] == 1
+    assert first.payload == second.payload
+    assert first.replay == second.replay
 
 
 def test_tool_observation_timeout_status_records_explicit_metadata() -> None:
@@ -426,6 +469,10 @@ def test_tool_observation_policy_hash_changes_with_redaction_terms() -> None:
     ("policy_kwargs", "message"),
     [
         ({"max_text_bytes": 0}, "Tool observation max_text_bytes must be positive."),
+        (
+            {"max_serialized_bytes": 1_048_577},
+            "Tool observation max_serialized_bytes must be between 4096 and 1048576.",
+        ),
         ({"timeout_ms": 0}, "Tool observation timeout_ms must be positive when set."),
         ({"replay_seed": " "}, "Tool observation replay_seed must be non-empty."),
     ],

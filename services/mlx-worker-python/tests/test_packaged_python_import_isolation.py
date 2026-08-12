@@ -29,6 +29,7 @@ def test_packaged_launcher_exports_import_isolation_before_pythonpath() -> None:
         bundled_cli_binary_name="melix",
         bundled_control_plane_binary_name="melix-control-plane",
         bundled_swift_worker_binary_name="melix-text-worker-swift",
+        bundled_computer_broker_binary_relative_path="MelixComputerUseBroker.app/Contents/MacOS/melix-computer-broker",
         bundled_python_executable_relative_path="python-runtime/bin/python3",
         bundled_site_packages_relative_path="python-site-packages",
         wait_script_relative_path="repo/scripts/wait_for_worker_ready.py",

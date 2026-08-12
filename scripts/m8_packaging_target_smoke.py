@@ -56,12 +56,21 @@ def _write_repo_fixture(repo_root: Path) -> None:
     (branding_dir / "MelixAppIcon.icns").write_bytes(b"melix-fixture-icon")
 
 
-def _write_bundle_fixture(temp_root: Path) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
+def _write_bundle_fixture(
+    temp_root: Path,
+) -> tuple[Path, Path, Path, Path, Path, Path, Path, Path]:
     menubar_binary = temp_root / "melix-menubar"
     cli_binary = temp_root / "melix"
     control_plane_binary = temp_root / "melix-control-plane"
     swift_worker_binary = temp_root / "melix-text-worker-swift"
-    for executable in (menubar_binary, cli_binary, control_plane_binary, swift_worker_binary):
+    computer_broker_binary = temp_root / "melix-computer-broker"
+    for executable in (
+        menubar_binary,
+        cli_binary,
+        control_plane_binary,
+        swift_worker_binary,
+        computer_broker_binary,
+    ):
         executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
         executable.chmod(0o755)
 
@@ -82,6 +91,7 @@ def _write_bundle_fixture(temp_root: Path) -> tuple[Path, Path, Path, Path, Path
         cli_binary,
         control_plane_binary,
         swift_worker_binary,
+        computer_broker_binary,
         swift_mlx_metallib_path,
         python_runtime_root,
         python_site_packages_path,
@@ -124,6 +134,7 @@ def main() -> int:
             cli_binary,
             control_plane_binary,
             swift_worker_binary,
+            computer_broker_binary,
             swift_mlx_metallib_path,
             python_runtime_root,
             python_site_packages_path,
@@ -136,6 +147,7 @@ def main() -> int:
             cli_executable_path=cli_binary,
             control_plane_executable_path=control_plane_binary,
             swift_text_worker_executable_path=swift_worker_binary,
+            computer_broker_executable_path=computer_broker_binary,
             swift_mlx_metallib_path=swift_mlx_metallib_path,
             swift_mlx_metallib_version="0.31.1",
             python_runtime_root=python_runtime_root,

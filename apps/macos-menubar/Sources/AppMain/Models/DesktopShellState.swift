@@ -4,6 +4,7 @@ import MelixControlPlaneCore
 
 public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendable {
     case chat = "Chat"
+    case agents = "Agents"
     case commandCenter = "Command Center"
     case image = "Image"
     case server = "Providers"
@@ -23,6 +24,8 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
         switch self {
         case .chat:
             return "message"
+        case .agents:
+            return "bolt.horizontal.circle"
         case .commandCenter:
             return "command.circle"
         case .image:
@@ -47,7 +50,7 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
     }
 
     public static var titlebarNavigationCases: [DesktopSurface] {
-        [.chat, .server, .models, .workflows]
+        [.chat, .agents, .server, .models, .workflows]
     }
 
     public static var visibleNavigationCases: [DesktopSurface] {
@@ -55,13 +58,15 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
     }
 
     public static var routableWorkspaceCases: [DesktopSurface] {
-        [.chat, .commandCenter, .server, .models, .workflows, .jobs, .diagnostics, .api, .image, .settings]
+        [.chat, .agents, .commandCenter, .server, .models, .workflows, .jobs, .diagnostics, .api, .image, .settings]
     }
 
     public var routeDomainID: String {
         switch self {
         case .chat:
             return "chat"
+        case .agents:
+            return "agents"
         case .commandCenter:
             return "command"
         case .server:
@@ -248,7 +253,7 @@ extension DesktopSurface {
             return .diagnostics
         case .settings:
             return .settings
-        case .chat, .commandCenter, .image, .server, .tools, .api:
+        case .chat, .agents, .commandCenter, .image, .server, .tools, .api:
             return nil
         }
     }
@@ -520,6 +525,23 @@ public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
                     title: "Chat",
                     subtitle: "Chat remains usable when the runtime Inspector is collapsed.",
                     inspectorModule: .chatRuntime
+                ),
+            ]
+        ),
+        .init(
+            domain: .agents,
+            pages: [
+                .page(
+                    domain: .agents,
+                    id: "runs",
+                    label: "Runs",
+                    title: "Agents",
+                    subtitle: "Inspect live and completed agent runs, tool execution, approvals, and cancellation receipts.",
+                    inspectorModule: .chatRuntime,
+                    primaryAction: .init(
+                        title: "Start in Chat",
+                        target: .page(domain: .chat, pageID: "session")
+                    )
                 ),
             ]
         ),
@@ -992,6 +1014,8 @@ extension DesktopSurface {
         switch Self.normalizedPaneVisibilityID(rawValue) {
         case "commandcenter":
             self = .commandCenter
+        case "agent", "agents":
+            self = .agents
         case "image":
             self = .image
         case "server", "servers", "provider", "providers":
@@ -1019,6 +1043,8 @@ extension DesktopSurface {
         switch self {
         case .chat:
             return "chat"
+        case .agents:
+            return "agents"
         case .commandCenter:
             return "commandCenter"
         case .image:
@@ -1664,11 +1690,28 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     }
 }
 
+public enum DesktopChatInteractionMode: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
+    case ask = "Ask"
+    case act = "Act"
+
+    public var id: String { rawValue }
+
+    public var systemImageName: String {
+        switch self {
+        case .ask:
+            return "text.bubble"
+        case .act:
+            return "bolt.horizontal.circle"
+        }
+    }
+}
+
 public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
     public let id: String
     public var title: String
     public var serverSessionID: String
     public var providerTargetID: String
+    public var interactionMode: DesktopChatInteractionMode
     public var branchID: String
     public var branchTitle: String
     public var transcript: [DesktopChatTranscriptEntry]
@@ -1685,6 +1728,7 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
         title: String,
         serverSessionID: String,
         providerTargetID: String = "",
+        interactionMode: DesktopChatInteractionMode = .ask,
         branchID: String = "main",
         branchTitle: String = "Main",
         transcript: [DesktopChatTranscriptEntry] = [],
@@ -1708,6 +1752,7 @@ public struct DesktopChatSessionState: Identifiable, Equatable, Sendable {
         self.providerTargetID = normalizedProviderTargetID.isEmpty
             ? (normalizedServerSessionID.isEmpty ? "" : "local:\(normalizedServerSessionID)")
             : normalizedProviderTargetID
+        self.interactionMode = interactionMode
         self.branchID = branchID
         self.branchTitle = branchTitle
         self.transcript = transcript

@@ -751,6 +751,16 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
 
     private(set) var recordedActions: [String] = []
     private(set) var recordedChatRequests: [ControlPlaneChatRequest] = []
+    private(set) var recordedChatCancellationRequestIDs: [String] = []
+    private(set) var recordedAgentStarts:
+        [Melix_Controlplane_V1_StartAgentRun] = []
+    private(set) var recordedAgentActivations: [String] = []
+    private(set) var recordedAgentRemoteTargets:
+        [ControlPlaneChatRequest.RemoteTarget] = []
+    private(set) var recordedAgentApprovals:
+        [Melix_Controlplane_V1_DecideAgentApproval] = []
+    private(set) var recordedAgentCancellations:
+        [(runID: String, reason: String)] = []
     private(set) var recordedModelSettingsUpdates: [RecordedModelSettingsUpdate] = []
     private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
     private(set) var recordedBenchRequests: [ControlPlaneBenchRequest] = []
@@ -779,6 +789,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var modelInfoError: Error?
     private var modelOperationError: Error?
     private var modelOperationDelay: Duration = .zero
+    private var modelLoadDelay: Duration = .zero
     private var doctorError: Error?
     private var benchError: Error?
     private var benchMatrixError: Error?
@@ -801,6 +812,37 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     private var updateServerIdlePolicyError: Error?
     private var snapshotOverride: Melix_Controlplane_V1_ServerSnapshot?
     private var responseFeatures: [String] = ["chat"]
+    private var handshakeFeatures: [String] = [
+        "xpc",
+        "models",
+        "metrics",
+        "cache-metadata",
+        "session-graph",
+        "image-jobs",
+    ]
+    private var agentSnapshots:
+        [String: Melix_Controlplane_V1_AgentRunSnapshot] = [:]
+    private var agentApprovalPolicySnapshot =
+        Melix_Controlplane_V1_AgentApprovalPolicySnapshot()
+    private var agentApprovalPolicyReplacementOverride:
+        Melix_Controlplane_V1_AgentApprovalPolicySnapshot?
+    private var agentApprovalDecisionReceipt:
+        Melix_Controlplane_V1_AgentApprovalDecisionReceipt?
+    private var agentOperationsSnapshot =
+        Melix_Controlplane_V1_AgentOperationsSnapshot()
+    private var agentCancellationReceipt:
+        Melix_Controlplane_V1_AgentRunCancellationReceipt?
+    private var preserveConfiguredAgentCancellationRunID = false
+    private var agentCancellationError: Error?
+    private var agentCancellationDelay: Duration = .zero
+    private var agentStartDeliveryDelay: Duration = .zero
+    private var agentStartDelay: Duration = .zero
+    private var agentStartResponseError: ControlPlaneXPCClientError?
+    private var agentActivationResponseError: ControlPlaneXPCClientError?
+    private var agentRunsDelay: Duration = .zero
+    private var agentRunsError: Error?
+    private var agentRunInventoryIsComplete = true
+    private var unknownAgentCancellationDisposition = "accepted"
     private var modelSettings = FakeControlPlaneXPCClient.defaultModelSettings()
     private var modelInfoResponse = FakeControlPlaneXPCClient.defaultModelInfo()
     private var modelOperationResponse = FakeControlPlaneXPCClient.defaultModelOperation()
@@ -985,6 +1027,10 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         modelOperationDelay = delay
     }
 
+    func configureModelLoadDelay(_ delay: Duration) {
+        modelLoadDelay = delay
+    }
+
     func configureModelOperation(
         _ operation: Melix_Controlplane_V1_ModelOperationResult,
         forNamedOperation operationName: String
@@ -1038,6 +1084,94 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         scheduledChatEvents = nil
     }
 
+    func configureHandshakeFeatures(_ features: [String]) {
+        handshakeFeatures = features
+    }
+
+    func configureAgentSnapshot(
+        _ snapshot: Melix_Controlplane_V1_AgentRunSnapshot
+    ) {
+        agentSnapshots[snapshot.runID] = snapshot
+    }
+
+    func configureAgentApprovalPolicy(
+        _ snapshot: Melix_Controlplane_V1_AgentApprovalPolicySnapshot
+    ) {
+        agentApprovalPolicySnapshot = snapshot
+    }
+
+    func configureAgentApprovalPolicyReplacement(
+        _ snapshot: Melix_Controlplane_V1_AgentApprovalPolicySnapshot?
+    ) {
+        agentApprovalPolicyReplacementOverride = snapshot
+    }
+
+    func configureAgentApprovalDecisionReceipt(
+        _ receipt: Melix_Controlplane_V1_AgentApprovalDecisionReceipt
+    ) {
+        agentApprovalDecisionReceipt = receipt
+    }
+
+    func configureAgentOperations(
+        _ snapshot: Melix_Controlplane_V1_AgentOperationsSnapshot
+    ) {
+        agentOperationsSnapshot = snapshot
+    }
+
+    func configureAgentCancellationReceipt(
+        _ receipt: Melix_Controlplane_V1_AgentRunCancellationReceipt,
+        preserveRunID: Bool = false
+    ) {
+        agentCancellationReceipt = receipt
+        preserveConfiguredAgentCancellationRunID = preserveRunID
+    }
+
+    func configureAgentCancellationError(_ error: Error?) {
+        agentCancellationError = error
+    }
+
+    func configureAgentCancellationDelay(_ delay: Duration) {
+        agentCancellationDelay = delay
+    }
+
+    func configureAgentStartDelay(_ delay: Duration) {
+        agentStartDelay = delay
+    }
+
+    func configureAgentStartDeliveryDelay(_ delay: Duration) {
+        agentStartDeliveryDelay = delay
+    }
+
+    func configureAgentStartResponseError(
+        _ error: ControlPlaneXPCClientError?
+    ) {
+        agentStartResponseError = error
+    }
+
+    func configureAgentActivationResponseError(
+        _ error: ControlPlaneXPCClientError?
+    ) {
+        agentActivationResponseError = error
+    }
+
+    func configureAgentRunsDelay(_ delay: Duration) {
+        agentRunsDelay = delay
+    }
+
+    func configureAgentRunsError(_ error: Error?) {
+        agentRunsError = error
+    }
+
+    func configureAgentRunInventoryIsComplete(_ isComplete: Bool) {
+        agentRunInventoryIsComplete = isComplete
+    }
+
+    func configureUnknownAgentCancellationDisposition(
+        _ disposition: String
+    ) {
+        unknownAgentCancellationDisposition = disposition
+    }
+
     func configureScheduledChatEvents(_ events: [ScheduledChatEvent]) {
         scheduledChatEvents = events
     }
@@ -1080,7 +1214,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         response.protocolVersion = "melix.controlplane.v1"
         response.serverVersion = "0.1.0"
         response.daemonInstanceID = "daemon-1"
-        response.features = ["xpc", "models", "metrics", "cache-metadata", "session-graph", "image-jobs"]
+        response.features = handshakeFeatures
         response.snapshot = makeSnapshot(state: modelState)
         return response
     }
@@ -1119,8 +1253,264 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
                     }
                     continuation.finish()
                 }
+            },
+            cancel: {
+                await self.recordChatExecutionCancellation(
+                    requestID: "chat-request-1"
+                )
             }
         )
+    }
+
+    func startAgentRun(
+        _ command: Melix_Controlplane_V1_StartAgentRun,
+        remoteTarget: ControlPlaneChatRequest.RemoteTarget?
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        if agentStartDeliveryDelay > .zero {
+            try? await Task.sleep(for: agentStartDeliveryDelay)
+        }
+        recordedAgentStarts.append(command)
+        if let remoteTarget {
+            recordedAgentRemoteTargets.append(remoteTarget)
+        }
+        recordedActions.append("agent.start:\(command.modelID)")
+        if agentStartDelay > .zero {
+            try? await Task.sleep(for: agentStartDelay)
+        }
+        let snapshot: Melix_Controlplane_V1_AgentRunSnapshot
+        if var configured = agentSnapshots[command.runID]
+            ?? agentSnapshots.values.first(where: {
+                $0.sessionID == command.sessionID
+            }) {
+            if !command.runID.isEmpty, configured.runID != command.runID {
+                let previousRunID = configured.runID
+                agentSnapshots.removeValue(forKey: previousRunID)
+                configured.runID = command.runID
+                if configured.hasPendingApproval {
+                    var pendingApproval = configured.pendingApproval
+                    pendingApproval.binding.runID = command.runID
+                    configured.pendingApproval = pendingApproval
+                }
+                if var decisionReceipt = agentApprovalDecisionReceipt,
+                   decisionReceipt.binding.runID == previousRunID {
+                    decisionReceipt.binding.runID = command.runID
+                    agentApprovalDecisionReceipt = decisionReceipt
+                }
+                agentSnapshots[configured.runID] = configured
+            }
+            snapshot = configured
+        } else {
+            var created = Melix_Controlplane_V1_AgentRunSnapshot()
+            created.runID = command.runID.isEmpty ? "agent-run-1" : command.runID
+            created.sessionID = command.sessionID
+            created.branchID = command.branchID
+            created.modelID = command.modelID
+            created.state = "created"
+            created.startedAtUnixMs = 1_800_000_000_000
+            created.updatedAtUnixMs = created.startedAtUnixMs
+            created.revision = 1
+            agentSnapshots[created.runID] = created
+            snapshot = created
+        }
+        if let agentStartResponseError {
+            throw agentStartResponseError
+        }
+        return snapshot
+    }
+
+    func activateAgentRun(
+        runID: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        recordedAgentActivations.append(runID)
+        recordedActions.append("agent.activate:\(runID)")
+        guard var snapshot = agentSnapshots[runID] else {
+            throw ControlPlaneXPCClientError.requestFailed(
+                code: "not_found",
+                message: "Agent run not found."
+            )
+        }
+        if let agentActivationResponseError {
+            snapshot.state = "model_turn"
+            snapshot.revision = snapshot.revision == UInt64.max
+                ? UInt64.max
+                : snapshot.revision + 1
+            agentSnapshots[runID] = snapshot
+            throw agentActivationResponseError
+        }
+        return snapshot
+    }
+
+    private func recordChatExecutionCancellation(
+        requestID: String
+    ) -> ControlPlaneChatCancellationReceipt {
+        let disposition: ControlPlaneChatCancellationDisposition =
+            recordedChatCancellationRequestIDs.contains(requestID)
+                ? .alreadyTerminal
+                : .accepted
+        recordedChatCancellationRequestIDs.append(requestID)
+        recordedActions.append("chat.cancel:\(requestID)")
+        return ControlPlaneChatCancellationReceipt(
+            requestID: requestID,
+            disposition: disposition
+        )
+    }
+
+    func decideAgentApproval(
+        _ command: Melix_Controlplane_V1_DecideAgentApproval
+    ) async throws -> Melix_Controlplane_V1_AgentApprovalDecisionReceipt {
+        recordedAgentApprovals.append(command)
+        recordedActions.append("agent.approval:\(command.binding.callID)")
+        let receipt: Melix_Controlplane_V1_AgentApprovalDecisionReceipt
+        if let configured = agentApprovalDecisionReceipt {
+            receipt = configured
+        } else {
+            var generated = Melix_Controlplane_V1_AgentApprovalDecisionReceipt()
+            generated.binding = command.binding
+            generated.choice = command.choice
+            generated.decisionID = "decision-1"
+            generated.actorID = "test-operator"
+            generated.decidedAtUnixMs = 1_800_000_000_100
+            generated.policyRevisionAfterDecision = "policy-test-2"
+            generated.policyPersistenceDisposition = command.choice
+                == .agentApprovalAlwaysAllow
+                ? .agentApprovalPolicyPersistenceApplied
+                : .agentApprovalPolicyPersistenceNotRequested
+            receipt = generated
+        }
+        if var snapshot = agentSnapshots[command.binding.runID] {
+            snapshot.clearPendingApproval()
+            snapshot.state = command.choice == .agentApprovalDeny
+                ? "model_turn"
+                : "tool_running"
+            snapshot.updatedAtUnixMs = receipt.decidedAtUnixMs
+            snapshot.revision = snapshot.revision == UInt64.max
+                ? UInt64.max
+                : snapshot.revision + 1
+            agentSnapshots[snapshot.runID] = snapshot
+        }
+        return receipt
+    }
+
+    func cancelAgentRun(
+        runID: String,
+        reason: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunCancellationReceipt {
+        recordedAgentCancellations.append((runID, reason))
+        recordedActions.append("agent.cancel:\(runID)")
+        if agentCancellationDelay > .zero {
+            try? await Task.sleep(for: agentCancellationDelay)
+        }
+        if let agentCancellationError {
+            throw agentCancellationError
+        }
+        let configuredReceipt = agentCancellationReceipt
+        var receipt = configuredReceipt
+            ?? Melix_Controlplane_V1_AgentRunCancellationReceipt()
+        if configuredReceipt == nil || preserveConfiguredAgentCancellationRunID == false {
+            receipt.runID = runID
+        }
+        if receipt.cancellationID.isEmpty {
+            receipt.cancellationID = "agent-cancellation-1"
+        }
+        if configuredReceipt == nil {
+            receipt.disposition = agentSnapshots[runID] == nil
+                ? unknownAgentCancellationDisposition
+                : "accepted"
+            receipt.sideEffectState = .agentToolSideEffectNone
+        }
+        if ["accepted", "already_terminal"].contains(receipt.disposition),
+           var snapshot = agentSnapshots[runID] {
+            snapshot.state = "cancelled"
+            snapshot.cancellationReceipt = receipt
+            snapshot.updatedAtUnixMs = 1_800_000_000_200
+            snapshot.revision = snapshot.revision == UInt64.max
+                ? UInt64.max
+                : snapshot.revision + 1
+            agentSnapshots[runID] = snapshot
+        }
+        return receipt
+    }
+
+    func agentRun(
+        runID: String
+    ) async throws -> Melix_Controlplane_V1_AgentRunSnapshot {
+        guard let snapshot = agentSnapshots[runID] else {
+            throw ControlPlaneXPCClientError.requestFailed(
+                code: "not_found",
+                message: "Agent run not found."
+            )
+        }
+        return snapshot
+    }
+
+    func agentRuns(
+        sessionID: String,
+        limit: UInt32
+    ) async throws -> [Melix_Controlplane_V1_AgentRunSnapshot] {
+        return Array(
+            agentSnapshots.values
+                .filter { sessionID.isEmpty || $0.sessionID == sessionID }
+                .sorted { $0.updatedAtUnixMs > $1.updatedAtUnixMs }
+                .prefix(Int(limit))
+        )
+    }
+
+    func nonterminalAgentRuns(
+        sessionID: String,
+        limit: UInt32
+    ) async throws -> ControlPlaneAgentRunInventory {
+        if agentRunsDelay > .zero {
+            try? await Task.sleep(for: agentRunsDelay)
+        }
+        if let agentRunsError {
+            throw agentRunsError
+        }
+        let runs = agentSnapshots.values
+            .filter {
+                (sessionID.isEmpty || $0.sessionID == sessionID)
+                    && ["completed", "failed", "cancelled"].contains($0.state) == false
+            }
+            .sorted { $0.updatedAtUnixMs > $1.updatedAtUnixMs }
+        return ControlPlaneAgentRunInventory(
+            runs: Array(runs.prefix(Int(limit))),
+            isComplete: agentRunInventoryIsComplete
+                && runs.count <= Int(limit)
+        )
+    }
+
+    func agentApprovalPolicy()
+        async throws -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot {
+        recordedActions.append("agent.policy.get")
+        return agentApprovalPolicySnapshot
+    }
+
+    func replaceAgentApprovalPolicy(
+        rules: [Melix_Controlplane_V1_AgentApprovalPolicyRule],
+        expectedRevision: UInt64
+    ) async throws -> Melix_Controlplane_V1_AgentApprovalPolicySnapshot {
+        recordedActions.append("agent.policy.replace:\(expectedRevision)")
+        if let agentApprovalPolicyReplacementOverride {
+            return agentApprovalPolicyReplacementOverride
+        }
+        guard agentApprovalPolicySnapshot.revision == expectedRevision else {
+            throw ControlPlaneXPCClientError.requestFailed(
+                code: "agent_policy_revision_conflict",
+                message: "The Agent policy changed; refresh before retrying."
+            )
+        }
+        agentApprovalPolicySnapshot.revision += 1
+        agentApprovalPolicySnapshot.rules = rules
+        if agentApprovalPolicySnapshot.schemaVersion.isEmpty {
+            agentApprovalPolicySnapshot.schemaVersion =
+                "melix.agent-approval-policy.v1"
+        }
+        return agentApprovalPolicySnapshot
+    }
+
+    func agentOperations()
+        async throws -> Melix_Controlplane_V1_AgentOperationsSnapshot {
+        recordedActions.append("agent.operations.get")
+        return agentOperationsSnapshot
     }
 
     func serverSnapshot() async throws -> Melix_Controlplane_V1_ServerSnapshot {
@@ -1141,6 +1531,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
     ) async throws -> Melix_Controlplane_V1_ModelSummary {
         recordedActions.append("load:\(modelID)")
         lastLoadMemoryBudgetBytes = memoryBudgetBytes
+        if modelLoadDelay > .zero {
+            try? await Task.sleep(for: modelLoadDelay)
+        }
         if let loadError {
             throw loadError
         }
@@ -1993,6 +2386,19 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         event.eventType = "image.job.state_changed"
         event.imageJob = Melix_Controlplane_V1_ImageJobStateChanged()
         event.imageJob.job = job
+        emit(event)
+    }
+
+    func sendAgentRunStateChanged(
+        _ snapshot: Melix_Controlplane_V1_AgentRunSnapshot,
+        changeKind: String = "state"
+    ) {
+        agentSnapshots[snapshot.runID] = snapshot
+        var event = Melix_Controlplane_V1_ControlPlaneEvent()
+        event.eventType = "agent.run_state_changed"
+        event.agentRun = Melix_Controlplane_V1_AgentRunStateChanged()
+        event.agentRun.run = snapshot
+        event.agentRun.changeKind = changeKind
         emit(event)
     }
 

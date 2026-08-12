@@ -12995,15 +12995,22 @@ struct MelixCLIRunnerTests {
             ),
             to: evalRunRoot.appendingPathComponent("run-record.json")
         )
-        Task.detached {
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            if let handle = try? FileHandle(forWritingTo: evalRunRoot.appendingPathComponent("logs.txt")) {
-                try? handle.seekToEnd()
-                try? handle.write(contentsOf: Data("active line 2\n".utf8))
-                try? handle.close()
-            }
+        let (appendStarted, appendStartedContinuation) = AsyncStream<Void>.makeStream()
+        let appendTask = Task.detached(priority: .high) {
+            appendStartedContinuation.yield()
+            appendStartedContinuation.finish()
+            try await Task.sleep(nanoseconds: 100_000_000)
+            let handle = try FileHandle(
+                forWritingTo: evalRunRoot.appendingPathComponent("logs.txt")
+            )
+            defer { try? handle.close() }
+            _ = try handle.seekToEnd()
+            try handle.write(contentsOf: Data("active line 2\n".utf8))
         }
+        var appendStartedIterator = appendStarted.makeAsyncIterator()
+        _ = await appendStartedIterator.next()
         let activeLogsJSON = try await runner.run(.logs(.init(jobID: "eval-1", sourcePath: sourceRoot.path, follow: true, json: true)))
+        try await appendTask.value
         let activeLogsPayload = try #require(parseJSONObject(activeLogsJSON))
         #expect(activeLogsPayload["follow_requested"] as? Bool == true)
         #expect(activeLogsPayload["active_follow_supported"] as? Bool == true)

@@ -6,8 +6,11 @@ import MelixControlPlaneCore
 enum MelixControlPlaneBootstrap {
     static func main() async throws {
         let bootstrapStartedAt = Date()
-        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let bootstrapEnvironment = BootstrapEnvironment(environment: ProcessInfo.processInfo.environment)
+        let homeOwnershipLease = try ControlPlaneHomeOwnershipLease.acquire(
+            environment: ProcessInfo.processInfo.environment
+        )
+        let modelCatalog = ModelCatalog(seedModels: ModelCatalog.phaseSevenContractSeedModels())
         let metricsStore = MetricsStore(exportPath: bootstrapEnvironment.controlPlaneMetricsPath)
         let mcpLoadStartedAt = Date()
         let mcpToolCatalog = MCPToolCatalog.load(environment: ProcessInfo.processInfo.environment)
@@ -101,7 +104,8 @@ enum MelixControlPlaneBootstrap {
             modelCatalog: modelCatalog
         )
 
-        _ = ControlPlaneService(
+        let controlPlaneService = ControlPlaneService(
+            daemonInstanceID: homeOwnershipLease.fencingToken,
             modelCatalog: modelCatalog,
             metricsStore: metricsStore,
             eventHub: eventHub,
@@ -110,13 +114,21 @@ enum MelixControlPlaneBootstrap {
             sessionGraphStore: sessionGraphStore,
             imageJobReadModel: imageJobReadModel,
             imageJobAdmissionController: imageJobAdmissionController,
+            workerRegistry: workerRegistry,
             mcpToolCatalog: mcpToolCatalog,
             gatewayConfigStore: gatewayConfigStore,
             gatewayServingDefaultsStore: gatewayServingDefaultsStore,
             gatewayRuntimeBinding: gatewayRuntimeBinding,
             gatewayAccessPolicyStore: gatewayAccessPolicyStore,
-            persistentAuthSessionStore: persistentAuthSessionStore
+            persistentAuthSessionStore: persistentAuthSessionStore,
+            environment: ProcessInfo.processInfo.environment
         )
+        let ipcProvider = ControlPlaneIPCGRPCProvider(service: controlPlaneService)
+        let ipcServer = try ControlPlaneIPCUDSServer(
+            socketPath: bootstrapEnvironment.controlPlaneSocketPath,
+            service: ipcProvider
+        )
+        try await ipcServer.start()
 
         let handler = OpenAIHandler(
             modelCatalog: modelCatalog,
@@ -161,7 +173,10 @@ enum MelixControlPlaneBootstrap {
             metricsStore: metricsStore
         )
         print("Melix control plane ready on http://\(gatewayRuntimeBinding.host):\(gatewayRuntimeBinding.port)")
+        print("Melix control plane IPC ready on \(bootstrapEnvironment.controlPlaneSocketPath)")
         await server.waitUntilStopped()
+        await ipcServer.stop()
+        homeOwnershipLease.release()
     }
 }
 
@@ -170,6 +185,7 @@ private struct BootstrapEnvironment {
     let pythonWorkerSocketPath: String
     let swiftTextWorkerSocketPath: String
     let swiftVisionWorkerSocketPath: String
+    let controlPlaneSocketPath: String
     let controlPlaneMetricsPath: String?
     let mcpConfigPath: String?
 
@@ -184,6 +200,8 @@ private struct BootstrapEnvironment {
             environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
         self.swiftVisionWorkerSocketPath =
             environment["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-vision-worker.sock"
+        self.controlPlaneSocketPath =
+            environment["MELIX_CONTROL_PLANE_SOCKET_PATH"] ?? "/tmp/melix-controlplane.sock"
         self.controlPlaneMetricsPath = environment["MELIX_CONTROL_PLANE_METRICS_PATH"]
         self.mcpConfigPath = environment["MELIX_MCP_CONFIG_PATH"]
     }

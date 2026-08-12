@@ -1037,6 +1037,439 @@ def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:
     ]
 
 
+def test_scope_report_selects_mcp_client_lifecycle_probe() -> None:
+    for changed_file in (
+        "services/mlx-worker-python/worker/runtime/mcp_client.py",
+        "services/mlx-worker-python/worker/runtime/tool_execution_runtime.py",
+        "services/mlx-worker-python/worker/grpc_server.py",
+    ):
+        scope = build_scope_report(
+            registry_path=REGISTRY_PATH,
+            changed_files=[changed_file],
+        )
+        assert "mcp-client-typed-lifecycle-dispatch" in _selected_probe_ids(
+            scope
+        )
+
+
+def test_mcp_client_lifecycle_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MCP_LIFECYCLE_PROBE_ITERATIONS", "20")
+    monkeypatch.setenv("MELIX_MCP_LIFECYCLE_PROBE_SAMPLES", "2")
+    probe_script = runpy.run_path(
+        str(REPO_ROOT / "scripts/mcp_client_lifecycle_probe.py")
+    )
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["initialize_ms_mean"] > 0.0
+    assert metrics["list_tools_ms_mean"] > 0.0
+    assert metrics["call_tool_ms_mean"] > 0.0
+    assert metrics["cancel_propagation_ms_mean"] > 0.0
+    assert metrics["metrics_snapshot_ms_mean"] > 0.0
+    assert metrics["operation_count"] == 20.0
+    assert metrics["sample_count"] == 2.0
+    assert metrics["feature_available_count"] == 1.0
+
+
+def test_mcp_client_lifecycle_probe_registration_has_focused_commands() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "mcp-client-typed-lifecycle-dispatch"
+    )
+
+    assert "test_manager_metrics_snapshot_tracks_latency" in probe.test_command
+    assert (
+        "test_active_cancel_reports_only_acknowledged_sdk_task_cancellation"
+        in probe.test_command
+    )
+    assert (
+        "test_runtime_metrics_measure_only_dispatched_adapter_cancellations"
+        in probe.test_command
+    )
+    assert (
+        "test_worker_tool_service_exports_typed_agent_runtime_metrics"
+        in probe.test_command
+    )
+    assert (
+        "test_worker_tool_service_lists_and_executes_real_mcp_source"
+        in probe.test_command
+    )
+    assert (
+        "test_http_source_rejects_url_userinfo_and_fragments"
+        in probe.test_command
+    )
+    assert (
+        "test_http_source_requires_environment_references_for_credentials"
+        in probe.test_command
+    )
+    assert (
+        "test_resolved_http_header_credential_is_enforced_in_result_redaction"
+        in probe.test_command
+    )
+    assert (
+        "test_run_cancel_at_computer_commit_boundary_preserves_final_evidence"
+        in probe.test_command
+    )
+    assert "test_build_server_and_main_bootstrap" in probe.test_command
+    assert "test_bootstrap_metrics_exporter_writes_atomically" in (
+        probe.test_command
+    )
+    assert "scripts/mcp_client_lifecycle_probe.py" in probe.probe_command
+    assert "MELIX_MCP_LIFECYCLE_PROBE_REPO_ROOT=\"$PWD\"" in (
+        probe.probe_command
+    )
+    assert "uv run --project services/mlx-worker-python python3" in (
+        probe.probe_command
+    )
+    assert "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\"" in (
+        probe.probe_command
+    )
+    assert "../head/scripts/mcp_client_lifecycle_probe.py" in (
+        probe.probe_command
+    )
+    metric_by_key = {metric.key: metric for metric in probe.metrics}
+    assert metric_by_key["initialize_ms_mean"].warn_abs == 0.02
+    assert metric_by_key["call_tool_ms_mean"].warn_abs == 0.01
+
+
+def test_scope_report_selects_agent_runtime_control_surface_probe() -> None:
+    for changed_file in (
+        "services/control-plane-swift/Sources/AgentRuntime/ControlPlaneAgentRuntime.swift",
+        "services/computer-use-broker-swift/Sources/ComputerUseBrokerTransport/BrokerToolAuthorizationVerifier.swift",
+        "apps/macos-menubar/Sources/AppMain/Chat/DesktopAgentRunView.swift",
+    ):
+        scope = build_scope_report(
+            registry_path=REGISTRY_PATH,
+            changed_files=[changed_file],
+        )
+        assert "agent-runtime-control-surface" in _selected_probe_ids(scope)
+
+
+def test_agent_runtime_control_surface_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_AGENT_CONTROL_PROBE_SAMPLES", "2")
+    probe_script = runpy.run_path(
+        str(REPO_ROOT / "scripts/agent_runtime_control_surface_probe.py")
+    )
+    probe_script["measure"].__globals__["_run_component"] = (
+        lambda command, timeout_seconds: float(
+            len(command) + timeout_seconds / 1_000
+        )
+    )
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["control_plane_test_ms_mean"] > 0.0
+    assert metrics["computer_broker_test_ms_mean"] > 0.0
+    assert metrics["desktop_test_ms_mean"] > 0.0
+    assert metrics["total_test_ms_mean"] > 0.0
+    assert metrics["component_count"] == 3.0
+    assert metrics["sample_count"] == 2.0
+    assert metrics["feature_available_count"] == 1.0
+
+
+def test_agent_runtime_control_surface_probe_has_focused_commands() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "agent-runtime-control-surface"
+    )
+
+    for focused_test in (
+        "blockedSnapshotFlushFailurePreservesOneTerminalTruth",
+        "agentOperationsReportsComputerTargetDiscoveryFailure",
+        "agentOperationsReportsComputerTargetDiscoveryNotRequested",
+        "agedAuthorizationOnlyCancelsSessionOverRealUDS",
+        "computerTargetDiscoveryPresentationIsTruthful",
+        "agentApprovalPolicyRefreshAndRevokeUsesCAS",
+        "chatStopRecordsBackendCancellationBeforeLeavingStreamingState",
+    ):
+        assert focused_test in probe.test_command
+    for coverage_selection in (
+        "swift test --package-path services/control-plane-swift "
+        "--enable-code-coverage --no-parallel",
+        "swift test --package-path services/computer-use-broker-swift "
+        "--enable-code-coverage",
+        "swift test --package-path apps/macos-menubar "
+        "--enable-code-coverage",
+        "MELIX_AGENT_MCP_E2E_ENABLE_SWIFT_COVERAGE=1",
+        "pytest -q tests/integration/test_agent_mcp_worker_e2e.py",
+        "--additional-profdata "
+        "'services/control-plane-swift=.build/agent-mcp-e2e/",
+        "--additional-profdata "
+        "'services/computer-use-broker-swift="
+        "services/computer-use-broker-swift/.build/native-focus-coverage/",
+    ):
+        assert coverage_selection in probe.coverage_command
+    assert "scripts/agent_runtime_control_surface_probe.py" in (
+        probe.probe_command
+    )
+    assert "../head/scripts/agent_runtime_control_surface_probe.py" in (
+        probe.probe_command
+    )
+    assert "scripts/swift_changed_scope_coverage.py" in probe.watch_globs
+    assert (
+        "services/mlx-worker-python/tests/test_swift_changed_scope_coverage.py"
+        in probe.watch_globs
+    )
+    assert "tests/integration/test_agent_mcp_worker_e2e.py" in (
+        probe.watch_globs
+    )
+    assert "tests/integration/fixtures/agent_mcp_stdio_server.py" in (
+        probe.watch_globs
+    )
+    assert "coverage report --fail-under=95" in probe.coverage_command
+    assert "coverage run --append scripts/swift_changed_scope_coverage.py" in (
+        probe.coverage_command
+    )
+    assert "--exclude-nonmeasurable" in probe.coverage_command
+    assert "swift run --package-path services/computer-use-broker-swift" in (
+        probe.coverage_command
+    )
+    for package_path in (
+        "services/control-plane-swift",
+        "services/computer-use-broker-swift",
+        "apps/macos-menubar",
+    ):
+        assert f"--package {package_path}" in probe.coverage_command
+
+
+def test_scope_report_selects_agent_worker_cancellation_probe() -> None:
+    for changed_file in (
+        "services/mlx-worker-python/worker/runtime/tool_execution_runtime.py",
+        "services/mlx-worker-python/worker/runtime/computer_use_adapter.py",
+        "services/mlx-worker-python/worker/runtime/computer_use_client.py",
+    ):
+        scope = build_scope_report(
+            registry_path=REGISTRY_PATH,
+            changed_files=[changed_file],
+        )
+        assert "agent-worker-cancellation-computer-use" in (
+            _selected_probe_ids(scope)
+        )
+
+
+def test_agent_worker_cancellation_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_AGENT_CANCEL_PROBE_ITERATIONS", "8")
+    monkeypatch.setenv("MELIX_AGENT_CANCEL_PROBE_SAMPLES", "2")
+    probe_script = runpy.run_path(
+        str(REPO_ROOT / "scripts/agent_worker_cancellation_probe.py")
+    )
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["run_cancel_ms_mean"] > 0.0
+    assert metrics["idempotent_cancel_ms_mean"] > 0.0
+    assert metrics["worker_to_adapter_cancel_ms_mean"] >= 0.0
+    assert metrics["adapter_dispatch_count"] == 8.0
+    assert metrics["iteration_count"] == 8.0
+    assert metrics["sample_count"] == 2.0
+    assert metrics["feature_available_count"] == 1.0
+
+
+def test_agent_worker_cancellation_probe_has_focused_commands() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "agent-worker-cancellation-computer-use"
+    )
+
+    for focused_test in (
+        "test_runtime_metrics_measure_only_dispatched_adapter_cancellations",
+        "test_run_cancel_at_computer_commit_boundary_preserves_final_evidence",
+        "test_untrusted_mcp_schema_cannot_reuse_trusted_validator_cache",
+        "test_run_cancellation_retains_newest_session_authorization",
+        "test_rejected_newer_authorization_does_not_poison_session_cleanup",
+        "test_worker_tool_service_exports_typed_agent_runtime_metrics",
+    ):
+        assert focused_test in probe.test_command
+    for covered_test_file in (
+        "services/mlx-worker-python/tests/test_tool_execution_runtime.py",
+        "services/mlx-worker-python/tests/test_computer_use_adapter.py",
+        "services/mlx-worker-python/tests/test_computer_use_client.py",
+        "services/mlx-worker-python/tests/test_tool_runtime_service.py",
+    ):
+        assert covered_test_file in probe.coverage_command
+    assert "scripts/agent_worker_cancellation_probe.py" in (
+        probe.probe_command
+    )
+    assert "MELIX_AGENT_WORKER_PROBE_REPO_ROOT=\"$PWD\"" in (
+        probe.probe_command
+    )
+    assert "uv run --project services/mlx-worker-python python3" in (
+        probe.probe_command
+    )
+    assert "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\"" in (
+        probe.probe_command
+    )
+    assert "../head/scripts/agent_worker_cancellation_probe.py" in (
+        probe.probe_command
+    )
+
+
+@pytest.mark.parametrize(
+    ("script_name", "root_environment"),
+    (
+        (
+            "mcp_client_lifecycle_probe.py",
+            "MELIX_MCP_LIFECYCLE_PROBE_REPO_ROOT",
+        ),
+        (
+            "agent_worker_cancellation_probe.py",
+            "MELIX_AGENT_WORKER_PROBE_REPO_ROOT",
+        ),
+        (
+            "agent_runtime_control_surface_probe.py",
+            "MELIX_AGENT_CONTROL_PROBE_REPO_ROOT",
+        ),
+    ),
+)
+def test_new_agent_probe_scripts_emit_explicit_missing_feature_baselines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    script_name: str,
+    root_environment: str,
+) -> None:
+    baseline_root = tmp_path / "base"
+    baseline_root.mkdir()
+    monkeypatch.setenv(root_environment, str(baseline_root))
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts" / script_name))
+
+    assert probe_script["main"]() == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "feature_available_count": 0.0
+    }
+
+
+@pytest.mark.parametrize(
+    ("probe_id", "iteration_environment"),
+    (
+        (
+            "mcp-client-typed-lifecycle-dispatch",
+            {
+                "MELIX_MCP_LIFECYCLE_PROBE_ITERATIONS": "4",
+                "MELIX_MCP_LIFECYCLE_PROBE_SAMPLES": "1",
+            },
+        ),
+        (
+            "agent-worker-cancellation-computer-use",
+            {
+                "MELIX_AGENT_CANCEL_PROBE_ITERATIONS": "4",
+                "MELIX_AGENT_CANCEL_PROBE_SAMPLES": "1",
+            },
+        ),
+    ),
+)
+def test_new_python_probe_commands_distinguish_base_and_head_repositories(
+    tmp_path: Path,
+    probe_id: str,
+    iteration_environment: dict[str, str],
+) -> None:
+    base_root = tmp_path / "base"
+    base_root.mkdir()
+    base_project = base_root / "services/mlx-worker-python"
+    base_project.mkdir(parents=True)
+    (base_project / "pyproject.toml").write_text(
+        """[project]
+name = "melix-probe-base-fixture"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []
+""",
+        encoding="utf-8",
+    )
+    head_link = tmp_path / "head"
+    head_link.symlink_to(REPO_ROOT, target_is_directory=True)
+    probe = next(
+        candidate
+        for candidate in load_probe_registry(REGISTRY_PATH)
+        if candidate.probe_id == probe_id
+    )
+    environment = {
+        **os.environ,
+        **iteration_environment,
+        "GITHUB_WORKSPACE": str(tmp_path),
+    }
+
+    base_result = _run_probe_impl(
+        probe=probe,
+        repo_root=base_root,
+        repo_label="base",
+        env=environment,
+    )
+    head_result = _run_probe_impl(
+        probe=probe,
+        repo_root=REPO_ROOT,
+        repo_label="head",
+        env=environment,
+    )
+
+    assert base_result["ok"] is True
+    assert head_result["ok"] is True
+    assert base_result["metrics"] == {"feature_available_count": 0.0}
+    assert head_result["metrics"]["feature_available_count"] == 1.0
+    probe_result = {
+        "probe": probe.to_scope_dict(),
+        "head_verification": {
+            "test": {"ok": True},
+            "coverage": {"ok": True, "coverage_pct": 100.0},
+        },
+        "base_probe": base_result,
+        "head_probe": head_result,
+    }
+    report = build_performance_report(
+        scope={
+            "changed_files": [],
+            "selected_probes": [probe.to_scope_dict()],
+            "matched_probe_ids": [probe_id],
+        },
+        probe_results=[probe_result],
+    )
+    row = report["rows"][0]
+    assert row["status"] == "ok"
+    assert any(
+        metric["key"] != "feature_available_count"
+        and metric["status"] == "missing"
+        for metric in row["metrics"]
+    )
+
+
+def test_agent_control_probe_command_has_base_compatible_feature_fallback(
+    tmp_path: Path,
+) -> None:
+    base_root = tmp_path / "base"
+    base_root.mkdir()
+    head_link = tmp_path / "head"
+    head_link.symlink_to(REPO_ROOT, target_is_directory=True)
+    probe = next(
+        candidate
+        for candidate in load_probe_registry(REGISTRY_PATH)
+        if candidate.probe_id == "agent-runtime-control-surface"
+    )
+    result = _run_probe_impl(
+        probe=probe,
+        repo_root=base_root,
+        repo_label="base",
+        env={**os.environ, "GITHUB_WORKSPACE": str(tmp_path)},
+    )
+
+    assert result["ok"] is True
+    assert result["metrics"] == {"feature_available_count": 0.0}
+
+
 def test_tool_registry_schema_bytes_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -5413,6 +5846,9 @@ def test_registered_probes_expose_focused_commands() -> None:
         "tool-registry-select-name-index-cache",
         "tool-registry-names-snapshot-cache",
         "tool-registry-openai-tools-template-cache",
+        "mcp-client-typed-lifecycle-dispatch",
+        "agent-runtime-control-surface",
+        "agent-worker-cancellation-computer-use",
     }
     registry_probe = None
     maintenance_probe = None

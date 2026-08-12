@@ -54,7 +54,7 @@ struct SiblingFileAdvisoryLockTests {
             }
             return Darwin.open(
                 path,
-                O_CREAT | O_RDWR | O_CLOEXEC,
+                O_CREAT | O_RDWR | O_CLOEXEC | O_EXLOCK | O_NONBLOCK,
                 mode_t(S_IRUSR | S_IWUSR)
             )
         }
@@ -62,12 +62,6 @@ struct SiblingFileAdvisoryLockTests {
             Issue.record("failed to open the cancellation-race fixture descriptor")
             return
         }
-        defer {
-            if Darwin.fcntl(descriptor, F_GETFD) >= 0 {
-                _ = Darwin.close(descriptor)
-            }
-        }
-
         let adoption = Task {
             while !Task.isCancelled {
                 await Task.yield()
@@ -77,7 +71,8 @@ struct SiblingFileAdvisoryLockTests {
         adoption.cancel()
 
         do {
-            _ = try await adoption.value
+            let unexpectedDescriptor = try await adoption.value
+            _ = Darwin.close(unexpectedDescriptor)
             Issue.record("a cancelled acquisition retained its descriptor")
         } catch is CancellationError {
             // Expected: the post-open guard closes before propagating cancellation.
@@ -85,8 +80,18 @@ struct SiblingFileAdvisoryLockTests {
             Issue.record("expected CancellationError, received \(error)")
         }
 
-        errno = 0
-        #expect(Darwin.fcntl(descriptor, F_GETFD) == -1)
-        #expect(errno == EBADF)
+        let replacementDescriptor = lockURL.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else {
+                return -1
+            }
+            return Darwin.open(
+                path,
+                O_RDWR | O_CLOEXEC | O_EXLOCK | O_NONBLOCK
+            )
+        }
+        #expect(replacementDescriptor >= 0)
+        if replacementDescriptor >= 0 {
+            _ = Darwin.close(replacementDescriptor)
+        }
     }
 }

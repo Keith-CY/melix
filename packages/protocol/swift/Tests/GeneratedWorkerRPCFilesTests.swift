@@ -12,6 +12,7 @@ final class GeneratedWorkerRPCFilesTests: XCTestCase {
             "inference.grpc.swift",
             "cache.grpc.swift",
             "maintenance.grpc.swift",
+            "tool_runtime.grpc.swift",
         ]
 
         let missingFiles = expectedFiles.filter { fileName in
@@ -22,6 +23,36 @@ final class GeneratedWorkerRPCFilesTests: XCTestCase {
         XCTAssertTrue(
             missingFiles.isEmpty,
             "Missing generated Swift worker RPC stubs: \(missingFiles.joined(separator: ", "))"
+        )
+    }
+
+    func testComputerBrokerServiceStubFileExists() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let filePath = packageRoot
+            .appendingPathComponent("computer/v1/computer.grpc.swift")
+            .path
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: filePath),
+            "Missing generated Swift Computer Use broker RPC stub."
+        )
+    }
+
+    func testControlPlaneIPCServiceStubFileExists() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let filePath = packageRoot
+            .appendingPathComponent(
+                "controlplane/v1/control_plane.grpc.swift"
+            )
+            .path
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: filePath),
+            "Missing generated Swift control-plane IPC RPC stub."
         )
     }
 }

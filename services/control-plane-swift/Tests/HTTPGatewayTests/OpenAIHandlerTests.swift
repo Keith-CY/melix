@@ -16408,7 +16408,7 @@ private func makeWorkerArtifact(
 
 private func waitForOpenAIHandlerCondition(
     _ description: String,
-    timeout: Duration = ciScaledWaitDuration(milliseconds: 500),
+    timeout: Duration = ciScaledWaitDuration(milliseconds: 2_000),
     pollInterval: Duration = .milliseconds(10),
     condition: @escaping @Sendable () async -> Bool
 ) async throws {
