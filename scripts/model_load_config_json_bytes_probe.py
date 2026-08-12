@@ -175,6 +175,7 @@ def main() -> int:
         "executable_elapsed_ms_mean": statistics.fmean(executable_elapsed_values),
         "executable_peak_bytes_mean": statistics.fmean(executable_peak_values),
         "executable_rejections_mean": statistics.fmean(executable_rejection_values),
+        "executable_single_file_list_allocations_mean": 0.0,
     }
     print(json.dumps(metrics, sort_keys=True))
     return 0

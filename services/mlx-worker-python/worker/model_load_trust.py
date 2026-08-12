@@ -34,6 +34,7 @@ _OS_STAT = os.stat
 _OS_SCANDIR = os.scandir
 _STAT_ISREG = stat.S_ISREG
 _STAT_ISDIR = stat.S_ISDIR
+_LIST = list
 EXECUTABLE_MODEL_FILE_PREFIXES = (
     "configuration",
     "feature_extraction",
@@ -380,13 +381,20 @@ def _detect_executable_model_files_for_stat(
     is_executable_model_file_entry = _is_executable_model_file_entry
     try:
         with _OS_SCANDIR(scan_path) as entries:
-            executable_file_names: list[str] = []
-            append_name = executable_file_names.append
+            first_file_name = ""
+            executable_file_names: list[str] | None = None
             for entry in entries:
-                if is_executable_model_file_entry(entry):
-                    append_name(entry.name)
-            if len(executable_file_names) > 1:
-                executable_file_names.sort()
+                if not is_executable_model_file_entry(entry):
+                    continue
+                if not first_file_name:
+                    first_file_name = entry.name
+                    continue
+                if executable_file_names is None:
+                    executable_file_names = _LIST((first_file_name,))
+                executable_file_names.append(entry.name)
+            if executable_file_names is None:
+                return (first_file_name,) if first_file_name else ()
+            executable_file_names.sort()
             return tuple(executable_file_names)
     except OSError:
         return ()

@@ -984,6 +984,30 @@ def test_trust_policy_caches_model_file_detection_source() -> None:
     assert source_cache.cache_info().hits == 1
 
 
+def test_trust_policy_single_executable_model_file_avoids_list_allocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable_model_dir = tmp_path / "single-executable-file-model"
+    executable_model_dir.mkdir()
+    (executable_model_dir / "configuration_melix_demo.py").write_text(
+        "class MelixDemoConfig: pass\n",
+        encoding="utf-8",
+    )
+    executable_model = WorkerModelCatalog.dev_text_model()
+    executable_model.model_path = str(executable_model_dir)
+
+    class AllocationGuardList(list):
+        def __init__(self, *args, **kwargs):  # pragma: no cover - regression guard only.
+            raise AssertionError("single executable file should not allocate list")
+
+    monkeypatch.setattr(model_load_trust_module, "_LIST", AllocationGuardList)
+
+    assert model_load_trust_module._detect_executable_model_files(executable_model) == (
+        "configuration_melix_demo.py",
+    )
+
+
 def test_trust_policy_multiple_executable_model_files_stay_sorted(tmp_path: Path) -> None:
     executable_model_dir = tmp_path / "multiple-executable-file-model"
     executable_model_dir.mkdir()
