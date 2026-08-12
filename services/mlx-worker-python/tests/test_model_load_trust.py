@@ -638,6 +638,16 @@ def test_trust_policy_auto_map_common_string_uses_leading_character_fast_path() 
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": NoisyIsSpaceString("custom.Loader")}) is True
 
 
+def test_trust_policy_auto_map_builtin_string_skips_isinstance_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    counted_isinstance = Mock(side_effect=isinstance)
+    monkeypatch.setitem(model_load_trust_module.__dict__, "isinstance", counted_isinstance)
+
+    assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": "custom.Loader"}) is True
+    counted_isinstance.assert_not_called()
+
+
 def test_trust_policy_auto_map_custom_loader_scan_preserves_blank_string_behavior() -> None:
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": ""}) is False
     assert model_load_trust_module._auto_map_has_custom_loader({"AutoModel": " \t\n"}) is False

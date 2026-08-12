@@ -413,7 +413,12 @@ def _model_files_detection_source(file_names: tuple[str, ...]) -> str:
 
 def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
     for value in auto_map.values():
-        if isinstance(value, str):
+        if type(value) is str:
+            if not value:
+                continue
+            if not value[0].isspace() or not value.isspace():
+                return True
+        elif isinstance(value, str):
             if not value:
                 continue
             if not value[0].isspace() or not value.isspace():
