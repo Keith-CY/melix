@@ -146,6 +146,8 @@ jobs:
             target: swift-test-control-rest
           - shard: control-worker
             target: swift-test-control-worker
+          - shard: computer-use-broker
+            target: swift-test-computer-use-broker
           - shard: menubar
             target: swift-test-menubar
 
@@ -175,10 +177,11 @@ jobs:
             .build
             packages/protocol/swift/.build
             services/control-plane-swift/.build
+            services/computer-use-broker-swift/.build
             services/mlx-text-worker-swift/.build
             apps/macos-menubar/.build
             ~/Library/Caches/org.swift.swiftpm
-          key: ${{ runner.os }}-swift-${{ matrix.target }}-${{ hashFiles('Package.swift', 'Package.resolved', 'packages/protocol/swift/Package.swift', 'packages/protocol/swift/Package.resolved', 'services/control-plane-swift/Package.swift', 'services/control-plane-swift/Package.resolved', 'services/mlx-text-worker-swift/Package.swift', 'services/mlx-text-worker-swift/Package.resolved', 'apps/macos-menubar/Package.swift', 'apps/macos-menubar/Package.resolved') }}
+          key: ${{ runner.os }}-swift-${{ matrix.target }}-${{ hashFiles('Package.swift', 'Package.resolved', 'packages/protocol/swift/Package.swift', 'packages/protocol/swift/Package.resolved', 'services/control-plane-swift/Package.swift', 'services/control-plane-swift/Package.resolved', 'services/computer-use-broker-swift/Package.swift', 'services/computer-use-broker-swift/Package.resolved', 'services/mlx-text-worker-swift/Package.swift', 'services/mlx-text-worker-swift/Package.resolved', 'apps/macos-menubar/Package.swift', 'apps/macos-menubar/Package.resolved') }}
           restore-keys: |
             ${{ runner.os }}-swift-${{ matrix.target }}-
             ${{ runner.os }}-swift-
