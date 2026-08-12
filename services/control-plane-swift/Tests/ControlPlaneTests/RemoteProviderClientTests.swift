@@ -1205,7 +1205,10 @@ struct RemoteProviderClientTests {
         let task = Task {
             try await transport.stream(for: request)
         }
-        await Task.yield()
+        for _ in 0..<100 where RemoteProviderNoResponseURLProtocol.state.wasStarted == false {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(RemoteProviderNoResponseURLProtocol.state.wasStarted)
         task.cancel()
         let result = await task.result
         if case .success = result {
@@ -1808,7 +1811,14 @@ private final class RemoteProviderCancellationProbe: @unchecked Sendable {
 
 private final class RemoteProviderHoldingURLProtocolState: @unchecked Sendable {
     private let lock = NSLock()
+    private var started = false
     private var stopped = false
+
+    var wasStarted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return started
+    }
 
     var wasStopped: Bool {
         lock.lock()
@@ -1818,7 +1828,14 @@ private final class RemoteProviderHoldingURLProtocolState: @unchecked Sendable {
 
     func reset() {
         lock.lock()
+        started = false
         stopped = false
+        lock.unlock()
+    }
+
+    func markStarted() {
+        lock.lock()
+        started = true
         lock.unlock()
     }
 
@@ -1841,6 +1858,7 @@ private final class RemoteProviderHoldingURLProtocol: URLProtocol, @unchecked Se
     }
 
     override func startLoading() {
+        Self.state.markStarted()
         guard let url = request.url,
               let response = HTTPURLResponse(
                   url: url,
@@ -1911,7 +1929,9 @@ private final class RemoteProviderNoResponseURLProtocol: URLProtocol, @unchecked
         request
     }
 
-    override func startLoading() {}
+    override func startLoading() {
+        Self.state.markStarted()
+    }
 
     override func stopLoading() {
         Self.state.markStopped()
