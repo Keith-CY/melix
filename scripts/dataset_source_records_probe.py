@@ -63,6 +63,7 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 def measure(*, directory_count: int, files_per_directory: int, samples: int) -> dict[str, float]:
     elapsed_ms: list[float] = []
     source_kind_elapsed_ms: list[float] = []
+    source_size_elapsed_ms: list[float] = []
     read_elapsed_ms: list[float] = []
     capped_read_elapsed_ms: list[float] = []
     record_elapsed_ms: list[float] = []
@@ -111,6 +112,13 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
                 if source_kinds != expected_kinds:
                     raise RuntimeError("source kind classification changed")
                 started = time.perf_counter()
+                source_size_entries = dataset_preparation._source_size_entries(paths)
+                source_size_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+                if len(source_size_entries) != expected_count:
+                    raise RuntimeError("source size entry count changed")  # pragma: no cover - guard only.
+                if source_size_entries[0] != (expected_first, len("Melix source row\n".encode("utf-8"))):
+                    raise RuntimeError("source size byte accounting changed")  # pragma: no cover - guard only.
+                started = time.perf_counter()
                 source_texts = [dataset_preparation._read_source_text(path) for path in paths]
                 read_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
                 if source_texts[0] != "Melix source row\n" or source_texts[-1] != "Melix source row\n":
@@ -150,6 +158,9 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
         "source_kind_elapsed_ms_mean": statistics.fmean(source_kind_elapsed_ms),
         "source_kind_elapsed_ms_min": min(source_kind_elapsed_ms),
         "source_kind_elapsed_ms_p95": sorted(source_kind_elapsed_ms)[int((len(source_kind_elapsed_ms) - 1) * 0.95)],
+        "source_size_elapsed_ms_mean": statistics.fmean(source_size_elapsed_ms),
+        "source_size_elapsed_ms_min": min(source_size_elapsed_ms),
+        "source_size_elapsed_ms_p95": sorted(source_size_elapsed_ms)[int((len(source_size_elapsed_ms) - 1) * 0.95)],
         "read_elapsed_ms_mean": statistics.fmean(read_elapsed_ms),
         "read_elapsed_ms_min": min(read_elapsed_ms),
         "read_elapsed_ms_p95": sorted(read_elapsed_ms)[int((len(read_elapsed_ms) - 1) * 0.95)],

@@ -285,15 +285,15 @@ def _assert_records_zero_observed_bytes_when_source_stat_fails(
     input_root.mkdir(parents=True)
     source_path = input_root / "notes.txt"
     source_path.write_text("Stat failures should not block readable sources.\n", encoding="utf-8")
-    original_stat = Path.stat
+    original_stat = os.stat
 
-    def fake_stat(path: Path, *args: object, **kwargs: object) -> os.stat_result:
-        if path == source_path:
+    def fake_stat(path: Path | str, *args: object, **kwargs: object) -> os.stat_result:
+        if os.fspath(path) == os.fspath(source_path):
             raise OSError("stat denied")
         return original_stat(path, *args, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "stat", fake_stat)
+        patch.setattr(dataset_preparation_module.os, "stat", fake_stat)
         receipt = prepare_dataset_ingest(
             DatasetIngestRequest(
                 workspace_project_id="m-courtyard-demo",
