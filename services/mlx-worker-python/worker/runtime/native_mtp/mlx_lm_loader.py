@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from builtins import open as _OPEN
+from builtins import set as _SET
 import importlib.util
 import json
 import logging
@@ -79,7 +80,7 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
 
     extra_files: list[str] = []
     append_extra_file = extra_files.append
-    seen: set[str] = set()
+    seen: _SET[str] = _SET()
     seen_add = seen.add
     seen_contains = seen.__contains__
     model_path_text = os.fspath(model_path)
@@ -105,8 +106,6 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
             file_name_text = to_text(file_name)
         if not str_endswith(file_name_text, safetensors_suffix):
             continue
-        if seen_contains(file_name_text):
-            continue
         if str_startswith(file_name_text, model_prefix):
             continue
         separator_index = str_rfind(file_name_text, path_sep)
@@ -115,6 +114,8 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
             model_prefix,
             separator_index + 1,
         ):
+            continue
+        if seen_contains(file_name_text):
             continue
         seen_add(file_name_text)
         path_text = path_join(model_path_text, file_name_text)
