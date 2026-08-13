@@ -47,6 +47,16 @@ in the original string instead of slicing the tail and re-entering the generic
 substring parser. Behavior remains unchanged for exact labels and the generic
 fallback remains in place for less common label shapes.
 
+## 2026-08 direct span integer accumulation follow-up
+
+This follow-up Python-only slice stays within
+`worker.model_ops.hub_catalog._direct_size_hint_from_span()` and the same
+registered `hub-catalog-size-hint-regex-precompile` probe. Exact integer spans
+with `KB`/`MB`/`GB` suffixes now parse the original character range directly,
+avoiding the temporary three-character unit slice, numeric substring, and
+`str.isdecimal()` scan. Decimal and malformed spans keep the existing fallback
+semantics through the generic direct size-hint parser.
+
 ## Implementation plan
 
 1. Keep the regex fallback and the direct uppercase pipe marker path intact.
