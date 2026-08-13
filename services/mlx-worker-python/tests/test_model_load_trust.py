@@ -802,6 +802,22 @@ def test_read_model_config_reuses_cached_config_path_text(tmp_path: Path) -> Non
     assert path_cache.cache_info().hits == 1
 
 
+def test_trust_policy_caches_executable_scan_path_by_model_path(tmp_path: Path) -> None:
+    scan_path_cache = model_load_trust_module._executable_model_scan_path_for_model_path
+    scan_path_cache.cache_clear()
+    model_dir = tmp_path / "plain-executable-scan-model"
+    model_dir.mkdir()
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = str(model_dir)
+
+    assert model_load_trust_module._executable_model_scan_path(model) == str(model_dir)
+    assert model_load_trust_module._executable_model_scan_path(model) == str(model_dir)
+    assert scan_path_cache.cache_info().hits == 1
+
+    model.model_path = f" {model_dir} "
+    assert model_load_trust_module._executable_model_scan_path(model) == str(model_dir)
+
+
 def test_trust_policy_expands_tilde_model_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
