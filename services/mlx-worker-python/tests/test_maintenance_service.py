@@ -5624,6 +5624,58 @@ def test_vlm_fast_path_bench_metrics_surfaces_mixed_decode_modes() -> None:
     assert metrics_by_name["bench.smoke.multimodal_decode_mode"].value == 5.0
 
 
+def test_categorical_metric_code_for_samples_stops_at_first_mixed_value() -> None:
+    class CountingSample:
+        def __init__(self, mode: str) -> None:
+            self.mode = mode
+            self.read_count = 0
+
+        @property
+        def multimodal_decode_mode(self) -> str:
+            self.read_count += 1
+            return self.mode
+
+    samples = [
+        CountingSample("single_stream"),
+        CountingSample("image_cache_reuse"),
+        CountingSample("image_cache_reuse"),
+    ]
+
+    value = MaintenanceCore._categorical_metric_code_for_samples(  # type: ignore[arg-type]
+        samples, "multimodal_decode_mode", {"single_stream": 1.0, "mixed": 5.0}
+    )
+
+    assert value == 5.0
+    assert [sample.read_count for sample in samples] == [1, 1, 0]
+
+
+def test_categorical_metric_code_for_samples_single_pass_uniform_and_empty() -> None:
+    samples = [
+        maintenance_core_module.BenchSample(
+            ttft_ms=10.0,
+            total_latency_ms=20.0,
+            completion_tokens=2,
+            multimodal_decode_mode="single_stream",
+        ),
+        maintenance_core_module.BenchSample(
+            ttft_ms=8.0,
+            total_latency_ms=16.0,
+            completion_tokens=2,
+            multimodal_decode_mode="single_stream",
+        ),
+    ]
+
+    mapping = {"": 0.0, "single_stream": 1.0}
+
+    assert (
+        MaintenanceCore._categorical_metric_code_for_samples(
+            samples, "multimodal_decode_mode", mapping
+        )
+        == 1.0
+    )
+    assert MaintenanceCore._categorical_metric_code_for_samples([], "mode", mapping) == 0.0
+
+
 def test_vlm_fast_path_bench_metrics_encode_text_only_batch_generator() -> None:
     metrics = MaintenanceCore._vlm_fast_path_bench_metrics(
         suite_id="smoke",
