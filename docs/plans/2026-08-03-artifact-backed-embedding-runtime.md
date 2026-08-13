@@ -218,13 +218,15 @@ report:
 - `singleton_32_samples_per_second`;
 - `batch_speedup_ratio`;
 - `nonfinite_output_count`;
-- `output_dimension_mismatch_count`.
+- `output_dimension_mismatch_count`;
+- `snapshot_fallback_glob_calls_mean`;
+- `snapshot_seal_rglob_calls_mean`.
 
 Success requires exactly one batch tokenizer call and forward, exactly 32
-singleton tokenizer calls and forwards,
-zero non-finite values, zero shape mismatches, and at least `2.0x` batch
-throughput. Runtime latency is evidence-only on CI; correctness counters are
-hard gates.
+singleton tokenizer calls and forwards, zero non-finite values, zero shape
+mismatches, at least `2.0x` batch throughput, and zero `Path.glob` / `Path.rglob`
+scan calls in the snapshot fallback, seal, and cleanup paths. Runtime latency is
+evidence-only on CI; correctness counters are hard gates.
 
 ### Apple Silicon Artifact Acceptance
 

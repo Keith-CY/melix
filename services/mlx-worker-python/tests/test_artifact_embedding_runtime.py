@@ -1860,6 +1860,94 @@ def test_load_model_snapshots_selected_sentence_transformer_contract_files(
     assert loaded["embedding_load_receipt"]["model_hash"] == descriptor.model_hash
 
 
+def test_load_model_fallback_snapshot_uses_single_scandir_without_path_glob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_dir = tmp_path / "snapshot-fallback-sentence-transformers-contract"
+    _write_tiny_bert_checkpoint(model_dir)
+    pooling_dir = model_dir / "1_Pooling"
+    pooling_dir.mkdir()
+    _write_json(
+        pooling_dir / "config.json",
+        {
+            "pooling_mode_mean_tokens": True,
+            "word_embedding_dimension": 4,
+        },
+    )
+    normalize_dir = model_dir / "2_Normalize"
+    normalize_dir.mkdir()
+    _write_json(normalize_dir / "config.json", {})
+    _write_json(model_dir / "sentence_bert_config.json", {"max_seq_length": 6})
+    model_spec = _bert_model_spec(model_dir)
+    del model_spec.ext["embedding_pooling_mode"]
+    del model_spec.ext["embedding_normalization"]
+    backend_loader = RecordingBackendLoader()
+    original_scandir = artifact_runtime.os.scandir
+    scandir_paths: list[Path] = []
+
+    def tracking_scandir(path):
+        scandir_paths.append(Path(path))
+        return original_scandir(path)
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"_snapshot_embedding_artifact() should use os.scandir, not Path.glob({pattern!r})"
+        )
+
+    monkeypatch.setattr(artifact_runtime.os, "scandir", tracking_scandir)
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    loaded: dict[str, object] = MLXEmbeddingRuntime(
+        backend_loader=backend_loader,
+        active_memory_bytes=lambda: 0,
+    ).load_model(model_spec)
+
+    descriptor = backend_loader.descriptors[0]
+    assert descriptor.pooling_mode == "mean"
+    assert descriptor.normalization == "l2"
+    load_receipt = loaded["embedding_load_receipt"]
+    assert isinstance(load_receipt, dict)
+    assert load_receipt["normalization"] == "l2"
+    assert scandir_paths.count(model_dir.resolve()) == 2
+
+
+def test_load_model_snapshot_seal_and_close_use_scandir_without_path_rglob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_dir = tmp_path / "snapshot-seal-close"
+    _write_tiny_bert_checkpoint(model_dir)
+    backend_loader = RecordingBackendLoader()
+    original_scandir = artifact_runtime.os.scandir
+    scandir_paths: list[Path] = []
+
+    def tracking_scandir(path):
+        scandir_paths.append(Path(path))
+        return original_scandir(path)
+
+    def fail_rglob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"Artifact snapshot sealing should use os.scandir, not Path.rglob({pattern!r})"
+        )
+
+    monkeypatch.setattr(artifact_runtime.os, "scandir", tracking_scandir)
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    loaded: dict[str, object] = MLXEmbeddingRuntime(
+        backend_loader=backend_loader,
+        active_memory_bytes=lambda: 0,
+    ).load_model(_bert_model_spec(model_dir))
+
+    descriptor = backend_loader.descriptors[0]
+    assert descriptor.source_model_path == model_dir.resolve()
+    assert not descriptor.model_path.exists()
+    load_receipt = loaded["embedding_load_receipt"]
+    assert isinstance(load_receipt, dict)
+    assert load_receipt["model_hash"] == descriptor.model_hash
+    assert any(path.name.startswith("melix-embedding-artifact-") for path in scandir_paths)
+
+
 def test_load_model_rejects_snapshot_module_path_escape(tmp_path: Path) -> None:
     model_dir = tmp_path / "snapshot-module-path-escape"
     _write_tiny_bert_checkpoint(model_dir)

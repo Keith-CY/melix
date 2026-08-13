@@ -4823,6 +4823,8 @@ def test_artifact_embedding_batch_probe_script_emits_metrics(
     assert metrics["batch_speedup_ratio"] >= 2.0
     assert metrics["nonfinite_output_count"] == 0.0
     assert metrics["output_dimension_mismatch_count"] == 0.0
+    assert metrics["snapshot_fallback_glob_calls_mean"] == 0.0
+    assert metrics["snapshot_seal_rglob_calls_mean"] == 0.0
 
 
 def test_artifact_embedding_batch_coverage_measures_changed_contract_tests() -> None:
@@ -4864,6 +4866,8 @@ def test_artifact_embedding_batch_coverage_measures_changed_contract_tests() -> 
     assert "MELIX_ARTIFACT_EMBEDDING_WORK_UNITS=100000" in probe["probe_command"]
     batch_metrics = {metric["key"]: metric for metric in probe["metrics"]}
     assert batch_metrics["batch_speedup_ratio"]["warn_pct"] == 5.0
+    assert batch_metrics["snapshot_fallback_glob_calls_mean"]["warn_abs"] == 0.0
+    assert batch_metrics["snapshot_seal_rglob_calls_mean"]["warn_abs"] == 0.0
     readme_metrics = {metric["key"]: metric for metric in readme_probe["metrics"]}
     assert readme_metrics["new_elapsed_ms_mean"]["warn_abs"] == 0.00005
     assert (
@@ -4882,6 +4886,7 @@ def test_artifact_embedding_batch_probe_reports_legacy_base_strategy() -> None:
     )
     probe_script["measure"].__globals__["MLXEmbeddingRuntime"] = None
     probe_script["measure"].__globals__["ArtifactEmbeddingDescriptor"] = None
+    probe_script["measure"].__globals__["artifact_embedding_runtime"] = None
 
     metrics = probe_script["measure"](sample_count=2, work_units=1_000)
 
@@ -4891,6 +4896,8 @@ def test_artifact_embedding_batch_probe_reports_legacy_base_strategy() -> None:
     assert metrics["singleton_32_tokenizer_count"] == 32.0
     assert metrics["nonfinite_output_count"] == 0.0
     assert metrics["output_dimension_mismatch_count"] == 0.0
+    assert metrics["snapshot_fallback_glob_calls_mean"] >= 1.0
+    assert metrics["snapshot_seal_rglob_calls_mean"] >= 1.0
 
 
 def test_artifact_embedding_batch_probe_main_emits_metrics(
