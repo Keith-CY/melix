@@ -31,6 +31,11 @@ of reparsing the cached serialized bytes. The method still returns a fresh
 protobuf object every time, so caller mutations cannot affect later callers or the
 registry cache.
 
+The 2026-08-13 scheduled slice applies that same template-copy contract inside
+`ToolRegistry.as_worker_tool_config()` itself for all registry instances. The
+change keeps `built_in_tool_config()` behavior unchanged while removing the
+serialize/parse round trip from direct selected-registry worker config exports.
+
 ## Verification plan
 
 - Focused tool-registry tests, including full tuple selection copy isolation and
@@ -38,7 +43,8 @@ registry cache.
 - Registered changed-scope coverage for the tool-registry probe scope.
 - Registered local probe on Linux, comparing the pre-change and post-change
   `full_selection_tool_config_elapsed_ms_mean`,
-  `partial_selection_tool_config_elapsed_ms_mean`, and adjacent metrics.
+  `partial_selection_tool_config_elapsed_ms_mean`,
+  `direct_registry_tool_config_elapsed_ms_mean`, and adjacent metrics.
 
 ## Boundary
 

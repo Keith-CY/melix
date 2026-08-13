@@ -35,6 +35,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     full_selection_config_elapsed_samples: list[float] = []
     full_selection_config_distinct_objects: list[float] = []
     partial_selection_config_elapsed_samples: list[float] = []
+    direct_registry_config_elapsed_samples: list[float] = []
     checksum = 0
     original_schema_byte_count = getattr(ToolDescriptor, "schema_byte_count", None)
 
@@ -113,6 +114,16 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
             partial_selection_config_elapsed_samples.append(
                 (time.perf_counter() - partial_selection_started) * 1000.0
             )
+
+            direct_registry = registry.select(("image_crop", "local_compute"))
+            direct_registry.as_worker_tool_config()
+            direct_registry_started = time.perf_counter()
+            for _index in range(iterations):
+                config = direct_registry.as_worker_tool_config()
+                checksum += len(config.tools) + len(config.schema_version)
+            direct_registry_config_elapsed_samples.append(
+                (time.perf_counter() - direct_registry_started) * 1000.0
+            )
     finally:
         tool_registry_module.ToolDescriptor.json_schema = original_json_schema
         if original_schema_byte_count is None:
@@ -139,6 +150,9 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         ),
         "partial_selection_tool_config_elapsed_ms_mean": statistics.fmean(
             partial_selection_config_elapsed_samples
+        ),
+        "direct_registry_tool_config_elapsed_ms_mean": statistics.fmean(
+            direct_registry_config_elapsed_samples
         ),
         "schema_bytes": float(expected_schema_bytes),
         "checksum": float(checksum),
