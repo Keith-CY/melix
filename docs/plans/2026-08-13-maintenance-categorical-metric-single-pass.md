@@ -27,6 +27,8 @@ The probe compares the previous list-plus-set helper against the current single-
 1. Uniform categorical samples, where all samples must be scanned to prove the single category.
 2. Mixed categorical samples, where the current helper can stop after the first mismatch.
 
+Because this PR adds the probe script, the registered probe command resolves the script from the head worktree when the base worktree does not contain it yet. This keeps base/head metric comparison available for a newly registered command-json probe.
+
 Reported metrics include current/legacy elapsed means, delta means, speedup ratios, sample counts, and peak bytes.
 
 ## Success criteria
