@@ -5723,6 +5723,12 @@
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0
+      },
+      {
+        "key": "direct_registry_tool_config_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
       }
     ]
   },

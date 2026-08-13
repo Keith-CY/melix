@@ -466,7 +466,7 @@ def test_built_in_tool_config_returns_isolated_template_copies() -> None:
     assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
 
 
-def test_tool_registry_worker_config_reuses_cached_serialized_bytes(
+def test_tool_registry_worker_config_reuses_cached_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
@@ -474,10 +474,12 @@ def test_tool_registry_worker_config_reuses_cached_serialized_bytes(
     first_config.tools.pop()
     first_config.schema_version = "mutated"
 
-    def fail_template_copy(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:  # pragma: no cover
-        raise AssertionError("cached worker tool config should copy from serialized bytes")
+    def fail_as_worker_tool_definition(self: ToolDescriptor) -> common_pb2.ToolDefinition:
+        raise AssertionError(  # pragma: no cover
+            "cached worker tool config should copy from the cached template"
+        )
 
-    monkeypatch.setattr(tool_registry_module, "_copy_tool_config", fail_template_copy)
+    monkeypatch.setattr(ToolDescriptor, "as_worker_tool_definition", fail_as_worker_tool_definition)
 
     second_config = registry.as_worker_tool_config()
 
@@ -1107,7 +1109,7 @@ def test_built_in_tool_config_caches_raw_normalized_selection_alias(
     assert built_in_tool_config(raw_selection).tools[0].name == "image_crop"
 
 
-def test_tool_registry_worker_tool_config_reuses_cached_serialized_snapshot(
+def test_tool_registry_worker_tool_config_reuses_cached_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = built_in_tool_registry().select(["image_crop", "local_compute"])
@@ -1115,7 +1117,7 @@ def test_tool_registry_worker_tool_config_reuses_cached_serialized_snapshot(
 
     def fail_as_worker_tool_definition(self: ToolDescriptor) -> common_pb2.ToolDefinition:
         raise AssertionError(  # pragma: no cover
-            "as_worker_tool_config() should reuse cached serialized config"
+            "as_worker_tool_config() should reuse the cached template"
         )
 
     monkeypatch.setattr(ToolDescriptor, "as_worker_tool_definition", fail_as_worker_tool_definition)

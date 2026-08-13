@@ -1492,6 +1492,7 @@ def test_tool_registry_schema_bytes_probe_script_emits_metrics(
     assert metrics["built_in_tool_config_elapsed_ms_mean"] >= 0.0
     assert metrics["built_in_tool_config_distinct_objects_mean"] == 20.0
     assert metrics["partial_selection_tool_config_elapsed_ms_mean"] >= 0.0
+    assert metrics["direct_registry_tool_config_elapsed_ms_mean"] >= 0.0
 
 
 def test_tool_registry_select_probe_script_emits_metrics(
