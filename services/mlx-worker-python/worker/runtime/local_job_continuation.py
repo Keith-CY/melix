@@ -24,6 +24,7 @@ RECEIPT_SCHEMA_VERSION = "melix.local_job_continuation_receipt.v1"
 
 JOB_STATUSES = frozenset({"pending", "running", "completed", "failed", "timeout", "blocked"})
 FOLLOWUP_STATUSES = frozenset({"not_started", "pending", "in_progress", "completed", "blocked"})
+_CLAIMED_FOLLOWUP_STATUSES = frozenset({"pending", "in_progress", "completed"})
 JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 _JSON_LOADS = json.loads
 
@@ -875,7 +876,7 @@ def claim_local_job_followup(
     if reconciled.receipt.get("reason") == "missing_completion_evidence":
         return reconciled
 
-    if record.followup_status in {"pending", "in_progress", "completed"}:
+    if record.followup_status in _CLAIMED_FOLLOWUP_STATUSES:
         return LocalJobContinuationReconciliation(
             record=record,
             receipt=_receipt(
@@ -1814,7 +1815,7 @@ def _followup_candidate_scan_receipt(
 ) -> dict[str, Any]:
     if evidence_available is None:
         evidence_available = _has_completion_evidence(record)
-    if record.followup_status in {"pending", "in_progress", "completed"}:
+    if record.followup_status in _CLAIMED_FOLLOWUP_STATUSES:
         return _receipt(
             job_id=record.job_id,
             status=record.status,
