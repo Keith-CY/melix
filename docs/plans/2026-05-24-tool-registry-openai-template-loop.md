@@ -40,6 +40,16 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/tool_registry_openai_tools_probe.py
 ```
 
+## 2026-08-13 Follow-up: Explicit property copy loop
+
+This follow-up slice keeps the same registered probe and narrows the implementation
+change to the inner OpenAI-tool schema property copy path. `ToolRegistry.as_openai_tools()`
+now materializes the returned list with an explicit append loop and copies each
+schema property dictionary in a direct nested loop instead of using the outer list
+comprehension plus the inner property dictionary comprehension. Returned payloads
+remain isolated mutable copies, and the cached template tuple remains the source of
+truth.
+
 ## Acceptance Criteria
 
 - Focused behavior tests pass locally on Linux.
