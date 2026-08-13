@@ -833,10 +833,10 @@ def _input_source_paths(input_path: Path) -> list[Path]:
 def _source_size_entries(paths: list[Path]) -> list[tuple[Path, int]]:
     entries: list[tuple[Path, int]] = []
     entries_append = entries.append
-    path_stat = Path.stat
+    stat_path = os.stat
     for path in paths:
         try:
-            entries_append((path, path_stat(path).st_size))
+            entries_append((path, stat_path(path).st_size))
         except OSError:
             entries_append((path, 0))
     return entries

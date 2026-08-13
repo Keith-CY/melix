@@ -129,6 +129,21 @@ def test_dataset_ingest_source_size_entries_preserve_order_and_missing_files(tmp
     ]
 
 
+def test_dataset_ingest_source_size_entries_use_module_stat_not_path_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.txt"
+    source.write_text("alpha", encoding="utf-8")
+
+    def fail_path_stat(self: Path):  # pragma: no cover - regression sentinel
+        raise AssertionError("_source_size_entries() should use os.stat directly")
+
+    monkeypatch.setattr(Path, "stat", fail_path_stat)
+
+    assert _source_size_entries([source]) == [(source, 5)]
+
+
 def test_dataset_preparation_import_does_not_eagerly_load_privacy_patterns() -> None:
     completed = subprocess.run(
         [
