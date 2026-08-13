@@ -26,6 +26,23 @@ FIXTURE_ROOT = (
 )
 
 
+def _fixture_manifest_paths() -> list[Path]:
+    paths: list[Path] = []
+    try:
+        entries = os.scandir(FIXTURE_ROOT)
+    except FileNotFoundError:
+        return paths
+    with entries:
+        for entry in entries:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            manifest_path = Path(entry.path) / "export-target-manifest.json"
+            if manifest_path.is_file():
+                paths.append(manifest_path)
+    paths.sort()
+    return paths
+
+
 def _env_int(name: str, default: int, minimum: int) -> int:
     try:
         value = int(os.environ.get(name, str(default)))
@@ -35,7 +52,7 @@ def _env_int(name: str, default: int, minimum: int) -> int:
 
 
 def main() -> int:
-    manifests = sorted(FIXTURE_ROOT.glob("*/export-target-manifest.json"))
+    manifests = _fixture_manifest_paths()
     iterations = _env_int("MELIX_RUNTIME_EXPORT_LAYOUT_PROBE_ITERATIONS", 40, 1)
     samples = _env_int("MELIX_RUNTIME_EXPORT_LAYOUT_PROBE_SAMPLES", 5, 1)
     elapsed_samples: list[float] = []

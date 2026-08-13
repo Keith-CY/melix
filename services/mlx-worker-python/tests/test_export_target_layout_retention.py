@@ -530,6 +530,44 @@ def test_export_target_layout_retention_cli_writes_metrics(tmp_path: Path) -> No
     assert payload["retention_decision_count"] == 15
 
 
+def test_export_target_layout_retention_report_default_paths_use_scandir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"_default_manifest_paths() should use os.scandir, not Path.glob({pattern!r})"
+        )
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert len(export_target_layout_retention_report._default_manifest_paths()) == 4
+
+
+def test_export_target_layout_retention_report_default_paths_skip_non_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root = tmp_path / "targets"
+    manifest_dir = target_root / "managed"
+    manifest_dir.mkdir(parents=True)
+    expected_manifest = manifest_dir / "export-target-manifest.json"
+    expected_manifest.write_text("{}", encoding="utf-8")
+    (target_root / "not-a-target.txt").write_text("skip", encoding="utf-8")
+    monkeypatch.setattr(export_target_layout_retention_report, "DEFAULT_FIXTURE_ROOT", target_root)
+
+    assert export_target_layout_retention_report._default_manifest_paths() == [expected_manifest]
+
+
+def test_export_target_layout_retention_report_missing_fixture_root_returns_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_root = tmp_path / "missing"
+    monkeypatch.setattr(export_target_layout_retention_report, "DEFAULT_FIXTURE_ROOT", missing_root)
+
+    assert export_target_layout_retention_report._default_manifest_paths() == []
+
+
 def test_runtime_export_layout_retention_probe_env_int_falls_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -555,6 +593,48 @@ def test_runtime_export_layout_retention_probe_script_emits_metrics(
     assert metrics["retained_byte_size"] == 12141056.0
     assert metrics["cleanable_byte_size"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
+
+
+def test_runtime_export_layout_retention_probe_manifest_paths_use_scandir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(ROOT / "scripts/runtime_export_layout_retention_probe.py"))
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"_fixture_manifest_paths() should use os.scandir, not Path.glob({pattern!r})"
+        )
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert len(probe_script["_fixture_manifest_paths"]()) == 4
+
+
+def test_runtime_export_layout_retention_probe_manifest_paths_skip_non_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(ROOT / "scripts/runtime_export_layout_retention_probe.py"))
+    target_root = tmp_path / "targets"
+    manifest_dir = target_root / "managed"
+    manifest_dir.mkdir(parents=True)
+    expected_manifest = manifest_dir / "export-target-manifest.json"
+    expected_manifest.write_text("{}", encoding="utf-8")
+    (target_root / "not-a-target.txt").write_text("skip", encoding="utf-8")
+    monkeypatch.setitem(probe_script["_fixture_manifest_paths"].__globals__, "FIXTURE_ROOT", target_root)
+
+    assert probe_script["_fixture_manifest_paths"]() == [expected_manifest]
+
+
+def test_runtime_export_layout_retention_probe_manifest_paths_missing_root_returns_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(ROOT / "scripts/runtime_export_layout_retention_probe.py"))
+    missing_root = tmp_path / "missing"
+    monkeypatch.setitem(probe_script["_fixture_manifest_paths"].__globals__, "FIXTURE_ROOT", missing_root)
+
+    assert probe_script["_fixture_manifest_paths"]() == []
 
 
 def _write_manifest(
