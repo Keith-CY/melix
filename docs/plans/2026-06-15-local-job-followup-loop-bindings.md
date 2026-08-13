@@ -57,6 +57,12 @@ This Python-only follow-up keeps the same registered `local-job-followup-scan-sc
 
 The registered scan probe remains the local and CI metric source for this slice. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
 
+## 2026-08-13 follow-up: claimed-status membership set reuse
+
+This Python-only follow-up keeps the same registered `local-job-followup-scan-scandir` probe and narrows duplicate-claim checks in `claim_local_job_followup(...)` and `_followup_candidate_scan_receipt(...)`. The claimed follow-up status collection is now a module-level `frozenset`, avoiding allocation of the same three-element set on every claim or candidate receipt check while preserving the exact statuses (`pending`, `in_progress`, and `completed`) that suppress duplicate local-job follow-ups.
+
+The existing claim and scan regression tests cover the unchanged duplicate-claim semantics. The registered candidate-receipt probe remains the local and CI metric source for this slice. No record schema, reconciliation, claim, prompt-context admission, scan ordering, or receipt payload fields change.
+
 ## Linux validation boundary
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime behavior changes are included.

@@ -5232,14 +5232,14 @@ class MaintenanceCore:
         field_name: str,
         mapping: dict[str, float],
     ) -> float:
-        values = [
-            str(getattr(sample, field_name, "") or "")
-            for sample in samples
-        ]
-        distinct_values = set(values)
-        if len(distinct_values) > 1:
-            return MaintenanceCore._categorical_metric_code("mixed", mapping)
-        return MaintenanceCore._categorical_metric_code(next(iter(distinct_values)), mapping)
+        first_value: str | None = None
+        for sample in samples:
+            value = str(getattr(sample, field_name, "") or "")
+            if first_value is None:
+                first_value = value
+            elif value != first_value:
+                return MaintenanceCore._categorical_metric_code("mixed", mapping)
+        return MaintenanceCore._categorical_metric_code(first_value or "", mapping)
 
     @staticmethod
     def _reported_cache_count(value: int) -> int:
