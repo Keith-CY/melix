@@ -3551,6 +3551,16 @@ def test_scope_report_selects_maintenance_percentile_probe() -> None:
     assert "maintenance-percentile-vector-reuse" in probe_ids
 
 
+def test_scope_report_selects_maintenance_categorical_metric_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/maintenance_core.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "maintenance-categorical-metric-single-pass" in probe_ids
+
+
 def test_scope_report_selects_maintenance_prompt_shape_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -5271,6 +5281,32 @@ def test_dataset_registry_split_match_probe_script_emits_metrics(
     assert metrics["peak_bytes_mean"] > 0
 
 
+def test_maintenance_categorical_metric_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_MAINTENANCE_CATEGORICAL_PROBE_VALUES", "12")
+    monkeypatch.setenv("MELIX_MAINTENANCE_CATEGORICAL_PROBE_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_MAINTENANCE_CATEGORICAL_PROBE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/maintenance_categorical_metric_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iteration_count"] == 2.0
+    assert metrics["value_count"] == 12.0
+    assert metrics["uniform_current_ms_mean"] >= 0.0
+    assert metrics["mixed_current_ms_mean"] >= 0.0
+    assert metrics["mixed_speedup"] > 0.0
+    assert metrics["checksum"] > 0.0
+    assert metrics["peak_bytes_mean"] > 0.0
+
+
 def test_maintenance_parameter_normalization_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -5828,6 +5864,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "dataset-quality-lengths-chain",
         "dataset-source-records-scandir",
         "maintenance-bench-report-readback",
+        "maintenance-categorical-metric-single-pass",
         "maintenance-percentile-vector-reuse",
         "maintenance-prompt-shape-vector-repeat",
         "maintenance-benchmark-parameter-normalization-single-convert",
