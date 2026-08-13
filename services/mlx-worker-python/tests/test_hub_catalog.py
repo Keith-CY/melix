@@ -132,6 +132,32 @@ def test_int_helper_preserves_bool_and_int_subclass_semantics() -> None:
     assert _int("3") == 0
 
 
+def test_direct_size_hint_span_parses_integer_suffix_without_substring_parser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.model_ops import hub_catalog
+
+    def fail_substring_parser(text: str) -> int:
+        raise AssertionError(  # pragma: no cover - regression guard
+            f"integer spans should parse without substring fallback: {text!r}"
+        )
+
+    monkeypatch.setattr(hub_catalog, "_direct_size_hint_from_text", fail_substring_parser)
+
+    assert hub_catalog._direct_size_hint_from_span("Model size: 128 MB", 12, 18) == 128 * 1024 * 1024
+    assert hub_catalog._direct_size_hint_from_span("MODEL SIZE|256 kb", 11, 17) == 256 * 1024
+    assert hub_catalog._direct_size_hint_from_span("MODEL SIZE|2 GB", 11, 15) == 2 * 1024 * 1024 * 1024
+
+
+def test_direct_size_hint_span_preserves_decimal_and_invalid_fallbacks() -> None:
+    from worker.model_ops import hub_catalog
+
+    assert hub_catalog._direct_size_hint_from_span("Model size: 1.5 GB", 12, 18) == int(1.5 * 1024 * 1024 * 1024)
+    assert hub_catalog._direct_size_hint_from_span("Model size: bad MB", 12, 18) == 0
+    assert hub_catalog._direct_size_hint_from_span("Model size: 128 MX", 12, 18) == 0
+    assert hub_catalog._direct_size_hint_from_span("Model size: 128 TB", 12, 18) == 0
+
+
 def test_direct_card_size_hint_exact_label_avoids_substring_parser(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

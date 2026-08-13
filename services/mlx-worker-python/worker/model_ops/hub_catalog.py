@@ -966,23 +966,39 @@ def _direct_size_hint_from_text(text: str) -> int:
 
 def _direct_size_hint_from_span(text: str, value_start: int, value_end: int) -> int:
     if value_end - value_start >= 4:
-        unit_suffix = text[value_end - 3 : value_end]
-        if unit_suffix == " MB" or unit_suffix == " mb":
-            multiplier = _SIZE_HINT_MB
-        elif unit_suffix == " GB" or unit_suffix == " gb":
-            multiplier = _SIZE_HINT_GB
-        elif unit_suffix == " KB" or unit_suffix == " kb":
-            multiplier = _SIZE_HINT_KB
-        else:
+        unit_suffix_start = value_end - 3
+        if text[unit_suffix_start] != " ":
             multiplier = 0
+        else:
+            unit_initial = ord(text[unit_suffix_start + 1])
+            unit_suffix = ord(text[unit_suffix_start + 2])
+            if unit_suffix != 66 and unit_suffix != 98:  # B or b
+                multiplier = 0
+            elif unit_initial == 77 or unit_initial == 109:  # M or m
+                multiplier = _SIZE_HINT_MB
+            elif unit_initial == 71 or unit_initial == 103:  # G or g
+                multiplier = _SIZE_HINT_GB
+            elif unit_initial == 75 or unit_initial == 107:  # K or k
+                multiplier = _SIZE_HINT_KB
+            else:
+                multiplier = 0
         if multiplier:
-            value_text = text[value_start : value_end - 3]
-            if value_text.isdecimal():
-                return int(value_text) * multiplier
-            try:
-                return int(float(value_text) * multiplier)
-            except ValueError:
+            value_end_without_unit = unit_suffix_start
+            if value_start >= value_end_without_unit:
                 return 0
+            value = 0
+            cursor = value_start
+            while cursor < value_end_without_unit:
+                digit = ord(text[cursor]) - 48
+                if digit < 0 or digit > 9:
+                    value_text = text[value_start:value_end_without_unit]
+                    try:
+                        return int(float(value_text) * multiplier)
+                    except ValueError:
+                        return 0
+                value = (value * 10) + digit
+                cursor += 1
+            return value * multiplier
     return _direct_size_hint_from_text(text[value_start:value_end])
 
 
