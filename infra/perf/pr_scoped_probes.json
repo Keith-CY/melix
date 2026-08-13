@@ -8056,6 +8056,18 @@
         "direction": "lower_is_better",
         "warn_pct": 0.0,
         "warn_abs": 0.0
+      },
+      {
+        "key": "snapshot_fallback_glob_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_abs": 0.0
+      },
+      {
+        "key": "snapshot_seal_rglob_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_abs": 0.0
       }
     ]
   },

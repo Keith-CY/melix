@@ -142,8 +142,8 @@ class _ArtifactSnapshot:
         self._closed = False
 
     def seal(self) -> None:
-        for path in self.model_path.rglob("*"):
-            path.chmod(0o500 if path.is_dir() else 0o400)
+        for path, is_directory in _snapshot_descendants(self.model_path):
+            path.chmod(0o500 if is_directory else 0o400)
         self.model_path.chmod(0o500)
 
     def close(self) -> None:
@@ -151,9 +151,19 @@ class _ArtifactSnapshot:
             return
         self._closed = True
         if self.model_path.exists():
+            descendants = _snapshot_descendants(self.model_path)
             self.model_path.chmod(0o700)
-            for path in self.model_path.rglob("*"):
-                path.chmod(0o700 if path.is_dir() else 0o600)
+            for path, is_directory in descendants:
+                if is_directory:
+                    path.chmod(0o700)
+            for path, is_directory in descendants:
+                if not is_directory:
+                    path.chmod(0o600)
+                    path.unlink()
+            for path, is_directory in descendants:
+                if is_directory:
+                    path.rmdir()
+            self.model_path.rmdir()
         self._temporary_directory.cleanup()
 
 
@@ -273,7 +283,7 @@ def _resolved_model_path(model_spec: Any) -> Path:
 def _embedding_weight_paths(model_path: Path) -> tuple[Path, ...]:
     weight_paths = tuple(
         _require_contained_file(model_path, candidate)
-        for candidate in sorted(model_path.glob("*.safetensors"))
+        for candidate in _root_files_with_suffix(model_path, ".safetensors")
     )
     if not weight_paths:
         raise ArtifactEmbeddingError(
@@ -281,6 +291,71 @@ def _embedding_weight_paths(model_path: Path) -> tuple[Path, ...]:
             "Artifact-backed embedding requires local safetensors weights.",
         )
     return weight_paths
+
+
+def _snapshot_descendants(root: Path) -> tuple[tuple[Path, bool], ...]:
+    descendants: list[tuple[Path, bool]] = []
+    stack = [root]
+    while stack:
+        directory = stack.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                try:
+                    is_directory = entry.is_dir(follow_symlinks=False)
+                except OSError:  # pragma: no cover - filesystem race guard
+                    is_directory = False
+                path = Path(entry.path)
+                descendants.append((path, is_directory))
+                if is_directory:
+                    stack.append(path)
+    descendants.sort(key=lambda item: len(item[0].parts), reverse=True)
+    return tuple(descendants)
+
+
+def _root_files_with_suffix(root: Path, suffix: str) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if not entry.name.endswith(suffix):
+                continue
+            try:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+            except OSError:  # pragma: no cover - filesystem race guard
+                continue
+            paths.append(Path(entry.path))
+    return tuple(sorted(paths))
+
+
+def _fallback_sentence_transformer_contract_paths(
+    source_model_path: Path,
+) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    with os.scandir(source_model_path) as entries:
+        for entry in entries:
+            name = entry.name
+            if not (name.endswith("_Pooling") or name.endswith("_Normalize")):
+                continue
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:  # pragma: no cover - filesystem race guard
+                continue
+            config_path = Path(entry.path) / "config.json"
+            if config_path.is_file():
+                paths.append(config_path)
+    return tuple(sorted(paths))
+
+
+def _fallback_sentence_transformer_contract_paths_by_stage(
+    source_model_path: Path,
+    stage_suffix: str,
+) -> tuple[Path, ...]:
+    return tuple(
+        path
+        for path in _fallback_sentence_transformer_contract_paths(source_model_path)
+        if path.parent.name.endswith(stage_suffix)
+    )
 
 
 def _resolved_max_length(
@@ -395,11 +470,17 @@ def _sentence_transformers_contract(
     else:
         pooling_paths = tuple(
             _require_contained_file(model_path, path)
-            for path in sorted(model_path.glob("*_Pooling/config.json"))
+            for path in _fallback_sentence_transformer_contract_paths_by_stage(
+                model_path,
+                "_Pooling",
+            )
         )
         normalize_paths = tuple(
             _require_contained_file(model_path, path)
-            for path in sorted(model_path.glob("*_Normalize/config.json"))
+            for path in _fallback_sentence_transformer_contract_paths_by_stage(
+                model_path,
+                "_Normalize",
+            )
         )
     if len(pooling_paths) > 1:
         raise ArtifactEmbeddingError(
@@ -567,9 +648,8 @@ def _snapshot_embedding_artifact(model_spec: Any) -> _ArtifactSnapshot:
                 module_path = _snapshot_relative_path(str(module.get("path", "")))
                 copy(module_path / "config.json")
         else:
-            for pattern in ("*_Pooling/config.json", "*_Normalize/config.json"):
-                for path in sorted(source_model_path.glob(pattern)):
-                    copy(path.relative_to(source_model_path))
+            for path in _fallback_sentence_transformer_contract_paths(source_model_path):
+                copy(path.relative_to(source_model_path))
         snapshot.seal()
         return snapshot
     except ArtifactEmbeddingError:
@@ -1178,6 +1258,7 @@ class MLXEmbeddingRuntime:
             "requested_normalization": str(ext.get("embedding_normalization", "") or "").strip(),
             "artifact_normalization": descriptor.artifact_normalization,
             "effective_normalization": descriptor.normalization,
+            "normalization": descriptor.normalization,
             "requested_dimensions": requested_dimensions,
             "effective_dimensions": descriptor.dimensions,
             "requested_max_length": requested_max_length,

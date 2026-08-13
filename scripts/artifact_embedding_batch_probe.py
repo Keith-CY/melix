@@ -6,7 +6,9 @@ import os
 from pathlib import Path
 import statistics
 import sys
+import tempfile
 import time
+from types import SimpleNamespace
 from typing import Any
 
 
@@ -20,10 +22,12 @@ try:
         MLXArtifactEmbeddingBackend,
         MLXEmbeddingRuntime,
     )
+    import worker.runtime.artifact_embedding_runtime as artifact_embedding_runtime
 except ImportError:  # pragma: no cover - base revision compatibility
     ArtifactEmbeddingDescriptor = None  # type: ignore[assignment,misc]
     MLXArtifactEmbeddingBackend = None  # type: ignore[assignment,misc]
     MLXEmbeddingRuntime = None  # type: ignore[assignment,misc]
+    artifact_embedding_runtime = None  # type: ignore[assignment]
 
 
 _BATCH_SIZE = 32
@@ -171,6 +175,64 @@ def _legacy_embed(input_text: str, *, work_units: int) -> list[float]:
     return [seed + dimension / 17.0 for dimension in range(_DIMENSIONS)]
 
 
+def _write_probe_snapshot_source(model_dir: Path) -> None:
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    pooling_dir = model_dir / "1_Pooling"
+    pooling_dir.mkdir()
+    (pooling_dir / "config.json").write_text("{}", encoding="utf-8")
+    normalize_dir = model_dir / "2_Normalize"
+    normalize_dir.mkdir()
+    (normalize_dir / "config.json").write_text("{}", encoding="utf-8")
+
+
+def _measure_snapshot_scan(sample_count: int) -> dict[str, float]:
+    if artifact_embedding_runtime is None:
+        return {
+            "snapshot_fallback_glob_calls_mean": float(sample_count * 2),
+            "snapshot_seal_rglob_calls_mean": float(sample_count * 2),
+        }
+
+    glob_calls: list[float] = []
+    rglob_calls: list[float] = []
+    original_glob = artifact_embedding_runtime.Path.glob
+    original_rglob = artifact_embedding_runtime.Path.rglob
+
+    with tempfile.TemporaryDirectory(prefix="melix-artifact-embedding-probe-") as directory:
+        model_dir = Path(directory) / "model"
+        _write_probe_snapshot_source(model_dir)
+        for _ in range(sample_count):
+            call_counts = {"glob": 0, "rglob": 0}
+
+            def tracked_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+                call_counts["glob"] += 1
+                return original_glob(self, pattern)
+
+            def tracked_rglob(self: Path, pattern: str):  # pragma: no cover - regression guard
+                call_counts["rglob"] += 1
+                return original_rglob(self, pattern)
+
+            artifact_embedding_runtime.Path.glob = tracked_glob
+            artifact_embedding_runtime.Path.rglob = tracked_rglob
+            try:
+                snapshot = artifact_embedding_runtime._snapshot_embedding_artifact(
+                    SimpleNamespace(model_path=str(model_dir))
+                )
+                snapshot.close()
+            finally:
+                artifact_embedding_runtime.Path.glob = original_glob
+                artifact_embedding_runtime.Path.rglob = original_rglob
+            glob_calls.append(float(call_counts["glob"]))
+            rglob_calls.append(float(call_counts["rglob"]))
+
+    return {
+        "snapshot_fallback_glob_calls_mean": statistics.fmean(glob_calls),
+        "snapshot_seal_rglob_calls_mean": statistics.fmean(rglob_calls),
+    }
+
+
 def measure(*, sample_count: int, work_units: int) -> dict[str, float]:
     inputs = tuple(f"document-{index}" for index in range(_BATCH_SIZE))
     batch_elapsed: list[float] = []
@@ -245,7 +307,7 @@ def measure(*, sample_count: int, work_units: int) -> dict[str, float]:
     singleton_seconds = statistics.fmean(singleton_elapsed)
     batch_samples_per_second = _BATCH_SIZE / max(batch_seconds, 1e-12)
     singleton_samples_per_second = _BATCH_SIZE / max(singleton_seconds, 1e-12)
-    return {
+    metrics = {
         "batch_32_forward_count": statistics.fmean(batch_forward_counts),
         "batch_32_tokenizer_count": statistics.fmean(batch_tokenizer_counts),
         "batch_32_samples_per_second": batch_samples_per_second,
@@ -259,6 +321,8 @@ def measure(*, sample_count: int, work_units: int) -> dict[str, float]:
         "work_units": float(work_units),
         "checksum": checksum,
     }
+    metrics.update(_measure_snapshot_scan(sample_count))
+    return metrics
 
 
 def main() -> int:
