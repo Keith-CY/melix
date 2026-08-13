@@ -92,6 +92,12 @@ and target count while materializing export reports. The metrics report no longe
 rescans the completed export report list solely to recompute those aggregate
 fields, while preserving the same report payload and error behavior.
 
+A follow-up 2026-08-13 metrics fixture discovery slice replaces the layout
+retention report and probe `Path.glob("*/export-target-manifest.json")` fixture
+lookup with a direct `os.scandir()` pass over the target-manifest fixture root.
+The slice preserves sorted manifest order and missing-root behavior while
+avoiding glob iterator/path expansion overhead before each metrics/probe run.
+
 ## Verification
 
 Focused verification:

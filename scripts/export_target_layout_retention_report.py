@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 import tempfile
@@ -28,7 +29,20 @@ DEFAULT_FIXTURE_ROOT = (
 
 
 def _default_manifest_paths() -> list[Path]:
-    return sorted(DEFAULT_FIXTURE_ROOT.glob("*/export-target-manifest.json"))
+    paths: list[Path] = []
+    try:
+        entries = os.scandir(DEFAULT_FIXTURE_ROOT)
+    except FileNotFoundError:
+        return paths
+    with entries:
+        for entry in entries:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            manifest_path = Path(entry.path) / "export-target-manifest.json"
+            if manifest_path.is_file():
+                paths.append(manifest_path)
+    paths.sort()
+    return paths
 
 
 def build_report(
