@@ -2804,10 +2804,11 @@ def _changed_paths_match_force_all_wildcards(changed_paths: set[str] | tuple[str
 
 def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
     glob_matches_path = _glob_matches_path
+    glob_has_magic = _glob_has_magic
     for glob in globs:
         if path == glob:
             return True
-        if not _glob_has_magic(glob):
+        if not glob_has_magic(glob):
             continue
         if glob_matches_path(path, glob):
             return True
