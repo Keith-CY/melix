@@ -95,14 +95,19 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     return raw_response.strip(), "parsed_code"
 
 
-def _stripped_slice(text: str, start: int, end: int) -> str:
-    ascii_whitespace_flags = _ASCII_WHITESPACE_FLAGS
-    ord_ = ord
+def _stripped_slice(
+    text: str,
+    start: int,
+    end: int,
+    *,
+    _ascii_whitespace_flags=_ASCII_WHITESPACE_FLAGS,
+    _ord=ord,
+) -> str:
     while end > start:
         char = text[end - 1]
-        char_ord = ord_(char)
+        char_ord = _ord(char)
         if char_ord < 128:
-            if not ascii_whitespace_flags[char_ord]:
+            if not _ascii_whitespace_flags[char_ord]:
                 break
         elif not char.isspace():
             break
@@ -110,7 +115,13 @@ def _stripped_slice(text: str, start: int, end: int) -> str:
     return text[start:end]
 
 
-def _code_block_content_start(text: str, start: int) -> int:
+def _code_block_content_start(
+    text: str,
+    start: int,
+    *,
+    _ascii_whitespace_flags=_ASCII_WHITESPACE_FLAGS,
+    _ord=ord,
+) -> int:
     if text.startswith(_PYTHON_CODE_BLOCK_TAG, start):
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
     elif _starts_with_python_tag_ignore_case(text, start):
@@ -118,13 +129,11 @@ def _code_block_content_start(text: str, start: int) -> int:
     text_length = len(text)
     if start < text_length and text[start] == "\n":
         start += 1
-    ascii_whitespace_flags = _ASCII_WHITESPACE_FLAGS
-    ord_ = ord
     while start < text_length:
         char = text[start]
-        char_ord = ord_(char)
+        char_ord = _ord(char)
         if char_ord < 128:
-            if not ascii_whitespace_flags[char_ord]:
+            if not _ascii_whitespace_flags[char_ord]:
                 return start
         elif not char.isspace():
             return start

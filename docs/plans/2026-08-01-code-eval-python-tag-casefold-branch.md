@@ -21,6 +21,8 @@ This follow-up slice remains within the same registered code-block extraction pr
 
 This 2026-08-02 follow-up slice stays in the same registered code-block extraction probe and applies the same ASCII whitespace lookup pattern to the leading content-start skip after a code fence tag. The common ASCII whitespace prefix now avoids repeated `str.isspace()` calls while non-ASCII leading whitespace still falls back to Unicode `str.isspace()` semantics. Focused extraction tests cover ASCII and Unicode leading whitespace after the `python` tag.
 
+This 2026-08-14 follow-up keeps the same behavior and registered probe while moving the code-block whitespace lookup table and `ord` builtin bindings onto `_stripped_slice()` and `_code_block_content_start()` defaults. That removes two per-call local rebinding steps from repeated fenced-code extraction without changing ASCII or Unicode whitespace handling.
+
 ## Verification plan
 
 Run the focused registered test command, changed-scope coverage command, and registered probe locally on Linux before opening the PR. GitHub Actions PR-scoped performance remains the merge gate for the registered probe report.
