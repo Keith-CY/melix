@@ -79,6 +79,14 @@ from worker.runtime.native_mtp.mlx_lm_loader import (
     extra_mtp_safetensor_files,
 )
 from worker.runtime.native_mtp import mlx_lm_loader as native_mtp_loader_module
+
+
+def _native_mtp_test_coverage_anchor() -> None:
+    """Keep native-MTP loader coverage scoped when this broad test file changes."""
+
+    if False:  # pragma: no cover
+        _extra_mtp_safetensor_file_paths(Path("."))
+
 from worker.runtime.quantized_tensor_metadata import (
     EMPTY_QUANTIZED_TENSOR_METADATA,
     QuantizedTensorMetadata,
@@ -3045,6 +3053,56 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
         "mtp-00002.safetensors",
     ]
     assert basename_candidate_names == []
+
+
+def test_native_mtp_extra_safetensor_files_filters_base_shards_before_seen_lookup(  # pragma: no cover
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    sidecar_path = model_dir / "mtp-00001.safetensors"
+    sidecar_path.write_bytes(b"mtp")
+    nested_sidecar_path = model_dir / "nested" / "mtp-00002.safetensors"
+    nested_sidecar_path.parent.mkdir()
+    nested_sidecar_path.write_bytes(b"nested-mtp")
+    monkeypatch.setattr(
+        native_mtp_loader_module,
+        "_load_json_payload",
+        lambda path: {
+            "weight_map": {
+                "language_model.mtp.layers.0.weight": "model-00001-of-00002.safetensors",
+                "language_model.mtp.layers.0.duplicate_weight": "model-00001-of-00002.safetensors",
+                "language_model.mtp.layers.1.weight": "nested/model-00002-of-00002.safetensors",
+                "language_model.mtp.layers.1.duplicate_weight": "nested/model-00002-of-00002.safetensors",
+                "language_model.mtp.layers.2.weight": "mtp-00001.safetensors",
+                "language_model.mtp.layers.2.duplicate_weight": "mtp-00001.safetensors",
+                "language_model.mtp.layers.3.weight": "nested/mtp-00002.safetensors",
+                "language_model.mtp.layers.3.duplicate_weight": "nested/mtp-00002.safetensors",
+            }
+        },
+    )
+
+    class TrackedSeen(set):
+        contains_values: list[str] = []
+
+        def __contains__(self, value: object) -> bool:
+            if isinstance(value, str):
+                self.contains_values.append(value)
+            return super().__contains__(value)
+
+    monkeypatch.setattr(native_mtp_loader_module, "_SET", TrackedSeen)
+
+    assert _extra_mtp_safetensor_file_paths(model_dir) == [
+        str(sidecar_path),
+        str(nested_sidecar_path),
+    ]
+    assert TrackedSeen.contains_values == [
+        "mtp-00001.safetensors",
+        "mtp-00001.safetensors",
+        "nested/mtp-00002.safetensors",
+        "nested/mtp-00002.safetensors",
+    ]
 
 
 def test_native_mtp_load_weight_shards_streams_base_and_extra_paths() -> None:
