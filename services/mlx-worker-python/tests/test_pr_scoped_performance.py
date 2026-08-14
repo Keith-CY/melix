@@ -5062,8 +5062,10 @@ def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
     assert metrics["iterations_per_sample"] == 40000.0
     assert metrics["inspect_signature_calls_mean"] == 1.0
     assert metrics["declares_signature_calls_mean"] == 1.0
+    assert metrics["first_declared_signature_calls_mean"] == 1.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["declares_elapsed_ms_mean"] >= 0
+    assert metrics["first_declared_elapsed_ms_mean"] >= 0
 
 
 def test_runtime_utils_package_version_probe_script_emits_metrics(

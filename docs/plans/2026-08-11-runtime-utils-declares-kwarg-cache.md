@@ -8,6 +8,8 @@ Reduce hot-loop overhead for repeated `callable_declares_kwarg(...)` checks in t
 
 This Python-only performance slice is limited to `services/mlx-worker-python/worker/runtime/runtime_utils.py` and its focused runtime utility tests/probe support. It adds a cached boolean lookup for explicit keyword declaration checks, parallel to the existing `callable_accepts_kwarg(...)` cache, while preserving the unhashable-callable fallback path.
 
+A 2026-08-14 follow-up slice keeps the same registered probe boundary and optimizes `first_declared_kwarg(...)` by reading the cached `keyword_accessible_params` set once and using direct membership checks inside the candidate loop. It preserves variadic-kwargs behavior because only explicitly declared keyword-accessible parameters are eligible.
+
 ## Registered performance probe
 
 The affected path is covered by the registered PR-scoped probe `runtime-utils-kwarg-signature-cache` in `infra/perf/pr_scoped_probes.json`. This slice extends the probe script and registry metrics so the existing focused `test_command`, `coverage_command`, and `probe_command` also report declaration-cache metrics:
@@ -15,7 +17,12 @@ The affected path is covered by the registered PR-scoped probe `runtime-utils-kw
 - `declares_elapsed_ms_mean` (lower is better)
 - `declares_signature_calls_mean` (lower is better)
 
-The probe continues to report the existing accept-cache metrics:
+The 2026-08-14 follow-up keeps the same registered probe entry and extends the checked probe script with supplemental first-declared lookup metrics for local and CI evidence:
+
+- `first_declared_elapsed_ms_mean` (lower is better)
+- `first_declared_signature_calls_mean` (lower is better)
+
+The registered probe continues to report the existing accept-cache metrics:
 
 - `elapsed_ms_mean`
 - `inspect_signature_calls_mean`

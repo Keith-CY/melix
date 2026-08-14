@@ -140,9 +140,9 @@ def callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
 
 
 def first_declared_kwarg(callable_obj: Any, keywords: tuple[str, ...]) -> str:
-    capabilities = callable_kwarg_signature(callable_obj)
+    keyword_accessible_params = callable_kwarg_signature(callable_obj).keyword_accessible_params
     for keyword in keywords:
-        if capabilities.declares(keyword):
+        if keyword in keyword_accessible_params:
             return keyword
     return ""
 
