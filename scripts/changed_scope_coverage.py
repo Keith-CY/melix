@@ -341,7 +341,7 @@ def _measurable_non_comment_lines(
             if not 1 <= line_no <= line_count:
                 continue
             stripped = source_lines[line_no - 1].strip()
-            if stripped and not stripped.startswith("#"):
+            if stripped and stripped[0] != "#":
                 measurable.append(line_no)
         return measurable
 

@@ -81,3 +81,18 @@ Registered probe: `changed-scope-coverage-measured-set-filter` in
 `infra/perf/pr_scoped_probes.json`. The probe includes focused tests, changed
 scope coverage, and the local/CI command-json probe for sparse and dense
 measured-line scans.
+
+## 2026-08-14 dense ASCII comment-prefix fast path slice
+
+This follow-up slice is limited to the dense-source blank/comment filter in
+`_measurable_non_comment_lines(...)`. After the existing `strip()` call has
+preserved whitespace and Unicode line-numbering semantics, the dense branch's
+comment test uses a direct first-character comparison instead of a
+`str.startswith("#")` method call. Blank lines remain guarded before indexing,
+indented comments still strip to `#`, and sparse measured-line filtering remains
+unchanged.
+
+Registered probe: `changed-scope-coverage-measured-set-filter` in
+`infra/perf/pr_scoped_probes.json`. The probe covers the same focused tests,
+changed-scope coverage command, and local/CI command-json metrics for sparse and
+dense measured-line scans.
