@@ -59,3 +59,17 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 
 PR-scoped performance CI remains the final registered probe validation source
 before merge.
+
+## 2026-08-14 ordinal mixed-case tag slice
+
+This follow-up slice is limited to `_starts_with_python_tag_ignore_case()` in
+`worker.engine.code_eval_runner`. The lowercase `python` tag path still uses the
+existing `str.startswith()` fast path, while mixed-case fallback checks now use a
+bound `ord` helper and ASCII bit folding instead of repeated two-character string
+comparisons. This preserves support for lowercase, uppercase, and mixed-case
+Python fences while narrowing the mixed-case code-block extraction branch.
+
+Registered probe: `code-eval-code-block-last-match-streaming` in
+`infra/perf/pr_scoped_probes.json`. The existing probe covers focused tests,
+changed-scope coverage, and local/CI command-json metrics for code-block
+extraction.

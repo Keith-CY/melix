@@ -136,15 +136,15 @@ def _starts_with_python_tag_ignore_case(text: str, start: int) -> bool:
     end = start + _PYTHON_CODE_BLOCK_TAG_LENGTH
     if end > len(text):
         return False
-    first = text[start]
-    if first != "p" and first != "P":
+    ord_ = ord
+    if (ord_(text[start]) | 32) != 112:
         return False
     return (
-        (text[start + 1] == "y" or text[start + 1] == "Y")
-        and (text[start + 2] == "t" or text[start + 2] == "T")
-        and (text[start + 3] == "h" or text[start + 3] == "H")
-        and (text[start + 4] == "o" or text[start + 4] == "O")
-        and (text[start + 5] == "n" or text[start + 5] == "N")
+        (ord_(text[start + 1]) | 32) == 121
+        and (ord_(text[start + 2]) | 32) == 116
+        and (ord_(text[start + 3]) | 32) == 104
+        and (ord_(text[start + 4]) | 32) == 111
+        and (ord_(text[start + 5]) | 32) == 110
     )
 
 
