@@ -51,8 +51,12 @@ def main() -> int:
                 version_id=version_id,
                 created_at=f"2026-05-24T00:{index % 60:02d}:{index // 60 % 60:02d}Z",
             )
-        # Noise entries should not be counted.
-        (versions_root / "not-a-version.txt").write_text("ignored", encoding="utf-8")
+        # Noise entries should not be counted or opened as version directories.
+        for index in range(version_count):
+            (versions_root / f"not-a-version-{index:05d}.txt").write_text(
+                "ignored",
+                encoding="utf-8",
+            )
         (versions_root / "empty-dir").mkdir(parents=True, exist_ok=True)
 
         listing = None

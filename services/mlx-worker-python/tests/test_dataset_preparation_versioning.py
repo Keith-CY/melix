@@ -462,6 +462,51 @@ def test_dataset_version_listing_uses_scandir_without_path_glob(
     assert listing["metrics"]["dataset_version_count"] == 1
 
 
+def test_dataset_version_listing_skips_non_directory_entries_before_open(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    versions_root = tmp_path / "datasets" / "support-chat" / "versions"
+    valid_version_dir = versions_root / "support-chat-v1"
+    valid_version_dir.mkdir(parents=True)
+    valid_manifest = valid_version_dir / "dataset-version.json"
+    valid_manifest.write_text(
+        json.dumps(
+            {
+                "dataset_id": "support-chat",
+                "version_id": "support-chat-v1",
+                "created_at": "2026-05-24T01:00:00Z",
+                "status": "ready",
+                "train_count": 0,
+                "validation_count": 0,
+                "failed_count": 0,
+                "quality_summary_path": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (versions_root / "notes.txt").write_text("noise", encoding="utf-8")
+    (versions_root / "dataset-version.json").write_text("{}", encoding="utf-8")
+
+    opened_paths: list[str] = []
+    original_open = open
+
+    def tracking_open(path, *args, **kwargs):
+        opened_paths.append(str(path))
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(dataset_preparation_module, "open", tracking_open, raising=False)
+
+    listing = list_dataset_versions(
+        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        output_root=tmp_path / "datasets",
+        dataset_id="support-chat",
+    )
+
+    assert [item["version_id"] for item in listing["versions"]] == ["support-chat-v1"]
+    assert opened_paths == [str(valid_manifest)]
+
+
 def test_dataset_version_listing_skips_missing_or_directory_manifests(tmp_path: Path) -> None:
     versions_root = tmp_path / "datasets" / "support-chat" / "versions"
     valid_version_dir = versions_root / "support-chat-v1"
