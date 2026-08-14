@@ -75,10 +75,15 @@ class DeterministicEmbeddingBackend:
             return []
         if dimensions < 0:
             return []
-        base_values = [
-            raw * _DIGEST_UINT32_SCALE - 1.0
-            for raw in _UNPACK_DIGEST_UINT32(_sha256(seed_text.encode("utf-8")).digest())
-        ]
+        digest_words = _UNPACK_DIGEST_UINT32(_sha256(seed_text.encode("utf-8")).digest())
+        if dimensions == 1:
+            value = digest_words[0] * _DIGEST_UINT32_SCALE - 1.0
+            if value > 0.0:
+                return [1.0]
+            if value < 0.0:
+                return [-1.0]
+            return [0.0]
+        base_values = [raw * _DIGEST_UINT32_SCALE - 1.0 for raw in digest_words]
         if dimensions == 8:
             l2_norm = _sqrt(_sum_squares(base_values))
             if l2_norm == 0.0:
@@ -93,13 +98,6 @@ class DeterministicEmbeddingBackend:
             base_values[6] = _round(base_values[6] * inverse_l2_norm, 6)
             base_values[7] = _round(base_values[7] * inverse_l2_norm, 6)
             return base_values
-        if dimensions == 1:
-            value = base_values[0]
-            if value > 0.0:
-                return [1.0]
-            if value < 0.0:
-                return [-1.0]
-            return [0.0]
         return self._project_digest_expanded(base_values, dimensions)
 
     def _project_digest_expanded(
