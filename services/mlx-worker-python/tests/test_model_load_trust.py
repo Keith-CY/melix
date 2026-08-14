@@ -591,6 +591,35 @@ def test_trust_policy_caches_config_json_by_file_stat(
     assert open_calls == 1
 
 
+def test_trust_policy_skips_json_loads_when_config_lacks_auto_map(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_load_trust_module._read_model_config_for_stat.cache_clear()
+    model_load_trust_module._detect_custom_loader_requirement_for_stat.cache_clear()
+    model = _executable_file_text_model(tmp_path)
+    (Path(model.model_path) / "config.json").write_text(
+        json.dumps({"model_type": "llama", "padding": "x" * 1024}),
+        encoding="utf-8",
+    )
+
+    def fail_loads(payload: bytes) -> object:  # pragma: no cover - regression only
+        raise AssertionError(f"config without auto_map should not be parsed: {payload!r}")
+
+    monkeypatch.setattr(model_load_trust_module, "_JSON_LOADS", fail_loads)
+
+    with pytest.raises(model_load_trust_module.ModelLoadTrustRejection) as exc_info:
+        resolve_model_load_trust_policy(
+            model,
+            request_policy=None,
+            runtime_kind="text",
+            runtime=RecordingTextBackend(),
+        )
+
+    assert exc_info.value.policy.custom_loader_required is True
+    assert exc_info.value.policy.custom_loader_detection_source == "model_files:modeling_melix_demo.py"
+
+
 def test_trust_policy_caches_auto_map_detection_by_file_stat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1175,6 +1204,24 @@ def test_trust_policy_treats_empty_config_json_as_absent(tmp_path: Path) -> None
     model_dir = tmp_path / "empty-config-model"
     model_dir.mkdir()
     (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = str(model_dir)
+
+    policy = resolve_model_load_trust_policy(
+        model,
+        request_policy=None,
+        runtime_kind="text",
+        runtime=RecordingTextBackend(),
+    )
+
+    assert policy.custom_loader_required is False
+    assert policy.custom_loader_detection_source == "config_json:absent"
+
+
+def test_trust_policy_treats_invalid_config_json_as_absent(tmp_path: Path) -> None:
+    model_dir = tmp_path / "invalid-config-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text('{"auto_map": ', encoding="utf-8")
     model = WorkerModelCatalog.dev_text_model()
     model.model_path = str(model_dir)
 
