@@ -653,24 +653,21 @@ def _tool_affordance_name(affordance: Any) -> str | None:
     if isinstance(affordance, str):
         return _normalized_tool_affordance_name(affordance)
     if type(affordance) is dict:
-        if "tool_id" in affordance:
-            raw_value = affordance["tool_id"]
-            if isinstance(raw_value, str):
-                return _normalized_tool_affordance_name(raw_value)
-            if raw_value is not None:
-                return None
-        if "tool_name" in affordance:
-            raw_value = affordance["tool_name"]
-            if isinstance(raw_value, str):
-                return _normalized_tool_affordance_name(raw_value)
-            if raw_value is not None:
-                return None
-        if "name" in affordance:
-            raw_value = affordance["name"]
-            if isinstance(raw_value, str):
-                return _normalized_tool_affordance_name(raw_value)
-            if raw_value is not None:
-                return None
+        raw_value = affordance.get("tool_id")
+        if isinstance(raw_value, str):
+            return _normalized_tool_affordance_name(raw_value)
+        if raw_value is not None:
+            return None
+        raw_value = affordance.get("tool_name")
+        if isinstance(raw_value, str):
+            return _normalized_tool_affordance_name(raw_value)
+        if raw_value is not None:
+            return None
+        raw_value = affordance.get("name")
+        if isinstance(raw_value, str):
+            return _normalized_tool_affordance_name(raw_value)
+        if raw_value is not None:
+            return None
         return None
     if isinstance(affordance, Mapping):
         for key in ("tool_id", "tool_name", "name"):

@@ -407,6 +407,27 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, protobuf config handling,
   and tool definitions unchanged.
 
+## Follow-up Slice: Preflight Affordance Local Bindings
+
+The 2026-08-14 preflight-affordance follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts and ordering unchanged,
+but uses direct `dict.get(...)` lookups for exact plain-dict affordances to
+avoid repeated membership/index probes on the common agentic receipt shape. The
+slice is limited to the first preflight scan that normalizes raw affordances
+into the referenced-tool set; catalog ordering,
+registry-only custom tools, missing-tool receipts, and invalid-affordance counts
+remain on the existing path.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for repeated default catalog
+  preflights;
+- preserve referenced-tool ordering, missing-tool receipts, invalid-affordance
+  counting, and custom catalog/registry behavior;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
