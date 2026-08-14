@@ -770,6 +770,22 @@ def test_measurable_non_comment_lines_skips_blanks_comments_and_out_of_range(
     assert changed_scope_coverage._measurable_non_comment_lines(source_path, []) == []
 
 
+def test_measurable_non_comment_lines_sorts_only_unsorted_inputs(tmp_path: Path) -> None:
+    source_path = tmp_path / "sorted_input.py"
+    source_path.write_text("first = 1\nsecond = 2\nthird = 3\n", encoding="utf-8")
+
+    sorted_line_numbers = [1, 2, 3]
+
+    assert changed_scope_coverage._line_numbers_sorted_or_copy(sorted_line_numbers) is sorted_line_numbers
+    assert changed_scope_coverage._line_numbers_sorted_or_copy([3, 1, 2]) == [1, 2, 3]
+    assert changed_scope_coverage._measurable_non_comment_lines(
+        source_path,
+        sorted_line_numbers,
+        sorted_input=True,
+    ) == [1, 2, 3]
+    assert changed_scope_coverage._measurable_non_comment_lines(source_path, [3, 1, 2]) == [1, 2, 3]
+
+
 def test_measurable_non_comment_lines_singleton_classifies_comment_and_indented_code(
     tmp_path: Path,
 ) -> None:

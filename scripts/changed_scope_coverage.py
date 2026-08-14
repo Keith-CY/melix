@@ -298,9 +298,22 @@ def _sorted_line_list_contains(lines: list[int], line_no: int) -> bool:
     return index < len(lines) and lines[index] == line_no
 
 
+def _line_numbers_sorted_or_copy(line_numbers: list[int]) -> list[int]:
+    if len(line_numbers) < 2:
+        return line_numbers
+    previous_line = line_numbers[0]
+    for line_no in line_numbers[1:]:
+        if previous_line > line_no:
+            return sorted(line_numbers)
+        previous_line = line_no
+    return line_numbers
+
+
 def _measurable_non_comment_lines(
     source_path: Path,
     line_numbers: list[int],
+    *,
+    sorted_input: bool = False,
 ) -> list[int]:
     """Return the given line numbers that hold code rather than blanks or comments.
 
@@ -311,10 +324,12 @@ def _measurable_non_comment_lines(
     which would shift every line number after such a character in the source.
 
     The result is ascending regardless of the order of ``line_numbers``. The only
-    caller already passes a sorted list, so the sort is a linear no-op there, but
-    it keeps unsorted input from silently reordering the result.
+    caller already passes a sorted list, so that call site opts into reusing it
+    directly. Other callers still receive sorted output by default.
     """
-    sorted_line_numbers = sorted(line_numbers)
+    sorted_line_numbers = (
+        line_numbers if sorted_input else _line_numbers_sorted_or_copy(line_numbers)
+    )
     if not sorted_line_numbers:
         return []
     measurable: list[int] = []
@@ -507,7 +522,7 @@ def _measurable_changed_lines(
 
     sorted_measured_changed = sorted(measured_changed)
     measurable = _measurable_non_comment_lines(
-        repo_root / rel_path, sorted_measured_changed
+        repo_root / rel_path, sorted_measured_changed, sorted_input=True
     )
     if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
         sorted_line_list_contains = _sorted_line_list_contains
