@@ -709,6 +709,21 @@ def _copy_payload_value(value: Any) -> Any:
         return {key: copy_value(item) for key, item in value.items()}
     if value_type is list:
         value_len = len(value)
+        if value_len == 12:
+            return [
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+                copy_value(value[5]),
+                copy_value(value[6]),
+                copy_value(value[7]),
+                copy_value(value[8]),
+                copy_value(value[9]),
+                copy_value(value[10]),
+                copy_value(value[11]),
+            ]
         if value_len == 11:
             return [
                 copy_value(value[0]),
@@ -804,6 +819,21 @@ def _copy_payload_value(value: Any) -> Any:
         return [copy_value(item) for item in value]
     if value_type is tuple:
         value_len = len(value)
+        if value_len == 12:
+            return (
+                copy_value(value[0]),
+                copy_value(value[1]),
+                copy_value(value[2]),
+                copy_value(value[3]),
+                copy_value(value[4]),
+                copy_value(value[5]),
+                copy_value(value[6]),
+                copy_value(value[7]),
+                copy_value(value[8]),
+                copy_value(value[9]),
+                copy_value(value[10]),
+                copy_value(value[11]),
+            )
         if value_len == 11:
             return (
                 copy_value(value[0]),
