@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -1111,7 +1112,11 @@ def test_evaluate_m9_release_evidence_reuses_section_failure_counts(
     monkeypatch.setattr(
         release_gates_module,
         "_evaluate_section_metrics_with_counts",
-        lambda metrics, rules, *, prefix: (list(section_failures), 2, 1),
+        lambda metrics, rules, *, prefix, assume_prefixed_rule_names=False: (
+            list(section_failures),
+            2,
+            1,
+        ),
     )
 
     failures, summary = release_gates_module.evaluate_m9_release_evidence(
@@ -1590,6 +1595,39 @@ def test_build_release_gate_report_includes_m9_summary_when_collectors_pass(
     assert report["observability"]["evidence"]["required_artifact_validity_passed"] == 1.0
     assert report["observability"]["serving_diagnostics"]["debug_queue_bounded"] == 1.0
     assert report["passed"] is True
+
+    failures, missing_count, failed_threshold_count = (
+        release_gates_module._evaluate_section_metrics_with_counts(
+            {"m9": {"mcp": {"present": 2.0}}},
+            {"m9.mcp.present": {"min": 1.0}},
+            prefix="m9.mcp.",
+            assume_prefixed_rule_names=True,
+        )
+    )
+    assert failures == []
+    assert missing_count == 0
+    assert failed_threshold_count == 0
+
+    metric_value = Mock(return_value=release_gates_module._MISSING)
+    monkeypatch.setattr(release_gates_module, "_metric_value", metric_value)
+    failures, missing_count, failed_threshold_count = (
+        release_gates_module._evaluate_section_metrics_with_counts(
+            {},
+            {
+                "m9.mcp.missing_a": {"min": 1.0},
+                "m9.mcp.missing_b": {"min": 1.0},
+            },
+            prefix="m9.mcp.",
+            assume_prefixed_rule_names=True,
+        )
+    )
+    assert failures == [
+        "m9.mcp.m9.mcp.missing_a is missing",
+        "m9.mcp.m9.mcp.missing_b is missing",
+    ]
+    assert missing_count == 2
+    assert failed_threshold_count == 0
+    metric_value.assert_not_called()
 
 
 def test_evaluate_release_gate_fails_closed_for_missing_or_regressed_m9_evidence() -> None:

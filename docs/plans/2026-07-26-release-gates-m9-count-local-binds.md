@@ -28,6 +28,17 @@ Run the registered focused tests, changed-scope coverage, and registered probe
 locally on Linux before pushing. GitHub Actions PR-scoped performance remains the
 merge gate for the registered probe report.
 
+## 2026-08-14 Follow-up: Absent Prefix Root Fast Path
+
+This follow-up keeps the same registered probe and narrows the hot missing-metric
+branch in `_evaluate_section_metrics_with_counts(...)`. The M9 evaluator now
+marks its generated rule set as already prefixed, so when a prefixed M9 rule name
+is absent and the flat metrics payload does not contain the prefix root (e.g.
+`m9`), the evaluator records the miss directly instead of rechecking whether the
+missing key has the section prefix for every rule. Nested lookup is still
+preserved when the root is present and for generic calls that may mix unprefixed
+dotted rule names.
+
 ## Acceptance Criteria
 
 - M9 release-gate failure messages and summary counters remain unchanged.

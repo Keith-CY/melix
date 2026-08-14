@@ -2116,6 +2116,7 @@ def evaluate_m9_release_evidence(
             metrics,
             section_rules,
             prefix=f"m9.{section_name}.",
+            assume_prefixed_rule_names=True,
         )
         failures_extend(section_failures)
         missing_probe_count += missing_for_section
@@ -2164,9 +2165,10 @@ def _run_python_json_script(
 
 def _evaluate_section_metrics_with_counts(
     values: dict[str, Any],
-    rules: dict[str, Any],
+    rules: dict[str, dict[str, float]],
     *,
     prefix: str = "",
+    assume_prefixed_rule_names: bool = False,
 ) -> tuple[list[str], int, int]:
     failures: list[str] = []
     missing_count = 0
@@ -2180,18 +2182,23 @@ def _evaluate_section_metrics_with_counts(
     float_ = float
     prefix_root = ""
     prefix_root_present = False
+    skip_prefixed_metric_lookup = False
     if prefix:
         prefix_first_dot = prefix.find(".")
         if prefix_first_dot != -1:
             prefix_root = prefix[:prefix_first_dot]
             prefix_root_present = prefix_root in values
+            skip_prefixed_metric_lookup = not prefix_root_present
     for name, rule in rules.items():
         if type(name) is str:
             value = values_get(name, missing)
             if value is missing:
-                if prefix_root and name.startswith(prefix):
-                    if prefix_root_present:
-                        value = metric_value(values, name)
+                if skip_prefixed_metric_lookup and (
+                    assume_prefixed_rule_names or name.startswith(prefix)
+                ):
+                    pass
+                elif prefix_root and name.startswith(prefix):
+                    value = metric_value(values, name)
                 else:
                     first_dot = name.find(".")
                     if first_dot != -1 and name[:first_dot] in values:
