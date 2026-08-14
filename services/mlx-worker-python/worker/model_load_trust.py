@@ -30,6 +30,8 @@ MODEL_LOAD_TRUST_POLICY = common_pb2.ModelLoadTrustPolicy
 WORKER_ROUTE_CLASS_UNSPECIFIED = common_pb2.WORKER_ROUTE_CLASS_UNSPECIFIED
 WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY = common_pb2.WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY
 _JSON_LOADS = json.loads
+_AUTO_MAP_CONFIG_KEY_BYTES = b'"auto_map"'
+_AUTO_MAP_KEY_SCAN_MIN_BYTES = 512
 _OS_STAT = os.stat
 _OS_SCANDIR = os.scandir
 _STAT_ISREG = stat.S_ISREG
@@ -500,8 +502,20 @@ def _detect_custom_loader_requirement_for_stat(
     mtime_ns: int,
     size: int,
 ) -> tuple[bool, str]:
-    config = _read_model_config_for_stat(config_path, mtime_ns, size)
-    if not config:
+    _ = (mtime_ns, size)
+    loads = _JSON_LOADS
+    try:
+        with _OPEN(config_path, "rb") as handle:
+            payload_bytes = handle.read()
+            if (
+                size >= _AUTO_MAP_KEY_SCAN_MIN_BYTES
+                and _AUTO_MAP_CONFIG_KEY_BYTES not in payload_bytes
+            ):
+                return CONFIG_JSON_DETECTION
+            config = loads(payload_bytes)
+    except (OSError, json.JSONDecodeError):
+        return CONFIG_JSON_ABSENT_DETECTION
+    if not isinstance(config, dict) or not config:
         return CONFIG_JSON_ABSENT_DETECTION
     auto_map = config.get("auto_map")
     if isinstance(auto_map, dict) and _auto_map_has_custom_loader(auto_map):
