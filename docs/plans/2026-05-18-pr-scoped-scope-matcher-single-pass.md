@@ -17,6 +17,14 @@ Keep matching semantics unchanged while reducing per-scope matcher overhead:
 - intersect exact watch paths with the changed-path set so exact matching scales with exact hits rather than every changed path;
 - bind hot-path lookups locally inside `_match_probe_indexes_uncached`.
 
+2026-08-14 follow-up slice: `_matches_any_glob()` now also binds the glob-magic
+predicate once before its watch-glob loop. This keeps exact-path and wildcard
+semantics unchanged while avoiding repeated global lookups when command-summary
+or legacy scope paths evaluate many watch globs. Because the adjacent
+`pr-scoped-performance-registry-cache` probe watches the same production file,
+its focused registry entry includes the existing `_matches_any_glob()` behavior
+checks so changed-line coverage remains valid when both probes are selected.
+
 ## Verification plan
 
 Run the registered focused tests, changed-scope coverage command, and registered probe locally on Linux before opening the PR. GitHub Actions PR-scoped performance remains the merge gate for the registered probe report.
