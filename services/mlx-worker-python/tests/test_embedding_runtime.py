@@ -218,6 +218,32 @@ def test_project_digest_single_dimension_skips_expanded_projection() -> None:
     assert zero in ([-1.0], [1.0])
 
 
+def test_project_digest_single_dimension_reads_only_first_digest_word(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = BERTEmbeddingBackend()
+
+    class FirstWordOnlyDigest:
+        first_word_reads = 0
+
+        def __getitem__(self, index: int) -> int:
+            if index != 0:  # pragma: no cover - regression guard
+                raise AssertionError(f"unexpected digest word read: {index}")
+            self.first_word_reads += 1
+            return 0xFFFFFFFF
+
+        def __iter__(self):  # pragma: no cover - regression guard
+            raise AssertionError("single-dimension projection should not iterate all digest words")
+
+    digest_words = FirstWordOnlyDigest()
+    monkeypatch.setattr(
+        embedding_backends_module,
+        "_UNPACK_DIGEST_UINT32",
+        lambda digest: digest_words,
+    )
+
+    assert backend._project_digest("bert::single-fast-path", 1) == [1.0]
+    assert digest_words.first_word_reads == 1
+
+
 def test_project_digest_single_dimension_preserves_zero_norm(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = BERTEmbeddingBackend()
     monkeypatch.setattr(embedding_backends_module, "_UNPACK_DIGEST_UINT32", lambda digest: (1,) * 8)
