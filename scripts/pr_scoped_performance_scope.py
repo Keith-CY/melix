@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 _JSON_LOADS = json.loads
-_CHANGED_FILES_CACHE: dict[str, tuple[int, int, tuple[object, ...]]] = {}
+_CHANGED_FILES_CACHE: dict[str, tuple[int, int, list[object]]] = {}
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -25,14 +25,14 @@ def load_changed_files(path: str | Path) -> list[object]:
     if cached is not None:
         cached_mtime_ns, cached_size, cached_files = cached
         if cached_mtime_ns == stat_result.st_mtime_ns and cached_size == stat_result.st_size:
-            return [*cached_files]
+            return cached_files.copy()
     changed_files = _JSON_LOADS(path_obj.read_bytes())
     if not isinstance(changed_files, list):
         raise ValueError("changed files payload must be a JSON list")
     _CHANGED_FILES_CACHE[cache_key] = (
         stat_result.st_mtime_ns,
         stat_result.st_size,
-        tuple(changed_files),
+        changed_files.copy(),
     )
     return changed_files
 
