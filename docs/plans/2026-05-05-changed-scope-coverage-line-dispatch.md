@@ -67,3 +67,17 @@ Registered probe: `changed-scope-coverage-diff-parser` in
 `infra/perf/pr_scoped_probes.json`. The probe already covers
 `scripts/changed_scope_coverage.py`, the parser probe script, focused parser
 unit tests, changed-scope coverage, and PR-scoped probe registry validation.
+
+## 2026-08-14 sorted measured-line target reuse slice
+
+This follow-up slice is limited to `_measurable_non_comment_lines(...)` in the
+changed-scope coverage measured-line path. The upstream caller already sorts the
+measured changed-line list before reading source text, so the common path can
+reuse that sorted list instead of always allocating a `sorted(...)` copy. Direct
+callers that provide unsorted line numbers still receive ascending output through
+the fallback copy/sort path.
+
+Registered probe: `changed-scope-coverage-measured-set-filter` in
+`infra/perf/pr_scoped_probes.json`. The probe includes focused tests, changed
+scope coverage, and the local/CI command-json probe for sparse and dense
+measured-line scans.
