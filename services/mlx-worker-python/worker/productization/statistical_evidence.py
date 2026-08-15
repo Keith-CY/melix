@@ -83,7 +83,6 @@ def build_category_breakdown(
 ) -> dict[str, dict[str, object]]:
     category_totals: dict[str, list[int]] = {}
     string_type = str
-    value_type = type
     is_instance = isinstance
     labels_are_sorted = True
     previous_category_label: str | None = None
@@ -92,8 +91,8 @@ def build_category_breakdown(
             raw_category_label = row["category_label"]
         except KeyError:
             continue
-        if value_type(raw_category_label) is string_type:
-            category_label = raw_category_label.strip()
+        if raw_category_label.__class__ is string_type:
+            category_label = raw_category_label.strip()  # type: ignore[attr-defined]
         elif is_instance(raw_category_label, string_type):
             category_label = raw_category_label.strip()
         else:
