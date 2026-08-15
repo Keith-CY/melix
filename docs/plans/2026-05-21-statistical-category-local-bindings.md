@@ -64,3 +64,29 @@ Local Linux probe quintet:
   `10.087316883727908` ms (`-0.7220499869436026` ms, `1.0716x` faster,
   `-6.68%`).
 - `peak_bytes_mean` stayed `17040.0`; checksum stayed `250365.72`.
+
+## 2026-08-15 follow-up: exact string class check
+
+This follow-up keeps the same registered probe and narrows to one additional
+category-label normalization micro-path in `build_category_breakdown()`. The
+common probe rows use exact `str` category labels, so the hot loop now uses the
+row value's `__class__` for the exact-string fast path instead of calling the
+locally bound `type(...)` helper. The string-subclass fallback still calls the
+instance `.strip()` method, preserving custom subclass behavior covered by
+`test_build_category_breakdown_aggregates_supported_categories_only`.
+
+Success criteria remain unchanged: focused pytest, changed-scope coverage, the
+registered local Linux probe, and the GitHub Actions PR-scoped performance probe
+must pass before merge.
+
+Local Linux evidence before PR:
+
+- Focused pytest and changed-scope coverage passed with 100% changed-line coverage.
+- Default registered probe 5x mean was noisy: baseline `9.972119564190507` ms,
+  head `10.02399220596999` ms; `peak_bytes_mean` improved from `16880.0` to
+  `16872.0` bytes and checksum stayed `250365.72`.
+- A larger 200k-row registered-probe run showed the expected direction:
+  baseline `42.77662228975844` ms, head `42.20924256203164` ms
+  (`-0.5673797277268022` ms, `1.013442073187951x`), with `peak_bytes_mean`
+  improving from `16073.142857142857` to `16065.142857142857` bytes and checksum
+  staying `1400511.9926000002`.
