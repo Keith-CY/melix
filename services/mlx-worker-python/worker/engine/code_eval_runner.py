@@ -30,6 +30,25 @@ _ORD_QUOTE = ord('"')
 _ORD_COLON = ord(":")
 _ORD_OBJECT_START = ord("{")
 _ORD_OBJECT_END = ord("}")
+_ORD_UNDERSCORE = ord("_")
+_ORD_LOWER_A = ord("a")
+_ORD_LOWER_C = ord("c")
+_ORD_LOWER_D = ord("d")
+_ORD_LOWER_E = ord("e")
+_ORD_LOWER_F = ord("f")
+_ORD_LOWER_I = ord("i")
+_ORD_LOWER_K = ord("k")
+_ORD_LOWER_L = ord("l")
+_ORD_LOWER_M = ord("m")
+_ORD_LOWER_N = ord("n")
+_ORD_LOWER_O = ord("o")
+_ORD_LOWER_P = ord("p")
+_ORD_LOWER_R = ord("r")
+_ORD_LOWER_S = ord("s")
+_ORD_LOWER_T = ord("t")
+_ORD_LOWER_U = ord("u")
+_ORD_LOWER_X = ord("x")
+_ORD_LOWER_Y = ord("y")
 _ASSERT_PRECEDING_BOUNDARIES = frozenset("\n\r;:")
 _ASSERT_LINE_SPACING = frozenset(" \t")
 _ASSERT_NON_IDENTIFIER_FOLLOWERS = frozenset(
@@ -841,27 +860,108 @@ def _known_code_eval_payload_string_value(
     value_end: int,
 ) -> str | None:
     value_length = value_end - value_start
-    payload_startswith = payload_bytes.startswith
     if value_length == 0:
         return ""
     if value_length == 2:
-        return "ok" if payload_startswith(b"ok", value_start) else None
+        if payload_bytes[value_start] == _ORD_LOWER_O and payload_bytes[value_start + 1] == _ORD_LOWER_K:
+            return "ok"
+        return None
     if value_length == 5:
-        return "error" if payload_startswith(b"error", value_start) else None
+        if (
+            payload_bytes[value_start] == _ORD_LOWER_E
+            and payload_bytes[value_start + 1] == _ORD_LOWER_R
+            and payload_bytes[value_start + 2] == _ORD_LOWER_R
+            and payload_bytes[value_start + 3] == _ORD_LOWER_O
+            and payload_bytes[value_start + 4] == _ORD_LOWER_R
+        ):
+            return "error"
+        return None
     if value_length == 6:
-        if payload_startswith(b"failed", value_start):
+        if (
+            payload_bytes[value_start] == _ORD_LOWER_F
+            and payload_bytes[value_start + 1] == _ORD_LOWER_A
+            and payload_bytes[value_start + 2] == _ORD_LOWER_I
+            and payload_bytes[value_start + 3] == _ORD_LOWER_L
+            and payload_bytes[value_start + 4] == _ORD_LOWER_E
+            and payload_bytes[value_start + 5] == _ORD_LOWER_D
+        ):
             return "failed"
-        return "passed" if payload_startswith(b"passed", value_start) else None
+        if (
+            payload_bytes[value_start] == _ORD_LOWER_P
+            and payload_bytes[value_start + 1] == _ORD_LOWER_A
+            and payload_bytes[value_start + 2] == _ORD_LOWER_S
+            and payload_bytes[value_start + 3] == _ORD_LOWER_S
+            and payload_bytes[value_start + 4] == _ORD_LOWER_E
+            and payload_bytes[value_start + 5] == _ORD_LOWER_D
+        ):
+            return "passed"
+        return None
     if value_length == 7:
-        if payload_startswith(b"not_run", value_start):
+        if (
+            payload_bytes[value_start] == _ORD_LOWER_N
+            and payload_bytes[value_start + 1] == _ORD_LOWER_O
+            and payload_bytes[value_start + 2] == _ORD_LOWER_T
+            and payload_bytes[value_start + 3] == _ORD_UNDERSCORE
+            and payload_bytes[value_start + 4] == _ORD_LOWER_R
+            and payload_bytes[value_start + 5] == _ORD_LOWER_U
+            and payload_bytes[value_start + 6] == _ORD_LOWER_N
+        ):
             return "not_run"
-        return "timeout" if payload_startswith(b"timeout", value_start) else None
+        if (
+            payload_bytes[value_start] == _ORD_LOWER_T
+            and payload_bytes[value_start + 1] == _ORD_LOWER_I
+            and payload_bytes[value_start + 2] == _ORD_LOWER_M
+            and payload_bytes[value_start + 3] == _ORD_LOWER_E
+            and payload_bytes[value_start + 4] == _ORD_LOWER_O
+            and payload_bytes[value_start + 5] == _ORD_LOWER_U
+            and payload_bytes[value_start + 6] == _ORD_LOWER_T
+        ):
+            return "timeout"
+        return None
     if value_length == 8:
-        return "compiled" if payload_startswith(b"compiled", value_start) else None
+        if (
+            payload_bytes[value_start] == _ORD_LOWER_C
+            and payload_bytes[value_start + 1] == _ORD_LOWER_O
+            and payload_bytes[value_start + 2] == _ORD_LOWER_M
+            and payload_bytes[value_start + 3] == _ORD_LOWER_P
+            and payload_bytes[value_start + 4] == _ORD_LOWER_I
+            and payload_bytes[value_start + 5] == _ORD_LOWER_L
+            and payload_bytes[value_start + 6] == _ORD_LOWER_E
+            and payload_bytes[value_start + 7] == _ORD_LOWER_D
+        ):
+            return "compiled"
+        return None
     if value_length == 9:
-        return "timed_out" if payload_startswith(b"timed_out", value_start) else None
+        if (
+            payload_bytes[value_start] == _ORD_LOWER_T
+            and payload_bytes[value_start + 1] == _ORD_LOWER_I
+            and payload_bytes[value_start + 2] == _ORD_LOWER_M
+            and payload_bytes[value_start + 3] == _ORD_LOWER_E
+            and payload_bytes[value_start + 4] == _ORD_LOWER_D
+            and payload_bytes[value_start + 5] == _ORD_UNDERSCORE
+            and payload_bytes[value_start + 6] == _ORD_LOWER_O
+            and payload_bytes[value_start + 7] == _ORD_LOWER_U
+            and payload_bytes[value_start + 8] == _ORD_LOWER_T
+        ):
+            return "timed_out"
+        return None
     if value_length == 12:
-        return "syntax_error" if payload_startswith(b"syntax_error", value_start) else None
+        if (
+            payload_bytes[value_start] == _ORD_LOWER_S
+            and payload_bytes[value_start + 1] == _ORD_LOWER_Y
+            and payload_bytes[value_start + 2] == _ORD_LOWER_N
+            and payload_bytes[value_start + 3] == _ORD_LOWER_T
+            and payload_bytes[value_start + 4] == _ORD_LOWER_A
+            and payload_bytes[value_start + 5] == _ORD_LOWER_X
+            and payload_bytes[value_start + 6] == _ORD_UNDERSCORE
+            and payload_bytes[value_start + 7] == _ORD_LOWER_E
+            and payload_bytes[value_start + 8] == _ORD_LOWER_R
+            and payload_bytes[value_start + 9] == _ORD_LOWER_R
+            and payload_bytes[value_start + 10] == _ORD_LOWER_O
+            and payload_bytes[value_start + 11] == _ORD_LOWER_R
+        ):
+            return "syntax_error"
+        return None
     return None
 
 
