@@ -16,10 +16,16 @@ The affected code path is already covered by the registered PR-scoped probe `cod
 
 Replace the Python-level repeated `str.find()` assert-token scan with a compiled regular expression that preserves the same statement-boundary rules: start-of-input or newline/semicolon/colon after optional horizontal spacing, followed by `assert` and a non-identifier follower.
 
-## Verification plan
+## 2026-08-15 follow-up: direct regex-search return
 
-1. Run the focused code-eval assert prescan tests.
-2. Run the registered `code-eval-assert-mention-prescan` coverage command.
-3. Run the registered local probe on Linux.
-4. Treat `elapsed_ms_mean` as the primary latency gate. `peak_bytes_mean` remains lower-is-better, with a 2 KiB absolute tolerance so the compiled-search match allocation does not make sub-kilobyte tracemalloc noise fail an otherwise lower-latency slice.
-5. Use GitHub Actions PR-scoped performance as the merge gate for the registered probe report.
+This follow-up keeps the same registered probe and narrows to the compiled-regex
+fast path introduced for `_may_contain_assert_statement()`. The helper still
+accepts the legacy `_isalnum` test hook for compatibility with existing focused
+regression tests, but no longer binds it to a throwaway local because the
+compiled regular expression owns the identifier-boundary decision. This removes
+one Python bytecode operation from every assert-prescan call while preserving the
+same statement-boundary semantics.
+
+Verification remains the same: focused code-eval assert tests, changed-scope
+coverage for the registered probe, the local Linux registered probe, and the
+GitHub Actions PR-scoped performance report before merge.
