@@ -355,7 +355,15 @@ class HubCatalog:
 
 
 def _next_cursor_from_link(link_header: str) -> str:
-    suffix_start = link_header.find(_NEXT_LINK_REL_SUFFIX)
+    suffix = _NEXT_LINK_REL_SUFFIX
+    if link_header.endswith(suffix):
+        suffix_start = len(link_header) - len(suffix)
+        url_start = link_header.rfind("<", 0, suffix_start)
+        if url_start >= 0:
+            return _cursor_query_value(link_header, url_start + 1, suffix_start)
+        return ""
+
+    suffix_start = link_header.find(suffix)
     if suffix_start >= 0:
         url_start = link_header.rfind("<", 0, suffix_start)
         if url_start >= 0:
