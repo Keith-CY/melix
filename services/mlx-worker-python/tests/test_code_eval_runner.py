@@ -1585,6 +1585,56 @@ def test_code_eval_payload_fast_path_decodes_known_status_values() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "unknown_value",
+    [
+        "no",
+        "other",
+        "fallow",
+        "parsed",
+        "notrun_",
+        "timedup",
+        "compilex",
+        "timedout_",
+        "syntaxerror_",
+    ],
+)
+def test_code_eval_payload_known_value_ord_fast_path_rejects_same_length_unknowns(
+    unknown_value: str,
+) -> None:
+    for known_value in (
+        "ok",
+        "error",
+        "failed",
+        "passed",
+        "not_run",
+        "timeout",
+        "compiled",
+        "timed_out",
+        "syntax_error",
+    ):
+        known_token = known_value.encode("utf-8")
+        assert (
+            code_eval_runner._known_code_eval_payload_string_value(
+                b'"' + known_token + b'"',
+                1,
+                len(known_token) + 1,
+            )
+            == known_value
+        )
+
+    token = unknown_value.encode("utf-8")
+
+    assert (
+        code_eval_runner._known_code_eval_payload_string_value(
+            b'"' + token + b'"',
+            1,
+            len(token) + 1,
+        )
+        is None
+    )
+
+
 def test_code_eval_payload_missing_required_field_falls_back_to_json_parse(
     tmp_path: Path,
 ) -> None:
