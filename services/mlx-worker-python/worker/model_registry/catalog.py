@@ -666,8 +666,12 @@ def _tensor_name_is_projector(name: str, lowered: str | None = None) -> bool:
     )
 
 
-def _tensor_name_is_gemma4_vision_weight_remap(name: str) -> bool:
-    return name.startswith("embed_vision.proj.") or ".embed_vision.proj." in name.lower()
+def _tensor_name_is_gemma4_vision_weight_remap(name: str, lowered: str | None = None) -> bool:
+    if name.startswith("embed_vision.proj."):
+        return True
+    if lowered is None:
+        lowered = name.lower()
+    return ".embed_vision.proj." in lowered
 
 
 def _tensor_name_is_draft(name: str, lowered: str | None = None) -> bool:
@@ -2607,10 +2611,12 @@ def _has_gemma4_vision_weight_remap_tensor(
 ) -> bool:
     if tensor_evidence.status != "ok":
         return False
-    return any(
-        _tensor_name_is_gemma4_vision_weight_remap(name)
-        for name in _weight_map_tensor_names(model_dir, json_cache=json_cache)
-    )
+    for name in _weight_map_tensor_names(model_dir, json_cache=json_cache):
+        if name.startswith("embed_vision.proj."):
+            return True
+        if ".embed_vision.proj." in name.lower():
+            return True
+    return False
 
 
 def _optional_head_receipt_metadata(
