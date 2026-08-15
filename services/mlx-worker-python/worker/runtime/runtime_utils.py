@@ -104,6 +104,22 @@ def _callable_declares_kwarg_cached(
     return keyword in signature.keyword_accessible_params
 
 
+@lru_cache(maxsize=1024)
+def _first_declared_kwarg_cached(
+    callable_obj: Any,
+    skip_first_parameter: bool,
+    keywords: tuple[str, ...],
+) -> str:
+    keyword_accessible_params = _callable_kwarg_signature_cached(
+        callable_obj,
+        skip_first_parameter,
+    ).keyword_accessible_params
+    for keyword in keywords:
+        if keyword in keyword_accessible_params:
+            return keyword
+    return ""
+
+
 def callable_kwarg_signature(callable_obj: Any) -> CallableKwargSignature:
     if type(callable_obj) is MethodType:
         return _callable_kwarg_signature_cached(callable_obj.__func__, True)
@@ -140,17 +156,28 @@ def callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
 
 
 def first_declared_kwarg(callable_obj: Any, keywords: tuple[str, ...]) -> str:
-    keyword_accessible_params = callable_kwarg_signature(callable_obj).keyword_accessible_params
-    for keyword in keywords:
-        if keyword in keyword_accessible_params:
-            return keyword
-    return ""
+    if type(callable_obj) is FunctionType:
+        return _first_declared_kwarg_cached(callable_obj, False, keywords)
+    if type(callable_obj) is MethodType:
+        return _first_declared_kwarg_cached(callable_obj.__func__, True, keywords)
+    cache_callable, skip_first_parameter = _callable_cache_target(callable_obj)
+    try:
+        return _first_declared_kwarg_cached(cache_callable, skip_first_parameter, keywords)
+    except TypeError:
+        keyword_accessible_params = _callable_kwarg_signature_uncached(
+            callable_obj,
+        ).keyword_accessible_params
+        for keyword in keywords:
+            if keyword in keyword_accessible_params:
+                return keyword
+        return ""
 
 
 def clear_callable_kwarg_signature_cache() -> None:
     _callable_kwarg_signature_cached.cache_clear()
     _callable_accepts_kwarg_cached.cache_clear()
     _callable_declares_kwarg_cached.cache_clear()
+    _first_declared_kwarg_cached.cache_clear()
 
 
 _INSTALLED_PACKAGE_VERSION_CACHE: dict[str, str] = {}
