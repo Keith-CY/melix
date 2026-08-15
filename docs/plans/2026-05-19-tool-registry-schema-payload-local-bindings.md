@@ -428,6 +428,25 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, protobuf config handling,
   and tool definitions unchanged.
 
+## Follow-up Slice: Exact Built-in Affordance Name Fast Path
+
+The 2026-08-15 follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts unchanged, but returns
+exact built-in agentic tool names before running the generic strip-and-regex
+normalizer. Tool affordances emitted by workflow, retrieval, and viewed-procedure
+paths use canonical built-in IDs on the hot path, so they do not need the custom
+name fallback unless whitespace or non-built-in names are present.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for repeated default catalog
+  preflights;
+- preserve referenced-tool ordering, missing-tool receipts, invalid-affordance
+  counting, and custom catalog/registry behavior;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
