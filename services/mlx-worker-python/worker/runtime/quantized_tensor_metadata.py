@@ -82,7 +82,7 @@ def _count_cross_shard_quantized_metadata_fixups(
     weight_suffix_length = len(weight_suffix)
     count = 0
     for tensor_name, shard_name in tensor_to_shard.items():
-        if not tensor_name.endswith(weight_suffix):
+        if tensor_name[-1] != "t" or not tensor_name.endswith(weight_suffix):
             continue
         scales_shard = tensor_to_shard.get(
             f"{tensor_name[:-weight_suffix_length]}{scales_suffix}",
