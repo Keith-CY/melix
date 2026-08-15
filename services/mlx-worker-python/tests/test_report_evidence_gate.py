@@ -289,7 +289,18 @@ def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> N
     assert roles == ["numeric_run"]
 
 
-def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> None:
+def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_string_frozenset = report_evidence_gate_module._string_frozenset
+    normalized_values: list[object] = []
+
+    def count_string_frozenset(values: object) -> frozenset[str]:
+        normalized_values.append(values)
+        return original_string_frozenset(values)
+
+    monkeypatch.setattr(report_evidence_gate_module, "_string_frozenset", count_string_frozenset)
+
     roles = report_evidence_gate_module._report_matrix_roles(
         {"runs": [{"run_kind": "serving_benchmark"}, {"run_kind": "evaluation"}]},
         {
@@ -300,7 +311,9 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
     )
 
     assert roles == ["serving", "evaluation"]
+    assert normalized_values == [("evaluation", "dialogue_evaluation"), ("adapter_check",)]
 
+    normalized_values.clear()
     mutable_roles = report_evidence_gate_module._report_matrix_roles(
         {"runs": [{"run_kind": "dynamic"}, {"run_kind": "99"}]},
         {
@@ -309,6 +322,7 @@ def test_report_evidence_gate_matrix_roles_select_multiple_run_kind_rules() -> N
         },
     )
     assert mutable_roles == ["dynamic", "numeric_rule"]
+    assert normalized_values == [{"dynamic"}]
 
 
 class _UnstringableEvidenceId:
