@@ -401,7 +401,6 @@ def _may_contain_assert_statement(
     _search=_ASSERT_STATEMENT_RE.search,
     _isalnum=str.isalnum,
 ) -> bool:
-    _ = _isalnum
     return _search(test_code) is not None
 
 

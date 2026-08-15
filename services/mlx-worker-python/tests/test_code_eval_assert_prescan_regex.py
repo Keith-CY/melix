@@ -15,5 +15,10 @@ def test_assert_prescan_uses_compiled_regex_search() -> None:
         calls.append(test_code)
         return object()
 
-    assert code_eval_runner._may_contain_assert_statement("assert value", _search=tracked_search)
+    def fail_isalnum(_value: str) -> bool:  # pragma: no cover - regression-only failure path
+        raise AssertionError("compiled regex search owns identifier-boundary checks")
+
+    assert code_eval_runner._may_contain_assert_statement(
+        "assert value", _search=tracked_search, _isalnum=fail_isalnum
+    )
     assert calls == ["assert value"]
