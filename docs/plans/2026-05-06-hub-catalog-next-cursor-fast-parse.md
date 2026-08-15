@@ -42,3 +42,9 @@ Behavior guard:
 - Add a regression case where an encoded `rel="next"` marker appears inside the previous URL; the parser must skip it and use the actual next segment.
 
 Validation remains Linux-local for Python tests, changed-scope coverage, and the registered command-json probe; CI must rerun the registered probe before merge.
+
+## 2026-08-15 slice: terminal next-link suffix fast path
+
+This follow-up keeps the same registered probe (`hub-catalog-next-cursor-fast-parse`) and narrows the dominant parser entry path for Hub `Link` headers where the `rel="next"` segment is the terminal segment. `_next_cursor_from_link()` now checks `str.endswith('>; rel="next"')` before scanning the whole header with `find()`, then reuses the existing reverse URL-boundary lookup and cursor query parser. Non-terminal suffix matches and compact/fallback `rel="next"` spacing continue through the existing scan paths.
+
+Expected signal: the registered cursor probe constructs the common terminal next-link form, so the entry-path check should reduce per-call header scanning while preserving cursor boundary and decoding behavior.
