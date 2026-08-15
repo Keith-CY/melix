@@ -2612,9 +2612,7 @@ def _has_gemma4_vision_weight_remap_tensor(
     if tensor_evidence.status != "ok":
         return False
     for name in _weight_map_tensor_names(model_dir, json_cache=json_cache):
-        if name.startswith("embed_vision.proj."):
-            return True
-        if ".embed_vision.proj." in name.lower():
+        if _tensor_name_is_gemma4_vision_weight_remap(name):
             return True
     return False
 

@@ -2350,7 +2350,28 @@ def test_registry_snapshot_reuses_single_tree_walk_for_plain_manifest_and_hf_cac
 
 
 
-def test_dev_models_honor_configured_text_embedding_and_rerank_overrides() -> None:
+def test_dev_models_honor_configured_text_embedding_and_rerank_overrides(tmp_path: Path) -> None:
+    remap_model_dir = tmp_path / "gemma4-remap"
+    _write_weight_index(
+        remap_model_dir,
+        {
+            "weight_map": {
+                "model.layers.0.embed_vision.proj.weight": "model-00001-of-00001.safetensors",
+            }
+        },
+    )
+    tensor_evidence = _TensorIndexEvidence(
+        source_path=str(remap_model_dir / "model.safetensors.index.json"),
+        status="ok",
+        modalities=("vision",),
+        tensor_counts={"vision": 1},
+    )
+
+    assert _has_gemma4_vision_weight_remap_tensor(
+        remap_model_dir,
+        tensor_evidence=tensor_evidence,
+    )
+
     text_model = WorkerModelCatalog.dev_text_model(
         {
             "MELIX_DEV_TEXT_FAMILY_ID": "llama",
