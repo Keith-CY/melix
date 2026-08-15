@@ -2372,6 +2372,34 @@ def test_dev_models_honor_configured_text_embedding_and_rerank_overrides(tmp_pat
         tensor_evidence=tensor_evidence,
     )
 
+    top_level_remap_model_dir = tmp_path / "gemma4-remap-top-level"
+    _write_weight_index(
+        top_level_remap_model_dir,
+        {
+            "weight_map": {
+                "embed_vision.proj.weight": "model-00001-of-00001.safetensors",
+            }
+        },
+    )
+    assert _has_gemma4_vision_weight_remap_tensor(
+        top_level_remap_model_dir,
+        tensor_evidence=tensor_evidence,
+    )
+
+    absent_remap_model_dir = tmp_path / "gemma4-remap-absent"
+    _write_weight_index(
+        absent_remap_model_dir,
+        {
+            "weight_map": {
+                "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+            }
+        },
+    )
+    assert not _has_gemma4_vision_weight_remap_tensor(
+        absent_remap_model_dir,
+        tensor_evidence=tensor_evidence,
+    )
+
     text_model = WorkerModelCatalog.dev_text_model(
         {
             "MELIX_DEV_TEXT_FAMILY_ID": "llama",
