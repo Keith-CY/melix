@@ -14,17 +14,20 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_registry import catalog as catalog_module
 from worker.model_registry.catalog import (
     WorkerModelCatalog,
+    _TensorIndexEvidence,
     _apply_registry_identity_metadata,
     _config_positive_int,
     _default_embedding_family_for_backend,
     _gemma4_mtp_assistant_metadata,
     _gemma4_qat_source_model,
     _gemma4_index_has_vision_weights,
+    _tensor_name_is_gemma4_vision_weight_remap,
     _has_mlx_signal,
     _has_model_weight_files,
     _hf_cache_repo_id,
     _hf_cache_revision,
     _hf_cache_revision_map,
+    _has_gemma4_vision_weight_remap_tensor,
     _infer_embedding_identity,
     _is_hf_cache_pruned_subtree,
     _is_hf_cache_snapshot_dir,
@@ -101,6 +104,89 @@ print(json.dumps(sorted(blocked.intersection(sys.modules))))
 
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) == []
+
+
+def test_gemma4_vision_weight_remap_helper_reuses_supplied_lowercase_name() -> None:
+    class LowerCountingName(str):
+        lower_calls = 0
+
+        def lower(self) -> str:
+            type(self).lower_calls += 1
+            return super().lower()
+
+    nested_name = LowerCountingName("model.layers.0.Embed_Vision.Proj.weight")
+
+    assert _tensor_name_is_gemma4_vision_weight_remap(
+        nested_name,
+        "model.layers.0.embed_vision.proj.weight",
+    )
+    assert LowerCountingName.lower_calls == 0
+    assert _tensor_name_is_gemma4_vision_weight_remap("embed_vision.proj.weight")
+    assert _tensor_name_is_gemma4_vision_weight_remap(nested_name)
+    assert LowerCountingName.lower_calls == 1
+
+
+def test_has_gemma4_vision_weight_remap_tensor_matches_nested_weight_name(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "gemma4-remap"
+    _write_weight_index(
+        model_dir,
+        {
+            "weight_map": {
+                "model.layers.0.embed_vision.proj.weight": "model-00001-of-00001.safetensors",
+            }
+        },
+    )
+    tensor_evidence = _TensorIndexEvidence(
+        source_path=str(model_dir / "model.safetensors.index.json"),
+        status="ok",
+        modalities=("vision",),
+        tensor_counts={"vision": 1},
+    )
+
+    assert _has_gemma4_vision_weight_remap_tensor(
+        model_dir,
+        tensor_evidence=tensor_evidence,
+    )
+
+
+def test_has_gemma4_vision_weight_remap_tensor_handles_top_level_and_absent_weights(
+    tmp_path: Path,
+) -> None:
+    top_level_dir = tmp_path / "gemma4-top-level-remap"
+    _write_weight_index(
+        top_level_dir,
+        {
+            "weight_map": {
+                "embed_vision.proj.weight": "model-00001-of-00001.safetensors",
+            }
+        },
+    )
+    absent_dir = tmp_path / "gemma4-without-remap"
+    _write_weight_index(
+        absent_dir,
+        {
+            "weight_map": {
+                "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+            }
+        },
+    )
+    tensor_evidence = _TensorIndexEvidence(
+        source_path=str(top_level_dir / "model.safetensors.index.json"),
+        status="ok",
+        modalities=("vision",),
+        tensor_counts={"vision": 1},
+    )
+
+    assert _has_gemma4_vision_weight_remap_tensor(
+        top_level_dir,
+        tensor_evidence=tensor_evidence,
+    )
+    assert not _has_gemma4_vision_weight_remap_tensor(
+        absent_dir,
+        tensor_evidence=tensor_evidence,
+    )
 
 
 def _write_processor_config(variant_dir: Path, payload: dict[str, object]) -> None:
@@ -2264,7 +2350,56 @@ def test_registry_snapshot_reuses_single_tree_walk_for_plain_manifest_and_hf_cac
 
 
 
-def test_dev_models_honor_configured_text_embedding_and_rerank_overrides() -> None:
+def test_dev_models_honor_configured_text_embedding_and_rerank_overrides(tmp_path: Path) -> None:
+    remap_model_dir = tmp_path / "gemma4-remap"
+    _write_weight_index(
+        remap_model_dir,
+        {
+            "weight_map": {
+                "model.layers.0.embed_vision.proj.weight": "model-00001-of-00001.safetensors",
+            }
+        },
+    )
+    tensor_evidence = _TensorIndexEvidence(
+        source_path=str(remap_model_dir / "model.safetensors.index.json"),
+        status="ok",
+        modalities=("vision",),
+        tensor_counts={"vision": 1},
+    )
+
+    assert _has_gemma4_vision_weight_remap_tensor(
+        remap_model_dir,
+        tensor_evidence=tensor_evidence,
+    )
+
+    top_level_remap_model_dir = tmp_path / "gemma4-remap-top-level"
+    _write_weight_index(
+        top_level_remap_model_dir,
+        {
+            "weight_map": {
+                "embed_vision.proj.weight": "model-00001-of-00001.safetensors",
+            }
+        },
+    )
+    assert _has_gemma4_vision_weight_remap_tensor(
+        top_level_remap_model_dir,
+        tensor_evidence=tensor_evidence,
+    )
+
+    absent_remap_model_dir = tmp_path / "gemma4-remap-absent"
+    _write_weight_index(
+        absent_remap_model_dir,
+        {
+            "weight_map": {
+                "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+            }
+        },
+    )
+    assert not _has_gemma4_vision_weight_remap_tensor(
+        absent_remap_model_dir,
+        tensor_evidence=tensor_evidence,
+    )
+
     text_model = WorkerModelCatalog.dev_text_model(
         {
             "MELIX_DEV_TEXT_FAMILY_ID": "llama",
