@@ -316,17 +316,23 @@ def _report_matrix_roles(
     # so skip it entirely when no rule in the matrix asks for one.
     needs_probe_phases = any(rule.get("probe_phases") for rule in matrix.values())
     probe_phases = _probe_phases(report) if needs_probe_phases else frozenset()
-    return [
-        role
-        for role, rule in matrix.items()
+    roles: list[str] = []
+    for role, rule in matrix.items():
+        run_kinds = rule.get("run_kinds", ())
+        if isinstance(run_kinds, tuple) and len(run_kinds) == 1:
+            run_kind = run_kinds[0]
+            if (run_kind if type(run_kind) is str else str(run_kind)) in run_kind_values:
+                roles.append(role)
+                continue
         if _rule_matches_report(
             rule=rule,
             run_kind_values=run_kind_values,
             targets=targets,
             metrics=metrics,
             probe_phases=probe_phases,
-        )
-    ]
+        ):
+            roles.append(role)
+    return roles
 
 
 def _rule_matches_report(
