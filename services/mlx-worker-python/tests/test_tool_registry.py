@@ -180,6 +180,29 @@ def test_tool_schema_consistency_preflight_accepts_viewed_procedure_tool() -> No
     assert decision.receipt["corrective_action"] == ""
 
 
+def test_tool_schema_consistency_preflight_exact_builtin_name_skips_regex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingRegex:
+        def fullmatch(self, value: str):  # pragma: no cover - regression guard
+            raise AssertionError(f"exact built-in affordance should skip regex: {value}")
+
+    registry = tool_registry_module.agentic_tool_catalog_registry().select(
+        ("local_compute", "visit")
+    )
+    monkeypatch.setattr(tool_registry_module, "_TOOL_NAME_RE", FailingRegex())
+
+    decision = tool_registry_module.preflight_agentic_tool_schema_consistency(
+        ({"tool_id": "visit", "source": "viewed_procedure"},),
+        registry=registry,
+        source="viewed_procedure",
+    )
+
+    assert decision.consistent is True
+    assert decision.referenced_tools == ("visit",)
+    assert decision.receipt["callable_tools"] == ["local_compute", "visit"]
+
+
 def test_tool_schema_consistency_preflight_reuses_cached_name_sets() -> None:
     class CountingNames(tuple[str, ...]):
         iter_calls = 0

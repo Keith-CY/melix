@@ -680,6 +680,8 @@ def _tool_affordance_name(affordance: Any) -> str | None:
 
 
 def _normalized_tool_affordance_name(raw_name: str) -> str | None:
+    if raw_name in _BUILTIN_AGENTIC_TOOL_NAME_SET:
+        return raw_name
     normalized_name = raw_name.strip()
     if not normalized_name:
         return None
