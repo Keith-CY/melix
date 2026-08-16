@@ -48,6 +48,16 @@ from worker.productization.run_records import (
 _COMPACT_JSONL_ENCODER = json.JSONEncoder(separators=(",", ":")).encode
 
 
+def _csv_scalar_value(value: object) -> str:
+    if value is None:
+        return ""
+    if type(value) is str:
+        return value
+    if type(value) is int or type(value) is float or type(value) is bool:
+        return str(value)
+    return _csv_value(value)
+
+
 def _is_serving_text_request_context(row: dict[str, object]) -> bool:
     return (
         row.get("schema_version") == "melix.serving_benchmark_context_row.v1"
@@ -625,7 +635,7 @@ class BenchmarkStore:
             csv_writer.writerow(fieldnames)
             write_jsonl = jsonl_handle.write
             dump_json = _COMPACT_JSONL_ENCODER
-            normalize_csv_value = _csv_value
+            normalize_csv_value = _csv_scalar_value
             write_csv_row = csv_writer.writerow
             for row in rows:
                 payload = row.to_dict()

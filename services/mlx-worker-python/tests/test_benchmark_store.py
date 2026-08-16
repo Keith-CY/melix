@@ -35,6 +35,23 @@ class _CountingRow:
         return dict(self.payload)
 
 
+def test_benchmark_store_csv_scalar_value_matches_export_helper_for_common_values() -> None:
+    values = (
+        None,
+        "plain",
+        42,
+        3.5,
+        True,
+        ["suite", "latency"],
+        ("train", "validation"),
+        {"b": 2, "a": 1},
+    )
+
+    assert [benchmark_store_module._csv_scalar_value(value) for value in values] == [
+        benchmark_store_module._csv_value(value) for value in values
+    ]
+
+
 def _effective_policy_receipt() -> dict[str, object]:
     return {
         "schema_version": "melix.text_effective_policy_receipt.v1",
