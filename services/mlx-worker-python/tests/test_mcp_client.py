@@ -2301,6 +2301,7 @@ def test_manager_metrics_snapshot_tracks_latency_reconnect_and_schema_changes(
 
         snapshot = manager.metrics_snapshot()
         assert snapshot.schema_version == "melix.mcp_client_metrics.v1"
+        assert not hasattr(snapshot, "__dict__")
         assert snapshot.initialize.invocation_count == 2
         assert snapshot.list_tools.invocation_count == 2
         assert snapshot.call_tool.invocation_count == 2
@@ -2314,6 +2315,7 @@ def test_manager_metrics_snapshot_tracks_latency_reconnect_and_schema_changes(
             snapshot.call_tool,
             snapshot.cancel_propagation,
         ):
+            assert not hasattr(operation, "__dict__")
             assert operation.average_latency_ms > 0
             assert operation.maximum_latency_ms >= operation.last_latency_ms
         await manager.close_all()

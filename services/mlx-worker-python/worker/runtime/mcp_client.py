@@ -495,7 +495,7 @@ class MCPCancellationReceipt:
     propagation_acknowledged: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MCPOperationMetricsSnapshot:
     invocation_count: int
     failure_count: int
@@ -510,7 +510,7 @@ class MCPOperationMetricsSnapshot:
         return self.total_latency_ms / self.invocation_count
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MCPClientMetricsSnapshot:
     schema_version: str
     initialize: MCPOperationMetricsSnapshot
@@ -521,7 +521,7 @@ class MCPClientMetricsSnapshot:
     schema_change_count: int
 
 
-@dataclass
+@dataclass(slots=True)
 class _MutableMCPOperationMetrics:
     invocation_count: int = 0
     failure_count: int = 0
