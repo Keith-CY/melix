@@ -38,6 +38,16 @@ detection uses the same entry-path text. This preserves descriptor detection,
 root pruning, HF cache detection, and traversal ordering while eliminating the
 remaining root-child `Path.__truediv__` joins measured by the probe.
 
+## 2026-08-16 follow-up: direct child regular-file containment fast path
+
+This follow-up stays within the same registered model registry probe boundary and
+is limited to `_artifact_embedding_regular_file(...)`, which is exercised by the
+artifact embedding metadata checks in the model registry probe. Direct child
+artifact files such as `config.json` can be accepted with the existing `lstat()`
+regular-file check without first constructing a relative path via
+`Path.relative_to(...)`. Nested module config paths continue through the original
+containment walk, preserving symlink-directory rejection and out-of-root refusal.
+
 ## Verification commands
 
 The full focused test, coverage, and probe commands live in the registered probe
