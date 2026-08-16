@@ -153,6 +153,7 @@ _BUILTIN_QUANTIZATION_METHODS: frozenset[str] = frozenset(
 _NORMALIZED_TARGET_MODULE_PRESETS_KEY = "_normalized_target_module_presets"
 _NORMALIZED_DEFAULT_TARGET_MODULES_KEY = "_normalized_default_target_modules"
 _NORMALIZED_TARGET_MODULES_CACHE_KEY = "_normalized_target_modules_cache"
+_COPY_LIST = list.copy
 
 _FAMILY_PROFILES: dict[str, dict[str, object]] = {
     "llama": {
@@ -1221,7 +1222,7 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
     if isinstance(cached_targets, list):
         # Cache stores canonical lists; copy() produces a fresh list per call so
         # callers can safely mutate without changing shared cache state.
-        return cached_targets.copy()
+        return _COPY_LIST(cached_targets)
     if cached_targets is not None:
         # Accept older tuple-style cache entries defensively for callers that may
         # have seeded custom profiles before this helper was updated.
