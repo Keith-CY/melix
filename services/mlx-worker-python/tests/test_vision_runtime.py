@@ -124,12 +124,14 @@ class IterationCountingMetadata(Mapping[str, str]):
     def __init__(self, values: dict[str, str]) -> None:
         self._values = values
         self.iteration_count = 0
+        self.length_count = 0
 
     def __iter__(self) -> Iterator[str]:
         self.iteration_count += 1
         return iter(self._values)
 
     def __len__(self) -> int:
+        self.length_count += 1  # pragma: no cover - empty-metadata probes assert this stays cold.
         return len(self._values)
 
     def __getitem__(self, key: str) -> str:
@@ -172,6 +174,26 @@ def test_vision_processor_metadata_reads_mapping_without_copy() -> None:
     assert capability_metadata["vision_processor_crop_grid"] == "1x2"
     assert capability_metadata["vision_processor_max_crop_count"] == "2"
     assert metadata.iteration_count == 0
+
+
+def test_empty_vision_family_metadata_skips_truthiness_length_probe() -> None:
+    metadata = IterationCountingMetadata({})
+
+    config = resolve_vision_family_config(metadata)
+
+    assert config.family_id == "llava-v1"
+    assert metadata.iteration_count == 0
+    assert metadata.length_count == 0
+
+
+def test_empty_vision_processor_metadata_skips_truthiness_length_probe() -> None:
+    metadata = IterationCountingMetadata({})
+
+    capability_metadata = vision_processor_capability_metadata(metadata)
+
+    assert capability_metadata["vision_processor_policy"] == "llava-single-crop-v1"
+    assert metadata.iteration_count == 0
+    assert metadata.length_count == 0
 
 
 def test_generate_streams_ocr_text_from_inline_image_bytes() -> None:
