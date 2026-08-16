@@ -37,3 +37,20 @@ Add an empty-evidence fast path to `_release_matrix_rows(...)`: after scanning r
 - Changed-scope coverage is at least 95% for touched executable Python scope.
 - Local registered probe shows lower `release_matrix_unmatched_elapsed_ms_mean` without changing emitted-row counts.
 - `git diff --check` passes.
+
+## 2026-08-16 Probe Phase Local Binding Follow-up Slice
+
+This follow-up remains inside the same registered PR-scoped probe,
+`report-evidence-gate-run-kind-set-membership`, because `_probe_phases(...)` is
+part of the same release-matrix role discovery path and the probe reports
+`probe_phases_elapsed_ms_mean` over the synthetic 2,048-row probe summary case.
+
+The slice only hoists hot-loop lookups inside `_probe_phases(...)`: bind
+`phases.add`, bind the probe phase bucket tuple once, and bind each side
+summary's `get` method before walking its buckets. The row filtering,
+stringification, whitespace trimming, side/bucket order, and returned `set[str]`
+semantics remain unchanged.
+
+Verification is the registered focused pytest command, changed-scope coverage,
+the registered local Linux probe comparison for `probe_phases_elapsed_ms_mean`,
+and hosted PR-scoped performance CI before merge.
