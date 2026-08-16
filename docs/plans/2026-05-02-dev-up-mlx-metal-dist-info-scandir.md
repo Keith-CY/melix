@@ -47,6 +47,10 @@ This follow-up keeps the registered `dev-up-mlx-metal-dist-info-scandir` probe a
 
 This follow-up keeps the registered `dev-up-mlx-metal-dist-info-scandir` probe and narrows the change to `_read_mlx_metal_dist_info_version_from_ancestor()`. Matching `mlx_metal-*.dist-info` entries now attempt the streamed `METADATA` read before calling `DirEntry.is_dir()`. Normal installed-wheel layouts with a valid metadata version avoid an extra directory stat, while missing/unreadable metadata still validates directory-ness before using the directory-name fallback.
 
+## Incremental Slice: Resolved Metallib Version Cache
+
+This follow-up keeps the registered `dev-up-mlx-metal-dist-info-scandir` probe and narrows the change to repeated calls for the same resolved `mlx.metallib` path inside one `scripts/dev_up.py` process. Once the metadata scan resolves a version (or confirms that no version is discoverable), the result is cached by resolved metallib path so subsequent compatibility checks do not rescan the same ancestor directory tree. Behavior remains metadata-first for the initial lookup, preserves the directory-name fallback, and is covered by a regression test that proves a second lookup avoids a second `os.scandir()` call.
+
 ## Verification Commands
 
 ```text
