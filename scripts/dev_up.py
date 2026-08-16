@@ -62,6 +62,7 @@ KNOWN_SWIFT_MLX_CORE_VERSION_BY_PACKAGE_VERSION = {
     "0.31.3": "0.31.1",
     "0.31.4": "0.31.1",
 }
+_MLX_METAL_DIST_INFO_VERSION_CACHE: dict[str, str | None] = {}
 DEFAULT_SOCKET_DIR = Path("/tmp")
 USAGE_TEXT = """Usage: bash scripts/dev_up.sh [--prefer-built] [--build-configuration debug|release]
 
@@ -742,6 +743,10 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
     dist_info_prefix_length = len(dist_info_prefix)
     dist_info_suffix_length = len(dist_info_suffix)
     resolved_metallib_path = metallib_path.resolve()
+    cache_key = os.fspath(resolved_metallib_path)
+    if cache_key in _MLX_METAL_DIST_INFO_VERSION_CACHE:
+        return _MLX_METAL_DIST_INFO_VERSION_CACHE[cache_key]
+
     common_site_packages = _common_mlx_metal_site_packages_ancestor(resolved_metallib_path)
     if common_site_packages is not None:
         try:
@@ -755,6 +760,7 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
         except OSError:
             version = None
         if version is not None:
+            _MLX_METAL_DIST_INFO_VERSION_CACHE[cache_key] = version
             return version
 
     for ancestor in resolved_metallib_path.parents:
@@ -771,7 +777,9 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
         except OSError:
             continue
         if version is not None:
+            _MLX_METAL_DIST_INFO_VERSION_CACHE[cache_key] = version
             return version
+    _MLX_METAL_DIST_INFO_VERSION_CACHE[cache_key] = None
     return None
 
 
