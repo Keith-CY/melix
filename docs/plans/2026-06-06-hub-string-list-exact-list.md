@@ -20,7 +20,7 @@ The registry entry includes focused `test_command`, `coverage_command`, and `pro
 ## Implementation plan
 
 1. Add focused regression coverage proving exact `list`, list subclass, and scalar string inputs preserve `_string_list` behavior.
-2. Fast-path exact `list` inputs before the generic `isinstance(value, list)` fallback.
+2. Fast-path exact all-string `list` inputs with a shallow copy before the generic filtering fallback, while preserving filtering for mixed lists and compatibility for list subclasses.
 3. Verify with the registered focused tests, changed-scope coverage, and local registered probe on Linux.
 4. Use PR-scoped performance CI as the merge gate.
 

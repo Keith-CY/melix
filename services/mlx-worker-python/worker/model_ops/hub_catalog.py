@@ -467,6 +467,11 @@ def _int(value: Any) -> int:
 
 def _string_list(value: Any) -> list[str]:
     if type(value) is list:
+        for item in value:
+            if type(item) is not str:
+                break
+        else:
+            return value.copy()
         return [item for item in value if isinstance(item, str)]
     if isinstance(value, list):
         return [item for item in value if isinstance(item, str)]
