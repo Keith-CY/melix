@@ -12,8 +12,9 @@ def whitespace_token_count(text: str) -> int:
     token_count = 0
     in_token = False
     if text.isascii():
+        ascii_whitespace = _ASCII_WHITESPACE
         for character in text:
-            if character in _ASCII_WHITESPACE:
+            if character in ascii_whitespace:
                 in_token = False
             elif not in_token:
                 token_count += 1
