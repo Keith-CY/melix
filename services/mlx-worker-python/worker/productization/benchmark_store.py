@@ -654,27 +654,30 @@ class BenchmarkStore:
         if not all(isinstance(row, BenchmarkMatrixSummaryRow) for row in summary_rows):
             return summary_rows
 
-        has_tool_turn_fields = False
+        for row in request_rows:
+            if not isinstance(row, BenchmarkMatrixRequestRow):
+                return summary_rows
+            if (
+                row.tool_call_count
+                or row.tool_latency_ms
+                or row.observation_bytes
+                or row.fatal_rate > 0.0
+                or row.turn_count
+            ):
+                break
+        else:
+            return summary_rows
+
         aggregates_by_cell_key: dict[
             tuple[str, int, int, int, str, str, str, int],
             tuple[int, int, float, int, int, int],
         ] = {}
         for row in request_rows:
-            if not isinstance(row, BenchmarkMatrixRequestRow):
-                return summary_rows
             tool_call_count = row.tool_call_count
             tool_latency_ms = row.tool_latency_ms
             observation_bytes = row.observation_bytes
             fatal_count = 1 if row.fatal_rate > 0.0 else 0
             turn_count = row.turn_count
-            if (
-                tool_call_count
-                or tool_latency_ms
-                or observation_bytes
-                or fatal_count
-                or turn_count
-            ):
-                has_tool_turn_fields = True
             key = (
                 row.suite_id,
                 row.context_length,
@@ -701,8 +704,6 @@ class BenchmarkStore:
                 aggregate_fatal_count + fatal_count,
                 aggregate_turn_count + turn_count,
             )
-        if not has_tool_turn_fields:
-            return summary_rows
 
         hydrated_rows: list[BenchmarkMatrixSummaryRow] = []
         for row in summary_rows:
