@@ -131,7 +131,7 @@ class IterationCountingMetadata(Mapping[str, str]):
         return iter(self._values)
 
     def __len__(self) -> int:
-        self.length_count += 1
+        self.length_count += 1  # pragma: no cover - empty-metadata probes assert this stays cold.
         return len(self._values)
 
     def __getitem__(self, key: str) -> str:
