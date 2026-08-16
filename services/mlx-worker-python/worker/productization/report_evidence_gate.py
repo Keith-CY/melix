@@ -491,15 +491,18 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
 
 def _probe_phases(report: dict[str, object]) -> set[str]:
     phases: set[str] = set()
+    phases_add = phases.add
     probe_summary = report.get("probe_summary")
     if not isinstance(probe_summary, dict):
         return phases
+    probe_phase_buckets = _PROBE_PHASE_BUCKETS
     for side in _PROBE_PHASE_SIDES:
         side_summary = probe_summary.get(side)
         if not isinstance(side_summary, dict):
             continue
-        for bucket in _PROBE_PHASE_BUCKETS:
-            rows = side_summary.get(bucket)
+        side_summary_get = side_summary.get
+        for bucket in probe_phase_buckets:
+            rows = side_summary_get(bucket)
             if not isinstance(rows, list):
                 continue
             for row in rows:
@@ -507,7 +510,7 @@ def _probe_phases(report: dict[str, object]) -> set[str]:
                     continue
                 phase = str(row.get("phase", "")).strip()
                 if phase:
-                    phases.add(phase)
+                    phases_add(phase)
     return phases
 
 
