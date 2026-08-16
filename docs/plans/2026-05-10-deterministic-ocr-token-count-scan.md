@@ -41,3 +41,16 @@ probe for this follow-up because it repeatedly calls
 `DeterministicOCRRuntime.prompt_token_count(...)` on one prepared OCR request and
 reports `elapsed_ms_mean` plus `peak_bytes_mean`. The focused OCR unit test also
 checks that a changed input-byte total invalidates the one-entry cache.
+
+## 2026-08-16 follow-up slice
+
+The shared deterministic whitespace token counter now uses an ASCII whitespace
+membership fast path before falling back to the existing `str.isspace()` scanner
+for non-ASCII text. The common OCR and VLM probe prompts are ASCII, so this keeps
+the no-`split()` scanner semantics while reducing per-character whitespace
+classification cost. Unicode whitespace behavior remains covered by the existing
+OCR token-count test.
+
+The same registered `deterministic-ocr-token-count-scan` probe governs this
+slice because its watch globs include `worker/runtime/token_counting.py`, focused
+OCR tests, changed-scope coverage, and the local/CI probe command.
