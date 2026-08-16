@@ -194,6 +194,31 @@ def test_prepare_video_input_reuses_last_parsed_uri_reference(
     assert parse_calls == 2
 
 
+def test_prepare_video_input_reuses_last_prepared_uri_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parse_calls = 0
+    original_parse = video_preprocessing._parse_video_reference
+
+    def counting_parse(reference: str):
+        nonlocal parse_calls
+        parse_calls += 1
+        return original_parse(reference)
+
+    monkeypatch.setattr(video_preprocessing, "_parse_video_reference", counting_parse)
+    repeated = common_pb2.MessagePart(
+        video_uri="https://example.com/media/repeated-prepared-input-cache.mov",
+        media=common_pb2.MediaMetadata(format="mov", byte_length=456),
+    )
+
+    first = prepare_video_input(repeated)
+    second = prepare_video_input(repeated)
+
+    assert first is second
+    assert first.byte_length == 456
+    assert parse_calls == 1
+
+
 def test_uri_identity_hash_caches_repeated_metadata_frames() -> None:
     _uri_identity_hash.cache_clear()
 
