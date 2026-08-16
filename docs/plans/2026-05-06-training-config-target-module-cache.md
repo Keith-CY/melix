@@ -32,6 +32,13 @@ Register `training-config-target-module-cache` in PR-scoped performance CI. The 
 - Achieve at least 95% changed-scope automated coverage for touched Python files.
 - Show a concrete local base-vs-head improvement for the registered probe before PR creation.
 
+## 2026-08-16 Follow-up Slice
+
+This follow-up keeps the registered probe and behavior contract unchanged while
+making the cached target-module return path use a module-local `list.copy` binding.
+The hot path still returns a fresh mutable list for every call; the slice only
+reduces repeated method lookup overhead in the cached-result materialization path.
+
 ## Verification Commands
 
 - Focused pytest for target-module behavior and PR-scoped probe registration.
