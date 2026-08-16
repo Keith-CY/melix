@@ -96,6 +96,11 @@ def test_string_list_preserves_exact_list_and_list_subclass_inputs() -> None:
     class TagList(list[str]):
         pass
 
+    exact_tags = ["mlx", "safetensors"]
+    normalized_tags = _string_list(exact_tags)
+
+    assert normalized_tags == exact_tags
+    assert normalized_tags is not exact_tags
     assert _string_list(["mlx", 7, "safetensors"]) == ["mlx", "safetensors"]
     assert _string_list(TagList(["mlx", "4-bit"])) == ["mlx", "4-bit"]
     assert _string_list("mlx") == ["mlx"]
