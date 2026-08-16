@@ -134,7 +134,7 @@ class VisionFamilyAdapter:
     descriptor: VisionFamilyDescriptor
 
     def resolve(self, metadata: Mapping[str, str] | None = None) -> ResolvedVisionFamilyConfig:
-        metadata = metadata or {}
+        metadata = _EMPTY_METADATA if metadata is None else metadata
         return ResolvedVisionFamilyConfig(
             family_id=self.descriptor.family_id,
             prompt_profile_id=_string_value(
@@ -202,6 +202,7 @@ _VISION_PROCESSOR_DEFAULTS: dict[str, tuple[str, str, str, int, str, str]] = {
         "4x256x4096",
     ),
 }
+_EMPTY_METADATA: Mapping[str, str] = {}
 _BOOL_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _BOOL_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
@@ -259,7 +260,7 @@ _VISION_FAMILY_ADAPTERS: dict[str, VisionFamilyAdapter] = {
 
 
 def resolve_vision_family_config(metadata: Mapping[str, str] | None = None) -> ResolvedVisionFamilyConfig:
-    metadata = metadata or {}
+    metadata = _EMPTY_METADATA if metadata is None else metadata
     family_id = _string_value(metadata, "vision_family_id", _DEFAULT_FAMILY_ID)
     adapter = _VISION_FAMILY_ADAPTERS.get(family_id)
     if adapter is None:
@@ -268,7 +269,7 @@ def resolve_vision_family_config(metadata: Mapping[str, str] | None = None) -> R
 
 
 def vision_processor_capability_metadata(metadata: Mapping[str, str] | None = None) -> dict[str, str]:
-    metadata = metadata or {}
+    metadata = _EMPTY_METADATA if metadata is None else metadata
     family_id = _string_value(metadata, "vision_family_id", _DEFAULT_FAMILY_ID)
     defaults = _VISION_PROCESSOR_DEFAULTS.get(family_id, _VISION_PROCESSOR_DEFAULTS[_DEFAULT_FAMILY_ID])
     return {

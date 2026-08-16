@@ -47,6 +47,21 @@ class IterationTrackingMetadata(Mapping[str, str]):
         return self._values[key]
 
 
+class EmptyLengthTrackingMetadata(Mapping[str, str]):
+    def __init__(self) -> None:
+        self.length_calls = 0
+
+    def __iter__(self) -> Iterator[str]:  # pragma: no cover - defensive mapping API
+        return iter(())
+
+    def __len__(self) -> int:  # pragma: no cover - covered only by baseline probe
+        self.length_calls += 1  # pragma: no cover - covered only by baseline probe
+        return 0  # pragma: no cover - covered only by baseline probe
+
+    def __getitem__(self, key: str) -> str:
+        raise KeyError(key)
+
+
 def _build_request(prompt_text: str) -> PreparedVisionRequest:
     images = [
         PreparedImageInput(
@@ -106,21 +121,33 @@ def _config_object_footprint_bytes(family_config: object) -> float:
     )
 
 
-def _measure_config_resolution() -> tuple[float, float]:
+def _measure_config_resolution() -> tuple[float, float, float]:
     elapsed_samples = []
     iteration_samples = []
+    empty_length_samples = []
     for _ in range(7):
         metadata = IterationTrackingMetadata()
+        empty_metadata = EmptyLengthTrackingMetadata()
         started = time.perf_counter()
         for _inner in range(2000):
             family_config = resolve_vision_family_config(metadata)
+            empty_family_config = resolve_vision_family_config(empty_metadata)
             if family_config.family_id != "paligemma-v1":
                 raise SystemExit(  # pragma: no cover - defensive probe invariant
                     f"unexpected family id: {family_config.family_id}"
                 )
+            if empty_family_config.family_id != "llava-v1":
+                raise SystemExit(  # pragma: no cover - defensive probe invariant
+                    f"unexpected empty family id: {empty_family_config.family_id}"
+                )
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         iteration_samples.append(float(metadata.iteration_calls))
-    return statistics.fmean(elapsed_samples), statistics.fmean(iteration_samples)
+        empty_length_samples.append(float(empty_metadata.length_calls))
+    return (
+        statistics.fmean(elapsed_samples),
+        statistics.fmean(iteration_samples),
+        statistics.fmean(empty_length_samples),
+    )
 
 
 def main() -> None:
@@ -133,7 +160,9 @@ def main() -> None:
     samples = []
     peak_samples = []
     token_count = 0
-    config_resolve_elapsed_ms, metadata_iteration_calls = _measure_config_resolution()
+    config_resolve_elapsed_ms, metadata_iteration_calls, empty_metadata_length_calls = (
+        _measure_config_resolution()
+    )
 
     for _ in range(7):
         tracemalloc.start()
@@ -156,6 +185,7 @@ def main() -> None:
                 "config_object_footprint_bytes": _config_object_footprint_bytes(family_config),
                 "config_resolve_elapsed_ms_mean": config_resolve_elapsed_ms,
                 "metadata_iteration_calls_mean": metadata_iteration_calls,
+                "empty_metadata_length_calls_mean": empty_metadata_length_calls,
                 "token_count": float(token_count),
             },
             sort_keys=True,
