@@ -26,6 +26,8 @@ _LOCALHOST_LAST_CHARS = frozenset(("t", "T"))
 _LAST_VIDEO_REFERENCE_RAW = ""
 _LAST_VIDEO_REFERENCE_PARSED: ParsedVideoReference | None = None
 _LAST_VIDEO_REFERENCE_PARSER: object | None = None
+_LAST_PREPARED_URI_KEY: tuple[str, str, str, str, int, int, int, int, int] | None = None
+_LAST_PREPARED_URI_INPUT: PreparedVideoInput | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +89,21 @@ def prepare_video_input(part) -> PreparedVideoInput:
     uri = str(getattr(part, "video_uri", "") or "").strip()
     if not uri:
         raise VideoPreprocessError("No video input provided.")
+    byte_length = int(getattr(media, "byte_length", 0) or 0)
+    uri_cache_key = (
+        uri,
+        mime_type,
+        format_name,
+        filename,
+        byte_length,
+        duration_ms,
+        frame_budget,
+        start_ms,
+        end_ms,
+    )
+    cached_uri_input = _last_prepared_uri_input(uri_cache_key)
+    if cached_uri_input is not None:
+        return cached_uri_input
     parsed_reference = _last_parsed_video_reference(uri)
     _validate_parsed_video_uri(parsed_reference)
     if filename:
@@ -101,8 +118,7 @@ def prepare_video_input(part) -> PreparedVideoInput:
         else:
             resolved_format = _resolve_video_format(format_name, mime_type, parsed_reference)
         resolved_filename = parsed_reference.path_name or f"remote-video.{resolved_format}"
-    byte_length = int(getattr(media, "byte_length", 0) or 0)
-    return PreparedVideoInput(
+    prepared = PreparedVideoInput(
         source_kind="uri",
         reference=uri,
         bytes_data=b"",
@@ -126,6 +142,27 @@ def prepare_video_input(part) -> PreparedVideoInput:
             end_ms,
         ),
     )
+    _remember_prepared_uri_input(uri_cache_key, prepared)
+    return prepared
+
+
+def _last_prepared_uri_input(
+    uri_cache_key: tuple[str, str, str, str, int, int, int, int, int],
+) -> PreparedVideoInput | None:
+    cached = _LAST_PREPARED_URI_INPUT
+    if cached is not None and uri_cache_key == _LAST_PREPARED_URI_KEY:
+        return cached
+    return None
+
+
+def _remember_prepared_uri_input(
+    uri_cache_key: tuple[str, str, str, str, int, int, int, int, int],
+    prepared: PreparedVideoInput,
+) -> None:
+    global _LAST_PREPARED_URI_INPUT, _LAST_PREPARED_URI_KEY
+
+    _LAST_PREPARED_URI_KEY = uri_cache_key
+    _LAST_PREPARED_URI_INPUT = prepared
 
 
 def _validate_bounds(duration_ms: int, frame_budget: int, start_ms: int, end_ms: int) -> None:
