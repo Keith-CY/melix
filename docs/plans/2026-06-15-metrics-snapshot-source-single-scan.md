@@ -120,3 +120,19 @@ The behavior contract remains unchanged: exact, prefix/suffix, empty-prefix, and
 multi-wildcard runtime pattern matches still select the newest regular file per
 source; configured sources still bypass runtime scanning; and only the final
 winning path for each source is materialized as a `Path`.
+
+## 2026-08-16 follow-up slice: simple prefix matcher fast path
+
+This Python-only follow-up keeps the same registered
+`melix-metrics-snapshot-runtime-scandir` probe and narrows to the common Melix
+runtime metrics patterns: distinct single-wildcard prefix/suffix names such as
+`control-plane-metrics*.json`, `swift-text-worker-metrics*.json`, and
+`python-worker-metrics*.json`. When the unresolved sources all use unique
+non-empty prefix buckets and no exact or multi-wildcard patterns are present,
+`discover_latest_metrics_paths(...)` now takes a direct per-entry matcher path
+that avoids the generic overlapping-match list machinery.
+
+The behavior contract remains unchanged: the generic path still handles exact,
+empty-prefix, overlapping, and multi-wildcard patterns, while the common runtime
+source scan still selects the newest regular file per source and materializes
+only the final winning path.
