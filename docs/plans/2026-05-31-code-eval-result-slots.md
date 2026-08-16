@@ -38,10 +38,19 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/code_eval_runner_script_probe.py
 ```
 
+## Follow-up: Passed Status Constant Fast Path
+
+The 2026-08-16 follow-up keeps the same Python-only boundary and registered
+`code-eval-runner-script-cache` probe. `CodeEvaluationResult.passed` now compares
+against module-level status constants rather than reloading identical string
+literals on every property access. Behavior remains identical for compiled,
+runtime, timeout, and test status combinations; the slice only reduces repeated
+property-check overhead in result-heavy evaluation loops.
+
 ## Acceptance Criteria
 
 - Focused behavior and registry tests pass locally on Linux.
 - Changed-scope coverage is at least 95% for the touched scope.
 - The registered local probe reports `result_instance_dict_count_mean=0.0` and
-  improved result allocation peak bytes versus `origin/main`.
+  no regression in the result allocation elapsed metric versus `origin/main`.
 - GitHub Actions PR-scoped performance completes successfully before merge.

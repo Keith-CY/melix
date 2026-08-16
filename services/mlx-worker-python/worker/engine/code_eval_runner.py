@@ -61,6 +61,9 @@ _OS_PREAD = os.pread
 _OS_READ = os.read
 _OS_CLOSE = os.close
 _OS_RDONLY = os.O_RDONLY
+_COMPILED_STATUS = "compiled"
+_OK_STATUS = "ok"
+_PASSED_STATUS = "passed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,10 +79,10 @@ class CodeEvaluationResult:
     @property
     def passed(self) -> bool:
         return (
-            self.compile_status == "compiled"
-            and self.runtime_status == "ok"
-            and self.timeout_status == "ok"
-            and self.test_status == "passed"
+            self.compile_status == _COMPILED_STATUS
+            and self.runtime_status == _OK_STATUS
+            and self.timeout_status == _OK_STATUS
+            and self.test_status == _PASSED_STATUS
         )
 
 
