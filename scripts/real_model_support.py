@@ -26,6 +26,9 @@ _REAL_MODEL_WEIGHT_FILENAMES = {
     "model.safetensors.index.json",
     "pytorch_model.bin.index.json",
 }
+_HF_CACHE_FALLBACK_CACHE: dict[
+    tuple[str, str, int, int, int], "_HuggingFaceCacheModelPath | None"
+] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,14 +296,23 @@ def _huggingface_cache_model_path(
     snapshots_root = repo_cache / "snapshots"
     if not snapshots_root.is_dir():
         return None
+    cache_key = _hf_cache_fallback_cache_key(model_id, cache_root, snapshots_root)
+    if cache_key is not None and cache_key in _HF_CACHE_FALLBACK_CACHE:
+        return _HF_CACHE_FALLBACK_CACHE[cache_key]
+
     with os.scandir(snapshots_root) as entries:
         latest_entry_name = max((entry.name for entry in entries), default=None)
     if latest_entry_name is None:
+        if cache_key is not None:
+            _HF_CACHE_FALLBACK_CACHE[cache_key] = None
         return None
 
     fallback = snapshots_root / latest_entry_name
     if _is_hf_cache_snapshot_dir(fallback):
-        return _hf_cache_snapshot_fallback(model_id, fallback)
+        result = _hf_cache_snapshot_fallback(model_id, fallback)
+        if cache_key is not None:
+            _HF_CACHE_FALLBACK_CACHE[cache_key] = result
+        return result
 
     latest_snapshot_name: str | None = None
     with os.scandir(snapshots_root) as entries:
@@ -312,8 +324,31 @@ def _huggingface_cache_model_path(
                 continue
             latest_snapshot_name = entry_name
     if latest_snapshot_name is None:
+        if cache_key is not None:
+            _HF_CACHE_FALLBACK_CACHE[cache_key] = None
         return None
-    return _hf_cache_snapshot_fallback(model_id, snapshots_root / latest_snapshot_name)
+    result = _hf_cache_snapshot_fallback(model_id, snapshots_root / latest_snapshot_name)
+    if cache_key is not None:
+        _HF_CACHE_FALLBACK_CACHE[cache_key] = result
+    return result
+
+
+def _hf_cache_fallback_cache_key(
+    model_id: str,
+    cache_root: Path,
+    snapshots_root: Path,
+) -> tuple[str, str, int, int, int] | None:
+    try:
+        stat_result = os.stat(snapshots_root, follow_symlinks=False)
+    except OSError:
+        return None
+    return (
+        model_id,
+        os.fspath(cache_root),
+        stat_result.st_mtime_ns,
+        stat_result.st_size,
+        stat_result.st_mode,
+    )
 
 
 def _is_hf_cache_snapshot_dir(path: Path) -> bool:

@@ -10,6 +10,7 @@ from scripts.real_model_support import (
     REAL_SMALL_TEXT_MODEL_ID,
     REAL_SMALL_TEXT_MODEL_PATH_ENV,
     _descriptor_runtime_model_path,
+    _hf_cache_fallback_cache_key,
     _has_recognized_model_weight_files,
     build_runtime_model_preflight,
     resolve_real_small_text_model_path,
@@ -411,6 +412,90 @@ def test_hf_cache_snapshot_fallback_rescans_when_lexical_max_is_not_directory(
     assert source.live is False
     assert source.local_model_path == str(latest_snapshot.resolve())
     assert "using lexicographically last snapshot directory" in source.warnings[0]
+
+
+def test_hf_cache_snapshot_fallback_reuses_cached_snapshot_scan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+    latest_snapshot = snapshots_root / "zzz-snapshot"
+    latest_snapshot.mkdir()
+    (snapshots_root / "aaa-snapshot").mkdir()
+    real_model_support_module._HF_CACHE_FALLBACK_CACHE.clear()
+    original_scandir = real_model_support_module.os.scandir
+    scandir_calls: list[Path] = []
+
+    def tracking_scandir(path):
+        scandir_calls.append(Path(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(real_model_support_module.os, "scandir", tracking_scandir)
+
+    first_source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+    second_source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert first_source.local_model_path == str(latest_snapshot.resolve())
+    assert second_source.local_model_path == first_source.local_model_path
+    assert scandir_calls == [snapshots_root]
+
+
+def test_hf_cache_snapshot_fallback_caches_no_directory_result(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    snapshots_root = (
+        home
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--mlx-community--Qwen3.5-0.8B-OptiQ-4bit"
+        / "snapshots"
+    )
+    snapshots_root.mkdir(parents=True)
+    (snapshots_root / "zzzz-not-a-directory").write_text("ignored\n", encoding="utf-8")
+    real_model_support_module._HF_CACHE_FALLBACK_CACHE.clear()
+
+    source = resolve_real_small_text_model_source(
+        environment={"HOME": str(home)},
+        allow_managed_root=False,
+        allow_hf_cache=True,
+    )
+
+    assert source.live is True
+    assert source.local_model_path == ""
+    assert list(real_model_support_module._HF_CACHE_FALLBACK_CACHE.values()) == [None]
+
+
+def test_hf_cache_fallback_cache_key_returns_none_for_stat_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    snapshots_root = tmp_path / "snapshots"
+    snapshots_root.mkdir()
+
+    def fail_stat(path, *, follow_symlinks=True):
+        assert Path(path) == snapshots_root
+        raise OSError("synthetic snapshots stat failure")
+
+    monkeypatch.setattr(real_model_support_module.os, "stat", fail_stat)
+
+    assert _hf_cache_fallback_cache_key("model/id", tmp_path / "hub", snapshots_root) is None
 
 
 def test_hf_cache_snapshot_fallback_returns_none_for_empty_snapshots_dir(
