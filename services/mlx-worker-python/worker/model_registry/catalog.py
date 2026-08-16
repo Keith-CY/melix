@@ -1645,6 +1645,11 @@ def _artifact_embedding_module_paths(
 
 
 def _artifact_embedding_regular_file(model_dir: Path, path: Path) -> bool:
+    if path.parent == model_dir:
+        try:
+            return stat.S_ISREG(path.lstat().st_mode)
+        except OSError:
+            return False
     try:
         relative_path = path.relative_to(model_dir)
     except ValueError:

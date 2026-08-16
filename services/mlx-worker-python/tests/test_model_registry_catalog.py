@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -24,6 +25,7 @@ from worker.model_registry.catalog import (
     _tensor_name_is_gemma4_vision_weight_remap,
     _has_mlx_signal,
     _has_model_weight_files,
+    _artifact_embedding_regular_file,
     _hf_cache_repo_id,
     _hf_cache_revision,
     _hf_cache_revision_map,
@@ -1189,6 +1191,20 @@ def test_registry_root_tree_detects_descriptors_during_single_scandir_pass(
     assert manifest_paths == (manifest_dir.resolve() / "manifest.json",)
     assert plain_dirs == (config_dir.resolve(),)
 
+
+
+def test_artifact_embedding_regular_file_short_circuits_direct_child_relative_to(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    with mock.patch.object(
+        Path,
+        "relative_to",
+        side_effect=AssertionError("direct children should not call relative_to"),
+    ):
+        assert _artifact_embedding_regular_file(tmp_path, config_path)
 
 
 def test_registry_root_tree_records_plain_local_weight_presence_during_single_scandir_pass(tmp_path: Path) -> None:
