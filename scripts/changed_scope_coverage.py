@@ -524,23 +524,18 @@ def _measurable_changed_lines(
     measurable = _measurable_non_comment_lines(
         repo_root / rel_path, sorted_measured_changed, sorted_input=True
     )
+    covered = []
+    missed = []
+    covered_append = covered.append
+    missed_append = missed.append
     if isinstance(executed_lookup, list) and isinstance(missing_lookup, list):
         sorted_line_list_contains = _sorted_line_list_contains
-        covered = [
-            line_no
-            for line_no in measurable
-            if sorted_line_list_contains(executed_lookup, line_no)
-        ]
-        missed = [
-            line_no
-            for line_no in measurable
-            if sorted_line_list_contains(missing_lookup, line_no)
-        ]
+        for line_no in measurable:
+            if sorted_line_list_contains(executed_lookup, line_no):
+                covered_append(line_no)
+            elif sorted_line_list_contains(missing_lookup, line_no):
+                missed_append(line_no)
     else:
-        covered = []
-        missed = []
-        covered_append = covered.append
-        missed_append = missed.append
         for line_no in measurable:
             if line_no in executed_lookup:
                 covered_append(line_no)
