@@ -333,6 +333,7 @@ def _measurable_non_comment_lines(
     if not sorted_line_numbers:
         return []
     measurable: list[int] = []
+    measurable_append = measurable.append
     if len(sorted_line_numbers) >= _DENSE_SOURCE_LINE_READ_THRESHOLD:
         with source_path.open("r", encoding="utf-8") as source_file:
             source_lines = source_file.readlines()
@@ -342,7 +343,7 @@ def _measurable_non_comment_lines(
                 continue
             stripped = source_lines[line_no - 1].strip()
             if stripped and stripped[0] != "#":
-                measurable.append(line_no)
+                measurable_append(line_no)
         return measurable
 
     target_count = len(sorted_line_numbers)
@@ -366,7 +367,7 @@ def _measurable_non_comment_lines(
                 and sorted_line_numbers[target_index] == source_line_no
             ):
                 if is_measurable:
-                    measurable.append(source_line_no)
+                    measurable_append(source_line_no)
                 target_index += 1
             if target_index >= target_count:
                 break
