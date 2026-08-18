@@ -696,15 +696,18 @@ def _right_stripped_chunk_length(chunk: bytes) -> int:
 
 
 def _seek_last_nonempty_line_bounds(handle: Any, *, chunk_size: int) -> tuple[int, int]:
+    handle_seek = handle.seek
+    handle_read = handle.read
     position = handle.tell()
     payload_end = 0
+    right_stripped_chunk_length = _right_stripped_chunk_length
     while position > 0:
         read_size = min(chunk_size, position)
         start = position - read_size
-        handle.seek(start)
-        chunk = handle.read(read_size)
+        handle_seek(start)
+        chunk = handle_read(read_size)
         if payload_end == 0:
-            search_end = _right_stripped_chunk_length(chunk)
+            search_end = right_stripped_chunk_length(chunk)
             if search_end == 0:
                 position = start
                 continue
