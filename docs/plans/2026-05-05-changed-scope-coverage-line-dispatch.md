@@ -110,3 +110,16 @@ Registered probe: `changed-scope-coverage-measured-set-filter` in
 `infra/perf/pr_scoped_probes.json`. The probe includes the sparse scan metric
 `sparse_elapsed_ms_mean`, focused tests, changed-scope coverage, and local/CI
 command-json metrics for the changed-scope measured-line path.
+
+## 2026-08-18 measurable append binding slice
+
+This follow-up slice is limited to `_measurable_non_comment_lines(...)` in the
+changed-scope coverage measured-line path. The dense and sparse source filters
+now bind `measurable.append` once before their hot loops, preserving the same
+blank/comment filtering, duplicate target-line behavior, out-of-range skipping,
+and sorted-output contract while avoiding repeated list attribute lookups.
+
+Registered probe: `changed-scope-coverage-measured-set-filter` in
+`infra/perf/pr_scoped_probes.json`. The probe includes focused parser and
+measured-line tests, changed-scope coverage, and local/CI command-json metrics
+for `elapsed_ms_mean`, `sparse_elapsed_ms_mean`, and `dense_elapsed_ms_mean`.
