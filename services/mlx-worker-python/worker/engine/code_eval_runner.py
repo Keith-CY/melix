@@ -434,14 +434,21 @@ def _count_assert_nodes(
     _isinstance=isinstance,
     _type=type,
     _len=len,
+    _cache_attr="_melix_assert_node_count",
 ) -> int:
+    cached_count = getattr(module, _cache_attr, None)
+    if cached_count is not None:
+        return cached_count
+
     module_body = getattr(module, "body", ())
     if module_body:
         for node in module_body:
             if _type(node) is not _assert_type:
                 break
         else:
-            return _len(module_body)
+            count = _len(module_body)
+            setattr(module, _cache_attr, count)
+            return count
 
     count = 0
     stack: list[ast.AST] = []
@@ -463,6 +470,7 @@ def _count_assert_nodes(
                 for item in child:
                     if _isinstance(item, _stmt_container_types):
                         stack_append(item)
+    setattr(module, _cache_attr, count)
     return count
 
 

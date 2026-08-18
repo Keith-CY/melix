@@ -512,6 +512,23 @@ def test_count_assert_nodes_fast_paths_all_top_level_asserts() -> None:
     assert code_eval_runner._count_assert_nodes(module, _isinstance=fail_isinstance) == 16
 
 
+def test_count_assert_nodes_caches_repeated_module_counts() -> None:
+    module = code_eval_runner.ast.parse(
+        "value = identity(0)\nif enabled:\n    assert identity(1) == 1",
+        filename="<tests>",
+        mode="exec",
+    )
+
+    assert code_eval_runner._count_assert_nodes(module) == 1
+
+    def fail_isinstance(*args, **kwargs):
+        raise AssertionError(  # pragma: no cover - regression-only failure path
+            "repeated assert-node counting should reuse the module-local count"
+        )
+
+    assert code_eval_runner._count_assert_nodes(module, _isinstance=fail_isinstance) == 1
+
+
 def test_count_assert_nodes_returns_zero_without_asserts() -> None:
     module = code_eval_runner.ast.parse(
         "value = identity(1)\nif enabled:\n    value += identity(2)",
