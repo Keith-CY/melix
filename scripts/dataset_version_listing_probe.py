@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("MELIX_DATASET_VERSION_LISTING_REPO_ROOT", Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
 
@@ -37,6 +37,7 @@ def _write_version_manifest(path: Path, *, version_id: str, created_at: str) -> 
 
 def main() -> int:
     version_count = int(os.environ.get("MELIX_DATASET_VERSION_LISTING_PROBE_COUNT", "2500"))
+    noise_file_count = int(os.environ.get("MELIX_DATASET_VERSION_LISTING_NOISE_FILE_COUNT", "2500"))
     sample_count = int(os.environ.get("MELIX_DATASET_VERSION_LISTING_PROBE_SAMPLES", "7"))
     elapsed_samples: list[float] = []
 
@@ -51,8 +52,9 @@ def main() -> int:
                 version_id=version_id,
                 created_at=f"2026-05-24T00:{index % 60:02d}:{index // 60 % 60:02d}Z",
             )
-        # Noise entries should not be counted.
-        (versions_root / "not-a-version.txt").write_text("ignored", encoding="utf-8")
+        # Noise entries should not be counted or opened as manifest candidates.
+        for index in range(noise_file_count):
+            (versions_root / f"not-a-version-{index:05d}.txt").write_text("ignored", encoding="utf-8")
         (versions_root / "empty-dir").mkdir(parents=True, exist_ok=True)
 
         listing = None
@@ -79,6 +81,7 @@ def main() -> int:
                 "elapsed_ms_p95": round(sorted(elapsed_samples)[int(0.95 * (len(elapsed_samples) - 1))], 6),
                 "sample_count": float(sample_count),
                 "version_count": float(version_count),
+                "noise_file_count": float(noise_file_count),
             },
             sort_keys=True,
         )
