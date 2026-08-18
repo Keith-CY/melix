@@ -1703,7 +1703,10 @@ class RequestStreamAssembler:
         start = index
         while index < header_length and not header[index].isspace():
             index += 1
-        return header[start:index].lower()
+        token = header[start:index]
+        if token in ("analysis", "thought", "reasoning", "commentary", "final"):
+            return token
+        return token.lower()
 
     @classmethod
     def _legacy_pipe_channel_header_body(cls, header: str, channel_name: str) -> str | None:

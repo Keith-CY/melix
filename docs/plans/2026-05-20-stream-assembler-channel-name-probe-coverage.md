@@ -38,6 +38,22 @@ Local Linux registered probe samples on this host (`MELIX_STREAM_ASSEMBLER_PARSE
 - delta: `-0.1506899648120452` ms, `3.910830471295034%` faster.
 - `channel_name_calls_mean`: unchanged at `13.0`.
 
+## 2026-08-18 known lowercase channel lower-copy elision
+
+`origin/main` uses the indexed channel-name scan above and still calls
+`str.lower()` for every uncached Harmony channel header. The registered probe
+workload emits repeated lowercase `analysis` and `final` headers, so this slice
+returns known canonical lowercase channel tokens directly and preserves
+`str.lower()` for mixed-case, unknown, and non-ASCII fallback tokens. The change
+is limited to `_pipe_channel_name(...)` plus a regression guard that proves the
+known lowercase path does not invoke `lower()`.
+
+The registered `stream-assembler-parser-mode-cache` probe remains the governing
+PR-scoped performance probe. It watches `stream_assembler.py`,
+`test_stream_assembler.py`, `test_pr_scoped_performance.py`, and
+`scripts/stream_assembler_parser_mode_probe.py`, with focused `test_command`,
+`coverage_command`, and `probe_command` entries.
+
 ## Verification plan
 
 1. Run the registered focused test command for `stream-assembler-parser-mode-cache`.
