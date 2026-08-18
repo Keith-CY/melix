@@ -3231,6 +3231,9 @@ class MaintenanceCore:
                 add_normalized_value(parsed)
         if not normalized_values:
             return default
+        if len(normalized_values) == 1:
+            value = next(iter(normalized_values))
+            return (value,)
         return tuple(sorted(normalized_values))
 
     @staticmethod
@@ -3245,6 +3248,9 @@ class MaintenanceCore:
                 add_normalized_value(normalized)
         if not normalized_values:
             return default
+        if len(normalized_values) == 1:
+            value = next(iter(normalized_values))
+            return (value,)
         return tuple(sorted(normalized_values))
 
     @staticmethod
