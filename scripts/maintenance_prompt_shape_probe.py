@@ -29,10 +29,12 @@ def main() -> int:
     token_count_samples: list[float] = []
     plain_count_samples: list[float] = []
     single_context_token_samples: list[float] = []
+    split_identity_reuse_samples: list[float] = []
     for _ in range(sample_count):
         token_total = 0
         plain_total = 0
         single_context_token_total = 0
+        split_identity_reuse_total = 0
         started = time.perf_counter()
         for _ in range(iteration_count):
             for context_length in contexts:
@@ -40,6 +42,11 @@ def main() -> int:
                 token_count = shaped.token_count if hasattr(shaped, "token_count") else len(shaped.split())
                 if token_count != context_length:
                     raise SystemExit(f"unexpected token count {token_count} for {context_length}")
+                split_tokens = shaped.split()
+                if len(split_tokens) != context_length:
+                    raise SystemExit(f"unexpected split token count {len(split_tokens)} for {context_length}")
+                if shaped.split() is split_tokens:
+                    split_identity_reuse_total += 1
                 token_total += token_count
         single_started = time.perf_counter()
         for index in range(single_context_iteration_count):
@@ -63,6 +70,7 @@ def main() -> int:
         token_count_samples.append(float(token_total))
         plain_count_samples.append(float(plain_total))
         single_context_token_samples.append(float(single_context_token_total))
+        split_identity_reuse_samples.append(float(split_identity_reuse_total))
     print(
         json.dumps(
             {
@@ -80,6 +88,10 @@ def main() -> int:
                 "plain_token_count_mean": round(statistics.fmean(plain_count_samples), 3),
                 "single_context_token_count_mean": round(
                     statistics.fmean(single_context_token_samples),
+                    3,
+                ),
+                "split_identity_reuse_count_mean": round(
+                    statistics.fmean(split_identity_reuse_samples),
                     3,
                 ),
             },

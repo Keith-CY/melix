@@ -97,7 +97,7 @@ class ImmutableBenchmarkTokens(list[str]):
 
 
 class ShapedBenchmarkPrompt(str):
-    __slots__ = ("_tokens", "token_count")
+    __slots__ = ("_split_tokens", "_tokens", "token_count")
 
     def __new__(
         cls,
@@ -106,6 +106,7 @@ class ShapedBenchmarkPrompt(str):
         token_count: int,
     ) -> ShapedBenchmarkPrompt:
         prompt = str.__new__(cls, value)
+        prompt._split_tokens = None
         prompt._tokens = tokens
         prompt.token_count = token_count
         return prompt
@@ -113,7 +114,11 @@ class ShapedBenchmarkPrompt(str):
     def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
         if sep is None and maxsplit == -1:
             # Preserve the shaped-token cache on the hot path; callers must treat it as read-only.
-            return ImmutableBenchmarkTokens(self.tokens)
+            split_tokens = self._split_tokens
+            if split_tokens is None:
+                split_tokens = ImmutableBenchmarkTokens(self.tokens)
+                self._split_tokens = split_tokens
+            return split_tokens
         return str(self).split(sep, maxsplit)
 
     @property
