@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import repeat
 
 from worker.runtime.artifact_embedding_runtime import ArtifactEmbeddingError
 from worker.runtime.embedding_backends import (
@@ -111,7 +112,7 @@ class DeterministicEmbeddingRuntime:
                 vector = embed_text(backend, inputs[0], dimensions)
                 copy_vector = vector.copy
                 vectors = [vector]
-                vectors.extend(copy_vector() for _ in range(input_count - 1))
+                vectors.extend(copy_vector() for _ in repeat(None, input_count - 1))
                 return vectors
             for index in range(cycle_length):
                 vector = embed_text(backend, inputs[index], dimensions)
