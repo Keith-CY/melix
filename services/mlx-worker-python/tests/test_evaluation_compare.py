@@ -167,6 +167,18 @@ def test_resolve_compare_target_models_preserves_calls_when_targets_repeated() -
     assert registry.get_loaded_model_calls == ["handle-0", "handle-1", "handle-0", "handle-1"]
 
 
+def test_resolve_compare_target_models_deduplicates_empty_targets_before_lookup() -> None:
+    registry = _FakeRegistry(["target-a", "target-b", "unused"])
+
+    resolved = resolve_compare_target_models(
+        registry=registry,
+        target_model_ids=("", "target-a", "target-a", "target-b"),
+    )
+
+    assert tuple(resolved) == ("target-a", "target-b")
+    assert registry.get_loaded_model_calls == ["handle-0", "handle-1"]
+
+
 def test_load_adapter_target_spec_populates_runtime_fields_and_ephemeral_id(
     tmp_path: Path,
 ) -> None:
