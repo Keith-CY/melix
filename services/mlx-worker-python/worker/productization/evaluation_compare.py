@@ -213,13 +213,19 @@ def resolve_compare_target_models(
         raise ValueError("Evaluation compare requires a live registry with loaded target models.")
     if not target_model_ids:
         return {}
-    requested_targets: list[str] = []
-    remaining_targets: set[str] = set()
-    for model_id in target_model_ids:
-        if not model_id or model_id in remaining_targets:
-            continue
-        requested_targets.append(model_id)
-        remaining_targets.add(model_id)
+    unique_targets = set(target_model_ids)
+    if len(unique_targets) == len(target_model_ids) and all(target_model_ids):
+        requested_targets = target_model_ids
+        remaining_targets = unique_targets
+    else:
+        requested_targets_list: list[str] = []
+        remaining_targets = set()
+        for model_id in target_model_ids:
+            if not model_id or model_id in remaining_targets:
+                continue
+            requested_targets_list.append(model_id)
+            remaining_targets.add(model_id)
+        requested_targets = tuple(requested_targets_list)
     loaded_models_by_id: dict[str, Any] = {}
     for handle in registry.list_loaded_models():
         loaded_model = registry.get_loaded_model(handle)
