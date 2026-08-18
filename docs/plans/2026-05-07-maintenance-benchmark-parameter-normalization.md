@@ -32,3 +32,19 @@ The probe repeatedly normalizes synthetic integer and string benchmark parameter
 - Changed executable coverage for touched Python scope is at least 95%.
 - Local probe shows `calls_per_value_mean=1.0` on the optimized branch and concrete elapsed/peak metrics.
 - `git diff --check` passes.
+
+## 2026-08-18 singleton-return follow-up slice
+
+The next small optimization remains inside the registered
+`maintenance-benchmark-parameter-normalization-single-convert` probe. When
+integer or string normalization produces exactly one unique positive/non-empty
+value, `_positive_sorted_values(...)` and `_normalized_string_values(...)` now
+return that singleton tuple directly instead of dispatching through
+`sorted(...)`. The existing empty-default fast path is preserved, and multi-value
+outputs still use sorted tuple materialization for deterministic ordering.
+
+Regression coverage asserts that singleton integer and string normalization do
+not call the module-level `sorted` helper while keeping the same returned tuple
+shape. Local Linux validation uses the registered focused test command,
+changed-scope coverage command, and PR-scoped performance probe before the PR;
+GitHub Actions PR-scoped performance remains the merge gate.

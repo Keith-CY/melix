@@ -7029,6 +7029,18 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
         assert MaintenanceCore._positive_sorted_values([0, -1], default=(32,)) == (32,)
         assert sorted_calls == 0
 
+    with monkeypatch.context() as singleton_int_context:
+        sorted_calls = 0
+
+        def counted_sorted(values):  # pragma: no cover - must not be called for singleton set
+            nonlocal sorted_calls
+            sorted_calls += 1
+            return builtins.sorted(values)
+
+        singleton_int_context.setattr(maintenance_core_module, "sorted", counted_sorted, raising=False)
+        assert MaintenanceCore._positive_sorted_values([8, 8, 0], default=(32,)) == (8,)
+        assert sorted_calls == 0
+
     class CountedString:
         def __init__(self, value: str) -> None:
             self.value = value
@@ -7060,6 +7072,20 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
         empty_string_context.setattr(maintenance_core_module, "sorted", counted_sorted, raising=False)
         assert MaintenanceCore._normalized_string_values([" ", ""], default=("default",)) == (
             "default",
+        )
+        assert sorted_calls == 0
+
+    with monkeypatch.context() as singleton_string_context:
+        sorted_calls = 0
+
+        def counted_sorted(values):  # pragma: no cover - must not be called for singleton set
+            nonlocal sorted_calls
+            sorted_calls += 1
+            return builtins.sorted(values)
+
+        singleton_string_context.setattr(maintenance_core_module, "sorted", counted_sorted, raising=False)
+        assert MaintenanceCore._normalized_string_values([" cold ", "cold", " "], default=("default",)) == (
+            "cold",
         )
         assert sorted_calls == 0
 
