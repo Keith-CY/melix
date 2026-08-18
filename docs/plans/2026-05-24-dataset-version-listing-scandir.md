@@ -1,6 +1,8 @@
 # Dataset version listing scandir slice
 
-This Python-only performance track keeps dataset-version listing behavior unchanged while reducing overhead in small, registered slices. The first slice replaced the one-level `Path.glob("*/dataset-version.json")` scan with an explicit `os.scandir()` pass. A follow-up changed shared JSON manifest loading from text decoding to byte loading. This slice keeps the same registered listing probe and trims the manifest iterator hot path by binding `os.scandir`, converting the versions root with `os.fspath(...)` once, and appending a local manifest suffix string instead of formatting each yielded path.
+This Python-only performance track keeps dataset-version listing behavior unchanged while reducing overhead in small, registered slices. The first slice replaced the one-level `Path.glob("*/dataset-version.json")` scan with an explicit `os.scandir()` pass. Follow-ups changed shared JSON manifest loading from text decoding to byte loading, then trimmed the manifest iterator hot path by binding `os.scandir`, converting the versions root with `os.fspath(...)` once, and appending a local manifest suffix string instead of formatting each yielded path.
+
+The 2026-08-18 follow-up keeps the same registered probe and narrows to `_iter_dataset_version_manifest_paths(...)`. The iterator now checks `DirEntry.is_dir(follow_symlinks=False)` before yielding a manifest candidate, so plain files under the versions root are skipped before the open/read path. Symlinked version directories remain excluded, missing or directory-valued manifests still skip at open time, and valid child directories preserve the same deterministic listing output.
 
 ## Scope
 
