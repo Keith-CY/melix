@@ -40,3 +40,22 @@ avoids all temporary slice allocations in the multi-input validation path, and
 cycle replay embeds the first cycle by index instead of materializing a slice.
 List and tuple inputs keep the prior slice comparison path to avoid regressing
 the existing list-backed probe workload.
+
+## 2026-08-18 Single-cycle iterator-count slice
+
+This follow-up Python-only slice keeps the same registered probe and narrows the
+single-input repeated-cycle replay path. The path still embeds the repeated text
+once and returns independent vector copies for every duplicate input, but the
+copy generator now iterates over `itertools.repeat(None, input_count - 1)` instead
+of `range(input_count - 1)`. The intended effect is to avoid building and
+stepping an integer range for the hot single-cycle copy loop while preserving the
+low-memory generator-based `list.extend(...)` behavior.
+
+Additional local verification for this slice:
+
+1. Run `services/mlx-worker-python/tests/test_embedding_runtime.py` and the
+   registered PR-scoped performance tests from the probe's `test_command`.
+2. Run the registered `coverage_command` and confirm changed-scope coverage stays
+   above 95%.
+3. Run `scripts/deterministic_embedding_duplicate_probe.py` locally on Linux and
+   compare the single-cycle metrics against the pre-change baseline.
