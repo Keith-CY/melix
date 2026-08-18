@@ -67,6 +67,7 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
     read_elapsed_ms: list[float] = []
     capped_read_elapsed_ms: list[float] = []
     record_elapsed_ms: list[float] = []
+    inventory_elapsed_ms: list[float] = []
     file_counts: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-dataset-source-records-probe-") as tmp:
         root = Path(tmp) / "raw-inputs"
@@ -145,6 +146,21 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
                 record_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
                 if records[0]["byte_size"] != len("Melix source row\n".encode("utf-8")):
                     raise RuntimeError("source record byte accounting changed")
+                inventory_records = records + [
+                    {
+                        **record,
+                        "metadata": {"row_index": row_index},
+                    }
+                    for record in records
+                    for row_index in (2, 3)
+                ]
+                started = time.perf_counter()
+                inventory = dataset_preparation._source_inventory(inventory_records)
+                inventory_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+                if len(inventory) != expected_count:
+                    raise RuntimeError("source inventory grouping changed")  # pragma: no cover - guard only.
+                if inventory[0]["record_count"] != 3:
+                    raise RuntimeError("source inventory repeated record accounting changed")  # pragma: no cover - guard only.
         finally:
             paths.clear()
             source_kinds.clear()
@@ -170,6 +186,9 @@ def measure(*, directory_count: int, files_per_directory: int, samples: int) -> 
         "record_elapsed_ms_mean": statistics.fmean(record_elapsed_ms),
         "record_elapsed_ms_min": min(record_elapsed_ms),
         "record_elapsed_ms_p95": sorted(record_elapsed_ms)[int((len(record_elapsed_ms) - 1) * 0.95)],
+        "inventory_elapsed_ms_mean": statistics.fmean(inventory_elapsed_ms),
+        "inventory_elapsed_ms_min": min(inventory_elapsed_ms),
+        "inventory_elapsed_ms_p95": sorted(inventory_elapsed_ms)[int((len(inventory_elapsed_ms) - 1) * 0.95)],
         "directory_count": float(directory_count),
         "files_per_directory": float(files_per_directory),
         "file_count_mean": statistics.fmean(file_counts),

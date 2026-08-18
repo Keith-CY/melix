@@ -931,6 +931,8 @@ def test_dataset_source_records_probe_script_emits_metrics(
     assert metrics["capped_read_elapsed_ms_p95"] >= 0.0
     assert metrics["record_elapsed_ms_mean"] >= 0.0
     assert metrics["record_elapsed_ms_p95"] >= 0.0
+    assert metrics["inventory_elapsed_ms_mean"] >= 0.0
+    assert metrics["inventory_elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
     assert metrics["directory_count"] == 3.0
     assert metrics["files_per_directory"] == 7.0
@@ -968,6 +970,7 @@ def test_dataset_source_records_probe_supports_multiple_timed_samples(
     assert metrics["sample_count"] == 2.0
     assert metrics["file_count_mean"] == 6.0
     assert metrics["record_elapsed_ms_p95"] >= 0.0
+    assert metrics["inventory_elapsed_ms_p95"] >= 0.0
 
 
 def test_dataset_source_records_probe_rejects_changed_file_count(

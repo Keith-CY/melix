@@ -27,6 +27,7 @@ from worker.productization.dataset_preparation import (
     _source_size_entries,
     _source_kind,
     _source_kind_for_name,
+    _source_inventory,
     _workspace_privacy_detection_evidence,
     list_dataset_versions,
     prepare_dataset_ingest,
@@ -633,6 +634,58 @@ def test_dataset_ingest_controls_can_be_inspected_independently(tmp_path: Path) 
     assert receipt["metrics"]["fuzzy_dedup_count"] == 0
     segment_text = (output_root / "segments.jsonl").read_text(encoding="utf-8")
     assert "jane@example.com" in segment_text
+
+
+def test_source_inventory_aggregates_repeated_structured_records() -> None:
+    records = [
+        {
+            "source_id": "source-a",
+            "source_uri": "rows.jsonl",
+            "source_kind": "structured_data",
+            "content_sha256": "sha-a",
+            "byte_size": 11,
+            "metadata": {"row_index": 1},
+        },
+        {
+            "source_id": "source-a",
+            "source_uri": "rows.jsonl",
+            "source_kind": "structured_data",
+            "content_sha256": "sha-a",
+            "byte_size": 13,
+            "metadata": {"last_row_index": 2},
+        },
+        {
+            "source_id": "source-b",
+            "source_uri": "notes.txt",
+            "source_kind": "text",
+            "content_sha256": "sha-b",
+            "byte_size": 17,
+            "metadata": {},
+        },
+    ]
+
+    inventory = _source_inventory(records)
+
+    assert inventory == [
+        {
+            "source_id": "source-b",
+            "source_uri": "notes.txt",
+            "source_kind": "text",
+            "content_sha256": "sha-b",
+            "byte_size": 17,
+            "record_count": 1,
+            "metadata": {},
+        },
+        {
+            "source_id": "source-a",
+            "source_uri": "rows.jsonl",
+            "source_kind": "structured_data",
+            "content_sha256": "sha-a",
+            "byte_size": 24,
+            "record_count": 2,
+            "metadata": {"row_index": 1, "last_row_index": 2},
+        },
+    ]
 
 
 def test_dataset_ingest_privacy_detector_redacts_source_records_before_segments(

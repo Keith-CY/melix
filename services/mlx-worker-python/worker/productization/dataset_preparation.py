@@ -1579,19 +1579,21 @@ def _language_for_suffix(suffix: str) -> str:
 
 def _source_inventory(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_uri: dict[str, dict[str, Any]] = {}
+    by_uri_get = by_uri.get
     for record in records:
-        item = by_uri.setdefault(
-            record["source_uri"],
-            {
+        source_uri = record["source_uri"]
+        item = by_uri_get(source_uri)
+        if item is None:
+            item = {
                 "source_id": record["source_id"],
-                "source_uri": record["source_uri"],
+                "source_uri": source_uri,
                 "source_kind": record["source_kind"],
                 "content_sha256": record["content_sha256"],
                 "byte_size": 0,
                 "record_count": 0,
                 "metadata": {},
-            },
-        )
+            }
+            by_uri[source_uri] = item
         item["byte_size"] += record["byte_size"]
         item["record_count"] += 1
         item["metadata"].update(record.get("metadata", {}))
