@@ -26,7 +26,10 @@ entries for:
 
 The probe reports both `config.json` auto-map detection metrics and the
 executable-file fallback metrics (`executable_elapsed_ms_mean`,
-`executable_peak_bytes_mean`).
+`executable_peak_bytes_mean`). The 2026-08-20 follow-up slice keeps the detector
+semantics unchanged and only binds the rejection policy `CopyFrom` method at the
+call site so cached template copies avoid a repeated bound-method lookup during
+custom-loader rejection loops.
 
 ## Verification Plan
 
