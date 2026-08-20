@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Iterable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -1196,6 +1196,16 @@ class _MCPSourceActor:
                 command.response.set_exception(error)
 
 
+def _has_source_lease(
+    leases: Iterable[tuple[str, object]],
+    source_id: str,
+) -> bool:
+    for leased_source_id, _owner_key in leases:
+        if leased_source_id == source_id:
+            return True
+    return False
+
+
 class MCPClientManager:
     """Own live MCP source lifecycle behind a small async interface."""
 
@@ -1530,7 +1540,7 @@ class MCPClientManager:
             if actor is not None:
                 await actor.cancel_owner(owner)
             async with self._lock:
-                if not any(key[0] == source_id for key in self._leases):
+                if not _has_source_lease(self._leases, source_id):
                     actor_to_close = self._actors.pop(source_id, None)
                     self._sources.pop(source_id, None)
                     self._configuration_digests.pop(source_id, None)
@@ -1698,7 +1708,7 @@ class MCPClientManager:
                 self._leases.pop(key, None)
             actor = self._actors.get(source_id)
             actor_to_close = None
-            if not any(key[0] == source_id for key in self._leases):
+            if not _has_source_lease(self._leases, source_id):
                 actor_to_close = self._actors.pop(source_id, None)
                 self._sources.pop(source_id, None)
                 self._configuration_digests.pop(source_id, None)

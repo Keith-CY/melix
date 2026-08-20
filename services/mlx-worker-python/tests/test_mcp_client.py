@@ -36,6 +36,7 @@ from worker.runtime.mcp_client import (
     MCPToolNotFoundError,
     MCPWireLimitError,
     _MCPSourceActor,
+    _has_source_lease,
 )
 
 
@@ -49,6 +50,17 @@ OTHER_OWNER = MCPOwnerIdentity(
     branch_id="branch-other",
     actor_id="actor-other",
 )
+
+
+def test_has_source_lease_scans_keys_without_generator_any() -> None:
+    leases = {
+        ("source-a", OWNER.key): object(),
+        ("source-b", OTHER_OWNER.key): object(),
+    }
+
+    assert _has_source_lease(leases, "source-a") is True
+    assert _has_source_lease(leases, "source-b") is True
+    assert _has_source_lease(leases, "source-c") is False
 
 
 SERVER_SOURCE = """
