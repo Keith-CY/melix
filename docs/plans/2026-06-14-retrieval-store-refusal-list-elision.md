@@ -42,3 +42,17 @@ common valid-record loop.
 Success is accepted only if focused tests, changed-scope coverage, and the
 local registered Linux probe pass with lower elapsed time, and if the PR-scoped
 CI probe completes successfully before merge.
+
+## Follow-up Slice: Receipt Copy Helper Binding
+
+The 2026-08-20 follow-up keeps the same Python-only retrieval projection
+boundary and registered `retrieval-context-projection-fastpath` probe. Lookup
+projection copies flat receipt dictionaries on the hot path; this slice keeps the
+existing defensive copy semantics while returning a fresh empty list for empty
+receipt collections and binding `dict.copy` once before the non-empty copy loop.
+Payload copying, admission, duplicate detection, and refusal semantics remain
+unchanged.
+
+Acceptance remains the focused retrieval-context tests, changed-scope coverage,
+the local registered Linux probe, and the PR-scoped CI performance probe before
+merge.
