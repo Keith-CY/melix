@@ -984,12 +984,19 @@ def test_trust_policy_executable_model_scan_skips_prefix_check_by_start_char(
             return follow_symlinks is False
 
     checked_names: list[str] = []
+    suffix_checks: list[str] = []
     original_prefixes = model_load_trust_module.EXECUTABLE_MODEL_FILE_PREFIXES
 
     class StartswithTrackedName(str):
         def startswith(self, prefix, *args):  # type: ignore[override]
             checked_names.append(str(self))
             return super().startswith(prefix, *args)
+
+        def __getitem__(self, key):  # type: ignore[override]
+            value = super().__getitem__(key)
+            if key == slice(-3, None, None):
+                suffix_checks.append(str(self))
+            return value
 
     monkeypatch.setattr(
         NonExecutableStartEntry,
@@ -1012,6 +1019,7 @@ def test_trust_policy_executable_model_scan_skips_prefix_check_by_start_char(
     assert non_executable is False
     assert executable is True
     assert checked_names == ["configuration_melix_demo.py"]
+    assert suffix_checks == ["configuration_melix_demo.py"]
     assert "c" in model_load_trust_module.EXECUTABLE_MODEL_FILE_PREFIX_START_CHARS
     assert all(
         prefix[0] in model_load_trust_module.EXECUTABLE_MODEL_FILE_PREFIX_START_CHARS
