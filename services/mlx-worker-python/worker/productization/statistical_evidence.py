@@ -251,11 +251,16 @@ def _paired_analytical_interval(
 
     resolved_mean = _mean(outcomes) if mean_value is None else mean_value
     values_equal = all_values_equal if all_values_equal is not None else _all_values_equal(outcomes)
-    if len(outcomes) == 1 or values_equal:
+    sample_size = len(outcomes)
+    if sample_size == 1 or values_equal:
         margin = 0.0
     else:
-        variance = sum((value - resolved_mean) ** 2 for value in outcomes) / (len(outcomes) - 1)
-        standard_error = math.sqrt(variance) / math.sqrt(len(outcomes))
+        squared_delta_total = 0.0
+        for value in outcomes:
+            delta = value - resolved_mean
+            squared_delta_total += delta * delta
+        variance = squared_delta_total / (sample_size - 1)
+        standard_error = math.sqrt(variance / sample_size)
         z_value = _two_sided_normal_z_value(confidence_level)
         margin = z_value * standard_error
 
