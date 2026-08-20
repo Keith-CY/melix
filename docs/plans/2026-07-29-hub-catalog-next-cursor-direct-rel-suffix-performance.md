@@ -5,6 +5,11 @@
 Accepted for the 2026-07-29 performance slice after local Linux tests,
 changed-scope coverage, and the registered hub catalog next-cursor probe.
 
+2026-08-20 follow-up slice: optimize the same registered next-cursor parser's
+common percent-decoding order for canonical uppercase `%2F` / `%2B` cursors
+before the plus-to-space pass, preserving the existing fallback for lowercase,
+UTF-8, and malformed percent escapes.
+
 ## Scope
 
 Optimize the Python hub catalog `Link` header next-cursor parser in
@@ -45,3 +50,7 @@ fallback parser, preserving compact forms such as `>;rel="next"`.
    the metrics against the pre-change baseline.
 4. Let GitHub Actions run the registered PR-scoped performance workflow before
    merge.
+
+The 2026-08-20 follow-up keeps the registered probe unchanged:
+`hub-catalog-next-cursor-fast-parse` still supplies focused tests,
+changed-scope coverage, and the local/CI probe command for the affected path.

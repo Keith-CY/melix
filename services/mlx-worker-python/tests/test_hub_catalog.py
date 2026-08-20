@@ -1125,6 +1125,12 @@ def test_next_cursor_from_link_extracts_encoded_next_cursor_without_full_query_p
     assert hub_catalog_module._next_cursor_from_link(link_header) == "abc/def ghi"
 
 
+def test_next_cursor_from_link_decodes_common_uppercase_escapes_before_plus_spaces() -> None:
+    link_header = '<https://huggingface.co/api/models?cursor=page%2F1%2Bbatch+ok>; rel="next"'
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "page/1+batch ok"
+
+
 def test_next_cursor_from_link_scans_segments_without_splitting_on_url_commas() -> None:
     link_header = (
         '<https://huggingface.co/api/models?cursor=prev>; rel="prev", '
