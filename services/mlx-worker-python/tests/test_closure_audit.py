@@ -265,6 +265,36 @@ def test_scan_probe_source_file_skips_pending_rebuild_when_file_has_no_matches(
     assert scanned_relative_paths == {"noise.md"}
 
 
+def test_matched_probe_names_single_pending_preserves_chunk_boundary_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    probe_name = "disconnect.resume_success_rate"
+    probe_file = tmp_path / "probe.md"
+    monkeypatch.setattr(closure_audit_module, "_PROBE_SOURCE_SCAN_CHUNK_SIZE", 12)
+    probe_file.write_text(f"prefix {probe_name} suffix\n", encoding="utf-8")
+
+    assert closure_audit_module._matched_probe_names_in_file(
+        file_path=probe_file,
+        probe_names=[probe_name],
+    ) == {probe_name}
+
+
+def test_matched_probe_names_single_pending_returns_empty_for_no_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    probe_file = tmp_path / "probe.md"
+    monkeypatch.setattr(closure_audit_module, "_PROBE_SOURCE_SCAN_CHUNK_SIZE", 12)
+    probe_file.write_text("unrelated closure audit evidence\n", encoding="utf-8")
+
+    assert (
+        closure_audit_module._matched_probe_names_in_file(
+            file_path=probe_file,
+            probe_names=["disconnect.resume_success_rate"],
+        )
+        == set()
+    )
+
+
 def test_collect_probe_sources_stops_checking_saturated_probe_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

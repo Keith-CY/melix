@@ -12,6 +12,12 @@ Synthetic closure-audit repositories can contain many text files that do not men
 
 This keeps behavior identical for matching files, duplicate-file suppression, and pending probe saturation while removing per-file list/dict work from the no-match path.
 
+## 2026-08-20 follow-up slice
+
+When the previous scans have saturated every required probe except one, `_matched_probe_names_in_file(...)` can test that final pending probe directly instead of building a temporary set and running the general multi-probe comprehension for every chunk. The direct single-pending path still preserves chunk-boundary matches by carrying the last `len(probe_name) - 1` characters into the next scan window.
+
+The slice remains covered by the same registered `closure-audit-probe-source-short-circuit` probe, including focused tests, changed-scope coverage, and the command-json probe.
+
 ## Verification
 
 Run the registered focused test command, changed-scope coverage command, and registered closure-audit probe locally on Linux before opening the PR. GitHub Actions PR-scoped performance remains the merge gate for the registered probe result.
