@@ -928,8 +928,7 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
                     if candidate_score > candidate_score_max:
                         candidate_score_max = candidate_score
                 candidate_score_count += 1
-        if candidate_score_count:
-            score_total += candidate_score_total
+        score_total += candidate_score_total
         if candidate_score_count >= 2:
             group_mean = candidate_score_total / candidate_score_count
             candidate_group_margin = candidate_score_max - candidate_score_min

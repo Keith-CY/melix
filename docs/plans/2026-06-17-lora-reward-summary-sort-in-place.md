@@ -46,6 +46,16 @@ constructing the summary and reuses the score list length after the in-place
 sort. This preserves reward summary semantics while reducing repeated helper and
 length lookups in the registered large-candidate workload.
 
+## 2026-08-20 follow-up slice: candidate total branch elision
+
+This follow-up Python-only slice keeps the same registered
+`lora-reward-summary-candidate-minmax` probe and remains limited to
+`_reward_summary(...)`. The helper now always folds the per-sample
+`candidate_score_total` into the aggregate reward total after scanning the
+candidate group. Samples without valid candidate scores add `0.0`, preserving
+all summary semantics while removing one hot-loop branch from the registered
+large-candidate workload.
+
 ## Acceptance Criteria
 
 - Focused tests pass.
