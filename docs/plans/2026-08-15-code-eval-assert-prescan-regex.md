@@ -29,3 +29,12 @@ same statement-boundary semantics.
 Verification remains the same: focused code-eval assert tests, changed-scope
 coverage for the registered probe, the local Linux registered probe, and the
 GitHub Actions PR-scoped performance report before merge.
+
+## 2026-08-20 follow-up: no-assert literal skip
+
+This follow-up keeps the compiled-regex boundary check for payloads that contain
+the text `assert`, but adds an earlier literal containment guard for the common
+no-assert fallback payload. The registered `code-eval-assert-mention-prescan`
+probe remains the compatibility guard for comments and strings that mention
+`assert`; the `code-eval-test-count-nonblank-streaming` probe is the governing
+metric for the large no-assert workload that now skips regex evaluation.

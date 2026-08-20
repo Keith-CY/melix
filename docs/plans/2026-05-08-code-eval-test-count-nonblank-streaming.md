@@ -31,6 +31,19 @@ Register `code-eval-test-count-nonblank-streaming` in the PR-scoped performance 
 - Changed-scope coverage for touched executable Python scope is at least 95%.
 - The local base-vs-head scoped probe shows materially lower `peak_bytes_mean` with identical nonblank line counts.
 
+## 2026-08-20 follow-up: assert literal pre-scan
+
+The registered `code-eval-test-count-nonblank-streaming` probe remains the
+governing metric for no-assert payloads. This follow-up keeps the nonblank-line
+counter unchanged and adds a cheaper literal pre-scan before the compiled assert
+statement regex. Large fallback payloads that do not contain the text `assert`
+can now skip regex evaluation entirely, while payloads with comments, strings,
+inline assert statements, unicode identifier edges, or real assert statements
+continue through the existing compiled-regex boundary check.
+
+Expected metric movement: lower `elapsed_ms_mean` for the registered no-assert
+probe with unchanged `nonblank_line_count_mean` and neutral `peak_bytes_mean`.
+
 ## Verification commands
 
 ```bash

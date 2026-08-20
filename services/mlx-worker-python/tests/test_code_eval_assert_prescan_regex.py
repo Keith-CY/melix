@@ -22,3 +22,21 @@ def test_assert_prescan_uses_compiled_regex_search() -> None:
         "assert value", _search=tracked_search, _isalnum=fail_isalnum
     )
     assert calls == ["assert value"]
+
+
+def test_assert_prescan_skips_regex_when_literal_is_absent() -> None:
+    calls: list[str] = []
+
+    def tracked_contains(test_code: str, needle: str) -> bool:
+        calls.append(f"contains:{needle}:{test_code[:5]}")
+        return False
+
+    def fail_search(_test_code: str) -> object | None:  # pragma: no cover - regression-only failure path
+        raise AssertionError("literal pre-scan should skip regex for no-assert payloads")
+
+    assert not code_eval_runner._may_contain_assert_statement(
+        "value = candidate(1)",
+        _contains=tracked_contains,
+        _search=fail_search,
+    )
+    assert calls == ["contains:assert:value"]

@@ -420,10 +420,11 @@ def _count_plain_assert_statement_lines(
 def _may_contain_assert_statement(
     test_code: str,
     *,
+    _contains=str.__contains__,
     _search=_ASSERT_STATEMENT_RE.search,
     _isalnum=str.isalnum,
 ) -> bool:
-    return _search(test_code) is not None  # direct regex search fast path
+    return _contains(test_code, "assert") and _search(test_code) is not None
 
 
 def _count_assert_nodes(
