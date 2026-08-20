@@ -445,12 +445,22 @@ def _auto_map_has_custom_loader(auto_map: dict[Any, Any]) -> bool:
         if type(value) is str:
             if not value:
                 continue
-            if not value[0].isspace() or not value.isspace():
+            first_character = value[0]
+            if (
+                " " < first_character < "\x7f"
+                or not first_character.isspace()
+                or not value.isspace()
+            ):
                 return True
         elif isinstance(value, str):
             if not value:
                 continue
-            if not value[0].isspace() or not value.isspace():
+            first_character = value[0]
+            if (
+                " " < first_character < "\x7f"
+                or not first_character.isspace()
+                or not value.isspace()
+            ):
                 return True
         elif value is not None and str(value).strip():
             return True
