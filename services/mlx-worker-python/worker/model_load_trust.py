@@ -191,7 +191,8 @@ def _custom_loader_rejection_policy(
     detection_source: str,
 ) -> common_pb2.ModelLoadTrustPolicy:
     policy = MODEL_LOAD_TRUST_POLICY()
-    policy.CopyFrom(
+    copy_from = policy.CopyFrom
+    copy_from(
         _custom_loader_rejection_policy_template(
             requested_mode,
             policy_source,
