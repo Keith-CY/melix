@@ -734,6 +734,20 @@ def test_measurable_non_comment_lines_numbering_matches_diff_parser(tmp_path: Pa
         ) == [1, 2, 3, 5], f"line numbering shifted by {separator!r}"
 
 
+def test_measurable_non_comment_lines_dense_preserves_universal_newline_numbering(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "dense_universal_newlines.py"
+    source_path.write_bytes(b"first = 1\rsecond = 2\r\n# comment\nthird = 3\n")
+
+    line_numbers = list(range(1, 65))
+
+    assert changed_scope_coverage._measurable_non_comment_lines(
+        source_path,
+        line_numbers,
+    ) == [1, 2, 4]
+
+
 def test_measurable_non_comment_lines_skips_blanks_comments_and_out_of_range(
     tmp_path: Path,
 ) -> None:

@@ -123,3 +123,20 @@ Registered probe: `changed-scope-coverage-measured-set-filter` in
 `infra/perf/pr_scoped_probes.json`. The probe includes focused parser and
 measured-line tests, changed-scope coverage, and local/CI command-json metrics
 for `elapsed_ms_mean`, `sparse_elapsed_ms_mean`, and `dense_elapsed_ms_mean`.
+
+## 2026-08-20 dense source split fast path slice
+
+This follow-up slice is limited to the dense-source branch in
+`_measurable_non_comment_lines(...)`. Instead of building the same full line list
+through the file object's Python-level `readlines()` loop, the branch reads the
+source text once, normalizes universal newline delimiters explicitly, and splits
+on literal `\n`. This preserves the existing line-numbering contract (including
+`\r` and `\r\n` handling without treating vertical-tab/form-feed/Unicode
+separators as new source lines) while moving dense fixture splitting into faster
+C-level string operations. Sparse source filtering and changed-line partitioning
+remain unchanged.
+
+Registered probe: `changed-scope-coverage-measured-set-filter` in
+`infra/perf/pr_scoped_probes.json`. The probe reports `dense_elapsed_ms_mean`,
+`sparse_elapsed_ms_mean`, and `elapsed_ms_mean`; CI remains the merge gate for
+the registered PR-scoped performance report.
