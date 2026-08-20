@@ -446,6 +446,20 @@ def _scan_probe_source_file(
 def _matched_probe_names_in_file(*, file_path: Path, probe_names: list[str]) -> set[str]:
     if not probe_names:
         return set()
+    if len(probe_names) == 1:
+        probe_name = probe_names[0]
+        carry = ""
+        carry_limit = max(len(probe_name) - 1, 0)
+        with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
+            while True:
+                chunk = handle.read(_PROBE_SOURCE_SCAN_CHUNK_SIZE)
+                if not chunk:
+                    break
+                haystack = carry + chunk
+                if probe_name in haystack:
+                    return {probe_name}
+                carry = haystack[-carry_limit:] if carry_limit else ""
+        return set()
     matched_probe_names: set[str] = set()
     remaining_probe_names = set(probe_names)
     carry = ""
