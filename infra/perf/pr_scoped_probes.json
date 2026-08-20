@@ -7449,6 +7449,7 @@
       "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
       "scripts/retrieval_context_projection_probe.py",
       "infra/perf/pr_scoped_probes.json",
+      "docs/plans/2026-06-14-retrieval-store-refusal-list-elision.md",
       "docs/plans/2026-06-16-retrieval-copy-tuple-generator.md",
       "docs/plans/2026-06-16-retrieval-lookup-metadata-refusal-lazy-defaults.md",
       "docs/plans/2026-06-16-retrieval-copy-tuple3-fastpath.md",
