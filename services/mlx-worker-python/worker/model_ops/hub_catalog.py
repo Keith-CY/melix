@@ -418,8 +418,8 @@ def _unquote_plus_ascii_cursor(value: str) -> str:
         return value.replace("+", " ")
 
     common_cursor = (
-        value.replace("+", " ")
-        .replace("%2F", "/")
+        value.replace("%2F", "/")
+        .replace("+", " ")
         .replace("%2B", "+")
     )
     if "%" not in common_cursor:
