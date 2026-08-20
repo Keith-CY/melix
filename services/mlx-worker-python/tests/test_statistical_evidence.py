@@ -291,6 +291,31 @@ def test_bootstrap_interval_short_circuits_constant_outcomes_without_sampling(
     assert evidence["analytical"]["lower_bound"] == 1.0
     assert evidence["analytical"]["upper_bound"] == 1.0
 
+    sqrt_inputs: list[float] = []
+    original_sqrt = statistical_evidence_module.math.sqrt
+
+    def tracking_sqrt(value: float) -> float:
+        sqrt_inputs.append(value)
+        return original_sqrt(value)
+
+    monkeypatch.setattr(statistical_evidence_module.math, "sqrt", tracking_sqrt)
+
+    mixed_evidence = build_paired_statistical_evidence(
+        paired_outcomes=(1.0, 0.0, -1.0, 1.0, 0.0),
+        confidence_level=0.95,
+        bootstrap_iterations=0,
+        bootstrap_seed=17,
+    )
+
+    assert mixed_evidence["analytical"] == {
+        "method": "paired_difference_normal_approximation",
+        "confidence_level": 0.95,
+        "lower_bound": -0.5334,
+        "upper_bound": 0.9334,
+        "crosses_zero": True,
+    }
+    assert len(sqrt_inputs) == 1
+
 
 def test_build_paired_statistical_evidence_reuses_summary_scan_between_intervals(
     monkeypatch: pytest.MonkeyPatch,
