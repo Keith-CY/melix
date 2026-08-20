@@ -1028,7 +1028,12 @@ def project_local_job_session_followups(
 def _copy_receipt_sequence(
     receipts: Sequence[dict[str, Any]],
 ) -> tuple[dict[str, Any], ...]:
-    return tuple(_copy_receipt(receipt) for receipt in receipts)
+    copied_receipts: list[dict[str, Any]] = []
+    append_receipt = copied_receipts.append
+    copy_receipt = _copy_receipt
+    for receipt in receipts:
+        append_receipt(copy_receipt(receipt))
+    return tuple(copied_receipts)
 
 
 def _copy_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -1063,16 +1068,25 @@ def _project_local_job_session_followup_claim(
 
 
 def _copy_prompt_user_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: _copy_json_like_value(value) for key, value in payload.items()}
+    copy_value = _copy_json_like_value
+    copied: dict[str, Any] = {}
+    for key, value in payload.items():
+        copied[key] = copy_value(value)
+    return copied
 
 
 def _copy_untrusted_context_receipts(
     receipts: Sequence[dict[str, object]],
 ) -> list[dict[str, object]]:
-    return [
-        {key: _copy_json_like_value(value) for key, value in receipt.items()}
-        for receipt in receipts
-    ]
+    copy_value = _copy_json_like_value
+    copied_receipts: list[dict[str, object]] = []
+    append_receipt = copied_receipts.append
+    for receipt in receipts:
+        copied: dict[str, object] = {}
+        for key, value in receipt.items():
+            copied[key] = copy_value(value)
+        append_receipt(copied)
+    return copied_receipts
 
 
 def _copy_json_like_value(value: Any) -> Any:

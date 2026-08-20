@@ -713,6 +713,18 @@ def test_local_job_followup_scan_probe_command_has_base_fallback() -> None:
     assert "PYPROBE" in probe.probe_command
 
 
+def test_local_job_followup_projection_min_is_informational() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "local-job-followup-scan-scandir"
+    )
+    metrics = {metric.key: metric for metric in probe.metrics}
+
+    assert metrics["projection_elapsed_ms_mean"].direction == "lower_is_better"
+    assert metrics["projection_elapsed_ms_min"].direction == "informational"
+
+
 
 def test_lora_aux_modules_scandir_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
