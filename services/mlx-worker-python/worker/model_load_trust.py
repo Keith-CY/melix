@@ -491,7 +491,15 @@ def _model_config_path(model_spec: common_pb2.ModelSpec) -> tuple[str, str | os.
     if type(model_path_value) is str:
         if not model_path_value:
             return None
-        if not model_path_value[0].isspace() and not model_path_value[-1].isspace():
+        first_character = model_path_value[0]
+        last_character = model_path_value[-1]
+        if (
+            (" " < first_character < "\x7f" and " " < last_character < "\x7f")
+            or (
+                not first_character.isspace()
+                and not last_character.isspace()
+            )
+        ):
             return _model_config_path_for_model_path(model_path_value)
     model_path = str(model_path_value or "").strip()
     if not model_path:

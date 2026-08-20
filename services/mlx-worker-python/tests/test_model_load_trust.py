@@ -832,6 +832,26 @@ def test_read_model_config_reuses_cached_config_path_text(tmp_path: Path) -> Non
     assert path_cache.cache_info().hits == 1
 
 
+def test_trust_policy_plain_model_path_uses_ascii_boundary_fast_path() -> None:
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = "/tmp/melix-model-load-ascii-boundary"
+
+    assert model_load_trust_module._model_config_path(model) == (
+        "/tmp/melix-model-load-ascii-boundary/config.json",
+        "/tmp/melix-model-load-ascii-boundary/config.json",
+    )
+
+
+def test_trust_policy_unicode_model_path_preserves_whitespace_fallback() -> None:
+    model = WorkerModelCatalog.dev_text_model()
+    model.model_path = " /tmp/mélix-model-load-unicode-boundary "
+
+    assert model_load_trust_module._model_config_path(model) == (
+        "/tmp/mélix-model-load-unicode-boundary/config.json",
+        "/tmp/mélix-model-load-unicode-boundary/config.json",
+    )
+
+
 def test_trust_policy_caches_executable_scan_path_by_model_path(tmp_path: Path) -> None:
     scan_path_cache = model_load_trust_module._executable_model_scan_path_for_model_path
     scan_path_cache.cache_clear()
