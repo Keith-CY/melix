@@ -1087,6 +1087,10 @@ def test_mcp_client_lifecycle_probe_script_emits_metrics(
     assert metrics["call_tool_ms_mean"] > 0.0
     assert metrics["cancel_propagation_ms_mean"] > 0.0
     assert metrics["metrics_snapshot_ms_mean"] > 0.0
+    assert metrics["source_lease_scan_baseline_ms_mean"] > 0.0
+    assert metrics["source_lease_scan_optimized_ms_mean"] > 0.0
+    assert metrics["source_lease_scan_speedup"] > 1.0
+    assert metrics["source_lease_scan_delta_ms"] < 0.0
     assert metrics["operation_count"] == 20.0
     assert metrics["sample_count"] == 2.0
     assert metrics["feature_available_count"] == 1.0
@@ -1149,9 +1153,16 @@ def test_mcp_client_lifecycle_probe_registration_has_focused_commands() -> None:
     assert "../head/scripts/mcp_client_lifecycle_probe.py" in (
         probe.probe_command
     )
+    probe_source = (REPO_ROOT / "scripts/mcp_client_lifecycle_probe.py").read_text(
+        encoding="utf-8"
+    )
+    assert "getattr(" in probe_source
+    assert "lambda leases, source_id: any(key[0] == source_id for key in leases)" in probe_source
     metric_by_key = {metric.key: metric for metric in probe.metrics}
     assert metric_by_key["initialize_ms_mean"].warn_abs == 0.02
     assert metric_by_key["call_tool_ms_mean"].warn_abs == 0.01
+    assert metric_by_key["source_lease_scan_optimized_ms_mean"].warn_pct == 10.0
+    assert metric_by_key["source_lease_scan_delta_ms"].warn_abs == 0.0
 
 
 def test_scope_report_selects_agent_runtime_control_surface_probe() -> None:

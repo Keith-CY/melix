@@ -40,6 +40,12 @@ if FEATURE_AVAILABLE:
         MCPToolResult,
     )
 
+    _has_source_lease = getattr(
+        mcp_client_module,
+        "_has_source_lease",
+        lambda leases, source_id: any(key[0] == source_id for key in leases),
+    )
+
     _TOOL = MCPToolDefinition(
         source_id="lifecycle-probe",
         name="echo",
@@ -51,6 +57,8 @@ if FEATURE_AVAILABLE:
         annotations={},
         schema_digest="lifecycle-probe-schema-v1",
     )
+else:
+    _has_source_lease = None
 
 
 class _DeterministicActor:
@@ -190,6 +198,7 @@ async def _sample(iterations: int) -> dict[str, float]:
 
 async def measure(iterations: int, sample_count: int) -> dict[str, float]:
     samples = [await _sample(iterations) for _ in range(sample_count)]
+    lease_scan_samples = [_sample_source_lease_scan(iterations) for _ in range(sample_count)]
     return {
         "initialize_ms_mean": statistics.fmean(
             sample["initialize_ms"] for sample in samples
@@ -206,10 +215,53 @@ async def measure(iterations: int, sample_count: int) -> dict[str, float]:
         "metrics_snapshot_ms_mean": statistics.fmean(
             sample["metrics_snapshot_ms"] for sample in samples
         ),
+        "source_lease_scan_baseline_ms_mean": statistics.fmean(
+            sample["baseline_ms"] for sample in lease_scan_samples
+        ),
+        "source_lease_scan_optimized_ms_mean": statistics.fmean(
+            sample["optimized_ms"] for sample in lease_scan_samples
+        ),
+        "source_lease_scan_delta_ms": statistics.fmean(
+            sample["optimized_ms"] - sample["baseline_ms"]
+            for sample in lease_scan_samples
+        ),
+        "source_lease_scan_speedup": statistics.fmean(
+            sample["baseline_ms"] / sample["optimized_ms"]
+            for sample in lease_scan_samples
+            if sample["optimized_ms"] > 0
+        ),
         "operation_count": float(iterations),
         "sample_count": float(sample_count),
         "feature_available_count": 1.0,
     }
+
+
+def _sample_source_lease_scan(iterations: int) -> dict[str, float]:
+    if _has_source_lease is None:  # pragma: no cover - guarded by FEATURE_AVAILABLE.
+        raise RuntimeError("source lease scan helper is unavailable")
+    leases = {
+        (f"source-{index % 16}", ("session", "branch", f"actor-{index}")): object()
+        for index in range(256)
+    }
+    target_source_id = "source-15"
+
+    baseline_started = time.perf_counter()
+    baseline_hits = 0
+    for _ in range(iterations):
+        if any(key[0] == target_source_id for key in leases):
+            baseline_hits += 1
+    baseline_ms = (time.perf_counter() - baseline_started) * 1_000
+
+    optimized_started = time.perf_counter()
+    optimized_hits = 0
+    for _ in range(iterations):
+        if _has_source_lease(leases, target_source_id):
+            optimized_hits += 1
+    optimized_ms = (time.perf_counter() - optimized_started) * 1_000
+
+    if baseline_hits != iterations or optimized_hits != iterations:  # pragma: no cover
+        raise RuntimeError("source lease scan probe lost expected hits")
+    return {"baseline_ms": baseline_ms, "optimized_ms": optimized_ms}
 
 
 def main() -> int:
