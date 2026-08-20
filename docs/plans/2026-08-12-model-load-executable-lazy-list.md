@@ -31,6 +31,13 @@ second matching executable file appears and sorting is required.
 Behavior remains unchanged: no match returns an empty tuple, one match returns a
 single-item tuple, and multiple matches still return sorted filenames.
 
+2026-08-20 follow-up slice: keep the same registered probe and executable scan
+path, but reject filenames whose first character cannot match an executable
+model-file prefix before checking the `.py` suffix. Large model directories often
+contain many Python adapter/helpers whose first character is outside the trusted
+prefix set, so the scan avoids a suffix slice for those distractors while still
+statting only names that pass the prefix and suffix guards.
+
 ## Verification plan
 
 Run on Linux before opening the PR:
