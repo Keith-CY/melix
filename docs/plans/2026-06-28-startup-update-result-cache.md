@@ -119,3 +119,22 @@ The registered `startup-signals-version-compare-single-pass` probe already
 includes `normalized_parts_*` metrics for this helper, so verification remains
 the focused startup-signals tests, changed-scope coverage command, local Linux
 probe, and PR-scoped performance workflow as the merge gate.
+
+## 2026-08-21 follow-up: equivalent channel rewrite result cache hit
+
+This Python-only follow-up keeps the same registered startup-signals probe and
+narrows back to `check_for_updates(...)`. The previous result cache stored final
+`UpdateCheckResult` objects by `(channel_path, installed_version,
+latest_version, channel)` but only the stat-valid cache read them on the hot
+path. When an update-channel file is rewritten without changing the parsed
+`latest_version` or `channel`, the channel must still be decoded because the stat
+tuple changed, but the final comparison and immutable result allocation can reuse
+the already cached result for that equivalent parsed channel state.
+
+The freshness boundary remains unchanged: the channel file is still statted on
+each call, changed stat tuples still force channel JSON decode, and changed
+`latest_version`/`channel` values still construct a new result. The added cache
+hit only skips repeated `compare_versions(...)` and result construction after an
+equivalent rewrite. Verification remains the registered focused tests,
+changed-scope coverage command, local Linux probe, and PR-scoped performance
+workflow as the merge gate.

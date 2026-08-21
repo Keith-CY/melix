@@ -158,6 +158,39 @@ def test_check_for_updates_reuses_cached_result_without_recompare(
     assert second_result is first_result
 
 
+def test_check_for_updates_reuses_cached_result_after_equivalent_channel_rewrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_path = tmp_path / "stable.json"
+    channel_path.write_text(
+        json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+        encoding="utf-8",
+    )
+    startup_signals_module._UPDATE_CHANNEL_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_CACHE.clear()
+    startup_signals_module._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
+
+    first_result = check_for_updates("0.1.0", channel_path)
+    channel_path.write_text(
+        json.dumps(
+            {"channel": "stable", "latest_version": "0.2.0"},
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_compare_versions(*args: object, **kwargs: object) -> int:  # pragma: no cover - sentinel
+        raise AssertionError("equivalent channel rewrite should reuse cached comparison result")
+
+    monkeypatch.setattr(startup_signals_module, "compare_versions", fail_compare_versions)
+
+    second_result = check_for_updates("0.1.0", channel_path)
+
+    assert second_result is first_result
+
+
 def test_check_for_updates_reuses_stat_valid_result_before_channel_decode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
