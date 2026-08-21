@@ -3306,6 +3306,7 @@ def test_scope_report_selects_shared_token_counting_probes() -> None:
     )
 
     assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "stream-assembler-token-byte-fast-decode",
         "deterministic-ocr-token-count-scan",
         "deterministic-vlm-completion-token-scan",
         "vision-family-prompt-token-count-scan",
