@@ -1695,11 +1695,29 @@ class RequestStreamAssembler:
     @lru_cache(maxsize=16)
     def _pipe_channel_name(header: str) -> str:
         header_length = len(header)
-        index = 0
-        while index < header_length and header[index].isspace():
-            index += 1
-        if index >= header_length:
+        if not header_length:
             return ""
+        first = header[0]
+        if not first.isspace():
+            if header.startswith("analysis") and (
+                header_length == 8 or header[8].isspace()
+            ):
+                return "analysis"
+            if header.startswith("final") and (
+                header_length == 5 or header[5].isspace()
+            ):
+                return "final"
+            if header.startswith("commentary") and (
+                header_length == 10 or header[10].isspace()
+            ):
+                return "commentary"
+            index = 0
+        else:
+            index = 1
+            while index < header_length and header[index].isspace():
+                index += 1
+            if index >= header_length:
+                return ""
         start = index
         while index < header_length and not header[index].isspace():
             index += 1

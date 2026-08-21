@@ -54,6 +54,33 @@ def test_pipe_channel_name_scans_first_token_without_split() -> None:
     RequestStreamAssembler._pipe_channel_name.cache_clear()
 
 
+def test_pipe_channel_name_known_lowercase_channels_skip_lower_copy() -> None:
+    RequestStreamAssembler._pipe_channel_name.cache_clear()
+
+    class LowerTrackingHeader(str):
+        lower_calls = 0
+
+        def __getitem__(self, key: Any):
+            return self.__class__(super().__getitem__(key))
+
+        def lower(self):  # pragma: no cover - regression guard must stay uncalled
+            self.__class__.lower_calls += 1
+            return super().lower()
+
+    assert (
+        RequestStreamAssembler._pipe_channel_name(LowerTrackingHeader("analysis metadata"))
+        == "analysis"
+    )
+    assert RequestStreamAssembler._pipe_channel_name(LowerTrackingHeader("final metadata")) == "final"
+    assert (
+        RequestStreamAssembler._pipe_channel_name(LowerTrackingHeader("commentary\tmetadata"))
+        == "commentary"
+    )
+    assert LowerTrackingHeader.lower_calls == 0
+
+    RequestStreamAssembler._pipe_channel_name.cache_clear()
+
+
 def test_legacy_pipe_hidden_channel_body_avoids_strip_copy() -> None:
     class StripTrackingHeader(str):
         strip_calls = 0
