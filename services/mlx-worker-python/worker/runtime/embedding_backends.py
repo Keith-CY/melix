@@ -10,6 +10,7 @@ _SHA256 = hashlib.sha256
 _SQRT = math.sqrt
 _ROUND = round
 _UNPACK_DIGEST_UINT32 = struct.Struct("<8I").unpack
+_UNPACK_DIGEST_FIRST_UINT32 = struct.Struct("<I").unpack_from
 _DIGEST_UINT32_SCALE = 2.0 / 0xFFFFFFFF
 
 
@@ -75,14 +76,18 @@ class DeterministicEmbeddingBackend:
             return []
         if dimensions < 0:
             return []
-        digest_words = _UNPACK_DIGEST_UINT32(_sha256(seed_text.encode("utf-8")).digest())
         if dimensions == 1:
-            value = digest_words[0] * _DIGEST_UINT32_SCALE - 1.0
+            value = (
+                _UNPACK_DIGEST_FIRST_UINT32(_sha256(seed_text.encode("utf-8")).digest())[0]
+                * _DIGEST_UINT32_SCALE
+                - 1.0
+            )
             if value > 0.0:
                 return [1.0]
             if value < 0.0:
                 return [-1.0]
             return [0.0]
+        digest_words = _UNPACK_DIGEST_UINT32(_sha256(seed_text.encode("utf-8")).digest())
         base_values = [raw * _DIGEST_UINT32_SCALE - 1.0 for raw in digest_words]
         if dimensions == 8:
             l2_norm = _sqrt(_sum_squares(base_values))

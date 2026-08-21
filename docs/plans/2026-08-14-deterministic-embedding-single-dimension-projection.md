@@ -26,8 +26,8 @@ branches.
 
 ## Verification Plan
 
-1. Add regression coverage proving single-dimension projection reads only the
-   first unpacked digest word and does not iterate the full digest sequence.
+1. Add regression coverage proving single-dimension projection unpacks only the
+   first digest word and does not unpack the full digest sequence.
 2. Run the registered focused test command locally on Linux.
 3. Run the registered changed-scope coverage command locally on Linux.
 4. Run the registered probe locally and compare `single_dimension_elapsed_ms_mean`
