@@ -218,35 +218,36 @@ def test_project_digest_single_dimension_skips_expanded_projection() -> None:
     assert zero in ([-1.0], [1.0])
 
 
-def test_project_digest_single_dimension_reads_only_first_digest_word(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_project_digest_single_dimension_unpacks_only_first_digest_word(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = BERTEmbeddingBackend()
+    full_unpack_calls = 0
+    first_unpack_calls = 0
 
-    class FirstWordOnlyDigest:
-        first_word_reads = 0
+    def fail_full_unpack(_digest: bytes):  # pragma: no cover - regression guard
+        nonlocal full_unpack_calls
+        full_unpack_calls += 1
+        raise AssertionError("single-dimension projection should not unpack all digest words")
 
-        def __getitem__(self, index: int) -> int:
-            if index != 0:  # pragma: no cover - regression guard
-                raise AssertionError(f"unexpected digest word read: {index}")
-            self.first_word_reads += 1
-            return 0xFFFFFFFF
+    def first_word_unpack(_digest: bytes) -> tuple[int]:
+        nonlocal first_unpack_calls
+        first_unpack_calls += 1
+        return (0xFFFFFFFF,)
 
-        def __iter__(self):  # pragma: no cover - regression guard
-            raise AssertionError("single-dimension projection should not iterate all digest words")
-
-    digest_words = FirstWordOnlyDigest()
+    monkeypatch.setattr(embedding_backends_module, "_UNPACK_DIGEST_UINT32", fail_full_unpack)
     monkeypatch.setattr(
         embedding_backends_module,
-        "_UNPACK_DIGEST_UINT32",
-        lambda digest: digest_words,
+        "_UNPACK_DIGEST_FIRST_UINT32",
+        first_word_unpack,
     )
 
     assert backend._project_digest("bert::single-fast-path", 1) == [1.0]
-    assert digest_words.first_word_reads == 1
+    assert first_unpack_calls == 1
+    assert full_unpack_calls == 0
 
 
 def test_project_digest_single_dimension_preserves_zero_norm(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = BERTEmbeddingBackend()
-    monkeypatch.setattr(embedding_backends_module, "_UNPACK_DIGEST_UINT32", lambda digest: (1,) * 8)
+    monkeypatch.setattr(embedding_backends_module, "_UNPACK_DIGEST_FIRST_UINT32", lambda digest: (1,))
     monkeypatch.setattr(embedding_backends_module, "_DIGEST_UINT32_SCALE", 1.0)
 
     assert backend._project_digest("bert::single-zero-norm", 1) == [0.0]
