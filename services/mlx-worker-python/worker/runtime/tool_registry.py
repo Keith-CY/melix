@@ -650,22 +650,24 @@ def _referenced_tool_affordance_names(
 
 
 def _tool_affordance_name(affordance: Any) -> str | None:
+    normalize_tool_name = _normalized_tool_affordance_name
     if isinstance(affordance, str):
-        return _normalized_tool_affordance_name(affordance)
+        return normalize_tool_name(affordance)
     if type(affordance) is dict:
-        raw_value = affordance.get("tool_id")
-        if isinstance(raw_value, str):
-            return _normalized_tool_affordance_name(raw_value)
-        if raw_value is not None:
-            return None
+        if "tool_id" in affordance:
+            raw_value = affordance["tool_id"]
+            if isinstance(raw_value, str):
+                return normalize_tool_name(raw_value)
+            if raw_value is not None:
+                return None
         raw_value = affordance.get("tool_name")
         if isinstance(raw_value, str):
-            return _normalized_tool_affordance_name(raw_value)
+            return normalize_tool_name(raw_value)
         if raw_value is not None:
             return None
         raw_value = affordance.get("name")
         if isinstance(raw_value, str):
-            return _normalized_tool_affordance_name(raw_value)
+            return normalize_tool_name(raw_value)
         if raw_value is not None:
             return None
         return None

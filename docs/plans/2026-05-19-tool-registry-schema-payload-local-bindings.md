@@ -447,6 +447,27 @@ Expected effect:
 - leave registry selection, OpenAI schema generation, protobuf config handling,
   and tool definitions unchanged.
 
+## Follow-up Slice: Tool-name Affordance Fast Path
+
+The 2026-08-21 tool-name affordance follow-up keeps
+`preflight_agentic_tool_schema_consistency(...)` receipts unchanged, but avoids a
+missing `dict.get("tool_id")` lookup on exact plain-dict affordances that only
+carry `tool_name`. Workflow-selected probe affordances use this shape in the
+registered preflight workload, so the scanner now checks for an explicit
+`tool_id` key before falling through to the existing `tool_name` and `name`
+precedence. Non-string `tool_id` values still invalidate the affordance, and
+`tool_id=None` preserves the previous fallthrough semantics.
+
+Expected effect:
+
+- reduce the registered `tool-registry-select-name-index-cache`
+  `preflight_consistency_elapsed_ms_mean` workload for tool-name-only dict
+  affordances;
+- preserve referenced-tool ordering, missing-tool receipts, invalid-affordance
+  counting, and custom mapping behavior;
+- leave registry selection, OpenAI schema generation, protobuf config handling,
+  and tool definitions unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
