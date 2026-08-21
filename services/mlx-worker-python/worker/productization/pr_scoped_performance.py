@@ -70,6 +70,9 @@ _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE: dict[
     tuple[int, int, tuple[str, ...]],
     tuple[dict[str, object], ...],
 ] = {}
+_COMMAND_SUMMARY_LAST_COMMAND: str | None = None
+_COMMAND_SUMMARY_LAST_MAX_LENGTH = 0
+_COMMAND_SUMMARY_LAST_RESULT = ""
 
 
 @lru_cache(maxsize=32)
@@ -84,9 +87,16 @@ def _log_progress(message: str) -> None:
 
 
 def _summarize_command(command: str, *, max_length: int = 180) -> str:
+    global _COMMAND_SUMMARY_LAST_COMMAND, _COMMAND_SUMMARY_LAST_MAX_LENGTH, _COMMAND_SUMMARY_LAST_RESULT
+    if _COMMAND_SUMMARY_LAST_COMMAND is command and _COMMAND_SUMMARY_LAST_MAX_LENGTH == max_length:
+        return _COMMAND_SUMMARY_LAST_RESULT
+
     summary = command.strip()
     if not summary:
-        return "<empty command>"
+        _COMMAND_SUMMARY_LAST_COMMAND = command
+        _COMMAND_SUMMARY_LAST_MAX_LENGTH = max_length
+        _COMMAND_SUMMARY_LAST_RESULT = "<empty command>"
+        return _COMMAND_SUMMARY_LAST_RESULT
 
     newline_index = summary.find("\n")
     if newline_index < 0:
@@ -95,11 +105,18 @@ def _summarize_command(command: str, *, max_length: int = 180) -> str:
         summary = summary[:newline_index].rstrip() + " ..."
     if len(summary) > max_length:
         if max_length <= 0:
-            return ""
+            _COMMAND_SUMMARY_LAST_COMMAND = command
+            _COMMAND_SUMMARY_LAST_MAX_LENGTH = max_length
+            _COMMAND_SUMMARY_LAST_RESULT = ""
+            return _COMMAND_SUMMARY_LAST_RESULT
         if max_length <= 4:
-            return summary[:max_length]
-        return summary[: max_length - 4] + " ..."
-    return summary
+            summary = summary[:max_length]
+        else:
+            summary = summary[: max_length - 4] + " ..."
+    _COMMAND_SUMMARY_LAST_COMMAND = command
+    _COMMAND_SUMMARY_LAST_MAX_LENGTH = max_length
+    _COMMAND_SUMMARY_LAST_RESULT = summary
+    return _COMMAND_SUMMARY_LAST_RESULT
 
 
 @dataclass(frozen=True, slots=True)

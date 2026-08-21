@@ -8034,6 +8034,19 @@ def test_command_summary_keeps_ci_heartbeats_compact() -> None:
     assert _summarize_command("python3 -c " + "x" * 300, max_length=0) == ""
 
 
+def test_command_summary_reuses_last_identical_command_object() -> None:
+    pr_scoped_performance_module._COMMAND_SUMMARY_LAST_COMMAND = None
+    pr_scoped_performance_module._COMMAND_SUMMARY_LAST_MAX_LENGTH = 0
+    pr_scoped_performance_module._COMMAND_SUMMARY_LAST_RESULT = ""
+
+    command = "python3 - <<'PY'\n" + "print('x')\n" * 64 + "PY"
+
+    assert _summarize_command(command) == "python3 - <<'PY' ..."
+    pr_scoped_performance_module._COMMAND_SUMMARY_LAST_RESULT = "cached-summary"
+
+    assert _summarize_command(command) == "cached-summary"
+
+
 def test_run_command_emits_heartbeat_for_silent_command(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
