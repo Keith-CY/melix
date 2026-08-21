@@ -42,3 +42,12 @@ Compare `origin/main` and this branch with the registered
 `maintenance-percentile-vector-reuse` probe settings. The accepted direction is
 lower `elapsed_ms_mean` with unchanged percentile helper behavior and no
 coverage loss.
+
+## 2026-08-21 follow-up: percentile index fast path
+
+This follow-up keeps the same registered probe and scope. `_ordered_percentile()`
+now derives `lower_index` with `int(rank)` on the non-negative rank range,
+checks the fractional `weight` before touching the upper element, and only reads
+`ordered[lower_index + 1]` when interpolation is required. Boundary percentile
+tests cover the exact-rank path at 0 and 100 percent while preserving the prior
+rounding and interpolation contract.
