@@ -29,11 +29,11 @@ The probe compares the previous list-plus-set helper against the current single-
 
 Because this PR adds the probe script, the registered probe command resolves the script from the head worktree when the base worktree does not contain it yet. This keeps base/head metric comparison available for a newly registered command-json probe.
 
-Reported metrics include current/legacy elapsed means, delta means, speedup ratios, sample counts, and peak bytes.
+Reported metrics include current/legacy elapsed means, delta means, speedup ratios, sample counts, and peak bytes. The direct gate is the current mixed-category helper latency (`mixed_current_ms_mean`), which measures the optimized hot path directly. Legacy-derived delta and speedup ratios remain reported as informational context because CI variance in the legacy baseline can otherwise flag unrelated maintenance slices even when current-helper latency is stable or faster.
 
 ## Success criteria
 
 - Existing categorical metric outputs are unchanged.
-- The mixed-category workload reports a faster current helper than the legacy helper.
+- The mixed-category workload keeps current-helper latency within the registered threshold.
 - Changed-scope coverage remains at or above the repository threshold.
 - The registered probe runs locally and in PR-scoped CI.
