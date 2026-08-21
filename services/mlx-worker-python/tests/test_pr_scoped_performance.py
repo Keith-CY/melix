@@ -2260,6 +2260,10 @@ def test_startup_signals_version_probe_script_emits_metrics(
     assert metrics["update_result_elapsed_ms_mean"] > 0
     assert metrics["update_result_iterations"] == 25000.0
     assert metrics["update_result_available_count"] == 12500.0
+    assert metrics["equivalent_channel_rewrite_elapsed_ms_mean"] > 0
+    assert metrics["equivalent_channel_rewrite_iterations"] == 2500.0
+    assert metrics["equivalent_channel_rewrite_result_available"] == 1.0
+    assert metrics["equivalent_channel_rewrite_compare_calls_mean"] > 0
     assert metrics["product_version_elapsed_ms_mean"] > 0
     assert metrics["product_version_iterations"] == 20000.0
     assert metrics["product_version_result_length"] == 5.0

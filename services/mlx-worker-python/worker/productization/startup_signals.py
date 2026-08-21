@@ -196,6 +196,14 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
         cache_key=channel_path_text,
     )
     cache_key = (channel_path_text, installed_version, latest_version, channel)
+    cached_result = _UPDATE_CHECK_RESULT_CACHE.get(cache_key)
+    if cached_result is not None:
+        _UPDATE_CHECK_RESULT_STAT_CACHE[stat_cache_key] = (
+            stat_mtime_ns,
+            stat_size,
+            cached_result,
+        )
+        return cached_result
     if latest_version:
         comparison = compare_versions(latest_version, installed_version)
         if comparison > 0:

@@ -114,6 +114,55 @@ def _measure_update_channel_read(iterations: int, sample_count: int) -> dict[str
     }
 
 
+def _measure_equivalent_channel_rewrite_cache(iterations: int, sample_count: int) -> dict[str, float]:
+    elapsed_samples: list[float] = []
+    compare_call_samples: list[float] = []
+    update_available = False
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        channel_path = Path(temporary_directory) / "stable.json"
+        channel_path.write_text(
+            json.dumps({"channel": "stable", "latest_version": "0.2.0"}),
+            encoding="utf-8",
+        )
+        original_compare_versions = startup_signals.compare_versions
+        try:
+            for sample_index in range(sample_count):
+                startup_signals._UPDATE_CHANNEL_CACHE.clear()
+                startup_signals._UPDATE_CHECK_RESULT_CACHE.clear()
+                startup_signals._UPDATE_CHECK_RESULT_STAT_CACHE.clear()
+                compare_calls = 0
+
+                def tracked_compare_versions(left: str, right: str) -> int:
+                    nonlocal compare_calls
+                    compare_calls += 1
+                    return original_compare_versions(left, right)
+
+                startup_signals.compare_versions = tracked_compare_versions
+                started = time.perf_counter()
+                for iteration in range(iterations):
+                    os.utime(
+                        channel_path,
+                        ns=(
+                            channel_path.stat().st_atime_ns,
+                            2_000_000_000 + sample_index * iterations + iteration,
+                        ),
+                    )
+                    result = startup_signals.check_for_updates("0.1.0", channel_path)
+                    update_available = result.update_available
+                elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+                compare_call_samples.append(float(compare_calls))
+        finally:
+            startup_signals.compare_versions = original_compare_versions
+
+    return {
+        "equivalent_channel_rewrite_compare_calls_mean": statistics.fmean(compare_call_samples),
+        "equivalent_channel_rewrite_elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "equivalent_channel_rewrite_iterations": float(iterations),
+        "equivalent_channel_rewrite_result_available": float(update_available),
+    }
+
+
 def _version_pairs(count: int) -> list[tuple[str, str]]:
     versions = [
         f"v{major}.{minor}.{patch}{suffix}+build.{index}"
@@ -169,6 +218,7 @@ def main() -> int:
     sample_count = 7
     update_result_iterations = 25_000
     update_channel_iterations = 7_500
+    equivalent_channel_rewrite_iterations = 2_500
     product_version_iterations = 20_000
     normalized_parts_iterations = 24_000
     pairs = _version_pairs(pair_count)
@@ -196,6 +246,12 @@ def main() -> int:
     }
     metrics.update(_measure_update_result_allocations(update_result_iterations, sample_count))
     metrics.update(_measure_update_channel_read(update_channel_iterations, sample_count))
+    metrics.update(
+        _measure_equivalent_channel_rewrite_cache(
+            equivalent_channel_rewrite_iterations,
+            sample_count,
+        )
+    )
     metrics.update(_measure_product_version_read(product_version_iterations, sample_count))
     metrics.update(_measure_normalized_version_parts(normalized_parts_iterations, sample_count))
     print(json.dumps(metrics, sort_keys=True))
