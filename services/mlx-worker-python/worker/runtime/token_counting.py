@@ -9,6 +9,16 @@ _ASCII_WHITESPACE = frozenset(" \t\n\r\v\f")
 @lru_cache(maxsize=512)
 def whitespace_token_count(text: str) -> int:
     """Count whitespace-delimited tokens, the shared deterministic estimator."""
+    if text and text.isascii() and text[0] > " " and text[-1] > " ":
+        if (
+            "  " not in text
+            and "\t" not in text
+            and "\n" not in text
+            and "\r" not in text
+            and "\v" not in text
+            and "\f" not in text
+        ):
+            return text.count(" ") + 1
     token_count = 0
     in_token = False
     if text.isascii():

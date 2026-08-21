@@ -1217,6 +1217,17 @@ def test_estimated_delta_token_count_matches_split_semantics_without_ascii_alloc
     assert stream_assembler._whitespace_token_count.cache_info().hits >= 1
 
 
+def test_whitespace_token_count_uses_normalized_ascii_space_fast_path() -> None:
+    stream_assembler._whitespace_token_count.cache_clear()
+    text = "alpha beta gamma delta"
+
+    assert stream_assembler._whitespace_token_count("") == 0
+    assert stream_assembler._whitespace_token_count(text) == 4
+    assert stream_assembler._whitespace_token_count(text) == 4
+
+    assert stream_assembler._whitespace_token_count.cache_info().hits == 1
+
+
 def test_delta_token_annotation_uses_ascii_count_fast_path(monkeypatch) -> None:
     calls: list[str] = []
     original_count = stream_assembler._whitespace_token_count
