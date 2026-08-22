@@ -478,37 +478,34 @@ class ToolRegistry:
             return []
         copy_dict = _COPY_DICT
         copy_list = _COPY_LIST
-        tools: list[dict[str, Any]] = []
-        append_tool = tools.append
-        for (
-            name,
-            description,
-            tool_kind,
-            observation_kind,
-            schema_properties,
-            required_arguments,
-        ) in openai_tool_templates:
-            properties: dict[str, Any] = {}
-            for argument_name, schema in schema_properties:
-                properties[argument_name] = copy_dict(schema)
-            append_tool(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": description,
-                        "parameters": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "properties": properties,
-                            "required": copy_list(required_arguments),
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            argument_name: copy_dict(schema)
+                            for argument_name, schema in schema_properties
                         },
+                        "required": copy_list(required_arguments),
                     },
-                    "x-melix-tool-kind": tool_kind,
-                    "x-melix-observation-kind": observation_kind,
-                }
-            )
-        return tools
+                },
+                "x-melix-tool-kind": tool_kind,
+                "x-melix-observation-kind": observation_kind,
+            }
+            for (
+                name,
+                description,
+                tool_kind,
+                observation_kind,
+                schema_properties,
+                required_arguments,
+            ) in openai_tool_templates
+        ]
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
         template = self._worker_tool_config_template
