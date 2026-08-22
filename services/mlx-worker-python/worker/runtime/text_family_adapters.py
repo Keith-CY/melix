@@ -489,6 +489,9 @@ def _string_value(metadata: Mapping[str, str], key: str, default: str) -> str:
 def _split_csv(raw_value: str) -> list[str]:
     if not raw_value:
         return []
+    if "," not in raw_value:
+        item = raw_value.strip()
+        return [item] if item else []
     return [item for part in raw_value.split(",") if (item := part.strip())]
 
 
