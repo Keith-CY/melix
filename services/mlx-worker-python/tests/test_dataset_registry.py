@@ -668,10 +668,12 @@ def test_dataset_catalog_scan_records_skip_file_stat_for_unsupported_names(
             self._is_dir = is_dir
             self._is_file = is_file
             self._file_error = file_error
+            self.is_dir_calls = 0
             self.is_file_calls = 0
 
         def is_dir(self, *, follow_symlinks: bool = True) -> bool:
             assert follow_symlinks is False
+            self.is_dir_calls += 1
             return self._is_dir
 
         def is_file(self, *, follow_symlinks: bool = True) -> bool:
@@ -739,6 +741,8 @@ def test_dataset_catalog_scan_records_skip_file_stat_for_unsupported_names(
     next_entry = catalog._next_supported_scan_entry(Path("/tmp"), after="")
 
     assert next_entry == ("train.jsonl", Path("/tmp/train.jsonl"), False, True)
+    assert supported.is_file_calls == 2
+    assert supported.is_dir_calls == 0
 
 
 def test_dataset_catalog_limited_preview_scan_streams_multiple_files_without_sorted_walk(

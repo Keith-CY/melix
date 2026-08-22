@@ -44,6 +44,15 @@ selected entry is actually processed. This preserves sorted depth-first preview
 semantics while avoiding `Path` allocation for selected sibling candidates that
 become unnecessary after an earlier directory yields enough rows.
 
+## Follow-up Slice: Supported File Metadata Before Directory Metadata
+
+The 2026-08-22 follow-up keeps the same registered probe and narrows to
+`_next_supported_scan_entry()` in the `limit=1` preview path. Supported dataset
+file names now try the non-following file metadata check before the directory
+metadata check. This preserves directory traversal and OSError tolerance while
+avoiding an extra directory stat on each supported file candidate in large
+preview directories.
+
 Success is accepted only if focused tests, changed-scope coverage, and the local
-registered Linux probe pass, and if the PR-scoped CI probe reports no regression
-before merge.
+registered Linux probe pass with lower elapsed time, and if the PR-scoped CI
+probe completes successfully before merge.
