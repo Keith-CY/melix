@@ -79,6 +79,14 @@ def test_split_csv_short_circuits_empty_values_without_split() -> None:
     assert _split_csv(" text, qwen ,, tools ") == ["text", "qwen", "tools"]
 
 
+def test_split_csv_short_circuits_single_values_without_split() -> None:
+    class NoSplitSingle(str):
+        def split(self, *args: object, **kwargs: object) -> list[str]:  # pragma: no cover
+            raise AssertionError("single CSV values should not allocate split parts")
+
+    assert _split_csv(NoSplitSingle(" qwen ")) == ["qwen"]
+
+
 def test_string_value_short_circuits_missing_values_without_strip() -> None:
     class NoStripEmpty(str):
         def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
