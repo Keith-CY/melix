@@ -325,9 +325,9 @@ class ModelOpsJobRegistry:
                         or not job_id_entry.name.startswith("model-ops-")
                     ):
                         continue
-                    manifest_path = Path(job_id_entry.path) / "train_lora.adapter.json"
-                    if manifest_path.is_file():
-                        manifests.append(manifest_path)
+                    manifest_path = os.path.join(job_id_entry.path, "train_lora.adapter.json")
+                    if os.path.isfile(manifest_path):
+                        manifests.append(Path(manifest_path))
         except OSError:
             return manifests
         return manifests
