@@ -364,8 +364,8 @@ def _measurable_non_comment_lines(
             target_line_no = sorted_line_numbers[target_index]
             if target_line_no > source_line_no:
                 continue
-            stripped = line.strip()
-            is_measurable = bool(stripped) and stripped[0] != "#"
+            stripped = line.lstrip()
+            is_measurable = bool(stripped) and stripped[0] not in "#\r\n"
             while (
                 target_index < target_count
                 and sorted_line_numbers[target_index] == source_line_no

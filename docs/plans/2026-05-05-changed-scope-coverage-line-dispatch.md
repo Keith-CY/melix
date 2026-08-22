@@ -140,3 +140,16 @@ Registered probe: `changed-scope-coverage-measured-set-filter` in
 `infra/perf/pr_scoped_probes.json`. The probe reports `dense_elapsed_ms_mean`,
 `sparse_elapsed_ms_mean`, and `elapsed_ms_mean`; CI remains the merge gate for
 the registered PR-scoped performance report.
+
+## 2026-08-22 sparse source lstrip fast path slice
+
+This follow-up slice is limited to the sparse-source branch in
+`_measurable_non_comment_lines(...)`. The filter now uses `lstrip()` and a direct
+first-character check for comment and newline-only lines, avoiding the trailing
+whitespace scan performed by `strip()` while preserving blank-line, indented
+comment, CRLF, duplicate-target, and sorted-output behavior.
+
+Registered probe: `changed-scope-coverage-measured-set-filter` in
+`infra/perf/pr_scoped_probes.json`. The probe reports `sparse_elapsed_ms_mean`,
+`dense_elapsed_ms_mean`, `elapsed_ms_mean`, and allowlist guard metrics; local
+Linux results plus CI PR-scoped performance remain the acceptance evidence.
