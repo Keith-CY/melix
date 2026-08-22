@@ -1214,6 +1214,7 @@ def _resolve_family_hooks(source_model: common_pb2.ModelSpec, *, family_id: str)
 
 
 def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> list[str]:
+    copy_list = _COPY_LIST
     cache = profile.get(_NORMALIZED_TARGET_MODULES_CACHE_KEY)
     if not isinstance(cache, dict):
         cache = {}
@@ -1222,7 +1223,7 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
     if isinstance(cached_targets, list):
         # Cache stores canonical lists; copy() produces a fresh list per call so
         # callers can safely mutate without changing shared cache state.
-        return _COPY_LIST(cached_targets)
+        return copy_list(cached_targets)
     if cached_targets is not None:
         # Accept older tuple-style cache entries defensively for callers that may
         # have seeded custom profiles before this helper was updated.
