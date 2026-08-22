@@ -327,6 +327,27 @@ def test_payload_card_library_detection_skips_tag_scan_when_top_library_empty(
     ) is True
 
 
+def test_payload_card_library_mixed_case_detection_skips_tag_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.model_ops import hub_catalog
+
+    def fail_tag_scan(value: object) -> bool:
+        raise AssertionError(  # pragma: no cover - regression guard
+            f"card library atom path should not scan tags: {value!r}"
+        )
+
+    monkeypatch.setattr(hub_catalog, "_tag_payload_contains_mlx", fail_tag_scan)
+
+    assert hub_catalog._payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation", object()],
+            "cardData": {"library_name": "MlX", "tags": ["audio", object()]},
+        }
+    ) is True
+
+
 def test_payload_card_tags_skip_top_tag_scan_when_card_tag_matches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

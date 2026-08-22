@@ -36,3 +36,17 @@ case so the registered metrics cover the changed card-data branch.
 - The registered local probe reports directionally lower `payload_compatibility_elapsed_ms_mean` with
   unchanged compatibility call count and expected match count for the updated workload.
 - GitHub Actions and the registered PR-scoped performance report complete successfully before merge.
+
+## 2026-08-22 mixed-case card library pre-tag slice
+
+This follow-up Python-only slice keeps the same registered probe and narrows the
+optimization to `_payload_is_mlx_compatible(...)` when top-level
+`library_name` is absent and `cardData.library_name` is a mixed-case MLX atom
+such as `MlX`. The previous branch reached the same `True` result only after
+scanning `cardData.tags` and top-level `tags`; this slice checks the card
+library atom before those tag scans while preserving the existing exact
+`"mlx"`/`"MLX"` fast path.
+
+The registered probe workload now includes a mixed-case card library payload and
+reports `payload_compatibility_tag_scan_calls_mean` so local Linux and CI can
+verify the tag-scan count drops without changing matched compatibility counts.
