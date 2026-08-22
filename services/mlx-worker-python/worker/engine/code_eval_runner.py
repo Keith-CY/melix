@@ -704,10 +704,11 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
         if failure_start is None or not payload_startswith(b'""', failure_start):
             return None
 
+    reverse_search_start = failure_start + 2
     timeout_start = reverse_field_value_start(
         payload_bytes,
         _CODE_EVAL_PAYLOAD_KEY_TOKEN_TIMEOUT_STATUS,
-        start=failure_start + 2,
+        start=reverse_search_start,
     )
     if timeout_start is None or not payload_startswith(b'"ok"', timeout_start):
         return None
@@ -715,7 +716,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     total_start = reverse_field_value_start(
         payload_bytes,
         _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_TOTAL,
-        start=failure_start + 2,
+        start=reverse_search_start,
         end=timeout_start,
     )
     total_result = extract_int_and_end(payload_bytes, total_start)
@@ -726,7 +727,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     passed_start = reverse_field_value_start(
         payload_bytes,
         _CODE_EVAL_PAYLOAD_KEY_TOKEN_TESTS_PASSED,
-        start=failure_start + 2,
+        start=reverse_search_start,
         end=total_start,
     )
     passed_result = extract_int_and_end(payload_bytes, passed_start)
@@ -737,7 +738,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     test_start = reverse_field_value_start(
         payload_bytes,
         _CODE_EVAL_PAYLOAD_KEY_TOKEN_TEST_STATUS,
-        start=failure_start + 2,
+        start=reverse_search_start,
         end=passed_start,
     )
     if test_start is None or not payload_startswith(b'"passed"', test_start):
@@ -746,7 +747,7 @@ def _extract_sorted_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, 
     runtime_start = reverse_field_value_start(
         payload_bytes,
         _CODE_EVAL_PAYLOAD_KEY_TOKEN_RUNTIME_STATUS,
-        start=failure_start + 2,
+        start=reverse_search_start,
         end=test_start,
     )
     if runtime_start is None or not payload_startswith(b'"ok"', runtime_start):

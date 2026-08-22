@@ -40,3 +40,15 @@ Before this change on `origin/main` (`299f5b16`), the registered probe reported:
 ```json
 {"elapsed_ms_mean": 57.443895722307, "iteration_count": 1200.0, "payload_bytes": 51874.0, "peak_bytes_mean": 52795.0, "sample_count": 7.0}
 ```
+
+## 2026-08-22 Follow-up: sorted payload reverse cursor local
+
+This follow-up Python-only slice stays within the registered
+`code-eval-payload-json-bytes` probe. The sorted-payload extractor now computes
+its reverse-search lower bound once and reuses that local for each reverse
+field scan. This keeps the fallback and malformed-payload behavior unchanged
+while removing repeated arithmetic from the compact sorted payload fast path.
+
+Expected metrics are lower or neutral `elapsed_ms_mean` for
+`scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain
+stable because the slice only reuses an integer cursor.
