@@ -272,6 +272,65 @@ def test_image_generation_and_edit_bind_model_id_once_per_loop(tmp_path: Path) -
     assert CountingLoadedModel.get_calls == 1
 
 
+def test_image_generation_and_edit_bind_artifact_metadata_hot_constants_once_per_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CountingCommonPb2:
+        metadata_type_lookups = 0
+        generated_role_lookups = 0
+
+        def __getattr__(self, name: str):
+            if name == "ImageArtifactMetadata":
+                type(self).metadata_type_lookups += 1
+            if name == "IMAGE_ARTIFACT_GENERATED":
+                type(self).generated_role_lookups += 1
+            return getattr(common_pb2, name)
+
+    runtime = DeterministicImageGenerationRuntime()
+    counting_common_pb2 = CountingCommonPb2()
+    monkeypatch.setattr(image_runtime, "common_pb2", counting_common_pb2)
+
+    generated = runtime.generate_images(
+        {"model_id": "melix-dev-image"},
+        inference_pb2.ImageGenerateRequest(
+            prompt="red fox in snow",
+            size="128x128",
+            response_format="png",
+            artifact_namespace="tests",
+            n=5,
+        ),
+        job_id="image-generate-artifact-metadata-type-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(generated.artifacts) == 5
+    assert CountingCommonPb2.metadata_type_lookups == 1
+    assert CountingCommonPb2.generated_role_lookups == 1
+
+    CountingCommonPb2.metadata_type_lookups = 0
+    CountingCommonPb2.generated_role_lookups = 0
+    edited = runtime.edit_image(
+        {"model_id": "melix-dev-image"},
+        inference_pb2.ImageEditRequest(
+            prompt="add stars",
+            image=b"SOURCE_IMAGE",
+            mask=b"MASK_IMAGE",
+            size="128x128",
+            response_format="png",
+            n=5,
+        ),
+        job_id="image-edit-artifact-metadata-type-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(edited.artifacts) == 7
+    assert CountingCommonPb2.metadata_type_lookups == 3
+    assert CountingCommonPb2.generated_role_lookups == 1
+
+
 def test_image_variant_ascii_token_reuses_small_index_cache() -> None:
     cached_token = image_runtime._ascii_variant_token(42)
 
