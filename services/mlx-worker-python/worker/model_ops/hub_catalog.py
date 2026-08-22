@@ -35,6 +35,7 @@ _README_MODEL_SIZE_TABLE_PREFIX = "README\nMODEL SIZE | "
 _README_MODEL_SIZE_TABLE_PREFIX_LENGTH = len(_README_MODEL_SIZE_TABLE_PREFIX)
 _NEXT_LINK_REL_MARKER = 'rel="next"'
 _NEXT_LINK_REL_SUFFIX = '>; rel="next"'
+_NEXT_LINK_REL_SUFFIX_LEN = len(_NEXT_LINK_REL_SUFFIX)
 _CURSOR_QUERY_KEY = "cursor="
 _CURSOR_QUERY_KEY_LEN = len(_CURSOR_QUERY_KEY)
 _CURSOR_QUERY_PARAM_KEY = "&cursor="
@@ -357,7 +358,7 @@ class HubCatalog:
 def _next_cursor_from_link(link_header: str) -> str:
     suffix = _NEXT_LINK_REL_SUFFIX
     if link_header.endswith(suffix):
-        suffix_start = len(link_header) - len(suffix)
+        suffix_start = len(link_header) - _NEXT_LINK_REL_SUFFIX_LEN
         url_start = link_header.rfind("<", 0, suffix_start)
         if url_start >= 0:
             return _cursor_query_value(link_header, url_start + 1, suffix_start)
