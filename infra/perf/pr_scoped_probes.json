@@ -5244,6 +5244,12 @@
         "key": "payload_compatibility_calls_mean",
         "unit": "calls",
         "direction": "informational"
+      },
+      {
+        "key": "payload_compatibility_tag_scan_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
       }
     ]
   },

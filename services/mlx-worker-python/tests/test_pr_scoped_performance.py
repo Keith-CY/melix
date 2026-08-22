@@ -4638,6 +4638,7 @@ def test_hub_catalog_size_hint_probe_script_emits_metrics(
     assert metrics["matched_hint_count"] == 5.0
     assert metrics["payload_compatibility_calls_mean"] == 8.0
     assert metrics["payload_compatibility_matched_count"] == 7.0
+    assert metrics["payload_compatibility_tag_scan_calls_mean"] == 5.0
     assert metrics["payload_compatibility_elapsed_ms_mean"] >= 0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0

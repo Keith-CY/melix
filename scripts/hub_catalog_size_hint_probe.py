@@ -35,7 +35,7 @@ def _payload(index: int) -> tuple[dict[str, Any], int]:
 
 
 def _compatibility_payload(index: int) -> tuple[dict[str, Any], bool]:
-    mode = index % 6
+    mode = index % 7
     if mode == 0:
         return {
             "id": "plain/model",
@@ -69,6 +69,13 @@ def _compatibility_payload(index: int) -> tuple[dict[str, Any], bool]:
             "id": "plain/model",
             "tags": ["Text-Generation", object()],
             "cardData": {"library_name": "mlx", "tags": ["audio", object()]},
+        }, True
+    if mode == 5:
+        return {
+            "id": "plain/model",
+            "tags": ["Text-Generation", object()],
+            "library_name": "",
+            "cardData": {"library_name": "MlX", "tags": ["audio", object()]},
         }, True
     return {
         "id": "plain/model",
@@ -105,17 +112,29 @@ def _run_sample(iterations: int) -> tuple[float, int, int, int]:
         hub_catalog._size_hint_from_text = original
 
 
-def _run_compatibility_sample(iterations: int) -> tuple[float, int]:
+def _run_compatibility_sample(iterations: int) -> tuple[float, int, int]:
+    tag_scan_calls = 0
+    original = hub_catalog._tag_payload_contains_mlx
+
+    def tracked_tag_scan(value: Any) -> bool:
+        nonlocal tag_scan_calls
+        tag_scan_calls += 1
+        return original(value)
+
+    hub_catalog._tag_payload_contains_mlx = tracked_tag_scan
     started = time.perf_counter()
     matched = 0
-    for index in range(iterations):
-        payload, expected = _compatibility_payload(index)
-        compatible = hub_catalog._payload_is_mlx_compatible(payload)
-        if compatible != expected:
-            raise SystemExit(f"unexpected mlx compatibility at {index}: {compatible} != {expected}")
-        if compatible:
-            matched += 1
-    return (time.perf_counter() - started) * 1000.0, matched
+    try:
+        for index in range(iterations):
+            payload, expected = _compatibility_payload(index)
+            compatible = hub_catalog._payload_is_mlx_compatible(payload)
+            if compatible != expected:
+                raise SystemExit(f"unexpected mlx compatibility at {index}: {compatible} != {expected}")
+            if compatible:
+                matched += 1
+        return (time.perf_counter() - started) * 1000.0, matched, tag_scan_calls
+    finally:
+        hub_catalog._tag_payload_contains_mlx = original
 
 
 def main() -> int:
@@ -129,6 +148,7 @@ def main() -> int:
     call_samples: list[int] = []
     compatibility_elapsed_samples: list[float] = []
     compatibility_matched_samples: list[int] = []
+    compatibility_tag_scan_call_samples: list[int] = []
     checksum = 0
     matched = 0
 
@@ -137,7 +157,11 @@ def main() -> int:
         elapsed_ms, checksum, matched, calls = _run_sample(iterations)
         _, peak_bytes = tracemalloc.get_traced_memory()
         tracemalloc.stop()
-        compatibility_elapsed_ms, compatibility_matched = _run_compatibility_sample(
+        (
+            compatibility_elapsed_ms,
+            compatibility_matched,
+            compatibility_tag_scan_calls,
+        ) = _run_compatibility_sample(
             compatibility_iterations
         )
         elapsed_samples.append(elapsed_ms)
@@ -145,6 +169,7 @@ def main() -> int:
         call_samples.append(calls)
         compatibility_elapsed_samples.append(compatibility_elapsed_ms)
         compatibility_matched_samples.append(compatibility_matched)
+        compatibility_tag_scan_call_samples.append(compatibility_tag_scan_calls)
 
     metrics = {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
@@ -154,6 +179,9 @@ def main() -> int:
         "payload_compatibility_elapsed_ms_mean": statistics.fmean(compatibility_elapsed_samples),
         "payload_compatibility_matched_count": float(compatibility_matched_samples[-1]),
         "payload_compatibility_calls_mean": float(compatibility_iterations),
+        "payload_compatibility_tag_scan_calls_mean": statistics.fmean(
+            compatibility_tag_scan_call_samples
+        ),
         "checksum": float(checksum),
         "sample_count": float(sample_count),
     }
