@@ -88,6 +88,8 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
     path_exists = os.path.exists
     path_sep = os.sep
     key_prefixes = _MTP_WEIGHT_KEY_PREFIXES
+    mtp_language_prefix = "language_model.mtp."
+    mtp_prefix = "mtp."
     to_text = str
     str_startswith = str.startswith
     str_endswith = str.endswith
@@ -96,7 +98,10 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
     model_prefix = "model"
     for key, file_name in weight_map.items():
         if type(key) is str:
-            if not str_startswith(key, key_prefixes):
+            if not (
+                str_startswith(key, mtp_language_prefix)
+                or str_startswith(key, mtp_prefix)
+            ):
                 continue
         elif not str_startswith(to_text(key), key_prefixes):
             continue
