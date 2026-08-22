@@ -306,6 +306,28 @@ def test_extract_final_result_accepts_one_answer_prefix() -> None:
     assert outcome.extracted_result == "Paris"
 
 
+def test_extract_final_result_text_heuristic_preserves_whitespace_wrapped_inputs() -> None:
+    outcome = extract_final_result(
+        raw_response="\n  ```\nParis\n```  \n",
+        result_kind="text",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "extracted"
+    assert outcome.extracted_result == "Paris"
+
+
+def test_extract_final_result_text_heuristic_whitespace_only_is_empty() -> None:
+    outcome = extract_final_result(
+        raw_response=" \n\t ",
+        result_kind="text",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "empty_response"
+    assert outcome.extracted_result == ""
+
+
 def test_extract_final_result_text_fallback_scans_tail_without_regex_split(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
