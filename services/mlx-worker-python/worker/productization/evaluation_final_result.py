@@ -108,6 +108,11 @@ def extract_final_result(
     result_kind: str,
     extraction_mode: str,
 ) -> ExtractionOutcome:
+    if extraction_mode == "heuristic_final" and result_kind == "text":
+        if not raw_response or raw_response.isspace():
+            return ExtractionOutcome("", "empty_response", "empty_response")
+        return _extract_text_heuristic(raw_response)
+
     normalized = raw_response.strip()
     if not normalized:
         return ExtractionOutcome("", "empty_response", "empty_response")
