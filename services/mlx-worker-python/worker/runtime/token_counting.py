@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 
-_ASCII_WHITESPACE = frozenset(" \t\n\r\v\f")
+_ASCII_WHITESPACE = " \t\n\r\v\f"
 
 
 @lru_cache(maxsize=512)
