@@ -1485,6 +1485,51 @@ def test_sorted_payload_fast_path_uses_bound_key_tokens(monkeypatch) -> None:
     }
 
 
+def test_sorted_payload_fast_path_reuses_reverse_search_start(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "failure_detail": "",
+            "metadata": {f"case_{index}": "ignored" for index in range(16)},
+            "runtime_status": "ok",
+            "test_status": "passed",
+            "tests_passed": 7,
+            "tests_total": 7,
+            "timeout_status": "ok",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    expected_start = code_eval_runner._CODE_EVAL_SORTED_EMPTY_FAILURE_VALUE_START + len(b'""')
+    observed_starts: list[int] = []
+    original_reverse = code_eval_runner._compact_json_field_value_start_for_token_reverse
+
+    def tracking_reverse(
+        payload_bytes: bytes,
+        key_token: bytes,
+        *,
+        start: int = 0,
+        end: int | None = None,
+    ) -> int | None:
+        observed_starts.append(start)
+        return original_reverse(payload_bytes, key_token, start=start, end=end)
+
+    monkeypatch.setattr(
+        code_eval_runner,
+        "_compact_json_field_value_start_for_token_reverse",
+        tracking_reverse,
+    )
+
+    assert code_eval_runner._extract_sorted_code_eval_payload_fields(payload) == {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 7,
+        "tests_total": 7,
+        "timeout_status": "ok",
+    }
+    assert observed_starts == [expected_start] * 5
+
+
 def test_sorted_payload_fast_path_skips_reserved_metadata_keys() -> None:
     payload_path = _BytesOnlyPayloadPath(
         json.dumps(
