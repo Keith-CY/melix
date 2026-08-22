@@ -15,7 +15,8 @@ and whose focused test, coverage, and probe commands are declared in
 1. Preserve the existing split-compatible whitespace token counting semantics for
    ASCII and non-ASCII text.
 2. Keep the current allocation-avoiding scanner and make only the smallest hot
-   loop improvement: bind the ASCII whitespace lookup table to a local variable
+   loop improvement for this follow-up slice: store the ASCII whitespace lookup
+   table as a compact string constant while preserving the existing local binding
    before scanning.
 3. Verify with the focused deterministic VLM/token-count tests, changed-scope
    coverage, and the registered deterministic VLM completion token probe.
