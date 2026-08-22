@@ -101,8 +101,9 @@ class ResolvedVisionFamilyConfig:
             image_token_divisor = 1
         image_tokens = 0
         image_multi_token_threshold = image_token_divisor * 2
+        len_bytes = len
         for image in images:
-            byte_count = len(image.bytes_data)
+            byte_count = len_bytes(image.bytes_data)
             if byte_count < image_multi_token_threshold:
                 image_tokens += 1
             else:
@@ -121,11 +122,13 @@ class ResolvedVisionFamilyConfig:
                 empty_video_frame_policies += 1
         video_tokens = video_frame_count * video_frame_token_cost + empty_video_frame_policies
 
-        total_tokens = prompt_tokens + image_tokens + video_tokens + self.prompt_token_bias
+        prompt_token_bias = self.prompt_token_bias
+        total_tokens = prompt_tokens + image_tokens + video_tokens + prompt_token_bias
         token_count = total_tokens if total_tokens > 1 else 1
         if has_media:
-            object.__setattr__(self, "_last_media_prompt_request", prepared_request)
-            object.__setattr__(self, "_last_media_prompt_token_count", token_count)
+            set_cached_value = object.__setattr__
+            set_cached_value(self, "_last_media_prompt_request", prepared_request)
+            set_cached_value(self, "_last_media_prompt_token_count", token_count)
         return token_count
 
 
