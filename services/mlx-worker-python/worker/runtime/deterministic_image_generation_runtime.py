@@ -89,6 +89,8 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         append_image = images.append
         append_artifact = artifacts.append
         sleep_image = sleep_if_configured
+        image_artifact_metadata = common_pb2.ImageArtifactMetadata
+        generated_role = common_pb2.IMAGE_ARTIFACT_GENERATED
 
         for index in range(image_count):
             if cancel_event.is_set():
@@ -103,10 +105,10 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
 
             digest = sha256_hex(payload).hexdigest()
             payload_byte_length = len(payload)
-            artifact = common_pb2.ImageArtifactMetadata(
+            artifact = image_artifact_metadata(
                 artifact_id=f"{job_id}::artifact-{index}",
                 job_id=job_id,
-                role=common_pb2.IMAGE_ARTIFACT_GENERATED,
+                role=generated_role,
                 mime_type=mime_type,
                 format=image_format,
                 width=width,
@@ -233,6 +235,8 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         append_image = images.append
         append_artifact = artifacts.append
         sleep_image = sleep_if_configured
+        image_artifact_metadata = common_pb2.ImageArtifactMetadata
+        generated_role = common_pb2.IMAGE_ARTIFACT_GENERATED
         prompt_text = request.prompt or "<empty>"
         render_edit_payload_prefix = b"\x89PNG\r\n\x1a\n" + (
             f"MELIX_IMAGE_EDIT\n"
@@ -259,10 +263,10 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
             append_image(payload)
             total_output_bytes += payload_byte_length
             append_artifact(
-                common_pb2.ImageArtifactMetadata(
+                image_artifact_metadata(
                     artifact_id=f"{job_id}::artifact-{index}",
                     job_id=job_id,
-                    role=common_pb2.IMAGE_ARTIFACT_GENERATED,
+                    role=generated_role,
                     mime_type=mime_type,
                     format=image_format,
                     width=width,
