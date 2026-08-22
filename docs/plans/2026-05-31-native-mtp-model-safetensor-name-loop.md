@@ -51,6 +51,12 @@ keys still use the compatibility `str(key).startswith(_MTP_WEIGHT_KEY_PREFIXES)`
 fallback, so public helper semantics stay unchanged while the registered probe's
 sidecar discovery workload avoids tuple-prefix overhead.
 
+2026-08-22 follow-up slice: `_extra_mtp_safetensor_file_paths()` now checks the
+last filename character before running the full `.safetensors` suffix test. This
+preserves empty-string, metadata, base-shard, and sidecar filtering semantics
+while letting noisy native-MTP index entries such as duplicate `.json` metadata
+skip the longer suffix comparison.
+
 ## Verification plan
 
 ```bash

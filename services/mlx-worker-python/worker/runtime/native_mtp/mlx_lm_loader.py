@@ -95,6 +95,7 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
     str_endswith = str.endswith
     str_rfind = str.rfind
     safetensors_suffix = ".safetensors"
+    safetensors_last_char = "s"
     model_prefix = "model"
     for key, file_name in weight_map.items():
         if type(key) is str:
@@ -109,7 +110,10 @@ def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
             file_name_text = file_name
         else:
             file_name_text = to_text(file_name)
-        if not str_endswith(file_name_text, safetensors_suffix):
+        if file_name_text[-1:] != safetensors_last_char or not str_endswith(
+            file_name_text,
+            safetensors_suffix,
+        ):
             continue
         if str_startswith(file_name_text, model_prefix):
             continue
