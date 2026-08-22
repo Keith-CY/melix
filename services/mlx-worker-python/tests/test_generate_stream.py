@@ -1093,6 +1093,24 @@ def test_allowed_tools_receipt_skips_empty_source_id_split() -> None:
     assert receipt["tool_source_ids"] == []
 
 
+def test_allowed_tools_receipt_uses_tuple_for_empty_source_ids(monkeypatch) -> None:
+    request = inference_pb2.GenerateRequest()
+    request.execution.ext["melix.tool_config.source"] = " client "
+    encoded_payloads: list[dict[str, object]] = []
+
+    class RecordingEncoder:
+        def encode(self, payload: dict[str, object]) -> str:
+            encoded_payloads.append(payload)
+            return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+    monkeypatch.setattr(engine_core_module, "_COMPACT_SORTED_JSON_ENCODER", RecordingEncoder())
+
+    receipt = json.loads(EngineCore._allowed_tools_receipt_json(request))
+
+    assert receipt["tool_source_ids"] == []
+    assert encoded_payloads[-1]["tool_source_ids"] == ()
+
+
 def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> None:
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)

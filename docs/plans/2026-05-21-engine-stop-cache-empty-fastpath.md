@@ -41,3 +41,11 @@ probe `engine-generate-usage-token-elision`, including focused `test_command`,
 `coverage_command`, and `probe_command` entries. Local Linux verification uses
 the registered focused tests, changed-scope coverage, the registered probe, and
 a direct microprobe for the empty-source-id receipt path.
+
+## 2026-08-22 Empty Source-ID Container Slice
+
+This Python-only follow-up keeps the same `_allowed_tools_receipt_json()` path
+and avoids allocating a mutable list for the common empty `melix.mcp.source_ids`
+case. Empty source IDs now remain an internal empty tuple until JSON encoding;
+the emitted `tool_source_ids` field is still `[]`. Non-empty source IDs still
+use the existing comma split, trim each item, and ignore empty segments.
