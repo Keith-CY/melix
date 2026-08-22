@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 import json
@@ -501,13 +502,45 @@ def _count_nonblank_test_lines(test_code: str) -> int:
     return count
 
 
+def _read_payload_file_bytes(
+    payload_path: Path,
+    *,
+    _os_open=_OS_OPEN,
+    _os_fstat=_OS_FSTAT,
+    _os_read=_OS_READ,
+    _os_close=_OS_CLOSE,
+    _os_rdonly=_OS_RDONLY,
+) -> bytes | None:
+    try:
+        fd = _os_open(payload_path, _os_rdonly)
+    except TypeError:
+        try:
+            return payload_path.read_bytes()
+        except OSError:
+            return None
+    except OSError:
+        return None
+
+    try:
+        size = _os_fstat(fd).st_size
+        return _os_read(fd, size) if size > 0 else b""
+    except OSError:
+        return None
+    finally:
+        try:
+            _os_close(fd)
+        except OSError:
+            pass
+
+
 def _load_payload_file(
     payload_path: Path,
     *,
     _loads=_JSON_LOADS,
     _decode_error=_JSON_DECODE_ERROR,
+    _read_payload_bytes: Callable[[Path], bytes | None] = _read_payload_file_bytes,
 ) -> dict[str, object] | None:
-    payload_bytes = _read_payload_file_bytes(payload_path)
+    payload_bytes = _read_payload_bytes(payload_path)
     if payload_bytes is None:
         return None
 
@@ -522,33 +555,6 @@ def _load_payload_file(
     if not isinstance(payload, dict):
         return None
     return payload
-
-
-def _read_payload_file_bytes(payload_path: Path) -> bytes | None:
-    os_open = _OS_OPEN
-    os_fstat = _OS_FSTAT
-    os_read = _OS_READ
-    os_close = _OS_CLOSE
-    try:
-        fd = os_open(payload_path, _OS_RDONLY)
-    except TypeError:
-        try:
-            return payload_path.read_bytes()
-        except OSError:
-            return None
-    except OSError:
-        return None
-
-    try:
-        size = os_fstat(fd).st_size
-        return os_read(fd, size) if size > 0 else b""
-    except OSError:
-        return None
-    finally:
-        try:
-            os_close(fd)
-        except OSError:
-            pass
 
 
 _CODE_EVAL_PAYLOAD_STRING_KEYS = (

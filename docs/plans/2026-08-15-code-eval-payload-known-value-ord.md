@@ -12,12 +12,26 @@ The known-value decoder now compares byte ordinals directly for the small fixed 
 
 This preserves fallback behavior: unknown values with the same lengths still return `None` so callers decode arbitrary failure details with UTF-8, and malformed payloads still fall back to full JSON parsing or rejection through the existing loader path.
 
-## Validation Plan
+## Validation
 
-- Run the focused code-evaluation payload fast-path tests.
-- Run changed-scope coverage through the registered probe coverage command.
+- Run the focused `code-eval-payload-json-bytes` tests locally on Linux.
+- Run changed-scope coverage for the code-eval payload loader and probe paths.
 - Run `scripts/code_eval_payload_json_probe.py` locally on Linux and compare against the pre-change baseline.
-- Rely on the registered PR-scoped performance workflow in CI for repository gating after PR creation.
+- GitHub Actions PR-scoped performance remains the final merge gate.
+
+## 2026-08-22 Follow-up: default-bound payload fd helpers
+
+This follow-up Python-only slice stays within the same code-evaluation payload
+byte-loading path and registered `code-eval-payload-json-bytes` probe. The
+payload reader now binds the fd helper functions and read-only flag as keyword
+defaults on `_read_payload_file_bytes(...)`, and `_load_payload_file(...)` binds
+that reader as its default byte-loading callable. This preserves the explicit
+injection seam for tests while avoiding repeated module-global helper lookups in
+the hot payload load path.
+
+Expected metrics are lower or neutral `elapsed_ms_mean` for
+`scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain stable
+because the slice only reuses immutable callables and an integer flag.
 
 ## Local Baseline
 

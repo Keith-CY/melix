@@ -1224,19 +1224,40 @@ def test_read_payload_file_bytes_handles_fallback_and_fd_errors(
         is None
     )
 
-    monkeypatch.setattr(code_eval_runner, "_OS_OPEN", lambda *_args, **_kwargs: 123)
+    assert (
+        code_eval_runner._read_payload_file_bytes(
+            Path("payload.json"),
+            _os_open=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("open failed")
+            ),
+        )
+        is None
+    )
 
     def fail_fstat(_fd: int) -> object:
         raise OSError("fstat failed")
 
-    monkeypatch.setattr(code_eval_runner, "_OS_FSTAT", fail_fstat)
-    assert code_eval_runner._read_payload_file_bytes(Path("payload.json")) is None
+    assert (
+        code_eval_runner._read_payload_file_bytes(
+            Path("payload.json"),
+            _os_open=lambda *_args, **_kwargs: 123,
+            _os_fstat=fail_fstat,
+        )
+        is None
+    )
 
     def fail_close(_fd: int) -> None:
         raise OSError("close failed")
 
-    monkeypatch.setattr(code_eval_runner, "_OS_CLOSE", fail_close)
-    assert code_eval_runner._read_payload_file_bytes(Path("payload.json")) is None
+    assert (
+        code_eval_runner._read_payload_file_bytes(
+            Path("payload.json"),
+            _os_open=lambda *_args, **_kwargs: 123,
+            _os_fstat=fail_fstat,
+            _os_close=fail_close,
+        )
+        is None
+    )
 
 
 def test_read_payload_file_bytes_uses_bound_fd_helpers(
@@ -1270,14 +1291,34 @@ def test_read_payload_file_bytes_uses_bound_fd_helpers(
     def fail_os_open(*_args: object) -> int:  # pragma: no cover - regression guard
         raise AssertionError("payload byte loading should use bound os.open")
 
-    monkeypatch.setattr(code_eval_runner, "_OS_OPEN", counted_open)
-    monkeypatch.setattr(code_eval_runner, "_OS_FSTAT", counted_fstat)
-    monkeypatch.setattr(code_eval_runner, "_OS_READ", counted_read)
-    monkeypatch.setattr(code_eval_runner, "_OS_CLOSE", counted_close)
     monkeypatch.setattr(code_eval_runner.os, "open", fail_os_open)
 
-    assert code_eval_runner._read_payload_file_bytes(payload_path) == b'{"runtime_status":"ok"}'
+    assert (
+        code_eval_runner._read_payload_file_bytes(
+            payload_path,
+            _os_open=counted_open,
+            _os_fstat=counted_fstat,
+            _os_read=counted_read,
+            _os_close=counted_close,
+        )
+        == b'{"runtime_status":"ok"}'
+    )
     assert calls == ["open", "fstat", "read", "close"]
+
+
+def test_read_payload_file_bytes_reuses_default_fd_helpers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_bytes(b'{"runtime_status":"ok"}')
+
+    def fail_cached_open(*_args: object) -> int:  # pragma: no cover - regression guard
+        raise AssertionError("payload byte loading should use default-bound os.open")
+
+    monkeypatch.setattr(code_eval_runner, "_OS_OPEN", fail_cached_open)
+
+    assert code_eval_runner._read_payload_file_bytes(payload_path) == b'{"runtime_status":"ok"}'
 
 
 def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_parse() -> None:
