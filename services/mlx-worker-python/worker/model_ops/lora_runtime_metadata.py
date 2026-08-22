@@ -323,14 +323,13 @@ def _saved_tokenizer_config(
 
 
 def _processor_resume_mode(base_model_dir: Path) -> str:
-    base_model_path = os.fspath(base_model_dir)
-    join = os.path.join
+    base_model_prefix = os.fspath(base_model_dir) + os.sep
     isfile = os.path.isfile
-    if isfile(join(base_model_path, "processor_config.json")):
+    if isfile(base_model_prefix + "processor_config.json"):
         return "processor_config"
-    if isfile(join(base_model_path, "preprocessor_config.json")):
+    if isfile(base_model_prefix + "preprocessor_config.json"):
         return "preprocessor_config"
-    if isfile(join(base_model_path, "tokenizer_config.json")):
+    if isfile(base_model_prefix + "tokenizer_config.json"):
         return "tokenizer_only"
     return "missing"
 
