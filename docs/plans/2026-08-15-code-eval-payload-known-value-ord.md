@@ -52,3 +52,16 @@ while removing repeated arithmetic from the compact sorted payload fast path.
 Expected metrics are lower or neutral `elapsed_ms_mean` for
 `scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain
 stable because the slice only reuses an integer cursor.
+
+## 2026-08-22 Follow-up: compact field helper payload length local
+
+This follow-up Python-only slice stays within the registered
+`code-eval-payload-json-bytes` probe. The compact JSON field lookup helpers now
+cache `len(payload_bytes)` once per helper call and reuse that local for the
+boundary check and default reverse-search end. This preserves the same compact
+and whitespace-tolerant fallback parsing behavior while avoiding duplicate
+length lookups in the sorted payload fast path.
+
+Expected metrics are lower or neutral `elapsed_ms_mean` for
+`scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain
+stable because the slice only reuses an integer local.

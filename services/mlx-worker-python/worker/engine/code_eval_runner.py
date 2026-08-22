@@ -768,12 +768,13 @@ def _compact_json_field_value_start_for_token(
     *,
     start: int = 0,
 ) -> int | None:
+    payload_length = len(payload_bytes)
     key_index = payload_bytes.find(key_token, start)
     if key_index < 0:
         return None
     value_start = key_index + len(key_token) + 1
     if (
-        value_start >= len(payload_bytes)
+        value_start >= payload_length
         or payload_bytes[value_start - 1] != _ORD_COLON
         or payload_bytes[value_start] in _JSON_PAYLOAD_WHITESPACE
     ):
@@ -788,12 +789,13 @@ def _compact_json_field_value_start_for_token_reverse(
     start: int = 0,
     end: int | None = None,
 ) -> int | None:
-    key_index = payload_bytes.rfind(key_token, start, len(payload_bytes) if end is None else end)
+    payload_length = len(payload_bytes)
+    key_index = payload_bytes.rfind(key_token, start, payload_length if end is None else end)
     if key_index < 0:
         return None
     value_start = key_index + len(key_token) + 1
     if (
-        value_start >= len(payload_bytes)
+        value_start >= payload_length
         or payload_bytes[value_start - 1] != _ORD_COLON
         or payload_bytes[value_start] in _JSON_PAYLOAD_WHITESPACE
     ):
