@@ -1238,12 +1238,14 @@ class EngineCore:
             or tool_choice_resolved
             or "auto"
         )
-        source_ids: list[str] = []
+        source_ids: tuple[str, ...] | list[str] = ()
         if source_ids_text:
+            parsed_source_ids: list[str] = []
             for item in source_ids_text.split(","):
                 source_id = item.strip()
                 if source_id:
-                    source_ids.append(source_id)
+                    parsed_source_ids.append(source_id)
+            source_ids = parsed_source_ids
         payload = {
             "allowed_tool_names": allowed_names,
             "allowed_tool_count": len(allowed_names),
