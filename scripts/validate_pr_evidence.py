@@ -20,6 +20,7 @@ REQUIRED_SECTIONS = (
     "Known Gaps",
 )
 _REQUIRED_SECTION_SET = frozenset(REQUIRED_SECTIONS)
+_REQUIRED_SECTION_BY_NAME = {name: name for name in REQUIRED_SECTIONS}
 PLACEHOLDER_MARKERS = ("tbd", "todo", "_no response_")
 
 
@@ -72,9 +73,14 @@ def _extract_sections(body_text: str) -> dict[str, str]:
         line_end = body_text.find("\n", name_start)
         if line_end < 0:
             line_end = body_length
-        section_name = body_text[name_start:line_end].strip()
+        raw_section_name = body_text[name_start:line_end]
+        section_name = _REQUIRED_SECTION_BY_NAME.get(raw_section_name)
+        if section_name is None:
+            stripped_heading = raw_section_name.strip()
+            if stripped_heading in _REQUIRED_SECTION_SET:
+                section_name = stripped_heading
         next_heading_index = body_text.find("\n## ", line_end)
-        if section_name in _REQUIRED_SECTION_SET:
+        if section_name is not None:
             content_start = line_end + 1 if line_end < body_length else body_length
             content_end = next_heading_index if next_heading_index >= 0 else body_length
             sections.setdefault(section_name, []).append(body_text[content_start:content_end])

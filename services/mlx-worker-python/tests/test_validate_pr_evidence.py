@@ -150,6 +150,29 @@ python3 scripts/validate_pr_evidence.py --body-file /tmp/body.md
     assert validate_pr_evidence.validate_body_text(body) == []
 
 
+def test_extract_sections_accepts_required_headings_with_trailing_spaces() -> None:
+    body = (
+        "## Plan or Spec   \n"
+        "- docs/plans/2026-08-10-pr-evidence-required-section-scan.md\n"
+        "\n"
+        "## Commands Run	\n"
+        "```text\n"
+        "python3 scripts/validate_pr_evidence.py --body-file /tmp/body.md\n"
+        "```\n"
+        "\n"
+        "## Coverage and Metrics \n"
+        "- changed-scope coverage: 100 percent.\n"
+        "\n"
+        "## Known Gaps  \n"
+        "- None.\n"
+    )
+
+    assert set(validate_pr_evidence._extract_sections(body)) == set(
+        validate_pr_evidence.REQUIRED_SECTIONS
+    )
+    assert validate_pr_evidence.validate_body_text(body) == []
+
+
 def test_extract_sections_accepts_final_required_heading_without_body() -> None:
     assert validate_pr_evidence._extract_sections("## Known Gaps") == {"Known Gaps": ""}
 
