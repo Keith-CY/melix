@@ -16,6 +16,7 @@ from worker.productization.dataset_preparation import (
     _SOURCE_KIND_BY_NAME,
     _SOURCE_KIND_NAME_CACHE_MAX,
     _blocked_ingest_receipt,
+    _iter_source_records,
     _iter_source_file_paths,
     _language_for_suffix,
     _normalize_line_endings,
@@ -300,6 +301,34 @@ def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
     assert _source_kind(Path("records.TSV")) == "structured_data"
     assert _source_kind(Path("README")) is None
     assert _source_kind(Path("archive.tar.gz")) is None
+
+
+def test_iter_source_records_skips_metadata_helper_for_non_code_text_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text_path = tmp_path / "notes.txt"
+    code_path = tmp_path / "tool.py"
+    text_path.write_text("Plain text\n", encoding="utf-8")
+    code_path.write_text("print('hello')\n", encoding="utf-8")
+    metadata_calls: list[tuple[Path, str]] = []
+
+    def tracked_metadata_for_path(path: Path, source_kind: str) -> dict[str, str]:
+        metadata_calls.append((path, source_kind))
+        return {"language": "python"}
+
+    monkeypatch.setattr(
+        dataset_preparation_module,
+        "_metadata_for_path",
+        tracked_metadata_for_path,
+    )
+
+    records = list(_iter_source_records(tmp_path, []))
+
+    by_uri = {record["source_uri"]: record for record in records}
+    assert by_uri["notes.txt"]["metadata"] == {}
+    assert by_uri["tool.py"]["metadata"] == {"language": "python"}
+    assert metadata_calls == [(code_path, "code")]
 
 
 def test_dataset_ingest_source_kind_name_helper_reuses_cached_basename_classification() -> None:

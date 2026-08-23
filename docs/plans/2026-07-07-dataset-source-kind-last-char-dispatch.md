@@ -33,3 +33,18 @@ Run the registered focused tests, changed-scope coverage command, `git diff --ch
 and the registered `dataset-source-records-scandir` probe locally on Linux before
 opening the PR. GitHub Actions PR-scoped performance remains the merge gate for
 the registered probe report.
+
+## 2026-08-23 Follow-up: Metadata Helper Elision
+
+This follow-up stays within the same dataset source-record ingestion hot path.
+`_iter_source_records()` only needs path metadata for code sources because
+`_metadata_for_path()` currently contributes the language metadata derived from
+the file suffix. Text, markdown, PDF/DOCX text, and other non-code records keep
+empty metadata, so they can bypass the metadata helper during the per-source
+record loop while preserving the existing record payload.
+
+The same registered PR-scoped probe, `dataset-source-records-scandir`, remains
+the required validation source. Its local Linux probe output includes the
+`record_elapsed_ms_*` and `inventory_elapsed_ms_*` metrics that cover the record
+construction path affected by this slice, while GitHub Actions PR-scoped
+performance remains the merge gate.
