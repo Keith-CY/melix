@@ -1597,7 +1597,9 @@ def _source_inventory(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             by_uri[source_uri] = item
         item["byte_size"] += record["byte_size"]
         item["record_count"] += 1
-        item["metadata"].update(record.get("metadata", {}))
+        metadata = record.get("metadata")
+        if metadata:
+            item["metadata"].update(metadata)
     return [by_uri[key] for key in sorted(by_uri)]
 
 

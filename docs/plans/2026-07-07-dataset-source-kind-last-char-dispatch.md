@@ -48,3 +48,18 @@ the required validation source. Its local Linux probe output includes the
 `record_elapsed_ms_*` and `inventory_elapsed_ms_*` metrics that cover the record
 construction path affected by this slice, while GitHub Actions PR-scoped
 performance remains the merge gate.
+
+## 2026-08-23 Follow-up: Empty Inventory Metadata Update Elision
+
+This follow-up remains inside the dataset source-record ingestion hot path and
+targets `_source_inventory()`. The inventory aggregation loop receives one
+record per simple source file before structured-row expansions are added. Most
+simple text, markdown, and code records carry empty metadata, while structured
+row records carry `row_index` metadata. The loop now skips the per-record
+`dict.update({})` call for empty metadata and only merges non-empty metadata,
+preserving the resulting inventory payload while reducing work during large
+source-tree scans.
+
+The registered `dataset-source-records-scandir` probe remains the required
+validation source. Its `inventory_elapsed_ms_*` metrics exercise the affected
+aggregation path locally on Linux and in the PR-scoped CI performance workflow.
