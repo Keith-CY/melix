@@ -41,6 +41,14 @@ less-common minus and backslash-marker branches. Behavior is unchanged: addition
 are still recorded at the current new-file line, removals and no-newline markers
 still do not advance `new_line`, and ordinary context lines still advance it.
 
+## 2026-08-23 bytes split binding slice
+
+This follow-up slice stays within `_parse_changed_lines(...)` and binds
+`bytes.split` once before the diff-line loop. The parser still splits on literal
+newline bytes and preserves the existing trailing-empty-line semantics; the
+change only removes repeated bound-method setup from the registered synthetic
+diff parser workload.
+
 ## Verification plan
 
 Run the registered focused tests, changed-scope coverage, and local registered probe before opening the PR. The PR-scoped performance workflow remains the merge gate for the registered probe result in CI.
