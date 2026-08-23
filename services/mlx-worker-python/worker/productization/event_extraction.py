@@ -102,6 +102,7 @@ _JSON_LOADS = json.loads
 _JSON_RAW_DECODE = _JSON_DECODER.raw_decode
 _JSON_FENCE_PREFIX = "```json\n"
 _JSON_FENCE_PREFIX_LENGTH = len(_JSON_FENCE_PREFIX)
+_JAVASCRIPT_FENCE_PREFIX_LENGTH = len("```javascript\n")
 _CLOSING_FENCE_WITH_LEADING_NEWLINE = "\n```"
 _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH = len(_CLOSING_FENCE_WITH_LEADING_NEWLINE)
 
@@ -2925,6 +2926,33 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
         parsed, end_index = raw_decode(
             response_text,
             json_fence_prefix_length,
+        )
+        if not has_only_optional_closing_fence(response_text, end_index, response_length):
+            raise json.JSONDecodeError("Extra data", response_text, end_index)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM response must be a JSON object")
+        return parsed
+
+    if (
+        response_length >= _JAVASCRIPT_FENCE_PREFIX_LENGTH
+        and response_text[0] == "`"
+        and response_text[1] == "`"
+        and response_text[2] == "`"
+        and response_text[3] == "j"
+        and response_text[4] == "a"
+        and response_text[5] == "v"
+        and response_text[6] == "a"
+        and response_text[7] == "s"
+        and response_text[8] == "c"
+        and response_text[9] == "r"
+        and response_text[10] == "i"
+        and response_text[11] == "p"
+        and response_text[12] == "t"
+        and response_text[13] == "\n"
+    ):
+        parsed, end_index = raw_decode(
+            response_text,
+            _JAVASCRIPT_FENCE_PREFIX_LENGTH,
         )
         if not has_only_optional_closing_fence(response_text, end_index, response_length):
             raise json.JSONDecodeError("Extra data", response_text, end_index)
