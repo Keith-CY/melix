@@ -20,9 +20,13 @@ Run `/tmp/statistical_evidence_constant_probe.py <origin-main-worktree> <head-wo
 
 The repository already has the `statistical-evidence-bootstrap-single-sort` PR-scoped performance probe watching this production file and test file. This slice relies on that registered probe to validate no regression in the mixed-outcome bootstrap path, and the local homogeneous probe validates that the shared mean/constant scan improves the constant-outcome path.
 
+## 2026-08-23 mixed-outcome summary comparison gate
+
+This follow-up Python-only slice stays inside `services/mlx-worker-python/worker/productization/statistical_evidence.py` and the existing registered `statistical-evidence-bootstrap-single-sort` probe. The summary loop still computes the mean across every outcome, but after the first unequal value has proven the sample is non-constant it stops performing repeated equality comparisons for the remaining tail. Bootstrap and analytical interval behavior is unchanged; only the constant-detection guard work on mixed outcomes is reduced.
+
 ## Success metrics
 
 - Focused statistical evidence pytest passes.
 - Changed-scope coverage for touched executable Python files is at least 95%.
-- Local homogeneous bootstrap probe shows lower elapsed time and peak traced allocation on head than `origin/main`.
+- Registered `statistical-evidence-bootstrap-single-sort` probe shows lower elapsed time on the mixed-outcome workload versus `origin/main`.
 - `git diff --check` passes.
