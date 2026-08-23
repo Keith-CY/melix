@@ -1234,11 +1234,12 @@ def _iter_source_records(
             yield from structured_records(path, text, operator_failures)
         else:
             normalized_text = normalize_line_endings(text)
+            metadata = metadata_for_path(path, source_kind) if source_kind == "code" else {}
             yield record(
                 path=path,
                 source_kind=source_kind,
                 text=normalized_text,
-                metadata=metadata_for_path(path, source_kind),
+                metadata=metadata,
                 normalized=True,
             )
 
