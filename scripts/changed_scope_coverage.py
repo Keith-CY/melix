@@ -111,7 +111,8 @@ def _parse_changed_lines(diff_text: str | bytes) -> dict[str, set[int]]:
     add_changed_line = None
     new_line: int | None = None
     diff_bytes = diff_text if isinstance(diff_text, bytes) else diff_text.encode()
-    for line in diff_bytes.split(b"\n"):
+    split_diff_lines = bytes.split
+    for line in split_diff_lines(diff_bytes, b"\n"):
         if not line:
             if add_changed_line is not None and new_line is not None:
                 new_line += 1
