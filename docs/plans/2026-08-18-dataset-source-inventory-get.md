@@ -28,6 +28,12 @@ Replace the hot-loop `dict.setdefault(...)` aggregation with an explicit `get`/i
 3. Run changed-scope coverage for the registered probe and require at least 95% on the touched scope.
 4. Run the registered local Linux probe and compare `inventory_elapsed_ms_mean` against `origin/main` before PR creation. CI PR-scoped performance remains the merge gate.
 
+## Follow-up Slice: Direct Metadata Lookup
+
+The 2026-08-23 follow-up keeps the same aggregation behavior and sorted `source_uri` order, but reads `record["metadata"]` directly in the hot loop. `_record(...)` always supplies a `metadata` dictionary for source records, so this preserves the internal record contract while avoiding an optional `.get(...)` method lookup per source record.
+
+The registered `dataset-source-records-scandir` probe remains the measurement gate; its inventory metrics isolate this aggregation/materialization step from source walking and reads.
+
 ## Boundary
 
 This is a Linux-verified Python slice. No Swift runtime effect is claimed.
