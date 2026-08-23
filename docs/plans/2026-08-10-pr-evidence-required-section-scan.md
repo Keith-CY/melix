@@ -58,3 +58,13 @@ newline-delimited `## ` heading markers instead of iterating over every PR body
 line. Required section capture remains limited to exact second-level headings,
 duplicate required section bodies are still concatenated, and non-required
 sections continue to be ignored.
+
+## 2026-08-23 follow-up slice: exact heading map fast path
+
+This Python-only follow-up keeps the same registered
+`pr-evidence-required-section-scan` probe and avoids stripping/hash-checking the
+section name for the common PR-template shape where required headings are exact
+`## <section>` lines. The extractor uses a precomputed exact section-name map
+first and falls back to the previous stripped-name matching path for required
+headings with trailing whitespace, preserving validator behavior while reducing
+per-heading work in large PR bodies.
