@@ -119,6 +119,41 @@ python3 scripts/validate_pr_evidence.py --body-file /tmp/body.md
     assert validate_pr_evidence.validate_body_text(body) == []
 
 
+def test_extract_sections_keeps_only_exact_second_level_required_headings() -> None:
+    body = """
+# Plan or Spec
+- ignored top-level heading body.
+
+### Plan or Spec
+- ignored third-level heading body.
+
+## Plan or Spec
+- docs/plans/2026-08-10-pr-evidence-required-section-scan.md
+
+## Commands Run
+```text
+python3 scripts/validate_pr_evidence.py --body-file /tmp/body.md
+```
+
+## Coverage and Metrics
+- changed-scope coverage: 100 percent.
+
+## Known Gaps
+- None.
+"""
+
+    sections = validate_pr_evidence._extract_sections(body)
+
+    assert sections["Plan or Spec"] == (
+        "- docs/plans/2026-08-10-pr-evidence-required-section-scan.md"
+    )
+    assert validate_pr_evidence.validate_body_text(body) == []
+
+
+def test_extract_sections_accepts_final_required_heading_without_body() -> None:
+    assert validate_pr_evidence._extract_sections("## Known Gaps") == {"Known Gaps": ""}
+
+
 def test_validate_body_text_reports_missing_or_placeholder_sections() -> None:
     body = """
 ## Summary

@@ -64,18 +64,21 @@ def load_body_text(args: argparse.Namespace) -> str:
 
 def _extract_sections(body_text: str) -> dict[str, str]:
     sections: dict[str, list[str]] = {}
-    current_section: str | None = None
-    for line in body_text.splitlines():
-        if line and line[0] == "#" and line.startswith("## "):
-            section_name = line[3:].strip()
-            if section_name in _REQUIRED_SECTION_SET:
-                current_section = section_name
-                sections.setdefault(section_name, [])
-            else:
-                current_section = None
-            continue
-        if current_section is not None:
-            sections[current_section].append(line)
+    heading_index = 0 if body_text.startswith("## ") else body_text.find("\n## ")
+    body_length = len(body_text)
+    while heading_index >= 0:
+        line_start = heading_index if heading_index == 0 else heading_index + 1
+        name_start = line_start + 3
+        line_end = body_text.find("\n", name_start)
+        if line_end < 0:
+            line_end = body_length
+        section_name = body_text[name_start:line_end].strip()
+        next_heading_index = body_text.find("\n## ", line_end)
+        if section_name in _REQUIRED_SECTION_SET:
+            content_start = line_end + 1 if line_end < body_length else body_length
+            content_end = next_heading_index if next_heading_index >= 0 else body_length
+            sections.setdefault(section_name, []).append(body_text[content_start:content_end])
+        heading_index = next_heading_index
     return {
         name: "\n".join(lines).strip()
         for name, lines in sections.items()

@@ -48,3 +48,13 @@ content, so `_extract_sections(...)` now checks the first character before
 calling `str.startswith("## ")`. Required section capture, non-required section
 elision, duplicate required headings, and placeholder validation semantics remain
 unchanged.
+
+## 2026-08-23 follow-up slice: newline-delimited heading scan
+
+This Python-only follow-up keeps the same registered
+`pr-evidence-required-section-scan` probe and narrows the remaining heading
+classification work in `_extract_sections(...)`. The extractor now jumps between
+newline-delimited `## ` heading markers instead of iterating over every PR body
+line. Required section capture remains limited to exact second-level headings,
+duplicate required section bodies are still concatenated, and non-required
+sections continue to be ignored.
