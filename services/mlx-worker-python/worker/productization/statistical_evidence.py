@@ -223,7 +223,7 @@ def _outcome_summary(values: tuple[float, ...]) -> tuple[float, bool]:
     for value in iterator:
         sample_size += 1
         total += value
-        if value != first_value:
+        if all_values_equal and value != first_value:
             all_values_equal = False
     return total / sample_size, all_values_equal
 

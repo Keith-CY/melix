@@ -365,6 +365,30 @@ def test_build_paired_statistical_evidence_skips_equality_scan_when_endpoints_di
     assert evidence["bootstrap"]["lower_bound"] < evidence["bootstrap"]["upper_bound"]
 
 
+def test_outcome_summary_stops_equality_checks_after_first_mismatch() -> None:
+    comparisons = 0
+
+    class CountingFloat(float):
+        def __ne__(self, other: object) -> bool:
+            nonlocal comparisons
+            comparisons += 1
+            return super().__ne__(other)
+
+    values = (
+        CountingFloat(1.0),
+        CountingFloat(1.0),
+        CountingFloat(0.0),
+        CountingFloat(1.0),
+        CountingFloat(-1.0),
+    )
+
+    mean_value, all_values_equal = statistical_evidence_module._outcome_summary(values)
+
+    assert mean_value == 0.4
+    assert all_values_equal is False
+    assert comparisons == 2
+
+
 def test_constant_outcome_detection_avoids_tail_slice_allocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
