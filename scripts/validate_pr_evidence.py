@@ -66,7 +66,7 @@ def _extract_sections(body_text: str) -> dict[str, str]:
     sections: dict[str, list[str]] = {}
     current_section: str | None = None
     for line in body_text.splitlines():
-        if line.startswith("## "):
+        if line and line[0] == "#" and line.startswith("## "):
             section_name = line[3:].strip()
             if section_name in _REQUIRED_SECTION_SET:
                 current_section = section_name

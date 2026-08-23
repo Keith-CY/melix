@@ -39,7 +39,12 @@ The probe records:
 - `peak_bytes_mean` for current extraction memory.
 - `irrelevant_section_line_count` for probe scale.
 
-The slice is acceptable when focused behavior tests pass, changed-scope coverage
-meets the repository threshold, and the registered probe shows a clear reduction
-in extraction time for large PR bodies without changing required-section
-semantics.
+## 2026-08-23 follow-up slice: heading-first guard
+
+This Python-only follow-up keeps the same registered
+`pr-evidence-required-section-scan` probe and narrows the extractor's per-line
+heading detection. Large PR bodies are dominated by ordinary bullet/checklist
+content, so `_extract_sections(...)` now checks the first character before
+calling `str.startswith("## ")`. Required section capture, non-required section
+elision, duplicate required headings, and placeholder validation semantics remain
+unchanged.
