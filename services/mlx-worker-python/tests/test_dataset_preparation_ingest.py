@@ -427,6 +427,48 @@ def test_dataset_ingest_record_reuses_source_id_cache() -> None:
     assert first_record["content_sha256"] != second_record["content_sha256"]
 
 
+class _EmptyMetadataMustNotUpdate(dict[str, object]):
+    def keys(self):  # type: ignore[no-untyped-def]
+        raise AssertionError(  # pragma: no cover - regression sentinel only.
+            "empty record metadata should not be merged into source inventory"
+        )
+
+
+def test_dataset_ingest_source_inventory_skips_empty_record_metadata_updates() -> None:
+    inventory = _source_inventory(
+        [
+            {
+                "source_id": "source-1",
+                "source_uri": "notes.txt",
+                "source_kind": "text",
+                "content_sha256": "sha",
+                "byte_size": 5,
+                "metadata": _EmptyMetadataMustNotUpdate(),
+            },
+            {
+                "source_id": "source-1",
+                "source_uri": "notes.txt",
+                "source_kind": "text",
+                "content_sha256": "sha",
+                "byte_size": 7,
+                "metadata": {"row_index": 2},
+            },
+        ]
+    )
+
+    assert inventory == [
+        {
+            "source_id": "source-1",
+            "source_uri": "notes.txt",
+            "source_kind": "text",
+            "content_sha256": "sha",
+            "byte_size": 12,
+            "record_count": 2,
+            "metadata": {"row_index": 2},
+        }
+    ]
+
+
 def test_dataset_ingest_record_source_id_uses_filesystem_encoding_for_surrogates() -> None:
     _record_source_id.cache_clear()
 
