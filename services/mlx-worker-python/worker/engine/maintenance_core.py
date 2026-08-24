@@ -3222,11 +3222,17 @@ class MaintenanceCore:
         return "text-generation"
 
     @staticmethod
-    def _positive_sorted_values(values, *, default: tuple[int, ...]) -> tuple[int, ...]:
+    def _positive_sorted_values(
+        values,
+        *,
+        default: tuple[int, ...],
+        _type=type,
+        _int=int,
+    ) -> tuple[int, ...]:
         normalized_values: set[int] = set()
         add_normalized_value = normalized_values.add
         for value in values:
-            parsed = value if type(value) is int else int(value)
+            parsed = value if _type(value) is int else _int(value)
             if parsed > 0:
                 add_normalized_value(parsed)
         if not normalized_values:
@@ -3237,13 +3243,19 @@ class MaintenanceCore:
         return tuple(sorted(normalized_values))
 
     @staticmethod
-    def _normalized_string_values(values, *, default: tuple[str, ...]) -> tuple[str, ...]:
+    def _normalized_string_values(
+        values,
+        *,
+        default: tuple[str, ...],
+        _type=type,
+        _str=str,
+        _strip=str.strip,
+    ) -> tuple[str, ...]:
         normalized_values: set[str] = set()
         add_normalized_value = normalized_values.add
-        strip = str.strip
         for value in values:
-            raw_value = value if type(value) is str else str(value)
-            normalized = strip(raw_value)
+            raw_value = value if _type(value) is str else _str(value)
+            normalized = _strip(raw_value)
             if normalized:
                 add_normalized_value(normalized)
         if not normalized_values:
