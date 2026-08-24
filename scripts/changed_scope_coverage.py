@@ -336,12 +336,7 @@ def _measurable_non_comment_lines(
     measurable: list[int] = []
     measurable_append = measurable.append
     if len(sorted_line_numbers) >= _DENSE_SOURCE_LINE_READ_THRESHOLD:
-        source_lines = (
-            source_path.read_text(encoding="utf-8")
-            .replace("\r\n", "\n")
-            .replace("\r", "\n")
-            .split("\n")
-        )
+        source_lines = source_path.read_text(encoding="utf-8").split("\n")
         line_count = len(source_lines)
         for line_no in sorted_line_numbers:
             if not 1 <= line_no <= line_count:
