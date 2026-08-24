@@ -211,7 +211,29 @@ def _coverage_path_allowlist_from_raw(raw_value: str) -> frozenset[str] | None:
         return frozenset([payload] if payload else [])
     if not isinstance(payload, list):
         raise SystemExit("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON must be a JSON list")
-    return frozenset(str(path) for path in payload if str(path))
+    if payload and isinstance(payload[0], str):
+        string_paths: list[str] = []
+        string_paths_append = string_paths.append
+        for path in payload:
+            if isinstance(path, str):
+                if path:
+                    string_paths_append(path)
+                continue
+            break
+        else:
+            return frozenset(string_paths)
+
+    allowlist: set[str] = set()
+    allowlist_add = allowlist.add
+    for path in payload:
+        if isinstance(path, str):
+            if path:
+                allowlist_add(path)
+            continue
+        coerced = str(path)
+        if coerced:
+            allowlist_add(coerced)
+    return frozenset(allowlist)
 
 
 def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:

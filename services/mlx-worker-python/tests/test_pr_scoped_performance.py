@@ -6271,6 +6271,7 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         for metric in by_id["changed-scope-coverage-empty-path-short-circuit"]["metrics"]
     }
     assert changed_scope_metrics["elapsed_ms_mean"]["warn_abs"] == 0.05
+    assert changed_scope_metrics["allowlist_parse_elapsed_ms_mean"]["warn_abs"] == 0.05
     assert changed_scope_metrics["source_read_calls_mean"]["warn_pct"] == 0.0
 
     dataset_preview_metrics = {

@@ -126,6 +126,35 @@ def test_parse_hunk_new_start_uses_delimiters_for_counted_and_single_line_ranges
     assert changed_scope_coverage._parse_hunk_new_start("@@ -1 @@") is None
 
 
+def test_coverage_path_allowlist_string_list_uses_direct_entries() -> None:
+    raw_value = json.dumps(["alpha.py", "", "beta.py"])
+
+    allowlist = changed_scope_coverage._coverage_path_allowlist_from_raw(raw_value)
+
+    assert allowlist == frozenset({"alpha.py", "beta.py"})
+
+
+def test_coverage_path_allowlist_mixed_list_coerces_once_per_entry() -> None:
+    class CountedPath:
+        calls = 0
+
+        def __str__(self) -> str:
+            type(self).calls += 1
+            return "coerced.py"
+
+    payload = ["alpha.py", CountedPath()]
+
+    original_loads = changed_scope_coverage.json.loads
+    changed_scope_coverage.json.loads = lambda raw: payload
+    try:
+        allowlist = changed_scope_coverage._coverage_path_allowlist_from_raw("[{}]")
+    finally:
+        changed_scope_coverage.json.loads = original_loads
+
+    assert allowlist == frozenset({"alpha.py", "coerced.py"})
+    assert CountedPath.calls == 1
+
+
 def test_parse_changed_lines_ignores_hunks_with_missing_new_range_delimiter() -> None:
     diff_text = "\n".join(
         [

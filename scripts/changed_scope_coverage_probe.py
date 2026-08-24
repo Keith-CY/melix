@@ -29,6 +29,9 @@ def run_probe(repo_root: Path, *, path_count: int = 300, samples: int = 7) -> di
     read_samples: list[float] = []
     main_elapsed_samples: list[float] = []
     main_coverage_read_samples: list[float] = []
+    allowlist_parse_samples: list[float] = []
+    allowlist_raw = json.dumps([f"pkg/module_{index}.py" for index in range(path_count * 120)])
+    expected_allowlist_size = path_count * 120
 
     with tempfile.TemporaryDirectory(prefix="melix-changed-scope-probe-") as tmp:
         root = Path(tmp)
@@ -114,13 +117,29 @@ def run_probe(repo_root: Path, *, path_count: int = 300, samples: int = 7) -> di
             main_elapsed_samples.append(0.0)
             main_coverage_read_samples.append(0.0)
 
+        allowlist_parser = getattr(module, "_coverage_path_allowlist_from_raw", None)
+        if allowlist_parser is None:
+            allowlist_parse_samples.append(0.0)
+        else:
+            for _ in range(samples):
+                allowlist_parser.cache_clear()
+                start = time.perf_counter()
+                allowlist = allowlist_parser(allowlist_raw)
+                allowlist_parse_samples.append((time.perf_counter() - start) * 1000.0)
+                if allowlist is None or len(allowlist) != expected_allowlist_size:
+                    raise RuntimeError(  # pragma: no cover - defensive probe failure path
+                        "large JSON allowlist parsed to an unexpected size"
+                    )
+
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "allowlist_parse_elapsed_ms_mean": statistics.fmean(allowlist_parse_samples),
         "main_empty_allowlist_elapsed_ms_mean": statistics.fmean(main_elapsed_samples),
         "main_empty_allowlist_coverage_read_calls_mean": statistics.fmean(
             main_coverage_read_samples
         ),
         "source_read_calls_mean": statistics.fmean(read_samples),
+        "allowlist_path_count": float(expected_allowlist_size),
         "path_count": float(path_count),
         "sample_count": float(samples),
     }
