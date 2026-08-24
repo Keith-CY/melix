@@ -30,3 +30,12 @@ the merge gate after the PR opens.
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime
 effect is claimed.
+
+## 2026-08-24 sandbox temp filter binding slice
+
+Follow-up slice: `_sandbox_temp_root_read_filters(...)` now reuses local default
+bindings for `json.dumps`, `os.path.realpath`, `Path`, and `str` while preserving
+the duplicate resolved-path elision and fallback behavior for path-like test
+doubles. The same registered probe, `code-eval-stdio-tail-single-stat`, covers
+this sandbox profile helper through its focused tests, changed-scope coverage,
+and `sandbox_profile_elapsed_ms_mean` metric.
