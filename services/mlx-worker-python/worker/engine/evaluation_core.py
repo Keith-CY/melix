@@ -4138,7 +4138,7 @@ class EvaluationCore:
             if value.isalpha():
                 return value.upper()
 
-        if len(value) > 1 and value.isascii():
+        if len(value) > 1:
             first_char = value[0]
             last_char = value[-1]
             if (
@@ -4146,6 +4146,7 @@ class EvaluationCore:
                 and last_char not in "`\"'."
                 and not first_char.isspace()
                 and not last_char.isspace()
+                and value.isascii()
                 and "  " not in value
                 and "\t" not in value
                 and "\n" not in value
