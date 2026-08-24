@@ -295,12 +295,10 @@ def _has_text(value: object) -> bool:
 
 def _report_run_kind_values(runs: list[dict[str, object]]) -> set[str]:
     """Return every ``run_kind`` in the report, normalized to text."""
-    values: set[str] = set()
-    add_value = values.add
-    for run in runs:
-        raw_value = run.get("run_kind", "")
-        add_value(raw_value if type(raw_value) is str else str(raw_value))
-    return values
+    return {
+        raw_value if type(raw_value := run.get("run_kind", "")) is str else str(raw_value)
+        for run in runs
+    }
 
 
 def _report_matrix_roles(

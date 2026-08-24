@@ -280,6 +280,22 @@ def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string()
     )
 
 
+def test_report_evidence_gate_run_kind_values_preserve_exact_string_fast_path() -> None:
+    class RunKind(str):
+        pass
+
+    values = report_evidence_gate_module._report_run_kind_values(
+        [
+            {"run_kind": "serving_benchmark"},
+            {"run_kind": 42},
+            {"run_kind": RunKind("dialogue_evaluation")},
+            {},
+        ]
+    )
+
+    assert values == {"serving_benchmark", "42", "dialogue_evaluation", ""}
+
+
 def test_report_evidence_gate_matrix_roles_keep_non_string_run_kind_match() -> None:
     roles = report_evidence_gate_module._report_matrix_roles(
         {"runs": [{"run_kind": 42}]},
