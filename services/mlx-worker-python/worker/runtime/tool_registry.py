@@ -804,7 +804,10 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
     current_matches: tuple[str, ...] | None = None
     context_matches: tuple[str, ...] | None = None
     if not vector_selected_tool_ids:
-        current_matches = _keyword_tool_matches(current_user_turn)
+        if current_user_turn and not current_user_turn.isspace():
+            current_matches = _keyword_tool_matches(current_user_turn)
+        else:
+            current_matches = ()
         if not current_matches:
             if recent_user_turns:
                 context_matches = _keyword_tool_matches(
