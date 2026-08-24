@@ -40,3 +40,16 @@ branches.
 One-dimensional deterministic fixture embedding projections should allocate less
 temporary data and run faster. Multi-dimensional projections intentionally keep
 the existing base-vector flow and output values.
+
+## Follow-up Slice: First-word digest unpack
+
+The 2026-08-24 follow-up slice keeps the same registered probe and narrows the
+implementation to the one-dimensional branch. That branch now unpacks only the
+first `uint32` digest word with a dedicated struct unpacker instead of unpacking
+all eight words and then reading index zero. Expanded and default eight-
+dimensional projections continue using the full eight-word unpacker and preserve
+output parity.
+
+Expected impact for this follow-up is lower `single_dimension_elapsed_ms_mean`
+and stable or lower `single_dimension_peak_bytes_mean` while preserving the
+expanded and default eight-dimensional metrics reported by the probe.
