@@ -1529,6 +1529,21 @@ def test_sorted_payload_fast_path_reuses_reverse_search_start(monkeypatch) -> No
     }
     assert observed_starts == [expected_start] * 5
 
+    class BrokenTempRoot:
+        def __str__(self) -> str:
+            return "broken-temp-root"
+
+        def resolve(self) -> object:
+            raise OSError("broken resolve")
+
+    assert code_eval_runner._sandbox_temp_root_read_filters(Path("relative-eval-root")) == (
+        f"(subpath {json.dumps('relative-eval-root')}) "
+        f"(subpath {json.dumps(os.path.realpath('relative-eval-root'))})"
+    )
+    assert code_eval_runner._sandbox_temp_root_read_filters(cast(Path, BrokenTempRoot())) == (
+        f"(subpath {json.dumps('broken-temp-root')})"
+    )
+
 
 def test_sorted_payload_fast_path_skips_reserved_metadata_keys() -> None:
     payload_path = _BytesOnlyPayloadPath(
