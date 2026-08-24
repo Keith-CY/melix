@@ -1111,20 +1111,27 @@ def _sandbox_profile(*, temp_root: Path) -> str:
     )
 
 
-def _sandbox_temp_root_read_filters(temp_root: Path) -> str:
-    temp_root_text = str(temp_root)
-    if isinstance(temp_root, Path):
-        resolved_text = os.path.realpath(temp_root_text)
+def _sandbox_temp_root_read_filters(
+    temp_root: Path,
+    *,
+    _json_dumps=json.dumps,
+    _os_path_realpath=os.path.realpath,
+    _path_type=Path,
+    _str=str,
+) -> str:
+    temp_root_text = _str(temp_root)
+    if isinstance(temp_root, _path_type):
+        resolved_text = _os_path_realpath(temp_root_text)
     else:
         try:
             resolved = temp_root.resolve()
         except OSError:
             resolved = temp_root
-        resolved_text = str(resolved)
-    temp_filter = f"(subpath {json.dumps(temp_root_text)})"
+        resolved_text = _str(resolved)
+    temp_filter = f"(subpath {_json_dumps(temp_root_text)})"
     if resolved_text == temp_root_text:
         return temp_filter
-    return f"{temp_filter} (subpath {json.dumps(resolved_text)})"
+    return f"{temp_filter} (subpath {_json_dumps(resolved_text)})"
 
 
 @dataclass(frozen=True)
