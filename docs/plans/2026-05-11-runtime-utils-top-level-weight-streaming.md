@@ -116,3 +116,16 @@ unchanged.
 Validation remains the focused runtime-utils pytest selection, changed-scope
 coverage, and the local plus CI `runtime-utils-top-level-weight-streaming` probe;
 the indexed metrics are the primary performance signal for this slice.
+
+## 2026-08-24 regular-file mode binding slice
+
+This follow-up Python slice keeps the same registered runtime resident-byte
+probe and narrows only the regular-file mode check used by `_weight_file_size(...)`
+and `_weight_dir_entry_file_size(...)`. Both hot helpers now reuse the module-level
+`stat.S_ISREG` binding instead of resolving the `stat` module attribute per weight
+candidate. File suffix filtering, single-stat behavior, OSError handling, and
+indexed/top-level resident-byte semantics remain unchanged.
+
+Validation remains the focused runtime-utils pytest selection, changed-scope
+coverage, and the local plus CI `runtime-utils-top-level-weight-streaming` probe;
+the flat-bundle `elapsed_ms_mean` is the primary signal for this slice.
