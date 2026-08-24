@@ -496,28 +496,28 @@ def estimate_cache_snapshot_bytes(cache_snapshot: Any) -> int:
             keys = get_attr(layer_cache, "keys", None)
             values = get_attr(layer_cache, "values", None)
             if keys is not None and values is not None:
-                total += tensor_pair_nbytes(keys, values, get_attr)
+                total += tensor_pair_nbytes(keys, values)
             elif keys is not None:
-                total += tensor_nbytes(keys, get_attr)
+                total += tensor_nbytes(keys)
             elif values is not None:
-                total += tensor_nbytes(values, get_attr)
+                total += tensor_nbytes(values)
         else:
             state_type = type_of(state)
             if state_type is list or state_type is tuple:
                 state_len = len(state)
                 if state_len == 2:
-                    total += tensor_pair_nbytes(state[0], state[1], get_attr)
+                    total += tensor_pair_nbytes(state[0], state[1])
                 elif state_len == 4:
                     total += (
-                        tensor_pair_nbytes(state[0], state[1], get_attr)
-                        + tensor_nbytes(state[2], get_attr)
-                        + tensor_nbytes(state[3], get_attr)
+                        tensor_pair_nbytes(state[0], state[1])
+                        + tensor_nbytes(state[2])
+                        + tensor_nbytes(state[3])
                     )
                 else:
                     for tensor in state:  # type: ignore[misc]
-                        total += tensor_nbytes(tensor, get_attr)
+                        total += tensor_nbytes(tensor)
             else:
-                total += tensor_nbytes(state, get_attr)
+                total += tensor_nbytes(state)
     return total if type_of(total) is int else int(total)
 
 
