@@ -1117,7 +1117,8 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
         if next_slash_index < 0 and slash_index < len(relative_path) - 1:
             first = relative_path[:slash_index]
             filename = relative_path[slash_index + 1 :]
-            stem = filename.rsplit(".", 1)[0]
+            dot_index = filename.rfind(".")
+            stem = filename[:dot_index] if dot_index >= 0 else filename
             split = _split_alias_from_candidate(stem)
             if not split and first not in _DEFAULT_CONFIG_PARTS:
                 split = _split_alias_from_candidate(first)
@@ -1128,7 +1129,8 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
     if not parts:
         return "", "default"
     filename = parts[-1]
-    stem = filename.rsplit(".", 1)[0]
+    dot_index = filename.rfind(".")
+    stem = filename[:dot_index] if dot_index >= 0 else filename
     split = _split_alias_from_candidate(stem)
     if not split:
         for candidate in parts[:-1]:
