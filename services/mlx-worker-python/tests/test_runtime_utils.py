@@ -710,6 +710,35 @@ def test_top_level_weight_file_bytes_handles_direntry_non_files_and_errors() -> 
     assert runtime_utils._weight_dir_entry_file_size(FakeEntry("MODEL.BIN")) == 13
 
 
+def test_weight_file_helpers_use_bound_regular_file_mode_checker(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weight_file = tmp_path / "model.safetensors"
+    weight_file.write_bytes(b"weights")
+
+    class FakeStat:
+        st_mode = stat.S_IFREG
+        st_size = 17
+
+    class FakeEntry:
+        name = "model.safetensors"
+
+        def stat(self) -> FakeStat:
+            return FakeStat()
+
+    def fail_global_regular_file_check(
+        mode: int,
+    ) -> bool:  # pragma: no cover - regression guard
+        _ = mode
+        raise AssertionError("hot weight helpers should use the bound regular-file checker")
+
+    monkeypatch.setattr(runtime_utils.stat, "S_ISREG", fail_global_regular_file_check)
+
+    assert runtime_utils._weight_dir_entry_file_size(FakeEntry()) == 17  # type: ignore[arg-type]
+    assert runtime_utils._weight_file_size(weight_file) == len(b"weights")
+
+
 def test_weight_file_size_uses_single_stat_for_file_type_and_size(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

@@ -16,6 +16,7 @@ _MODEL_WEIGHT_SUFFIXES = (".safetensors", ".npz", ".bin", ".gguf")
 _MODEL_WEIGHT_SUFFIX_LAST_CHARS = frozenset("sSzZnNfF")
 _MODEL_WEIGHT_PRIMARY_SUFFIX = ".safetensors"
 _MODEL_WEIGHT_SECONDARY_SUFFIXES = (".npz", ".bin", ".gguf")
+_IS_REGULAR_FILE_MODE = stat.S_ISREG
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,7 +243,7 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
     os_sep = os.sep
     model_dir_path = os.fspath(model_dir)
     is_model_weight_filename = _is_model_weight_filename
-    is_regular_file_mode = stat.S_ISREG
+    is_regular_file_mode = _IS_REGULAR_FILE_MODE
     os_path_join = os.path.join
     os_stat = os.stat
     for raw_shard in weight_map.values():
@@ -297,7 +298,7 @@ def _weight_dir_entry_file_size(entry: os.DirEntry[str]) -> int:
         return 0
     try:
         stat_result = entry.stat()
-        if not stat.S_ISREG(stat_result.st_mode):
+        if not _IS_REGULAR_FILE_MODE(stat_result.st_mode):
             return 0
         return stat_result.st_size
     except OSError:
@@ -309,7 +310,7 @@ def _weight_file_size(path: Path) -> int:
         return 0
     try:
         stat_result = path.stat()
-        if not stat.S_ISREG(stat_result.st_mode):
+        if not _IS_REGULAR_FILE_MODE(stat_result.st_mode):
             return 0
         return stat_result.st_size
     except OSError:
