@@ -34,6 +34,7 @@ _EXPLICIT_SIZE_HINT_SEARCH = _EXPLICIT_SIZE_HINT_RE.search
 _README_MODEL_SIZE_TABLE_PREFIX = "README\nMODEL SIZE | "
 _README_MODEL_SIZE_TABLE_PREFIX_LENGTH = len(_README_MODEL_SIZE_TABLE_PREFIX)
 _NEXT_LINK_REL_MARKER = 'rel="next"'
+_NEXT_LINK_REL_MARKER_LEN = len(_NEXT_LINK_REL_MARKER)
 _NEXT_LINK_REL_SUFFIX = '>; rel="next"'
 _NEXT_LINK_REL_SUFFIX_LEN = len(_NEXT_LINK_REL_SUFFIX)
 _CURSOR_QUERY_KEY = "cursor="
@@ -372,7 +373,7 @@ def _next_cursor_from_link(link_header: str) -> str:
         return ""
 
     marker = _NEXT_LINK_REL_MARKER
-    marker_len = len(marker)
+    marker_len = _NEXT_LINK_REL_MARKER_LEN
     search_start = 0
     while True:
         relation_start = link_header.find(marker, search_start)
@@ -389,24 +390,33 @@ def _next_cursor_from_link(link_header: str) -> str:
         return _cursor_query_value(link_header, url_start + 1, url_end)
 
 
-def _cursor_query_value(url: str, start: int, end: int) -> str:
-    query_start = url.find("?", start, end)
+def _cursor_query_value(
+    url: str,
+    start: int,
+    end: int,
+    cursor_param_key: str = _CURSOR_QUERY_PARAM_KEY,
+    cursor_param_key_len: int = _CURSOR_QUERY_PARAM_KEY_LEN,
+    cursor_query_key: str = _CURSOR_QUERY_KEY,
+    cursor_query_key_len: int = _CURSOR_QUERY_KEY_LEN,
+) -> str:
+    url_find = url.find
+    query_start = url_find("?", start, end)
     if query_start < 0:
         return ""
-    query_end = url.find("#", query_start + 1, end)
+    query_end = url_find("#", query_start + 1, end)
     if query_end < 0:
         query_end = end
 
     value_start = query_start + 1
-    cursor_start = url.find(_CURSOR_QUERY_PARAM_KEY, value_start, query_end)
+    cursor_start = url_find(cursor_param_key, value_start, query_end)
     if cursor_start >= 0:
-        value_start = cursor_start + _CURSOR_QUERY_PARAM_KEY_LEN
-    elif url.startswith(_CURSOR_QUERY_KEY, value_start, query_end):
-        value_start += _CURSOR_QUERY_KEY_LEN
+        value_start = cursor_start + cursor_param_key_len
+    elif url.startswith(cursor_query_key, value_start, query_end):
+        value_start += cursor_query_key_len
     else:
         return ""
 
-    value_end = url.find("&", value_start, query_end)
+    value_end = url_find("&", value_start, query_end)
     if value_end < 0:
         value_end = query_end
     return _unquote_plus_ascii_cursor(url[value_start:value_end])

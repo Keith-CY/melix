@@ -18,10 +18,16 @@ from worker.model_ops.hub_catalog import _next_cursor_from_link
 def _link_header(index: int) -> tuple[str, str]:
     cursor = f"page/{index}+batch {index % 17}"
     encoded = cursor.replace("/", "%2F").replace("+", "%2B").replace(" ", "+")
-    header = (
-        f'<https://huggingface.co/api/models?cursor=prev-{index}>; rel="prev", '
-        f'<https://huggingface.co/api/models?limit=50&full=true&cursor={encoded}&cardData=true>; rel="next"'
-    )
+    if index & 1:
+        header = (
+            f'<https://huggingface.co/api/models?cursor=prev-{index}>; rel="prev", '
+            f'<https://huggingface.co/api/models?limit=50&full=true&cursor={encoded}&cardData=true>; rel="next"'
+        )
+    else:
+        header = (
+            f'<https://huggingface.co/api/models?limit=50&full=true&cursor={encoded}&cardData=true>; rel="next", '
+            f'<https://huggingface.co/api/models?cursor=prev-{index}>; rel="prev"'
+        )
     return header, cursor
 
 
