@@ -52,6 +52,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     no_keyword_fallback_selected_schema_bytes_samples: list[float] = []
     whitespace_turn_planning_elapsed_samples: list[float] = []
     whitespace_turn_selected_schema_bytes_samples: list[float] = []
+    blank_current_context_planning_elapsed_samples: list[float] = []
+    blank_current_context_selected_schema_bytes_samples: list[float] = []
     policy_planning_elapsed_samples: list[float] = []
     policy_selected_schema_bytes_samples: list[float] = []
     preflight_consistency_elapsed_samples: list[float] = []
@@ -238,6 +240,29 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         )
         checksum += whitespace_turn_schema_bytes
 
+        blank_current_context_schema_bytes = 0
+        blank_current_context_started = time.perf_counter()
+        for _index in range(selector_iterations):
+            keyword_match_cache_clear()
+            selection_result = select_agentic_tools_for_turn(
+                ToolSelectionInput(
+                    current_user_turn=" \t\n  ",
+                    recent_user_turns=("Search the local text evidence.",),
+                    vector_available=False,
+                    max_selected_tools=4,
+                )
+            )
+            blank_current_context_schema_bytes += int(
+                selection_result.receipt["selected_schema_bytes"]
+            )
+        blank_current_context_planning_elapsed_samples.append(
+            (time.perf_counter() - blank_current_context_started) * 1000.0
+        )
+        blank_current_context_selected_schema_bytes_samples.append(
+            float(blank_current_context_schema_bytes / selector_iterations)
+        )
+        checksum += blank_current_context_schema_bytes
+
         policy_schema_bytes = 0
         policy_started = time.perf_counter()
         for _index in range(selector_iterations):
@@ -340,6 +365,12 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         ),
         "whitespace_turn_selected_schema_bytes_mean": statistics.fmean(
             whitespace_turn_selected_schema_bytes_samples
+        ),
+        "blank_current_context_planning_elapsed_ms_mean": statistics.fmean(
+            blank_current_context_planning_elapsed_samples
+        ),
+        "blank_current_context_selected_schema_bytes_mean": statistics.fmean(
+            blank_current_context_selected_schema_bytes_samples
         ),
         "policy_planning_elapsed_ms_mean": statistics.fmean(policy_planning_elapsed_samples),
         "policy_selected_schema_bytes_mean": statistics.fmean(
