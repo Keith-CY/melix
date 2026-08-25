@@ -61,6 +61,11 @@ def test_detect_image_family_identity_supports_explicit_overrides_and_path_infer
         explicit_family_id="fill-v1",
         explicit_task_kind="image-text-to-image",
     )
+    padded_explicit = detect_image_family_identity(
+        model_path="models/anything",
+        explicit_family_id=" QWENIMAGE-V1 ",
+        explicit_task_kind=" Text-To-Image ",
+    )
     qwen = detect_image_family_identity(model_path="models/qwen-image-dev")
     fill = detect_image_family_identity(model_path="models/flux-fill-dev")
     kontext = detect_image_family_identity(model_path="models/flux-kontext-dev")
@@ -75,6 +80,8 @@ def test_detect_image_family_identity_supports_explicit_overrides_and_path_infer
     assert explicit.family_id == "fill-v1"
     assert explicit.source == "explicit_override"
     assert explicit.task_kind == "image-text-to-image"
+    assert padded_explicit.family_id == "qwenimage-v1"
+    assert padded_explicit.task_kind == "text-to-image"
     assert qwen.family_id == "qwenimage-v1"
     assert qwen.task_kind == "text-to-image"
     assert qwen.source == "directory_name"

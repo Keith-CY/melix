@@ -116,11 +116,14 @@ def detect_image_family_identity(
     explicit_task_kind: str = "",
 ) -> ImageFamilyDetection:
     normalized_task_kind = _normalized_task_kind(explicit_task_kind)
-    normalized_family_id = explicit_family_id.strip().lower()
-    if normalized_family_id:
+    if explicit_family_id:
+        normalized_family_id = explicit_family_id
         descriptor = _IMAGE_FAMILY_ADAPTERS.get(normalized_family_id)
         if descriptor is None:
-            raise ValueError(f"Unsupported image family adapter: {normalized_family_id}")
+            normalized_family_id = explicit_family_id.strip().lower()
+            descriptor = _IMAGE_FAMILY_ADAPTERS.get(normalized_family_id)
+            if descriptor is None:
+                raise ValueError(f"Unsupported image family adapter: {normalized_family_id}")
         return ImageFamilyDetection(
             family_id=normalized_family_id,
             source="explicit_override",
@@ -229,6 +232,8 @@ def resolve_image_family_config(
 
 
 def _normalized_task_kind(value: str) -> str:
+    if value in _SUPPORTED_IMAGE_TASK_KINDS:
+        return value
     normalized = value.strip().lower()
     if not normalized:
         return ""

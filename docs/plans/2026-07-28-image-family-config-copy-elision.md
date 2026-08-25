@@ -63,6 +63,21 @@ The focused regression test asserts these config objects no longer expose
 `image-family-config-copy-elision`; its `peak_bytes_mean` and elapsed-time metrics
 cover the repeated resolver allocation path.
 
+## 2026-08-25 exact explicit identity follow-up
+
+This follow-up keeps the same registered probe and narrows the
+behavior-preserving change to explicit image family/task-kind normalization in
+`worker/runtime/image_family_adapters.py`. Exact registered family IDs now look
+up the descriptor before falling back to `strip().lower()`, and exact supported
+task-kind literals return before normalization. Padded or mixed-case values still
+use the existing fallback and validation behavior.
+
+The focused regression test covers the padded/mixed-case fallback so the exact
+fast path does not narrow accepted inputs. The registered probe's repeated
+resolver workload passes exact family/task-kind literals, so it measures the
+avoided string normalization locally on Linux and in the PR-scoped CI performance
+report.
+
 ## Verification plan
 
 Run the registered focused test command, changed-scope coverage command, and the
