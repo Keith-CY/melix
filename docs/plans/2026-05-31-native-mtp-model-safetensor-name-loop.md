@@ -57,6 +57,12 @@ preserves empty-string, metadata, base-shard, and sidecar filtering semantics
 while letting noisy native-MTP index entries such as duplicate `.json` metadata
 skip the longer suffix comparison.
 
+2026-08-25 follow-up slice: `_extra_mtp_safetensor_file_paths()` now uses a direct
+last-character index after an explicit empty-name guard instead of slicing
+`file_name_text[-1:]`. This keeps empty-string and non-safetensor filtering
+behavior unchanged while removing one tiny temporary string allocation per native
+MTP weight-map filename in the registered sidecar-discovery workload.
+
 ## Verification plan
 
 ```bash
