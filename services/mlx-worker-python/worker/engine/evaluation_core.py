@@ -1766,20 +1766,19 @@ class EvaluationCore:
                 elif isinstance(value, float) and value.is_integer():
                     provider_usage_totals[key] = provider_usage_totals.get(key, 0) + int(value)
 
-        slowest_dialogues = []
-        for trace in heapq.nlargest(
-            5,
-            traces,
-            key=lambda item: float(item.get("total_duration_ms") or 0.0),
-        ):
-            slowest_dialogues.append(
-                {
-                    "dialogue_id": trace.get("dialogue_id", ""),
-                    "line_number": trace.get("line_number", 0),
-                    "duration_ms": trace.get("total_duration_ms", 0.0),
-                    "status": trace.get("status", ""),
-                }
+        slowest_dialogues = [
+            {
+                "dialogue_id": trace.get("dialogue_id", ""),
+                "line_number": trace.get("line_number", 0),
+                "duration_ms": trace.get("total_duration_ms", 0.0),
+                "status": trace.get("status", ""),
+            }
+            for trace in heapq.nlargest(
+                5,
+                traces,
+                key=lambda item: float(item.get("total_duration_ms") or 0.0),
             )
+        ]
 
         return {
             "dialogue_status_counts": status_counts,

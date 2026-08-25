@@ -748,6 +748,19 @@ def test_percentile_exact_rank_skips_upper_neighbor_read() -> None:
     assert EvaluationCore._ordered_percentile(values, 95.0) == 19.0
     assert values.read_indexes == [19]
 
+    diagnostic_traces: list[dict[str, object]] = [
+        {"dialogue_id": "fast", "line_number": 1, "status": "ok", "total_duration_ms": 1.0},
+        {"dialogue_id": "slow", "line_number": 2, "status": "failed", "total_duration_ms": 9.0},
+    ]
+    diagnostic_slowest = EvaluationCore._event_extraction_dialogue_diagnostics(diagnostic_traces)["slowest_dialogues"]
+    assert isinstance(diagnostic_slowest, list)
+    assert diagnostic_slowest[0] == {
+        "dialogue_id": "slow",
+        "line_number": 2,
+        "duration_ms": 9.0,
+        "status": "failed",
+    }
+
 
 def test_latency_stats_reuse_single_sorted_vector(monkeypatch: pytest.MonkeyPatch) -> None:
     sorted_call_count = 0
