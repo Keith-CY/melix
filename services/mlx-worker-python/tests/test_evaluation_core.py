@@ -8,6 +8,7 @@ from pathlib import Path
 import random
 import sys
 from types import ModuleType, SimpleNamespace
+from typing import overload
 
 import pytest
 
@@ -723,6 +724,31 @@ def test_percentile_preserves_interpolated_results() -> None:
     assert EvaluationCore._percentile([10.0, 20.0, 30.0, 40.0], 95.0) == 38.5
 
 
+def test_percentile_exact_rank_skips_upper_neighbor_read() -> None:
+    class TrackingValues(list[float]):
+        def __init__(self, values: list[float]) -> None:
+            super().__init__(values)
+            self.read_indexes: list[int] = []
+
+        @overload
+        def __getitem__(self, index: int) -> float: ...
+
+        @overload
+        def __getitem__(self, index: slice) -> list[float]: ...
+
+        def __getitem__(self, index: int | slice) -> float | list[float]:  # type: ignore[override]
+            if isinstance(index, int):
+                self.read_indexes.append(index)
+            return super().__getitem__(index)
+
+    assert EvaluationCore._ordered_percentile([10.0, 20.0, 30.0, 40.0], 95.0) == 38.5
+
+    values = TrackingValues([float(index) for index in range(21)])
+
+    assert EvaluationCore._ordered_percentile(values, 95.0) == 19.0
+    assert values.read_indexes == [19]
+
+
 def test_latency_stats_reuse_single_sorted_vector(monkeypatch: pytest.MonkeyPatch) -> None:
     sorted_call_count = 0
     original_sorted = builtins.sorted
@@ -743,6 +769,7 @@ def test_latency_stats_reuse_single_sorted_vector(monkeypatch: pytest.MonkeyPatc
 
     assert original == [40.0, 10.0, 30.0, 20.0]
     assert stats == {"mean": 25.0, "p50": 25.0, "p95": 38.5, "max": 40.0}
+    assert EvaluationCore._latency_stats([float(index) for index in range(21)])["p95"] == 19.0
     assert EvaluationCore._latency_stats([10.0, 30.0, 20.0]) == {"mean": 20.0, "p50": 20.0, "p95": 29.0, "max": 30.0}
     assert EvaluationCore._latency_stats([42.0]) == {"mean": 42.0, "p50": 42.0, "p95": 42.0, "max": 42.0}
     assert sorted_call_count == 0

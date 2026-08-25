@@ -1938,12 +1938,14 @@ class EvaluationCore:
                 p50 = (sorted_values[p50_lower] + sorted_values[p50_lower + 1]) * 0.5
             else:
                 p50 = sorted_values[p50_lower]
-            p95_index = (value_count - 1) * 0.95
-            p95_lower = int(p95_index)
-            p95_fraction = p95_index - p95_lower
-            p95 = sorted_values[p95_lower] + (
-                sorted_values[p95_lower + 1] - sorted_values[p95_lower]
-            ) * p95_fraction
+            p95_lower, p95_remainder = divmod((value_count - 1) * 19, 20)
+            p95_lower_value = sorted_values[p95_lower]
+            if p95_remainder:
+                p95 = p95_lower_value + (
+                    sorted_values[p95_lower + 1] - p95_lower_value
+                ) * (p95_remainder / 20)
+            else:
+                p95 = p95_lower_value
         return {
             "mean": round_ms(total / value_count),
             "p50": round_ms(p50),
@@ -1957,13 +1959,17 @@ class EvaluationCore:
 
     @staticmethod
     def _ordered_percentile(sorted_values: list[float], percentile: float) -> float:
-        if len(sorted_values) == 1:
+        value_count = len(sorted_values)
+        if value_count == 1:
             return sorted_values[0]
-        index = (len(sorted_values) - 1) * (percentile / 100.0)
+        index = (value_count - 1) * (percentile / 100.0)
         lower = int(index)
-        upper = min(lower + 1, len(sorted_values) - 1)
         fraction = index - lower
-        return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * fraction
+        lower_value = sorted_values[lower]
+        if not fraction:
+            return lower_value
+        upper = lower + 1
+        return lower_value + (sorted_values[upper] - lower_value) * fraction
 
     @staticmethod
     def _should_abort_event_extraction_on_provider_error(exc: Exception) -> bool:

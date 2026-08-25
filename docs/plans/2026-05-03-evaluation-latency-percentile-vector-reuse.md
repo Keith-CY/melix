@@ -32,6 +32,11 @@ The probe must be base-compatible so `origin/main` still runs successfully durin
 - Latency summary outputs (`mean`, `p50`, `p95`, `max`) remain unchanged.
 - Focused changed-scope coverage for touched executable files is at least 95%.
 - The registered local probe must show stable or lower `elapsed_ms_mean` versus `origin/main`; `sorted_calls_mean` may drop below `1.0` when the implementation uses `list.sort()` on a defensive copy instead of `builtins.sorted`.
+- A 2026-08-25 follow-up micro-slice keeps the same registered probe and
+  focused tests while tightening percentile index handling: `_latency_stats()`
+  computes the fixed p95 index with integer `divmod()`, reuses the p95 lower
+  value instead of reading it twice, and `_ordered_percentile()` returns
+  immediately for exact-rank inputs before touching the upper neighbor.
 
 ## Verification Commands
 
