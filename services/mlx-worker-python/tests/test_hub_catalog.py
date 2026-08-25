@@ -17,6 +17,7 @@ from worker.model_ops.hub_catalog import (
     HubSearchPage,
     _bytes_per_parameter,
     _direct_size_hint_from_text,
+    _has_common_4bit_optiq_quantization,
     _int,
     _is_mlx_compatible,
     _local_fit_evidence,
@@ -90,6 +91,13 @@ def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:
         == "2-bit, 3-bit, 8-bit, fp32, bf16"
     )
     assert _quantization_summary([], lowered_tags={"family-test", "4-bit", "optiq"}) == "4-bit, optiq"
+
+
+def test_common_optiq_quantization_helper_rejects_additional_aliases() -> None:
+    assert _has_common_4bit_optiq_quantization({"family-test", "4-bit", "optiq"}) is True
+    assert _has_common_4bit_optiq_quantization({"family-test", "4bit", "optiq"}) is True
+    assert _has_common_4bit_optiq_quantization({"family-test", "4-bit"}) is False
+    assert _has_common_4bit_optiq_quantization({"family-test", "4-bit", "optiq", "fp16"}) is False
 
 
 def test_string_list_preserves_exact_list_and_list_subclass_inputs() -> None:

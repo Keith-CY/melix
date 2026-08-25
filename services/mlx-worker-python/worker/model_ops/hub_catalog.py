@@ -1267,11 +1267,7 @@ def _bytes_per_parameter_from_tag_substrings(lowered: set[str]) -> float:
 
 def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = None) -> str:
     lowered = _normalized_lowered_tags(tags, lowered_tags)
-    if (
-        "optiq" in lowered
-        and not lowered.isdisjoint(_COMMON_4BIT_OPTIQ_TAGS)
-        and lowered.isdisjoint(_COMMON_4BIT_OPTIQ_EXCLUDED_TAGS)
-    ):
+    if _has_common_4bit_optiq_quantization(lowered):
         return "4-bit, optiq"
     values: list[str] = []
     if "2bit" in lowered or "2-bit" in lowered:
@@ -1295,6 +1291,14 @@ def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = No
     if "qat" in lowered:
         values.append("QAT")
     return ", ".join(values)
+
+
+def _has_common_4bit_optiq_quantization(lowered: set[str]) -> bool:
+    return (
+        "optiq" in lowered
+        and ("4-bit" in lowered or "4bit" in lowered)
+        and lowered.isdisjoint(_COMMON_4BIT_OPTIQ_EXCLUDED_TAGS)
+    )
 
 
 def _gemma4_qat_fast_candidate(repo_id_lower: str, lowered_tags: set[str]) -> bool:
