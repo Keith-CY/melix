@@ -741,6 +741,8 @@ def test_percentile_exact_rank_skips_upper_neighbor_read() -> None:
                 self.read_indexes.append(index)
             return super().__getitem__(index)
 
+    assert EvaluationCore._ordered_percentile([10.0, 20.0, 30.0, 40.0], 95.0) == 38.5
+
     values = TrackingValues([float(index) for index in range(21)])
 
     assert EvaluationCore._ordered_percentile(values, 95.0) == 19.0
