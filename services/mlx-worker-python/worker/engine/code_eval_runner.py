@@ -58,6 +58,7 @@ _ASSERT_NON_IDENTIFIER_FOLLOWERS = frozenset(
 _ASSERT_STATEMENT_RE = re.compile(r"(?:^[ \t]*|[\n\r;:][ \t]*)assert(?!\w)")
 _OS_OPEN = os.open
 _OS_FSTAT = os.fstat
+_OS_STAT = os.stat
 _OS_PREAD = os.pread
 _OS_READ = os.read
 _OS_CLOSE = os.close
@@ -533,6 +534,42 @@ def _read_payload_file_bytes(
             pass
 
 
+@lru_cache(maxsize=32)
+def _read_payload_file_bytes_for_stat(
+    payload_path_text: str,
+    mtime_ns: int,
+    ctime_ns: int,
+    size: int,
+) -> bytes | None:
+    _ = (mtime_ns, ctime_ns)
+    try:
+        fd = _OS_OPEN(payload_path_text, _OS_RDONLY)
+    except OSError:
+        return None
+    try:
+        return _OS_READ(fd, size) if size > 0 else b""
+    except OSError:
+        return None
+    finally:
+        try:
+            _OS_CLOSE(fd)
+        except OSError:
+            pass
+
+
+def _cached_real_payload_file_bytes(payload_path: Path, *, _os_stat=_OS_STAT) -> bytes | None:
+    try:
+        payload_stat = _os_stat(payload_path)
+    except OSError:
+        return None
+    return _read_payload_file_bytes_for_stat(
+        os.fspath(payload_path),
+        payload_stat.st_mtime_ns,
+        payload_stat.st_ctime_ns,
+        payload_stat.st_size,
+    )
+
+
 def _load_payload_file(
     payload_path: Path,
     *,
@@ -540,7 +577,10 @@ def _load_payload_file(
     _decode_error=_JSON_DECODE_ERROR,
     _read_payload_bytes: Callable[[Path], bytes | None] = _read_payload_file_bytes,
 ) -> dict[str, object] | None:
-    payload_bytes = _read_payload_bytes(payload_path)
+    if _read_payload_bytes is _read_payload_file_bytes and isinstance(payload_path, Path):
+        payload_bytes = _cached_real_payload_file_bytes(payload_path)
+    else:
+        payload_bytes = _read_payload_bytes(payload_path)
     if payload_bytes is None:
         return None
 

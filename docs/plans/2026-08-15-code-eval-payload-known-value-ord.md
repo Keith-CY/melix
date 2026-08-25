@@ -65,3 +65,17 @@ length lookups in the sorted payload fast path.
 Expected metrics are lower or neutral `elapsed_ms_mean` for
 `scripts/code_eval_payload_json_probe.py`; `peak_bytes_mean` should remain
 stable because the slice only reuses an integer local.
+
+## 2026-08-25 Follow-up: stat-keyed real payload byte cache
+
+This follow-up Python-only slice stays within the same registered
+`code-eval-payload-json-bytes` probe. Real `Path` payload loads now use a small
+stat-keyed byte cache before the compact JSON fast path. The cache key includes
+path text, `mtime_ns`, `ctime_ns`, and size, so repeated loads of the same stable
+payload avoid redundant fd reads while stat changes still invalidate the cached
+bytes. Non-`Path` payload test doubles and explicitly injected byte readers keep
+using the existing byte-loading seam unchanged.
+
+Expected metrics are lower `elapsed_ms_mean` and `peak_bytes_mean` for
+`scripts/code_eval_payload_json_probe.py`; payload semantics remain unchanged for
+missing, invalid, non-mapping, custom path-like, and stat-changed payloads.

@@ -1212,6 +1212,75 @@ def test_load_payload_file_uses_os_read_for_real_paths(
     }
 
 
+def test_load_payload_file_caches_real_path_bytes_by_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_bytes(json.dumps({"runtime_status": "ok", "tests_total": 3}).encode("utf-8"))
+    original_read = code_eval_runner._OS_READ
+    read_calls = 0
+
+    def counted_read(fd: int, size: int) -> bytes:
+        nonlocal read_calls
+        read_calls += 1
+        return original_read(fd, size)
+
+    monkeypatch.setattr(code_eval_runner, "_OS_READ", counted_read)
+    code_eval_runner._read_payload_file_bytes_for_stat.cache_clear()
+    try:
+        assert code_eval_runner._load_payload_file(payload_path) == {
+            "runtime_status": "ok",
+            "tests_total": 3,
+        }
+        assert code_eval_runner._load_payload_file(payload_path) == {
+            "runtime_status": "ok",
+            "tests_total": 3,
+        }
+        assert read_calls == 1
+
+        payload_path.write_bytes(json.dumps({"runtime_status": "ok", "tests_total": 4}).encode("utf-8"))
+        payload_stat = payload_path.stat()
+        os.utime(
+            payload_path,
+            ns=(payload_stat.st_atime_ns, payload_stat.st_mtime_ns + 1_000_000),
+        )
+        assert code_eval_runner._load_payload_file(payload_path) == {
+            "runtime_status": "ok",
+            "tests_total": 4,
+        }
+        assert read_calls == 2
+    finally:
+        code_eval_runner._read_payload_file_bytes_for_stat.cache_clear()
+
+
+def test_cached_payload_file_bytes_handles_fd_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    code_eval_runner._read_payload_file_bytes_for_stat.cache_clear()
+
+    def fail_open(*_args: object) -> int:
+        raise OSError("cached open failed")
+
+    monkeypatch.setattr(code_eval_runner, "_OS_OPEN", fail_open)
+    assert code_eval_runner._read_payload_file_bytes_for_stat("payload.json", 1, 2, 3) is None
+
+    monkeypatch.setattr(code_eval_runner, "_OS_OPEN", lambda *_args: 123)
+
+    def fail_read(_fd: int, _size: int) -> bytes:
+        raise OSError("cached read failed")
+
+    monkeypatch.setattr(code_eval_runner, "_OS_READ", fail_read)
+    assert code_eval_runner._read_payload_file_bytes_for_stat("payload.json", 2, 3, 4) is None
+
+    def fail_close(_fd: int) -> None:
+        raise OSError("cached close failed")
+
+    monkeypatch.setattr(code_eval_runner, "_OS_CLOSE", fail_close)
+    assert code_eval_runner._read_payload_file_bytes_for_stat("payload.json", 3, 4, 0) == b""
+    code_eval_runner._read_payload_file_bytes_for_stat.cache_clear()
+
+
 def test_read_payload_file_bytes_handles_fallback_and_fd_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
