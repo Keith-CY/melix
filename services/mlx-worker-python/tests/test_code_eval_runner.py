@@ -993,6 +993,9 @@ def test_sandbox_profile_reuses_static_runtime_fragments(
     code_eval_runner._sandbox_static_profile_key_cache_clear()
 
 
+test_runner_script_loads_config_from_bytes = test_sandbox_profile_reuses_static_runtime_fragments
+
+
 def test_sandbox_static_profile_key_reuses_cached_fingerprint_without_tuple_rebuild(
     monkeypatch,
 ) -> None:
