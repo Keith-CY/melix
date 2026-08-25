@@ -1326,6 +1326,7 @@ _RUNNER_SCRIPT = textwrap.dedent(
         import ast
         import importlib.util
         import json
+        import os
         from pathlib import Path
         import resource
         import sys
@@ -1391,9 +1392,17 @@ _RUNNER_SCRIPT = textwrap.dedent(
         def _load_config(
             config_path: Path,
             _json_loads=json.loads,
-            _read_bytes=Path.read_bytes,
+            _os_open=os.open,
+            _os_fstat=os.fstat,
+            _os_read=os.read,
+            _os_close=os.close,
+            _os_rdonly=os.O_RDONLY,
         ) -> dict[str, object]:
-            payload = _json_loads(_read_bytes(config_path))
+            fd = _os_open(config_path, _os_rdonly)
+            try:
+                payload = _json_loads(_os_read(fd, _os_fstat(fd).st_size))
+            finally:
+                _os_close(fd)
             if not isinstance(payload, dict):
                 raise TypeError("runner config must be a JSON object")
             return payload
