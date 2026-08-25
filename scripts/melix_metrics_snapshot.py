@@ -40,7 +40,7 @@ SOURCE_DEFINITIONS = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SourcePath:
     name: str
     path: Path | None
@@ -210,20 +210,21 @@ def resolve_source_paths(
 ) -> dict[str, SourcePath]:
     if environment is None:
         environment = dict(os.environ)
-    explicit = {
-        "control_plane": control_plane_metrics,
-        "swift_text_worker": swift_text_worker_metrics,
-        "python_worker": python_worker_metrics,
-    }
+    environment_get = environment.get
+    normalize_path_value = normalize_path
     resolved: dict[str, SourcePath] = {}
     runtime_source_names: list[str] = []
-    for name, definition in SOURCE_DEFINITIONS.items():
-        explicit_path = normalize_path(explicit[name])
+    for name, explicit_path_value in (
+        ("control_plane", control_plane_metrics),
+        ("swift_text_worker", swift_text_worker_metrics),
+        ("python_worker", python_worker_metrics),
+    ):
+        explicit_path = normalize_path_value(explicit_path_value)
         if explicit_path is not None:
             resolved[name] = SourcePath(name=name, path=explicit_path, configured_by="argument")
             continue
 
-        env_path = normalize_path(environment.get(definition["env"]))
+        env_path = normalize_path_value(environment_get(SOURCE_DEFINITIONS[name]["env"]))
         if env_path is not None:
             resolved[name] = SourcePath(name=name, path=env_path, configured_by="environment")
             continue
