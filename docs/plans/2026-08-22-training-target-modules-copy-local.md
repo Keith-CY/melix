@@ -18,3 +18,17 @@ The cached target-module path now binds the module-level list-copy helper into a
 2. Run the registered changed-scope coverage command and keep changed-scope coverage at or above 95%.
 3. Run the registered local Linux probe for `training-config-target-module-cache` against an `origin/main` baseline and accept only if metrics show non-regression or improvement with unchanged checksum.
 4. Use GitHub Actions PR-scoped performance as the merge gate after opening the PR.
+
+## 2026-08-25 exact-list cache-hit slice
+
+This follow-up Python slice keeps the same registered probe and narrows only the
+cached `_resolve_target_modules(...)` branch. Canonical cache entries are always
+plain `list` objects, so the hot cache-hit check now uses an exact `type(...) is
+list` guard before `list.copy(...)`. Non-plain historical/custom cache entries
+still fall through to `list(...)`, preserving defensive compatibility while
+removing subclass-aware `isinstance(...)` work from the registered cached-loop
+probe.
+
+Validation remains the focused target-module tests, changed-scope coverage, and
+the local plus CI `training-config-target-module-cache` probe; `elapsed_ms_mean`
+and unchanged checksum are the primary signals for this slice.
