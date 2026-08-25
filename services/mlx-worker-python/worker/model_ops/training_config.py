@@ -1220,7 +1220,7 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
         cache = {}
         profile[_NORMALIZED_TARGET_MODULES_CACHE_KEY] = cache
     cached_targets = cache.get(raw_value)
-    if isinstance(cached_targets, list):
+    if type(cached_targets) is list:
         # Cache stores canonical lists; copy() produces a fresh list per call so
         # callers can safely mutate without changing shared cache state.
         return copy_list(cached_targets)
