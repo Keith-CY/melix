@@ -39,3 +39,14 @@ the duplicate resolved-path elision and fallback behavior for path-like test
 doubles. The same registered probe, `code-eval-stdio-tail-single-stat`, covers
 this sandbox profile helper through its focused tests, changed-scope coverage,
 and `sandbox_profile_elapsed_ms_mean` metric.
+
+## 2026-08-25 sandbox profile temp-root text reuse slice
+
+Follow-up slice: `_sandbox_profile(...)` now converts and quotes `temp_root` once,
+passes that text into `_sandbox_temp_root_read_filters(...)`, and reuses the same
+quoted value for the write-subpath filter. The read filter helper keeps its
+previous public behavior when called directly, while the sandbox-profile hot path
+avoids a second `str(Path)` conversion, one repeated `json.dumps(...)`, and binds
+`json.dumps`/`str` through defaults. The registered
+`code-eval-stdio-tail-single-stat` probe measures this through its
+`sandbox_profile_elapsed_ms_mean` metric locally on Linux and in PR-scoped CI.
