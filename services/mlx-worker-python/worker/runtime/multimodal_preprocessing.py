@@ -253,13 +253,15 @@ def _parse_image_reference(uri: str) -> ParsedImageReference:
     if uri.startswith("file:///") and "%" not in uri:
         decoded_path = uri[7:]
         path = Path(decoded_path)
+        filename = decoded_path.rsplit("/", 1)[-1]
+        dot_index = filename.rfind(".")
         return ParsedImageReference(
             raw=uri,
             parsed=_LOCAL_FILE_IMAGE_PARSE,
             decoded_path=decoded_path,
             path=path,
-            filename=path.name,
-            format=path.suffix.lstrip("."),
+            filename=filename,
+            format=filename[dot_index + 1 :] if dot_index > 0 else "",
         )
 
     parsed = urlparse(uri)
