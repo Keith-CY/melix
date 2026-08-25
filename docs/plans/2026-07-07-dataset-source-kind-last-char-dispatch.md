@@ -63,3 +63,14 @@ source-tree scans.
 The registered `dataset-source-records-scandir` probe remains the required
 validation source. Its `inventory_elapsed_ms_*` metrics exercise the affected
 aggregation path locally on Linux and in the PR-scoped CI performance workflow.
+
+## 2026-08-25 Follow-up: Common Suffix Character Checks
+
+This follow-up remains inside `_classify_source_kind_name()`. The common
+lowercase suffix dispatch still uses the final-character branch table, but each
+branch now checks the remaining suffix characters by index instead of allocating
+suffix slices such as `name[-4:]` for every scanned source filename. Uppercase
+and uncommon suffixes continue through the existing lowercase fallback path, so
+the classification contract is unchanged while the registered probe's
+`source_kind_elapsed_ms_*` metrics cover the hot-path change locally on Linux and
+in PR-scoped CI.

@@ -1293,30 +1293,30 @@ def _classify_source_kind_name(name: str) -> str | None:
     if not name:
         return None
     last_char = name[-1]
+    name_len = len(name)
     if last_char == "t":
-        if name[-4:] == ".txt":
-            if len(name) >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
+        if name_len >= 4 and name[-4] == "." and name[-3] == "t" and name[-2] == "x":
+            if name_len >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
                 return "pdf"
-            if len(name) >= 9 and name[-9] == "." and name[-8:-4].lower() == "docx":
+            if name_len >= 9 and name[-9] == "." and name[-8:-4].lower() == "docx":
                 return "docx"
             return "text"
-        if name[-5:] == ".text":
+        if name_len >= 5 and name[-5] == "." and name[-4] == "t" and name[-3] == "e" and name[-2] == "x":
             return "text"
     elif last_char == "d":
-        if name[-3:] == ".md":
+        if name_len >= 3 and name[-3] == "." and name[-2] == "m":
             return "markdown"
     elif last_char == "y":
-        if name[-3:] == ".py":
+        if name_len >= 3 and name[-3] == "." and name[-2] == "p":
             return "code"
     elif last_char == "l":
-        if name[-6:] == ".jsonl":
+        if name_len >= 6 and name[-6] == "." and name[-5] == "j" and name[-4] == "s" and name[-3] == "o" and name[-2] == "n":
             return "structured_data"
     elif last_char == "n":
-        if name[-5:] == ".json":
+        if name_len >= 5 and name[-5] == "." and name[-4] == "j" and name[-3] == "s" and name[-2] == "o":
             return "structured_data"
     elif last_char == "v":
-        suffix4 = name[-4:]
-        if suffix4 == ".csv" or suffix4 == ".tsv":
+        if name_len >= 4 and name[-4] == "." and name[-2] == "s" and (name[-3] == "c" or name[-3] == "t"):
             return "structured_data"
 
     dot_index = name.rfind(".")
