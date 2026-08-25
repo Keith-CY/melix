@@ -4,7 +4,7 @@
 
 This Python-only performance slice is limited to the code-evaluation sandbox runner script in `worker.engine.code_eval_runner`.
 
-The change preserves runner config JSON semantics while binding `Path.read_bytes` as a default argument in the generated runner helper so repeated config reads avoid the per-call bound-method lookup inside the hot probe loop.
+The original slice preserved runner config JSON semantics by binding `Path.read_bytes` as a default argument in the generated runner helper. The follow-up slice keeps the same semantics and switches the generated runner helper to a single `os.open`/`os.fstat`/`os.read` descriptor read so repeated config reads avoid Path-layer method dispatch in the hot probe loop.
 
 ## Registered probe
 
@@ -20,7 +20,7 @@ That probe already declares focused `test_command`, `coverage_command`, and `pro
 ## Implementation plan
 
 1. Keep the static runner script cache intact.
-2. Add a regression assertion that the generated runner script binds `Path.read_bytes` locally and loads config bytes through that binding.
+2. Add a regression assertion that the generated runner script performs one descriptor-backed config read and closes the file descriptor.
 3. Run the registered focused tests, changed-scope coverage, and PR-scoped probe locally on Linux.
 4. Use GitHub Actions and the registered PR-scoped performance workflow as the merge validation source.
 

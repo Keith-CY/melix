@@ -6,7 +6,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
-from typing import SupportsIndex, cast
+from typing import Callable, SupportsIndex, cast
+from types import ModuleType
 
 import pytest
 
@@ -1049,7 +1050,7 @@ def test_runner_script_reuses_precomputed_static_payload(monkeypatch) -> None:
     code_eval_runner._runner_script.cache_clear()
 
 
-def test_runner_script_loads_config_from_bytes(tmp_path: Path) -> None:
+def test_runner_script_loads_config_with_single_fd_read(tmp_path: Path) -> None:
     code_eval_runner._runner_script.cache_clear()
     script = code_eval_runner._runner_script()
     namespace: dict[str, object] = {"__name__": "melix_runner_probe"}
@@ -1059,16 +1060,32 @@ def test_runner_script_loads_config_from_bytes(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_bytes(b'{"payload_path": "/tmp/payload.json", "memory_limit_mb": 64}')
 
-    assert load_config(config_path) == {
+    close_calls = 0
+    os_module = cast(ModuleType, namespace["os"])
+    original_close = os_module.close
+
+    def tracked_close(fd: int) -> None:
+        nonlocal close_calls
+        close_calls += 1
+        original_close(fd)
+
+    typed_load_config = cast(Callable[..., dict[str, object]], load_config)
+    assert typed_load_config(config_path, _os_close=tracked_close) == {
         "payload_path": "/tmp/payload.json",
         "memory_limit_mb": 64,
     }
-    assert "_read_bytes=Path.read_bytes" in script
-    assert "payload = _json_loads(_read_bytes(config_path))" in script
+    assert close_calls == 1
+    assert "_os_read(fd, _os_fstat(fd).st_size)" in script
+    assert "_read_bytes=Path.read_bytes" not in script
+    assert "payload = _json_loads(_read_bytes(config_path))" not in script
     assert 'json.dumps(payload, separators=(",", ":"))' in script
     assert "json.load(file)" not in script
 
     code_eval_runner._runner_script.cache_clear()
+
+
+def test_runner_script_loads_config_from_bytes(tmp_path: Path) -> None:
+    test_runner_script_loads_config_with_single_fd_read(tmp_path)
 
 
 def test_sandbox_profile_cache_key_tracks_python_environment(
