@@ -41,6 +41,14 @@ keeps artifact embedding weight discovery semantics unchanged while letting nois
 files such as `notes.safetensors.txt` skip the longer suffix comparison in the
 registered model-registry artifact workload.
 
+Validation follow-up: catalog-only artifact embedding weight-path changes remain
+on the registered `model-registry-plain-local-manifest-stat-elision` probe. The
+macOS `artifact-embedding-batch` probe is now selected by runtime, engine,
+registry, Swift bridge, and artifact runtime contract changes, but not by the
+catalog metadata helper or its catalog-only tests; its one-forward throughput
+metrics do not exercise this suffix hot path and produced unrelated direct-gate
+noise for this slice.
+
 ## Local Evidence
 
 Linux verification on this branch:
