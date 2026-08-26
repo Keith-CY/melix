@@ -8117,6 +8117,7 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     assert metrics["module_path_scandir_calls_mean"] == 1.0
     assert metrics["artifact_weight_glob_calls_mean"] == 0.0
     assert metrics["artifact_weight_scandir_calls_mean"] == 1.0
+    assert metrics["artifact_weight_suffix_checks_mean"] == 1.0
     assert metrics["plain_scan_count_mean"] == metrics["model_count"] == 400.0
     assert metrics["manifest_count_mean"] == 400.0
     assert metrics["sample_count"] == 20.0
@@ -8132,6 +8133,7 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     assert direct_metrics["module_path_scandir_calls_mean"] == 1.0
     assert direct_metrics["artifact_weight_glob_calls_mean"] == 0.0
     assert direct_metrics["artifact_weight_scandir_calls_mean"] == 1.0
+    assert direct_metrics["artifact_weight_suffix_checks_mean"] == 1.0
     assert direct_metrics["plain_scan_count_mean"] == direct_metrics["manifest_count_mean"] == 3.0
 
 

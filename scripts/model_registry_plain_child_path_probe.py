@@ -17,6 +17,48 @@ import worker.model_registry.catalog as model_catalog
 from worker.model_registry.catalog import WorkerModelCatalog
 
 
+class _CountingName(str):
+    endswith_calls = 0
+
+    def endswith(self, suffix: str | tuple[str, ...], *args: object) -> bool:  # type: ignore[override]
+        type(self).endswith_calls += 1
+        return super().endswith(suffix, *args)  # type: ignore[arg-type]
+
+
+class _CountingDirEntry:
+    def __init__(self, entry: object) -> None:
+        self._entry = entry
+
+    @property
+    def name(self) -> _CountingName:
+        return _CountingName(getattr(self._entry, "name"))
+
+    @property
+    def path(self) -> str:
+        return getattr(self._entry, "path")
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._entry, name)
+
+
+class _CountingScandir:
+    def __init__(self, context: object) -> None:
+        self._context = context
+        self._entries = None
+
+    def __enter__(self) -> "_CountingScandir":
+        self._entries = getattr(self._context, "__enter__")()
+        return self
+
+    def __iter__(self):
+        if self._entries is None:
+            return iter(())
+        return (_CountingDirEntry(entry) for entry in self._entries)
+
+    def __exit__(self, *exc: object) -> bool:
+        return getattr(self._context, "__exit__")(*exc)
+
+
 def main() -> int:
     model_count = int(os.environ.get("MELIX_MODEL_REGISTRY_PLAIN_CHILD_PROBE_MODELS", "400"))
     sample_count = int(os.environ.get("MELIX_MODEL_REGISTRY_PLAIN_CHILD_PROBE_SAMPLES", "5"))
@@ -29,6 +71,7 @@ def main() -> int:
     module_scandir_call_samples: list[float] = []
     weight_glob_call_samples: list[float] = []
     weight_scandir_call_samples: list[float] = []
+    weight_suffix_check_samples: list[float] = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir) / "registry"
@@ -147,6 +190,7 @@ def main() -> int:
             module_scandir_calls = 0
             weight_glob_calls = 0
             weight_scandir_calls = 0
+            _CountingName.endswith_calls = 0
 
             def tracking_truediv(self: Path, key: object) -> Path:
                 nonlocal root_plain_child_joins
@@ -189,6 +233,7 @@ def main() -> int:
                     module_scandir_calls += 1
                 if path == os.fspath(weight_model_dir):
                     weight_scandir_calls += 1
+                    return _CountingScandir(original_scandir(path))
                 return original_scandir(path)
 
             Path.__truediv__ = tracking_truediv  # type: ignore[method-assign]
@@ -243,6 +288,7 @@ def main() -> int:
             module_scandir_call_samples.append(float(module_scandir_calls))
             weight_glob_call_samples.append(float(weight_glob_calls))
             weight_scandir_call_samples.append(float(weight_scandir_calls))
+            weight_suffix_check_samples.append(float(_CountingName.endswith_calls))
 
     print(
         json.dumps(
@@ -275,6 +321,10 @@ def main() -> int:
                 ),
                 "artifact_weight_scandir_calls_mean": round(
                     statistics.fmean(weight_scandir_call_samples),
+                    6,
+                ),
+                "artifact_weight_suffix_checks_mean": round(
+                    statistics.fmean(weight_suffix_check_samples),
                     6,
                 ),
                 "model_count": float(model_count),

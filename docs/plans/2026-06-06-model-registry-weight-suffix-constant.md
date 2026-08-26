@@ -35,6 +35,12 @@ The registry entry already includes focused `test_command`, `coverage_command`,
 and `probe_command` entries covering `catalog.py`, focused catalog tests,
 PR-scoped performance tests, and the synthetic 400-model registry scan metrics.
 
+2026-08-26 follow-up slice: `_artifact_embedding_weight_paths()` now checks the
+last filename character before running the full `.safetensors` suffix test. This
+keeps artifact embedding weight discovery semantics unchanged while letting noisy
+files such as `notes.safetensors.txt` skip the longer suffix comparison in the
+registered model-registry artifact workload.
+
 ## Local Evidence
 
 Linux verification on this branch:
