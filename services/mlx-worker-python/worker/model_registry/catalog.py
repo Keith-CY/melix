@@ -1670,7 +1670,12 @@ def _artifact_embedding_weight_paths(model_dir: Path) -> tuple[Path, ...]:
     try:
         with os.scandir(os.fspath(model_dir)) as entries:
             for entry in entries:
-                if entry.name.endswith(".safetensors"):
+                entry_name = entry.name
+                if (
+                    entry_name
+                    and entry_name[-1] == "s"
+                    and entry_name.endswith(".safetensors")
+                ):
                     weight_paths.append(Path(entry.path))
     except OSError:
         return ()

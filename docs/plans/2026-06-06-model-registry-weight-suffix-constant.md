@@ -35,6 +35,20 @@ The registry entry already includes focused `test_command`, `coverage_command`,
 and `probe_command` entries covering `catalog.py`, focused catalog tests,
 PR-scoped performance tests, and the synthetic 400-model registry scan metrics.
 
+2026-08-26 follow-up slice: `_artifact_embedding_weight_paths()` now checks the
+last filename character before running the full `.safetensors` suffix test. This
+keeps artifact embedding weight discovery semantics unchanged while letting noisy
+files such as `notes.safetensors.txt` skip the longer suffix comparison in the
+registered model-registry artifact workload.
+
+Validation follow-up: catalog-only artifact embedding weight-path changes remain
+on the registered `model-registry-plain-local-manifest-stat-elision` probe. The
+macOS `artifact-embedding-batch` probe is now selected by runtime, engine,
+registry, Swift bridge, and artifact runtime contract changes, but not by the
+catalog metadata helper or its catalog-only tests; its one-forward throughput
+metrics do not exercise this suffix hot path and produced unrelated direct-gate
+noise for this slice.
+
 ## Local Evidence
 
 Linux verification on this branch:

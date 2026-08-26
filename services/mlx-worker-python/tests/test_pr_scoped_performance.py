@@ -3319,11 +3319,10 @@ def test_scope_report_selects_model_registry_catalog_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/model_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 2
     assert [probe["id"] for probe in scope["selected_probes"]] == [
         "model-registry-plain-local-manifest-stat-elision",
         "model-registry-readme-source-fastpath",
-        "artifact-embedding-batch",
     ]
 
 
@@ -3500,6 +3499,21 @@ def test_scope_report_selects_artifact_embedding_batch_probe() -> None:
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
     assert "artifact-embedding-batch" in probe_ids
+
+
+def test_scope_report_keeps_catalog_weight_paths_on_model_registry_probe() -> None:
+    for changed_file in (
+        "services/mlx-worker-python/worker/model_registry/catalog.py",
+        "services/mlx-worker-python/tests/test_artifact_embedding_catalog_contract.py",
+    ):
+        scope = build_scope_report(
+            registry_path=REGISTRY_PATH,
+            changed_files=[changed_file],
+        )
+        probe_ids = _selected_probe_ids(scope)
+
+        assert "model-registry-plain-local-manifest-stat-elision" in probe_ids
+        assert "artifact-embedding-batch" not in probe_ids
 
 
 def test_scope_report_selects_benchmark_export_probe() -> None:
@@ -8117,6 +8131,7 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     assert metrics["module_path_scandir_calls_mean"] == 1.0
     assert metrics["artifact_weight_glob_calls_mean"] == 0.0
     assert metrics["artifact_weight_scandir_calls_mean"] == 1.0
+    assert metrics["artifact_weight_suffix_checks_mean"] == 1.0
     assert metrics["plain_scan_count_mean"] == metrics["model_count"] == 400.0
     assert metrics["manifest_count_mean"] == 400.0
     assert metrics["sample_count"] == 20.0
@@ -8132,6 +8147,7 @@ def test_model_registry_catalog_probe_command_emits_metrics(monkeypatch: pytest.
     assert direct_metrics["module_path_scandir_calls_mean"] == 1.0
     assert direct_metrics["artifact_weight_glob_calls_mean"] == 0.0
     assert direct_metrics["artifact_weight_scandir_calls_mean"] == 1.0
+    assert direct_metrics["artifact_weight_suffix_checks_mean"] == 1.0
     assert direct_metrics["plain_scan_count_mean"] == direct_metrics["manifest_count_mean"] == 3.0
 
 

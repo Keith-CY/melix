@@ -59,6 +59,32 @@ def _write_pooling(
     return pooling_path
 
 
+class _TrackingName(str):
+    endswith_calls = 0
+
+    def endswith(self, suffix: str | tuple[str, ...], *args: object) -> bool:  # type: ignore[override]
+        type(self).endswith_calls += 1
+        return super().endswith(suffix, *args)  # type: ignore[arg-type]
+
+
+class _FakeScandir:
+    def __init__(self, entries: list[object]) -> None:
+        self._entries = entries
+
+    def __enter__(self) -> list[object]:
+        return self._entries
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+
+class _FakeDirEntry:
+    def __init__(self, name: str, path: Path) -> None:
+        self.name = _TrackingName(name)
+        self.path = os.fspath(path)
+
+
+
 def _modules(*, normalize: bool = False) -> list[dict[str, object]]:
     modules: list[dict[str, object]] = [
         {
@@ -220,6 +246,23 @@ def test_catalog_fallback_sentence_transformer_modules_uses_single_scandir(
         normalize_path,
     )
     assert scandir_calls == 1
+
+
+def test_catalog_artifact_embedding_weight_paths_prescreen_suffix_last_character(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    weights_path = tmp_path / "model.safetensors"
+    entries: list[object] = [
+        _FakeDirEntry("notes.safetensors.txt", tmp_path / "notes.safetensors.txt"),
+        _FakeDirEntry("model.safetensors", weights_path),
+    ]
+    _TrackingName.endswith_calls = 0
+
+    monkeypatch.setattr(model_catalog.os, "scandir", lambda _path: _FakeScandir(entries))
+
+    assert model_catalog._artifact_embedding_weight_paths(tmp_path) == (weights_path,)
+    assert _TrackingName.endswith_calls == 1
 
 
 def test_catalog_fallback_sentence_transformer_modules_rejects_bad_scandir_entries(
