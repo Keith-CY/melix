@@ -15,7 +15,7 @@ let package = Package(
         .package(path: "../../services/control-plane-swift"),
         .package(path: "../../packages/protocol/swift"),
         .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
     ],
     targets: [
         .executableTarget(
