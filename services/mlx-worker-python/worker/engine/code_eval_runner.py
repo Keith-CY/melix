@@ -421,9 +421,13 @@ def _count_plain_assert_statement_lines(
 def _may_contain_assert_statement(
     test_code: str,
     *,
+    _assert_token="assert",
+    _contains=str.__contains__,
     _search=_ASSERT_STATEMENT_RE.search,
     _isalnum=str.isalnum,
 ) -> bool:
+    if not _contains(test_code, _assert_token):
+        return False
     return _search(test_code) is not None  # direct regex search fast path
 
 

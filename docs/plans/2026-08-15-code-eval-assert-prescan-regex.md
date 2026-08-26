@@ -29,3 +29,16 @@ same statement-boundary semantics.
 Verification remains the same: focused code-eval assert tests, changed-scope
 coverage for the registered probe, the local Linux registered probe, and the
 GitHub Actions PR-scoped performance report before merge.
+
+## 2026-08-26 follow-up: absent token containment guard
+
+This follow-up keeps the same registered `code-eval-assert-mention-prescan`
+probe and adds one exact string containment guard before invoking the compiled
+regex. Payloads that do not contain the token `assert` cannot contain an assert
+statement, so they can return `False` without paying regex-search setup cost.
+Payloads that do contain the token still use the compiled regex as the source of
+truth for statement-boundary and identifier-follower semantics.
+
+The slice is Python-only and locally Linux-verifiable. The expected local benefit
+is visible on no-assert fallback workloads while preserving the assert-mention
+probe behavior and keeping CI's PR-scoped registered report as the merge gate.
