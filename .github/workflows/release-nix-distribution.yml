@@ -120,7 +120,7 @@ jobs:
           fi
 
       - name: Commit Nix flake update
-        uses: EndBug/add-and-commit@v10
+        uses: EndBug/add-and-commit@v11
         with:
           cwd: nix-distribution
           add: ${{ env.NIX_FLAKE_PATH }}
