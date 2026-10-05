@@ -8,7 +8,7 @@ dependencies = [
   "grpcio>=1.71.0",
   "httpx>=0.28.1,<1",
   "jsonschema>=4.26.0,<5",
-  "mcp>=1.27.1,<2",
+  "mcp>=1.27.1,<3",
   "protobuf>=5.29.0",
 ]
 
@@ -22,21 +22,21 @@ dev = [
 [project.optional-dependencies]
 mlx = [
   "mlx>=0.31.2,<0.33",
-  "mlx-lm>=0.31.3,<0.32",
-  "mlx-vlm>=0.5.0,<0.7",
+  "mlx-lm>=0.31.3,<0.33",
+  "mlx-vlm>=0.5.0,<0.8",
   "pyarrow>=23.0.1,<26",
 ]
 audio-stt = [
-  "mlx-audio==0.4.6",
+  "mlx-audio==0.5.7",
 ]
 audio-tts = [
-  "mlx-audio==0.4.6",
+  "mlx-audio==0.5.7",
 ]
 audio = [
-  "mlx-audio==0.4.6",
+  "mlx-audio==0.5.7",
 ]
 synthetic-data = [
-  "data-designer>=0.5.9,<0.9",
+  "data-designer>=0.5.9,<0.10",
 ]
 
 [tool.pytest.ini_options]
